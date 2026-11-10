@@ -1133,7 +1133,7 @@ group SVR-D1 {
     ase::run_deck writer  ase::run_existing writer  ase::run_failed reader
     ase::run_lock_key writer  ase::stimuli_nvec neither  cosim_shim_verdict neither
     log_file neither  meas_block neither  predeck_file neither  predeck_write writer
-    raw_file neither  render_deck writer  result_probe neither  result_probe_calc neither
+    raw_file neither  render_deck writer  dcvar_body writer  result_probe neither  result_probe_calc neither
     result_probe_raw neither  s2p_file neither  sp_export_lines writer
     result_probe_raw_answers neither  result_probe_calc_answers neither  result_answers neither
     ase::optexport_compose writer  ase::optexport_manifest neither  ase::optexport_measure neither

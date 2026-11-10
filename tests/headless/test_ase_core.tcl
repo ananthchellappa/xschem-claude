@@ -6599,9 +6599,17 @@ foreach grt [dict keys [ase::analysis_types ngspice]] {
 ## for exactly this field (`devhelp -csv -type -flags`, no run needed). Calling
 ## it `text` would say ASE-L has no opinion about the content, and Stage 5b would
 ## then have to guess which text box is the one to hang a checkbox tree off.
+## ⚠ `sweepkind` JOINED THE SAME WAY AND IS NOT A
+## NUMBER. dc's `swkind` is the DC form's choice of WHAT a DC analysis sweeps
+## -- `temp`, `variable` or `component`, ase::dc_sweep_kind -- so its values are
+## words, and its kind is what the form renders as radio buttons. Calling it
+## `mode` would have handed it mode's readonly combobox and mode's
+## `default`-keyed absence rule, both of which are wrong for a value that a row
+## without the key states by its name. test_ase_dc_param_sweep band K pins the
+## field itself.
 check "GR8 every kind this registry declares has been classified as a number or\
  not a number, and the four numeric ones are the only ones parsed" \
-  [lsort $GRK] {bool filter freq int mode node outvar real source time}
+  [lsort $GRK] {bool filter freq int mode node outvar real source sweepkind time}
 
 # --- TF: THE DC SMALL-SIGNAL TRANSFER FUNCTION (Stage 5, issue 1426) --------
 ## `tf` was a `role probe` card and nothing else: registered so the four-state

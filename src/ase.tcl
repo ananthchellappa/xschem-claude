@@ -5033,6 +5033,12 @@ proc ase::field_caption {sim type field {modeval {}}} {
 # picked `oct` and typed 0 would be told to fix `Points per decade`, a caption
 # not on their screen -- which is the very defect A3 is about, re-created one
 # layer in. Row LB3 is the pin.
+#
+# ⚠ A SWEEP KIND IS NOT A STORED VALUE OR A DEFAULT. dc's
+# `swkind` relabels `source`, and a row that stores no kind means what its name
+# means, which no constant can say -- so its value here is
+# `ase::dc_sweep_kind`'s answer, the very one the form opens on. Without it a
+# legacy row with no name would be sent to fix a caption keyed by nothing.
 proc ase::field_caption_for_row {sim type row field} {
   set e [ase::analysis_entry $sim $type]
   set mv {}
@@ -5041,7 +5047,9 @@ proc ase::field_caption_for_row {sim type row field} {
       if {![dict exists $f relabels] || [dict get $f relabels] ne $field} { continue }
       if {![dict exists $f name]} { continue }
       set mn [dict get $f name]
-      if {[dict exists $row $mn] && [dict get $row $mn] ne {}} {
+      if {[dict exists $f kind] && [dict get $f kind] eq {sweepkind}} {
+        set mv [ase::dc_sweep_kind [dict replace $row type $type] $sim]
+      } elseif {[dict exists $row $mn] && [dict get $row $mn] ne {}} {
         set mv [dict get $row $mn]
       } else {
         set mv [ase::field_default $f]
@@ -5345,6 +5353,83 @@ proc ase::analysis_nonsetting_keys {} {
   return {type enabled x id}
 }
 
+# ─── WHAT A DC ROW SWEEPS: THE ONE ANSWER ──────
+#
+# `temp`, `variable` or `component`; {} for a row that is not a dc row. Every
+# reader asks this -- the adapter's `dcvar_plan`, the commit door, the gate,
+# the `sweep_target` precondition, the DC form -- and none keeps a copy.
+#
+# ⚖ THE DC FORM ASKS WHAT TO SWEEP, as Cadence ADE-L's DC form does (Sweep
+# Variable: Temperature / Design Variable / Component), and NOTHING IS
+# INFERRED FROM A NAME MATCHING A VARIABLE. Real benches name a source after
+# the variable that sets it: a current source `ILOAD` whose DC value and pulse
+# levels both read a variable `iload`. `.dc ILOAD` moves only the source's DC
+# value; a sweep of `iload` moves the pulse levels too. The name cannot tell
+# them apart, so a name-based guess would read such a bench the wrong way.
+#
+# So the ROW says what it sweeps, in its `swkind` key (the dc entry's
+# `kind sweepkind` field):
+#   variable    a sweep of the design variable the row names: the adapter's
+#               loop of reloads. ONLY THIS VALUE IS EVER WRITTEN.
+#   temp        the form's word for Temperature, and
+#   component   for Component; honoured when present, so a choice survives the
+#               form's own rebuilds, but never written: a stored row says them
+#               by its name alone.
+#   (no key)    what the simulator's own `.dc NAME` means: `temp` when the name
+#               is the temperature, else `component` (`ase::dc_name_kind`).
+#               That is every row written before the key existed -- the
+#               committed corpus and every saved bench -- so each keeps the
+#               meaning it was run with.
+# Any other value is no statement and reads as no key. An explicit `temp` or
+# `component` its name contradicts is refused by ase::analysis_emit_check
+# (`sweeptemp`, `sweepcomp`), because the deck says `dc <name>` either way.
+proc ase::dc_sweep_kind {row {sim {}}} {
+  if {[ase::state_get $row type] ne {dc}} { return {} }
+  set k [string tolower [string trim [ase::state_get $row swkind]]]
+  if {$k in {temp variable component}} { return $k }
+  return [ase::dc_name_kind [ase::state_get $row source] $sim]
+}
+
+# WHAT A DC SWEEP NAME MEANS ON ITS OWN: `temp` or `component`.
+#
+# ⚠ THE TEMPERATURE'S NAME IS THE ADAPTER'S WORD (D34-D36). Whether a name is
+# the temperature is the `dc_swkind` hook's answer (ngspice: `temp`, any case);
+# core never spells it. No hook, or a hook that raises, is no opinion about the
+# temperature, so the name is a component's.
+proc ase::dc_name_kind {name {sim {}}} {
+  if {$sim eq {}} { set sim [ase::default_simulator] }
+  set k {}
+  catch {
+    set h [ase::backend_hook $sim dc_swkind]
+    if {$h ne {}} { set k [$h [string trim $name]] }
+  }
+  if {$k eq {temp}} { return temp }
+  return component
+}
+
+# THE VALUES A DC FORM'S CHOICE STANDS FOR: Temperature names the temperature.
+#
+# The form hides the name row when Temperature is chosen, so the name the deck
+# needs is supplied here, for the commit door and for the banner alike: the
+# name the form holds when it already is the temperature -- a legacy
+# `source TEMP` stays byte-identical -- else the adapter's own word for it, its
+# first `temp` candidate (ngspice: `temp`). `vals` is a form's field -> value
+# dict; a type other than dc, or any other choice, passes through untouched.
+proc ase::dc_sweep_vals {sim type vals {state {}}} {
+  if {$type ne {dc} || ![dict exists $vals swkind]} { return $vals }
+  if {[string tolower [string trim [dict get $vals swkind]]] ne {temp}} { return $vals }
+  set nm {}
+  if {[dict exists $vals source]} { set nm [dict get $vals source] }
+  if {[ase::dc_name_kind $nm $sim] eq {temp}} { return $vals }
+  set tn {}
+  catch {
+    set h [ase::backend_hook $sim dc_sweep_candidates]
+    if {$h ne {}} { set tn [lindex [$h $state temp {}] 0] }
+  }
+  if {$tn ne {}} { dict set vals source $tn }
+  return $vals
+}
+
 # THE OFFENCES THAT STOP A ROW REACHING A DECK -- ALL OF THEM, IN ORDER, as
 # `{token field sentence}` triples, or `{}` when the row is emittable.
 #
@@ -5356,7 +5441,7 @@ proc ase::analysis_nonsetting_keys {} {
 # simulator; `ase::analysis_types` survives only because it wraps the lookup in
 # its own catch. A call site written to "it falls back" raises instead of
 # answering -- and this one runs on the Run path.
-proc ase::analysis_emit_check {sim row} {
+proc ase::analysis_emit_check {sim row {state {}} {ai {}}} {
   set out {}
   set type [ase::state_get $row type]
   set e [ase::analysis_entry $sim $type]
@@ -5562,6 +5647,46 @@ proc ase::analysis_emit_check {sim row} {
       }
     }
   }
+  # --- A SWEEP KIND ITS OWN NAME CONTRADICTS ----------------
+  # `ase::dc_sweep_kind` honours an explicit `temp` or `component`, and the
+  # deck says `dc <name>` whatever the row says -- so `swkind temp` naming a
+  # device, or `swkind component` naming the temperature, would run something
+  # other than what the row and the form say. The form writes neither value;
+  # the first comes from a hand edit, the second from typing the temperature's
+  # name as a component. A missing name is `missing`'s, not this one's.
+  set _swk [ase::dc_sweep_kind $row $sim]
+  if {$_swk in {temp component}} {
+    set _swn [string trim [ase::state_get $row source]]
+    if {$_swn ne {}} {
+      set _swnk [ase::dc_name_kind $_swn $sim]
+      if {$_swk eq {temp} && $_swnk ne {temp}} {
+        lappend out [list sweeptemp source [ase::analysis_emit_msg sweeptemp $_swn]]
+      } elseif {$_swk eq {component} && $_swnk eq {temp}} {
+        lappend out [list sweepcomp source [ase::analysis_emit_msg sweepcomp $_swn]]
+      }
+    }
+  }
+  # --- WHAT THE BENCH ITSELF RULES OUT, WHEN THE CALLER HAS IT --
+  # A row sweeping one of the bench's DESIGN VARIABLES (its `swkind` says so;
+  # the adapter's `dcvar_plan` hook plans it) has offences no row alone can
+  # show: the variable's own value, the bench's other analyses, its measurement
+  # rows, and whether the bench has the variable at all. So
+  # a caller holding the bench passes it -- the commit door, the gate, the
+  # Analyses pane, and the adapter's own render backstop -- and every one of
+  # them gets the same tuples. `ai` is the row's index in the bench (the
+  # measurement binding is by index); {} means "look it up". Without `state`
+  # the answer is exactly what it always was.
+  if {$state ne {}} {
+    catch {
+      set _dvh [ase::backend_hook $sim dcvar_plan]
+      if {$_dvh ne {}} {
+        set _dv [$_dvh $state $row $ai]
+        if {$_dv ne {}} {
+          foreach _o [dict get $_dv offences] { lappend out $_o }
+        }
+      }
+    }
+  }
   return $out
 }
 
@@ -5582,6 +5707,8 @@ proc ase::analysis_emit_msg {token args} {
     unknownkey   { return "has a setting named '$f' that ASE-L cannot emit" }
     verbatim     { return "has verbatim lines ASE-L cannot read, or a blank one among them" }
     belowmin     { return "needs '$f' to be at least [lindex $args 1]" }
+    sweeptemp    { return "sweeps the temperature but names '$f'; to sweep '$f', choose Component" }
+    sweepcomp    { return "sweeps a component, but '$f' names the temperature; choose Temperature" }
   }
   return {}
 }
@@ -5683,10 +5810,32 @@ proc ase::analysis_schema_errors {{sim {}}} {
         }
       }
     }
+    # --- A FIELD AN ADAPTER HOOK SPENDS IS CONSUMED --------
+    # dc's `swkind` is spent by the adapter's `dcvar_plan` (a design-variable
+    # sweep is a loop of reloads, not a template word), and its field says so:
+    # `spentby <hook>`. ⚠ THE HOOK MUST RESOLVE, or the field is offered and
+    # reaches nothing -- `variable` would silently emit `dc <name>` -- so an
+    # unregistered hook is `badspentby` and the field stays unconsumed.
+    set _spent {}
+    if {[dict exists $e fields]} {
+      set _hsim $sim
+      if {$_hsim eq {}} { set _hsim [ase::default_simulator] }
+      foreach f [dict get $e fields] {
+        if {![dict exists $f spentby] || ![dict exists $f name]} { continue }
+        set _hk {}
+        catch {set _hk [ase::backend_hook $_hsim [dict get $f spentby]]}
+        if {$_hk ne {} && [info commands $_hk] ne {}} {
+          lappend _spent [dict get $f name]
+        } else {
+          lappend out [list $ty badspentby [dict get $f spentby]]
+        }
+      }
+    }
     foreach f $declared {
       set used 0
       if {[lsearch -exact $gates $f] >= 0} { set used 1 }
       if {[lsearch -exact $_sfl $f] >= 0} { set used 1 }
+      if {[lsearch -exact $_spent $f] >= 0} { set used 1 }
       foreach card [dict get $e emit] {
         if {[dict exists $card tmpl] \
             && [lsearch -exact [ase::analysis_slots [dict get $card tmpl]] $f] >= 0} {
@@ -12480,7 +12629,8 @@ proc ase::netlist_facts {netlist_text} {
 # ⚠ THE EVALUATOR IS ASE-L's AND THE REASONS ARE THE ADAPTER's (D34-D37). That
 # `dc` needs a sweepable target is schema; that ngspice's `dctrcurv.c` accepts a
 # voltage source, a current source, a resistor and the literal `temp` and
-# nothing else is CONTENT, and it arrives through `dc_swkind`.
+# nothing else is CONTENT, and it arrives through `dc_swkind` (which
+# ase::dc_sweep_kind asks, through ase::dc_name_kind).
 #
 # ⚠ AND A STATIC FACT MAY NOT PRODUCE A REFUSAL. `ase::netlist_facts` answers
 # `exact 0`: it cannot see inside an `.include`, so "this deck has no AC source"
@@ -12534,12 +12684,32 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
       # ngspice sweeps a V source, an I source, a resistor, or `temp`.
       if {![dict exists $row source] || [dict get $row source] eq {}} { return {} }
       set nm [dict get $row source]
-      set kind {}
-      catch {
-        set h [ase::backend_hook $sim dc_swkind]
-        if {$h ne {}} { set kind [$h $nm] }
-      }
+      ## WHAT THE ROW SWEEPS IS THE ROW'S OWN STATEMENT, read by
+      ## the one reader (`ase::dc_sweep_kind`), and never inferred from the name
+      ## matching a variable. A row that states nothing means what ngspice's
+      ## `.dc <name>` means: the temperature, or a component.
+      set kind [ase::dc_sweep_kind [dict replace $row type $type] $sim]
       if {$kind eq {temp}} { return {} }
+      ## A DESIGN VARIABLE NAMES NO INSTANCE. What can stop such a sweep is
+      ## exact and is refused by ase::analysis_emit_check (dcvar_plan's
+      ## offences); what is left for here is ADVICE: an output the sweep cannot
+      ## carry. The adapter reads that from the output's text alone
+      ## (`dcvar_output_refusals`); the run goes on, as R-OUT3a requires, and
+      ## the row's Value says the same thing after it.
+      if {$kind eq {variable}} {
+        set _ors {}
+        catch {
+          set _oh [ase::backend_hook $sim dcvar_output_refusals]
+          if {$_oh ne {}} { set _ors [$_oh $state $row] }
+        }
+        if {![llength $_ors]} { return {} }
+        set _s [lindex [lindex $_ors 0] 1]
+        if {[llength $_ors] > 1} {
+          append _s " (and [expr {[llength $_ors] - 1}] more output[expr {[llength $_ors] > 2 ? {s} : {}}] like it)"
+        }
+        return [list caution $_s \
+          "read a top-level net or a source current, or measure it in an analysis that is not a design-variable sweep"]
+      }
       # A `temp` sweep names no instance; everything else has to be in the deck.
       set seen 0
       dict for {sc sd} [dict get $facts nodes] {
@@ -12550,9 +12720,21 @@ proc ase::needs_eval {sim type id row facts opts {state {}}} {
         if {$seen} break
       }
       if {$seen} { return {} }
-      return [list blocked \
-        "this circuit has no '$nm' to sweep" \
-        "name a voltage source, a current source, a resistor, or `temp`"]
+      ## the temperature is chosen in the DC form now, and a
+      ## component named like it is refused (`sweepcomp`), so the advice says
+      ## the choice rather than the word. AND A NAME THAT IS ONE OF THE BENCH'S
+      ## DESIGN VARIABLES gets the way to sweep it: a row naming a variable
+      ## with no `swkind` is a component sweep, and this is where the user
+      ## learns the form can sweep the variable.
+      set fix "name a voltage source, a current source or a resistor, or choose Temperature"
+      foreach _v [ase::state_get $state variables] {
+        if {[dict exists $_v name]
+            && [string equal -nocase [string trim [dict get $_v name]] [string trim $nm]]} {
+          append fix "; to sweep the design variable, choose Design variable in the DC form"
+          break
+        }
+      }
+      return [list blocked "this circuit has no '$nm' to sweep" $fix]
     }
     tf_insrc {
       # THE TRANSFER FUNCTION'S INPUT SOURCE HAS TO BE AN INDEPENDENT SOURCE,
@@ -14438,9 +14620,13 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   # composing a whole sentence in ASE-L's voice.
   set simname [ase::state_get $state simulator [ase::default_simulator]]
   set emitbad {}
+  set _eai -1
   foreach arow [ase::state_get $state analyses] {
+    incr _eai
     if {[ase::state_get $arow enabled 0] ne {1}} { continue }
-    foreach off [ase::analysis_emit_check $simname $arow] {
+    ## WITH THE BENCH AND THE ROW'S INDEX, so a design-variable
+    ## sweep's own offences (dcvar_plan) are refused here too.
+    foreach off [ase::analysis_emit_check $simname $arow $state $_eai] {
       # ⚠ `unrenderable` IS **NOT** THIS BLOCK'S TO ACT ON, and skipping it is not
       # tidiness. Issue 1401's own block sits immediately below with a different
       # sentence, a rundir note that names an EARLIER run's files, and a rule that
@@ -26516,6 +26702,9 @@ namespace eval ase::backend::ngspice {
     # the run for exactly this reason -- without that, every run's plots pile up
     # on the previous run's and `6` annotates whichever stale operating point
     # happens to come first. See the deletion beside cosim_clear_artifacts.
+    ## The lines a `reset` wipes (the campaign `alter` and `optran` lines),
+    ## kept so a design-variable sweep can write them again at every point.
+    set _pt_moved {}
     set pmapf {}
     if {[ase::n_enabled_analyses $state] > 0} {
       ## --- 1462 (§11a): THIS CAMPAIGN POINT'S `alter` LINES -----------------
@@ -26540,6 +26729,7 @@ namespace eval ase::backend::ngspice {
                       [ase::state_get $state simulator [ase::default_simulator]] \
                       $state] {
         lappend lines $_cpl
+        lappend _pt_moved $_cpl
       }
       ## --- 1459 (§10b): THE OPERATING-POINT STRATEGY ------------------------
       ## ⚠ ABOVE EVERY ANALYSIS, AND INSIDE `.control`. `optran` is a COMMAND,
@@ -26560,6 +26750,7 @@ namespace eval ase::backend::ngspice {
                       [ase::state_get $state simulator [ase::default_simulator]] \
                       $state] {
         lappend lines $_otl
+        lappend _pt_moved $_otl
       }
       lappend lines "set appendwrite"
       ## --- 1430: AND THE SIDECAR PATH, RESOLVED ONCE, UNDER EXACTLY THIS
@@ -26651,10 +26842,31 @@ namespace eval ase::backend::ngspice {
     # Analyses pane still showing it ticked. ase::analysis_emit_order now REFUSES
     # such a row by name, and ase::preflight_gate refuses it earlier still.
     set arows [ase::state_get $state analyses]
-    foreach aent [ase::analysis_emit_order $state $op_last \
-                        [namespace tail [namespace current]]] {
+    ## THE WHOLE ORDER IS KNOWN BEFORE THE FIRST BODY, so a design-variable
+    ## sweep can tell whether another analysis follows it (and must then re-load
+    ## the circuit on the bench's own value). Other rows ignore it.
+    set _pt_eo [ase::analysis_emit_order $state $op_last \
+                  [namespace tail [namespace current]]]
+    set _pt_all {}
+    foreach aent $_pt_eo { lappend _pt_all [list [lindex $aent 1] [lindex $aent 2]] }
+    foreach aent $_pt_eo {
       lassign $aent arank ai type
       set a [lindex $arows $ai]
+      ## A DC ROW SWEEPING ONE OF THE BENCH'S DESIGN VARIABLES is a loop of
+      ## reloads, not a `dc` line (ngspice has no such sweep), and it has a body
+      ## of its own: dcvar_body. Every other row goes on below, byte-identical.
+      if {$type eq {dc}} {
+        set _dv [dcvar_plan $state $a $ai]
+        if {$_dv ne {}} {
+          set _pw [dict create raw [path_word [raw_file $state] aseraw 0]]
+          if {$pmapf ne {}} { dict set _pw plotmap [path_word $pmapf asemap 0] }
+          foreach _l [dcvar_body $state $a $ai $_dv $_pw quit \
+                        [dict create evnodes $evnodes seen $lines replay $_pt_moved order $_pt_all]] {
+            lappend lines $_l
+          }
+          continue
+        }
+      }
       # 0964: the device requests, immediately before the analysis that is
       # the only one able to use them. A `save` COMMAND, not a dot-card:
       # dot-cards are not commands in here (see the shape switch above).
@@ -28017,6 +28229,9 @@ namespace eval ase::backend::ngspice {
   # Echoes: only the rawfile reader's own clash sentence; the rule note and
   # the missing note are result_probe's.
   proc result_answers {state mode} {
+    ## the bench as given -- the readers below are each handed
+    ## `[dict set state outputs ...]`, which REBINDS `state` to a subset.
+    set st0 $state
     set sim [ase::state_get $state simulator ngspice]
     set rawrows {}
     set calcrows {}
@@ -28083,6 +28298,33 @@ namespace eval ase::backend::ngspice {
         set rec [dict merge $rec [calc_answer_status [dict get $ca answer]]]
       }
       lappend out $rec
+    }
+    ## AN OUTPUT A DESIGN-VARIABLE SWEEP CANNOT CARRY SAYS WHY.
+    ## Its signal is simply not in the sweep's plot, so the Calculator's own
+    ## refusal would name the missing vector and not the reason; the row that
+    ## got NO number (refused, or no value at all) is given the reason instead.
+    ## A row that did get one keeps it. One body with the pre-run advice
+    ## (dcvar_output_refusals), so the two cannot disagree.
+    set _dvr [dict create]
+    foreach _a [::ase::state_get $st0 analyses] {
+      if {[::ase::state_get $_a enabled 0] ne {1}} { continue }
+      if {[::ase::state_get $_a type] ne {dc}} { continue }
+      foreach _r [dcvar_output_refusals $st0 $_a] {
+        if {![dict exists $_dvr [lindex $_r 0]]} { dict set _dvr [lindex $_r 0] [lindex $_r 1] }
+      }
+    }
+    if {[dict size $_dvr]} {
+      set _o2 {}
+      foreach rec $out {
+        if {[dict get $rec status] in {refused novalue}
+            && [dict exists $_dvr [dict get $rec expr]]} {
+          dict set rec status refused
+          dict set rec value {}
+          dict set rec msg [dict get $_dvr [dict get $rec expr]]
+        }
+        lappend _o2 $rec
+      }
+      set out $_o2
     }
     return $out
   }
@@ -29844,6 +30086,30 @@ $_leg
   # bench exists for. Enabling `sp` on one of them is a USER GESTURE, not a
   # migration, and section CP is the row that would notice if this stage made it
   # one.
+  #
+  # ─── `dc`'s SWEEP KIND ──────────────────────
+  #
+  # ⚖ THE DC FORM ASKS WHAT to sweep, as ADE-L's DC form does: Temperature,
+  # Design variable or Component. `swkind` is that choice and
+  # `ase::dc_sweep_kind` is the one reader of it (see its header for the
+  # reason and the meaning of each value). `source` is the name, and its
+  # caption follows the choice (`relabels`), so a refusal about a missing name
+  # says `Variable name` or `Component name` as the form does.
+  #
+  # ⚠ `swkind` IS A FIELD AND NOT A ROW KEY, and the difference is D4's. A
+  # third entry in `ase::analysis_nonsetting_keys` would license the key on
+  # every row of every type of every simulator; as a field it is licensed on
+  # this entry alone, the Options… editor skips it, and the form builds it
+  # from this table. NO TEMPLATE SPENDS IT: `variable` turns the row into the
+  # adapter's loop of reloads (`dcvar_plan`, then `dcvar_body`), and
+  # `temp`/`component` are what `dc @source …` already means. `spentby` names
+  # that hook so `ase::analysis_schema_errors` can tell a field spent by an
+  # adapter hook from one spent by nothing -- and refuses the declaration if
+  # the hook is not registered.
+  #
+  # ⚠ NO `default`, ON PURPOSE. A row without the key means what its name
+  # means, which no constant can say, and `ase::ui::form_is_absent` would
+  # otherwise compare against the constant. Only `variable` is ever written.
     return [dict create \
       op [dict create \
         label op  baseline 1  registered 1  seed_enabled 1  emitorder 0  viewrank 10 \
@@ -29855,7 +30121,13 @@ $_leg
       dc [dict create \
         label dc  baseline 1  registered 1  seed_enabled 0  emitorder 10 viewrank 20 \
         needs  {sweep_target saves_resolve cider_klu xspice} \
-        fields {{name source kind source required 1 label {Sweep variable}} \
+        fields {{name swkind kind sweepkind values {temp variable component} \
+                             valuelabels {temp Temperature variable {Design variable} \
+                                          component Component} \
+                             label {Sweep variable} relabels source spentby dcvar_plan} \
+                {name source kind source required 1 label {Name} \
+                             labels {variable {Variable name} \
+                                     component {Component name}}} \
                 {name start  kind real   required 1 label {Start}} \
                 {name stop   kind real   required 1 label {Stop value}} \
                 {name step   kind real   required 1 label {Step size}} \
@@ -32045,6 +32317,18 @@ $_leg
     return [list $ref $best $mech]
   }
 
+  # WHICH KIND OF THING A DC SWEEP NAME IS TO ngspice ON ITS OWN: `temp`, else
+  # the device letter (`isource`, `resistor`, `source`). ngspice's dctrcurv.c
+  # sweeps the temperature, a V source, an I source or a resistor, and it tells
+  # them apart the way the netlist does, by the name.
+  #
+  # ⚠ BY THE NAME ALONE, AND NEVER BY THE BENCH'S VARIABLES. Real benches name
+  # a source after the variable that sets it: a source `ILOAD` whose DC value
+  # and pulse levels both read a variable `iload`. `.dc ILOAD` moves
+  # only the source's DC value, a sweep of `iload` moves the pulse levels too,
+  # and a name cannot tell the two apart. Whether a row sweeps a design variable
+  # is the ROW's own statement (`swkind`), read by `ase::dc_sweep_kind`, which
+  # asks this proc only what a name means when the row says nothing.
   proc dc_swkind {name} {
     set n [string trim $name]
     if {[string equal -nocase $n temp]} { return temp }
@@ -32053,6 +32337,564 @@ $_leg
       r       { return resistor }
       default { return source }
     }
+  }
+
+  # ─── A DC SWEEP OF A DESIGN VARIABLE ─────────────────────
+  # ngspice's dc
+  # sweeps a V source, an I source, a resistor or `temp` and nothing else
+  # (dctrcurv.c), and a `.param` is fixed when the circuit is parsed. So this
+  # adapter writes a LOOP into `.control`: per point `alterparam`, a re-seed,
+  # `reset` (the re-parse), the lines a reset wipes, `op`, the guard, and a copy
+  # of the collected vectors into the `const` plot; after the last point ONE
+  # plot named `DC transfer characteristic` whose scale is the variable, written
+  # where a real dc sweep's plot is written. MEASURED on ngspice:
+  #   * a `setseed` before every `reset` gives IDENTICAL random draws at every
+  #     point; without it every point is different silicon. A bare `setseed`
+  #     re-seeds from $rndseed. On the fork (build-ver_51) that reproduces
+  #     the start-up draws, so the sweep is the unswept op's own silicon; apt
+  #     ngspice-45.2 gives every point the same draws but not the start-up ones.
+  #   * `set temp`, a control-level `option`, `alter` and `optran` are LOST at
+  #     `reset`, so the caller's replay lines and this row's own lines are
+  #     written again at every point.
+  #   * `alterparam` HOISTS the parameter to the deck's first line:
+  #     `alterparam nseg=VDD*16` is `Undefined parameter [vdd]` and a FATAL exit
+  #     at the next reset. So a value put back after the sweep must be a number.
+  #   * the const plot survives `reset` and `destroy all`. A `let` on a name it
+  #     already has WRITES THROUGH (`let c = …` overwrote `c`, the speed of
+  #     light), so no vector of the sweep plot takes one of its twelve names.
+  #   * `write <file> v(out)` on the built plot still writes the scale first.
+  #   * `meas` on the built plot is `Error: measure limited to tran, dc, sp, or
+  #     ac analysis`: com_measure2.c checks the plot's TYPE name, which no
+  #     command sets. A measurement row on such a sweep is therefore refused.
+  #   * xschem reads the result back as an ordinary dc sweep: read_dataset()
+  #     keys on the Plotname, so `xschem raw read <f> dc` gives sim_type dc with
+  #     the variable as var 0, calc::raw_analyses answers `op dc`, and
+  #     `vs(out)` / `value(vs(out),16)` answer.
+
+  # The most points one such sweep may have. ⚠ EVERY POINT IS A WHOLE RELOAD.
+  # The 1024-word `foreach` line (4 KB) was measured to parse and run. The cap
+  # bounds a typo'd step -- 0 to 31 by 0.01 is 3101 points -- and still admits
+  # a sweep of 1024 integer values.
+  proc dcvar_max_points {} { return 1024 }
+
+  # The const plot's names, lowercased (`setplot const; display`). A
+  # sweep-plot vector never takes one: see the header above.
+  proc dcvar_const_names {} {
+    return {false true boltz c e echarge i kelvin no pi planck yes}
+  }
+
+  # THE CLAUSE after "the dc analysis" / "This dc analysis" (the commit door's
+  # and the gate's frames), or an output's whole sentence. One arm per line.
+  # `novar`: a row that says it sweeps a design variable and names one the
+  # bench does not have.
+  proc dcvar_msg {kind {a {}} {b {}} {c {}}} {
+    switch -exact -- $kind {
+      novar { return "sweeps the design variable '$a', which this bench does not have; add it under Design Variables or choose another" }
+      second { return "sweeps the design variable '$a', which cannot be combined with a second sweep variable yet; clear the second sweep" }
+      zerostep { return "sweeps the design variable '$a' with a step of zero" }
+      empty { return "sweeps the design variable '$a', but its step never takes it from the start value to the stop value" }
+      cap { return "sweeps the design variable '$a' over more than $b points; each point reloads the circuit, so ASE-L allows at most $b. Use a larger step" }
+      restore { return "sweeps the design variable '$a', whose value '$b' is not a number; ASE-L puts the value back after the sweep for this bench's other analyses, so it has to be one" }
+      meas { return "sweeps the design variable '$a', and a simulator measurement cannot read such a sweep; write the measurement as an output instead" }
+      output { return "output '$a' reads '$b', $c, and a sweep of a design variable carries only top-level nets and source currents, so that output has no value" }
+    }
+    return {}
+  }
+
+  # IS THIS ROW A SWEEP OF ONE OF THE BENCH'S DESIGN VARIABLES, AND CAN IT BE
+  # RENDERED? {} when it is not (not dc, no sweep name, or a row whose kind --
+  # `ase::dc_sweep_kind`, the row's own `swkind` -- is not `variable`); else a
+  # dict:
+  #   name value   the variable as the bench spells it, and its value text
+  #   base         that value as a number, {} when it is not one
+  #   start stop step   the three numbers, {} where one does not read as a
+  #                number (the generic `fill`/`missing` offence names it)
+  #   n            the point count by ngspice's own rule (dctrcurv.c: add the
+  #                step until sgn(step)*(v - stop) > 1e3*DBL_EPSILON), counted
+  #                no further than one past the cap
+  #   others       1 when another analysis of the bench is enabled
+  #   offences     {{token field clause} ...}, ase::analysis_emit_check's shape
+  # `ai` is the row's index in the bench ({} = look it up; -1 = not stored yet).
+  #
+  # ⚠ A ROW THAT SAYS `variable` AND NAMES NO VARIABLE OF THE BENCH IS STILL A
+  # VARIABLE SWEEP, ONE THAT CANNOT BE RENDERED (`dcvar_novar`). Answering {}
+  # for it would send it down the ordinary `dc NAME` path -- a component sweep
+  # the row did not ask for, at rc 0 if the netlist has such a device. The
+  # value check (restore) needs the variable and is skipped; every other
+  # offence is still reported.
+  proc dcvar_plan {state row {ai {}}} {
+    if {[::ase::state_get $row type] ne {dc}} { return {} }
+    if {[::ase::dc_sweep_kind $row [namespace tail [namespace current]]] ne {variable}} {
+      return {}
+    }
+    set src [string trim [::ase::state_get $row source]]
+    if {$src eq {}} { return {} }
+    set vname $src ; set vval {} ; set found 0
+    foreach v [::ase::state_get $state variables] {
+      if {[dict exists $v name]
+          && [string equal -nocase [string trim [dict get $v name]] $src]} {
+        set vname [string trim [dict get $v name]]
+        if {[dict exists $v value]} { set vval [string trim [dict get $v value]] }
+        set found 1
+        break
+      }
+    }
+    set rows [::ase::state_get $state analyses]
+    if {$ai eq {}} { set ai [lsearch -exact $rows $row] }
+    set off {}
+    if {!$found} {
+      lappend off [list dcvar_novar source [dcvar_msg novar $vname]]
+    }
+    foreach f {source2 start2 stop2 step2} {
+      if {[string trim [::ase::state_get $row $f]] ne {}} {
+        lappend off [list dcvar_second source2 [dcvar_msg second $vname]]
+        break
+      }
+    }
+    set sufs [si_suffixes]
+    set num [dict create]
+    foreach f {start stop step} {
+      set r [::ase::si_parse [::ase::state_get $row $f] $sufs]
+      if {[lindex $r 0] ne {bad} && [string is double -strict [lindex $r 1]]} {
+        dict set num $f [lindex $r 1]
+      } else {
+        dict set num $f {}
+      }
+    }
+    set n 0
+    set cap [dcvar_max_points]
+    if {[dict get $num start] ne {} && [dict get $num stop] ne {}
+        && [dict get $num step] ne {}} {
+      set x  [dict get $num start]
+      set x1 [dict get $num stop]
+      set st [dict get $num step]
+      if {$st == 0} {
+        lappend off [list dcvar_step step [dcvar_msg zerostep $vname]]
+      } else {
+        set sg [expr {$st > 0 ? 1.0 : -1.0}]
+        while {$sg * ($x - $x1) <= 2.220446049250313e-13} {
+          incr n
+          if {$n > $cap} { break }
+          set x [expr {$x + $st}]
+        }
+        if {$n == 0} {
+          lappend off [list dcvar_empty step [dcvar_msg empty $vname]]
+        } elseif {$n > $cap} {
+          lappend off [list dcvar_cap step [dcvar_msg cap $vname $cap]]
+        }
+      }
+    }
+    set base {}
+    set br [::ase::si_parse $vval $sufs]
+    if {[lindex $br 0] ne {bad} && [string is double -strict [lindex $br 1]]} {
+      set base [lindex $br 1]
+    }
+    set others 0
+    set i 0
+    foreach r $rows {
+      if {$i != $ai && [::ase::state_get $r enabled 0] eq {1}} { set others 1 }
+      incr i
+    }
+    if {$found && $others && $base eq {}} {
+      lappend off [list dcvar_restore source [dcvar_msg restore $vname $vval]]
+    }
+    if {$ai >= 0} {
+      set ms {}
+      catch {set ms [::ase::meas_for [namespace tail [namespace current]] $state dc $ai]}
+      if {[llength $ms]} {
+        lappend off [list dcvar_meas source [dcvar_msg meas $vname]]
+      }
+    }
+    return [dict create name $vname value $vval base $base \
+              start [dict get $num start] stop [dict get $num stop] \
+              step [dict get $num step] n $n others $others offences $off]
+  }
+
+  # A NUMBER AS ONE WORD ngspice READS EXACTLY: an integral value with no
+  # exponent, anything else in Tcl's shortest round-trip form (0.1, 1e-06).
+  proc dcvar_num {x} {
+    if {$x == floor($x) && abs($x) < 1e15} { return [format %.0f $x] }
+    return [expr {double($x)}]
+  }
+
+  # THE VECTORS A DESIGN-VARIABLE SWEEP CARRIES, read from the deck's own dot
+  # section (`lines`, up to `.control`): every TOP-LEVEL node and the branch of
+  # every top-level V, E, H and L device, as {lhs rhs type} -- `lhs` the
+  # vector the sweep plot gets, `rhs` what each point's op plot is asked for.
+  #
+  # ⚠ NOT ase::netlist_map's node table, which over-approximates ON PURPOSE
+  # (every non-k=v token of a card is a "node": `pwl`, `0us`, a model name) --
+  # the safe direction for a pre-flight and the wrong one here: a name the op
+  # plot lacks copies NOTHING, the mailbox stays zero, and the results file
+  # would carry a column of zeros under a real-looking name. So the node
+  # positions are the device's own (2 for r c l v i d b f h, 3 for j z q, 4 for
+  # m e g t, every non-k=v token but the master for x, none for any other
+  # letter), and a name must be one `let` can create (a letter or `_`, then
+  # letters, digits, `_`), not ground (`0`, and `gnd`: MEASURED, ngspice keeps
+  # no `gnd` vector), not an event node, and not a const-plot name.
+  # ⚠ A NARROWED DECK (a `.save` card and no `.save all`) holds only what it
+  # saves, so only that is copied.
+  proc dcvar_collect {lines {evnodes {}}} {
+    set logical {}
+    foreach raw $lines {
+      set t [string trimleft $raw]
+      if {[string tolower [lindex [regexp -all -inline {\S+} $t] 0]] eq {.control}} { break }
+      if {[string index $t 0] eq {+}} {
+        if {[llength $logical]} {
+          lset logical end "[lindex $logical end] [string range $t 1 end]"
+        }
+        continue
+      }
+      lappend logical $raw
+    }
+    set reserved [concat [dcvar_const_names] {0 gnd}]
+    set ev {}
+    foreach e $evnodes { lappend ev [string tolower $e] }
+    set ok {^[A-Za-z_][A-Za-z0-9_]*$}
+    set nodes {} ; set nseen [dict create]
+    set brs {} ; set bseen [dict create]
+    set saves {} ; set saveall 0 ; set hassave 0
+    set depth 0
+    foreach line $logical {
+      ## ⚠ A QUOTED OR BRACED VALUE IS ONE WORD, spaces and all: xschem writes
+      ## `X1 vdd out seg L='16.62 + (nseg-16)*0.6'`, and split at its spaces the
+      ## `+` and `(nseg-16)*0.6'` would push the MASTER `seg` into the node
+      ## positions (caught on the first fixture this proc ever read).
+      set toks [regexp -all -inline {(?:'[^']*'|"[^"]*"|\{[^\}]*\}|[^\s'"\{\}])+} $line]
+      if {![llength $toks]} { continue }
+      set first [lindex $toks 0]
+      set c [string tolower [string index $first 0]]
+      if {$c eq {*} || $c eq {;}} { continue }
+      if {$c eq {.}} {
+        switch -exact -- [string tolower $first] {
+          .subckt { incr depth }
+          .ends - .eom { if {$depth > 0} { incr depth -1 } }
+          .global {
+            if {$depth == 0} {
+              foreach g [lrange $toks 1 end] {
+                set lg [string tolower $g]
+                if {[regexp $ok $g] && $lg ni $reserved && $lg ni $ev
+                    && ![dict exists $nseen $lg]} {
+                  dict set nseen $lg 1 ; lappend nodes $g
+                }
+              }
+            }
+          }
+          .save {
+            set hassave 1
+            foreach s [lrange $toks 1 end] {
+              if {[string tolower $s] eq {all}} { set saveall 1 } else { lappend saves $s }
+            }
+          }
+        }
+        continue
+      }
+      if {$depth > 0} { continue }
+      set keep {}
+      foreach t [lrange $toks 1 end] { if {[string first = $t] < 0} { lappend keep $t } }
+      switch -exact -- $c {
+        r - c - l - v - i - d - b - f - h { set k 2 }
+        j - z - q { set k 3 }
+        m - e - g - t { set k 4 }
+        x { set k [expr {[llength $keep] - 1}] }
+        default { set k 0 }
+      }
+      foreach t [lrange $keep 0 [expr {$k - 1}]] {
+        set lt [string tolower $t]
+        if {[regexp $ok $t] && $lt ni $reserved && $lt ni $ev
+            && ![dict exists $nseen $lt]} {
+          dict set nseen $lt 1 ; lappend nodes $t
+        }
+      }
+      if {$c in {v e h l} && [regexp $ok $first]
+          && ![dict exists $bseen [string tolower $first]]} {
+        dict set bseen [string tolower $first] 1 ; lappend brs $first
+      }
+    }
+    if {$hassave && !$saveall} {
+      set sn {} ; set sb {}
+      foreach s $saves {
+        if {[regexp -nocase {^v\((.*)\)$} $s -> in]} {
+          foreach p [split $in ,] { lappend sn [string tolower [string trim $p]] }
+        } elseif {[regexp -nocase {^i\((.*)\)$} $s -> in]} {
+          lappend sb [string tolower [string trim $in]]
+        } else {
+          lappend sn [string tolower $s]
+        }
+      }
+      set kn {} ; foreach x $nodes { if {[string tolower $x] in $sn} { lappend kn $x } }
+      set kb {} ; foreach x $brs { if {[string tolower $x] in $sb} { lappend kb $x } }
+      set nodes $kn ; set brs $kb
+    }
+    set out {}
+    foreach x $nodes { lappend out [list $x "v($x)" voltage] }
+    foreach x $brs { lappend out [list "${x}#branch" "i($x)" current] }
+    return $out
+  }
+
+  # WHY ONE SIGNAL A ROW READS CANNOT BE CARRIED BY A DESIGN-VARIABLE SWEEP, or
+  # {} when it can (as far as its TEXT shows: whether a top-level net really
+  # exists is the Calculator's answer after the run). `tok` is a token of
+  # calc::eval_text_signals, or a plain row's signal.
+  proc dcvar_signal_why {tok} {
+    set t [string trim $tok]
+    set ok {^[A-Za-z_][A-Za-z0-9_]*$}
+    set gnd {0 gnd}
+    if {[string index $t 0] eq "@"} { return {a device parameter} }
+    if {[regexp {^([A-Za-z_][A-Za-z0-9_]*)#branch$} $t -> d]} {
+      if {[string tolower [string index $d 0]] ni {v e h l}} {
+        return {the current of a device that is not a source}
+      }
+      return {}
+    }
+    if {[regexp {^([A-Za-z]+)\((.*)\)$} $t -> fn inner]} {
+      if {[string equal -nocase $fn i]} {
+        set d [string trim [lindex [split $inner ,] 0]]
+        if {[string first . $d] >= 0} { return {a current inside a subcircuit} }
+        if {![regexp $ok $d]} { return {a current the simulator cannot copy} }
+        if {[string tolower [string index $d 0]] ni {v e h l}} {
+          return {the current of a device that is not a source}
+        }
+        return {}
+      }
+      foreach p [split $inner ,] {
+        set p [string trim $p]
+        if {[string tolower $p] in $gnd} { continue }
+        if {[string first . $p] >= 0} { return {a node inside a subcircuit} }
+        if {![regexp $ok $p]} { return {a net whose name the simulator cannot copy} }
+      }
+      return {}
+    }
+    if {[string tolower $t] in $gnd} { return {} }
+    if {[string first . $t] >= 0} { return {a node inside a subcircuit} }
+    if {![regexp $ok $t]} { return {a net whose name the simulator cannot copy} }
+    return {}
+  }
+
+  # THE OUTPUTS OF `state` THAT ROW `row`'s DESIGN-VARIABLE SWEEP CANNOT SERVE,
+  # as {{expr sentence} ...}; {} when the row is no such sweep. An output is
+  # judged when it reads this sweep: its qualifier says dc, or it has none and
+  # the sweep is the bench's only enabled analysis (an unqualified text could
+  # read another one -- calc::et_default). The signals are the ones
+  # the save list reads: ase::output_signal for a
+  # plain row, calc::eval_text_signals for an expression.
+  proc dcvar_output_refusals {state row} {
+    set dv [dcvar_plan $state $row]
+    if {$dv eq {}} { return {} }
+    set alone [expr {![dict get $dv others]}]
+    set out {}
+    foreach o [::ase::state_get $state outputs] {
+      if {![dict exists $o expr]} { continue }
+      set ex [string trim [dict get $o expr]]
+      if {$ex eq {}} { continue }
+      set an {}
+      if {[info commands ::calc::aq_plan] ne {}} {
+        catch {set an [dict get [calc::aq_plan $ex] type]}
+      }
+      if {$an ne {} && $an ne {dc}} { continue }
+      if {$an eq {} && !$alone} { continue }
+      if {[::ase::output_is_plain $ex]} {
+        set sg [list [::ase::output_signal $ex]]
+      } elseif {[info commands ::calc::eval_text_signals] ne {}} {
+        set sg {}
+        catch {set sg [calc::eval_text_signals [::ase::output_calc_text $ex]]}
+      } else {
+        set sg {}
+      }
+      foreach s $sg {
+        set why [dcvar_signal_why $s]
+        if {$why eq {}} { continue }
+        set nm [string trim [::ase::state_get $o name]]
+        if {$nm eq {}} { set nm $ex }
+        lappend out [list $ex [dcvar_msg output $nm $s $why]]
+        break
+      }
+    }
+    return $out
+  }
+
+  # THE DC FORM'S NAME PICKER, FOR ONE SWEEP KIND (`ase::dc_sweep_kind`'s
+  # three words):
+  #   variable    the bench's design variables
+  #   component   the top-level devices dctrcurv.c can sweep (V and I sources,
+  #               resistors), read from the netlist facts the dialog already
+  #               holds -- it never netlists to get them, so cold facts give {}
+  #               and the name is typed
+  #   temp        the name a temperature sweep carries. The form hides the name
+  #               row for Temperature and writes this, so the word is the
+  #               adapter's (D36), not ASE-L's
+  # Case-insensitively unique, first spelling kept; any other kind gets {}.
+  proc dc_sweep_candidates {state kind {facts {}}} {
+    set c {}
+    switch -exact -- $kind {
+      variable {
+        foreach v [::ase::state_get $state variables] {
+          if {[dict exists $v name] && [string trim [dict get $v name]] ne {}} {
+            lappend c [string trim [dict get $v name]]
+          }
+        }
+      }
+      component {
+        set devs {}
+        catch {set devs [dict keys [dict get $facts nodes {} devs]]}
+        foreach d $devs {
+          if {[string tolower [string index $d 0]] in {v i r}} { lappend c $d }
+        }
+      }
+      temp { lappend c temp }
+    }
+    set out {} ; set seen {}
+    foreach x $c {
+      if {[string tolower $x] in $seen} { continue }
+      lappend seen [string tolower $x] ; lappend out $x
+    }
+    return $out
+  }
+
+  # THE BODY OF A DESIGN-VARIABLE SWEEP: analysis_body's answer for a row whose
+  # dcvar_plan is `dv`, called from render_deck's emit loop. `pathwords` holds
+  # the `raw` (and, when there is one, `plotmap`) path words; `guard` is `quit`.
+  # `carry` holds:
+  #   evnodes   the deck's event nodes, which are not copied
+  #   seen      the deck's dot section, which dcvar_collect reads
+  #   replay    the caller's lines that a `reset` wipes, written after every
+  #             one: render_deck's campaign `alter` and `optran` lines
+  #   order     the deck's {ai type} emit order, which says whether another
+  #             analysis FOLLOWS this one (then the variable is put back AND
+  #             the circuit re-loaded, so it runs on the bench's own value)
+  # Every point re-seeds with a bare `setseed` (the run's start-up seed) before
+  # its `reset`, so every point is the same silicon.
+  # ⚠ THE BACKSTOP: every offence ase::analysis_emit_check knows refuses here,
+  # for render_deck's own reason -- a `.state` can be hand-edited.
+  # ⚠ A FAILED POINT FAILS THE SWEEP. The guard after each `op` is
+  # sim_status_guard verbatim, so the run stops there as ngspice's own dc does.
+  proc dcvar_body {state a ai dv pathwords guard carry} {
+    set sim [namespace tail [namespace current]]
+    set bad {}
+    catch {set bad [::ase::analysis_emit_check $sim $a $state $ai]}
+    if {[llength $bad]} {
+      return -code error "ase: the dc analysis [lindex [lindex $bad 0] 2]; nothing was rendered"
+    }
+    set seen {} ; set evnodes {} ; set replay {} ; set order {}
+    foreach {k v} {seen seen evnodes evnodes replay replay order order} {
+      if {[dict exists $carry $k]} { set $v [dict get $carry $k] }
+    }
+    if {[dict exists $pathwords raw]} {
+      set rawpw [dict get $pathwords raw]
+    } else {
+      set rawpw [path_word [raw_file $state] aseraw 0]
+    }
+    set evk {}
+    catch {set evk [dict keys $evnodes]}
+    set collect [dcvar_collect $seen $evk]
+    ## THE SCALE: the variable's own name, unless the const plot or a collected
+    ## vector already has it, or it is a scale name another analysis owns --
+    ## then ngspice's own `<name>-sweep` spelling (`temp-sweep`).
+    set vn [dict get $dv name]
+    set taken [concat [dcvar_const_names] {time frequency}]
+    foreach cv $collect { lappend taken [string tolower [lindex $cv 0]] }
+    set scale $vn
+    if {[string tolower $vn] in $taken} { set scale "${vn}-sweep" }
+    set n [dict get $dv n]
+    set mb "const.asedv${ai}"
+    set st [dict get $dv step]
+    set v0 [dcvar_num [dict get $dv start]]
+    if {$st < 0} {
+      set vexpr "${v0}-[dcvar_num [expr {-$st}]]*\$asedvi"
+    } else {
+      set vexpr "${v0}+[dcvar_num $st]*\$asedvi"
+    }
+    set setseed setseed
+    set following 0
+    set pos -1 ; set j 0
+    foreach ent $order {
+      if {[lindex $ent 0] == $ai} { set pos $j }
+      incr j
+    }
+    if {$pos >= 0 && $pos < [llength $order] - 1} { set following 1 }
+    ## THIS ROW'S OWN LINES, written again at every point (a reset wipes them):
+    ## its option scope and suppressions, its setup and noise lines, and the
+    ## verbatim hatch -- last, immediately above the `op` it is for.
+    set scopepre {} ; set scopepost {}
+    catch {
+      set _sl [::ase::opt_scope_lines $sim $state dc]
+      set scopepre [dict get $_sl pre] ; set scopepost [dict get $_sl post]
+    }
+    set supprepre {} ; set supprepost {}
+    catch {
+      set _su [::ase::analysis_suppress_lines $sim $state dc $a]
+      set supprepre [dict get $_su pre] ; set supprepost [dict get $_su post]
+    }
+    set own [concat $scopepre $supprepre \
+               [::ase::analysis_setup_emit $sim $a lines $state $ai] \
+               [::ase::stimuli_emit $sim $a lines $state $ai] \
+               [::ase::analysis_verbatim $a]]
+    set copies {}
+    lappend copies "let ${mb}_x\[\$asedvi\] = $vexpr"
+    set k 0
+    foreach cv $collect {
+      lappend copies "let ${mb}_$k\[\$asedvi\] = [lindex $cv 1]"
+      incr k
+    }
+    set L {}
+    lappend L "* ASE-L: [::ase::analysis_line $sim $a] sweeps the design variable\
+ $vn, one reload per point"
+    ## THE MAILBOXES ARE CREATED WITH `const` AS THE CURRENT PLOT, by their bare
+    ## names. MEASURED on ngspice-45.2: `let const.asedv1_x = vector(4)` is
+    ## "When creating a new vector, it cannot be indexed" and creates nothing,
+    ## so every copy into it fails and the sweep plot is never built. Once the
+    ## vector exists, the indexed `let const.<name>[i]` writes below work there
+    ## and on the fork alike.
+    lappend L {setplot const}
+    lappend L "let asedv${ai}_x = vector($n)"
+    set k 0
+    foreach cv $collect { lappend L "let asedv${ai}_$k = vector($n)" ; incr k }
+    set idx {}
+    for {set i 0} {$i < $n} {incr i} { lappend idx $i }
+    lappend L "foreach asedvi [join $idx { }]"
+    set in {  }
+    lappend L "${in}alterparam $vn=$vexpr"
+    lappend L "${in}$setseed"
+    lappend L "${in}reset"
+    foreach l $replay { lappend L "$in$l" }
+    foreach l $own { lappend L "$in$l" }
+    lappend L "${in}op"
+    foreach g [sim_status_guard] { lappend L "$in$g" }
+    foreach l $copies { lappend L "$in$l" }
+    lappend L "${in}destroy all"
+    lappend L end
+    if {[dict get $dv others]} {
+      lappend L "alterparam $vn=[dcvar_num [dict get $dv base]]"
+    }
+    lappend L {setplot new}
+    lappend L "let $scale = ${mb}_x"
+    set k 0
+    foreach cv $collect { lappend L "let [lindex $cv 0] = ${mb}_$k" ; incr k }
+    foreach cv $collect { lappend L "settype [lindex $cv 2] [lindex $cv 0]" }
+    lappend L "setscale $scale"
+    ## `setcs` keeps the case (it is on inp_readall's whitelist), and the name
+    ## is the registry's `select`, so ase::reconcile_plots and read_dataset see
+    ## a dc plot.
+    lappend L {setcs curplotname = "DC transfer characteristic"}
+    foreach l [::ase::analysis_setup_emit $sim $a post $state $ai] { lappend L $l }
+    foreach l [::ase::stimuli_emit $sim $a post $state $ai] { lappend L $l }
+    lappend L remzerovec
+    if {[dict exists $pathwords plotmap]} {
+      lassign [dict get $pathwords plotmap] _pw_pre _pw_map
+      foreach _pwl $_pw_pre { lappend L $_pwl }
+      lappend L "echo \"[::ase::plotmap_record dc $ai {$curplotname}]\" >> $_pw_map"
+    }
+    lassign $rawpw _pw_pre _pw_raw
+    foreach _pwl $_pw_pre { lappend L $_pwl }
+    lappend L "write $_pw_raw"
+    foreach l [meas_block $state dc $ai] { lappend L $l }
+    foreach l $supprepost { lappend L $l }
+    foreach l $scopepost { lappend L $l }
+    if {$following} {
+      lappend L $setseed reset
+      foreach l $replay { lappend L $l }
+    }
+    return $L
   }
 
 
@@ -34459,6 +35301,9 @@ $_leg
     analysis_caveat     ::ase::backend::ngspice::analysis_caveat \
     si_suffixes         ::ase::backend::ngspice::si_suffixes \
     dc_swkind           ::ase::backend::ngspice::dc_swkind \
+    dcvar_plan          ::ase::backend::ngspice::dcvar_plan \
+    dcvar_output_refusals ::ase::backend::ngspice::dcvar_output_refusals \
+    dc_sweep_candidates ::ase::backend::ngspice::dc_sweep_candidates \
     out_decompose       ::ase::backend::ngspice::out_decompose \
     deck_keywords       ::ase::backend::ngspice::deck_keywords \
     ncdump_parse        ::ase::backend::ngspice::ncdump_parse \

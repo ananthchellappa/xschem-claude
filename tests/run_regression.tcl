@@ -154,7 +154,19 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wave_tabs" \
                  "headless/test_ase_window" \
                  "headless/test_rdw_help" \
+                 "headless/test_ase_dc_param_sweep" \
                   "headless/test_wave_subwindows"]
+## `headless/test_ase_dc_param_sweep` IS IN BOTH LISTS, registered in the commit
+## that creates it: ASE-L's DC analysis sweeping a DESIGN VARIABLE (a row with
+## `swkind variable`), which the ngspice adapter writes as a loop of reloads and
+## one `DC transfer characteristic` plot. The counted arm runs the sweep kind,
+## the plan and its refusals, the commit door's and the gate's one reader, the
+## deck text, the collected vectors, the output advice, and band X: a real
+## ngspice run (ASE_DCVAR_NGSPICE, else the fork under XSCHEM_TEST_REAL_HOME;
+## each X row prints `skip:` without one). Band G, the DC form itself, is the
+## display arm's and prints ONE `skip:` line here. Both arms' epilogues were
+## scored with `banner_complete` SOURCED from tests/banner_rule.tcl before this
+## entry went in.
 ## `headless/test_wave_subwindows` IS IN BOTH LISTS (waveform viewer subwindows
 ## stage 1, doc/claude/specs/waveform_viewer_subwindows.md), registered in the
 ## commit that creates it. Both arms were captured exactly as the two loops below
@@ -948,7 +960,13 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_hover_highlight" \
                  "headless/test_rdw_help" \
                  "headless/test_cadence_q_scope" \
+                 "headless/test_ase_dc_param_sweep" \
                   "headless/test_wave_subwindows"]
+## `headless/test_ase_dc_param_sweep` IS ALSO IN `hcases` (see the note there):
+## this entry is its display arm, where band G builds the real DC form -- the
+## Sweep variable radios, the relabelled and re-listed name picker, the hidden
+## name row for Temperature, the label column that does not move, and the OK
+## door writing `swkind variable` only for a design-variable sweep.
 ## `headless/test_cadence_q_scope` IS IN THIS LIST ALONE: it drives the cadence_style_rc
 ## q / Alt-Shift-Q bindings with `event generate` and reads the property form; under
 ## --nogui it self-skips to zero checks, so a counted entry would measure nothing.

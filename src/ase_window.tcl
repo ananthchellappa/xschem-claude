@@ -6314,7 +6314,57 @@ proc ase::ui::chana_field_row {key parent type field r row} {
   set kind {}
   if {[dict exists $fd kind]} { set kind [dict get $fd kind] }
   set lbl [ase::ui::form_label $sim $type $field]
+  ## THE DC SWEEP'S NAME PICKER. dc's `source`, on
+  ## a simulator whose adapter offers names (`dc_sweep_candidates`), is an
+  ## EDITABLE combobox, still free text, listing the names of the kind the row
+  ## sweeps (`ase::dc_sweep_kind`): the bench's design variables for Design
+  ## variable, the netlist's top-level V and I sources and resistors for
+  ## Component, from the facts the dialog already holds -- it never netlists.
+  ## ⚠ ALWAYS A COMBOBOX, EVEN WITH NOTHING TO LIST, because the list changes
+  ## with the radio above it (`chana_mode_changed`) and cold facts list no
+  ## component: an entry built for an empty list could never offer the
+  ## variables a moment later. Every other `source` field stays an entry.
+  set cands {}
+  if {$kind eq {source} && $type eq {dc} && $field eq {source}} {
+    set _hk {}
+    catch {set _hk [ase::backend_hook $sim dc_sweep_candidates]}
+    if {$_hk ne {}} {
+      set kind picker
+      set cands [ase::ui::chana_dc_cands $key [ase::dc_sweep_kind $row $sim]]
+    }
+  }
   switch -exact -- $kind {
+    sweepkind {
+      ## WHAT THE DC ANALYSIS SWEEPS, AS RADIO BUTTONS -- the
+      ## three choices of ADE-L's DC form's first row. One button per
+      ## declared value, worded by its `valuelabels` (the stored word is the
+      ## value), sharing `dlg($key,fld,$field)`, which `form_get` reads back. A
+      ## pick relabels the name below it, hides it for Temperature and re-lists
+      ## its picker (`chana_mode_changed`). The form opens on the row's own
+      ## kind -- `ase::dc_sweep_kind` of the row with this dialog's edits
+      ## overlaid -- so a legacy `source ILOAD` row opens on Component.
+      label $parent.l$field -text $lbl -font AseLabelFont -anchor w
+      frame $parent.$field
+      set dlg($key,fld,$field) [ase::dc_sweep_kind [dict replace $row type $type] $sim]
+      set _vals {}
+      if {[dict exists $fd values]} { set _vals [dict get $fd values] }
+      foreach _v $_vals {
+        radiobutton $parent.$field.$_v -text [ase::field_value_label $fd $_v] \
+          -value $_v -variable ::ase::ui::dlg($key,fld,$field) -anchor w \
+          -command [list ase::ui::chana_mode_changed $key $type $field]
+        pack $parent.$field.$_v -side left -padx {0 10}
+      }
+      grid $parent.l$field -row $r -column 0 -sticky w -padx {8 6} -pady 2
+      grid $parent.$field  -row $r -column 1 -sticky w -padx {0 8} -pady 2
+    }
+    picker {
+      label $parent.l$field -text $lbl -font AseLabelFont -anchor w
+      ttk::combobox $parent.$field -values $cands -width 24 -font AseEntryFont
+      catch {$parent.$field set [ase::state_get $row $field]}
+      bind $parent.$field <Return> [list ase::ui::chana_ok $key]
+      grid $parent.l$field -row $r -column 0 -sticky w -padx {8 6} -pady 2
+      grid $parent.$field  -row $r -column 1 -sticky we -padx {0 8} -pady 2
+    }
     bool {
       label $parent.l$field -text $lbl -font AseLabelFont -anchor w
       if {[ase::state_get $row $field 0] eq {1}} {
@@ -6398,6 +6448,13 @@ proc ase::ui::form_get {key field} {
       }
       return 0
     }
+    Frame {
+      # A RADIO GROUP (a `sweepkind` field) is the one field
+      # whose widget is a frame. Like the checkbutton it has no `get`; its
+      # answer is the value its buttons share, already the stored word.
+      if {[info exists dlg($key,fld,$field)]} { return $dlg($key,fld,$field) }
+      return {}
+    }
     Combobox - TCombobox {
       # ⚖ R9 A2: THE WIDGET SHOWS THE READABLE WORD AND EVERY READER ABOVE THIS
       # POINT MUST STILL SEE THE DECK WORD. Mapping back HERE -- at the one
@@ -6443,6 +6500,13 @@ proc ase::ui::form_get {key field} {
 #
 # So "absent" is a per-field question: empty for a text field, OFF for a bool,
 # and THE DECLARED DEFAULT for anything that has one.
+#
+# ⚠ AND FOR A SWEEP KIND IT IS EVERY CHOICE BUT `variable`.
+# Temperature and Component are what a row's name already says once the commit
+# door has supplied the temperature's name (`ase::dc_sweep_vals`) -- so the key
+# would change no deck line and break the round trip of every legacy row the
+# first time its dialog is OKed. Only a design-variable sweep says something
+# its name cannot, and it is the only value ever written.
 proc ase::ui::form_is_absent {sim type field v} {
   if {$v eq {}} { return 1 }
   set fd [ase::field_descriptor $sim $type $field]
@@ -6451,6 +6515,10 @@ proc ase::ui::form_is_absent {sim type field v} {
   if {$kind eq {bool}} {
     if {$v eq {0}} { return 1 }
     return 0
+  }
+  if {$kind eq {sweepkind}} {
+    if {[string tolower [string trim $v]] eq {variable}} { return 0 }
+    return 1
   }
   if {[dict exists $fd default] && $v eq [dict get $fd default]} { return 1 }
   return 0
@@ -6482,6 +6550,14 @@ proc ase::ui::form_label {sim type field {modeval {}}} {
 # A MODE PICK RELABELS ITS DECLARED NEIGHBOUR. `relabels <field>` on the mode
 # field names the one it governs; `dialog_row` names its label `$w.l$ename`, so
 # the whole operation is one configure.
+#
+# ⚠ A SWEEP KIND DOES TWO THINGS MORE. Temperature names
+# nothing, so the name row is HIDDEN -- `grid remove`, which keeps the row's
+# grid options for the bare `grid` that restores it, and keeps the widget, so
+# what was typed there comes back with it -- and the commit door supplies the
+# temperature's own name (`ase::dc_sweep_vals`). And the name picker is
+# re-listed for the kind now chosen. `chana_show` runs this at build time as
+# well, which is what opens a Temperature row with its name row already hidden.
 proc ase::ui::chana_mode_changed {key type field} {
   variable dlg
   set w [ase::ui::chana_form $key]
@@ -6493,6 +6569,100 @@ proc ase::ui::chana_mode_changed {key type field} {
   if {![winfo exists $w.l$tgt]} { return }
   catch {$w.l$tgt configure \
     -text [ase::ui::form_label $sim $type $tgt [ase::ui::form_get $key $field]]}
+  ## the label's grid padx, taken while it is gridded: a hidden row has no
+  ## `grid info`, and `chana_label_column` needs it
+  set _gi [grid info $w.l$tgt]
+  if {[dict exists $_gi -padx]} { set dlg($key,lpadx,$tgt) [dict get $_gi -padx] }
+  if {[dict exists $fd kind] && [dict get $fd kind] eq {sweepkind} \
+      && [winfo exists $w.$tgt]} {
+    set _k [ase::ui::form_get $key $field]
+    if {$_k eq {temp}} {
+      grid remove $w.l$tgt $w.$tgt
+    } else {
+      grid $w.l$tgt $w.$tgt
+    }
+    if {[winfo class $w.$tgt] eq {TCombobox}} {
+      catch {$w.$tgt configure -values [ase::ui::chana_dc_cands $key $_k]}
+    }
+    ## and the precondition banner, which judges the kind: `sweep_target`'s
+    ## advice for a component the netlist lacks is no advice for a variable
+    catch {ase::ui::chana_note $key}
+  }
+  catch {ase::ui::chana_label_column $key $type}
+}
+
+# THE LABEL COLUMN DOES NOT MOVE WHEN A PICK RELABELS A FIELD.
+# Column 0 of the form is as wide as its widest label, so a relabel that
+# changes the widest one moved every input on the form: "Variable name:" ->
+# "Component name:" moved them about 20 px. So column 0's minsize is the widest
+# caption any relabelled label of this form can wear -- every value of the
+# field that relabels it -- measured in that label's OWN font, plus what the
+# label requests beyond its text and its grid padx (remembered by
+# `chana_mode_changed` while the label was gridded). No pixel is spelled here.
+#
+# ⚠ THE FONT IS THE LABEL'S, READ LIVE, NOT AseLabelFont. `chana_field_row`
+# creates the label in AseLabelFont, but `ase::ui::apply_theme`'s Label arm
+# repaints it in AseBodyFont -- so `chana_show` calls this again AFTER the theme
+# pass, and that measurement is the one in force when the form is first drawn.
+# A later font-size change goes stale until the next pick or rebuild.
+#
+# ⚠ A FORM WHOSE RELABELLED CAPTIONS ARE ALL NARROWER THAN ANOTHER OF ITS LABELS
+# (ac's, noise's, disto's and sp's `Points per ...`, beside `Start frequency
+# (Hz)`) gets a minsize that changes nothing; a form with no relabelling field
+# gets 0, the default. Row G14 of tests/headless/test_ase_dc_param_sweep.tcl
+# holds every other form to that.
+proc ase::ui::chana_label_column {key type} {
+  variable dlg
+  set w [ase::ui::chana_form $key]
+  if {$w eq {}} { return 0 }
+  set sim [ase::ui::chana_sim $key]
+  set need 0
+  foreach f [ase::ui::chana_fields $type $sim] {
+    set fd [ase::field_descriptor $sim $type $f]
+    if {![dict exists $fd relabels] || ![dict exists $fd values]} { continue }
+    set tgt [dict get $fd relabels]
+    set lab $w.l$tgt
+    if {![winfo exists $lab]} { continue }
+    set fnt [$lab cget -font]
+    set chrome [expr {[winfo reqwidth $lab] - [font measure $fnt [$lab cget -text]]}]
+    set pad 0
+    if {[info exists dlg($key,lpadx,$tgt)]} {
+      set px $dlg($key,lpadx,$tgt)
+      if {[llength $px] == 1} {
+        set pad [expr {2 * $px}]
+      } else {
+        set pad [expr {[lindex $px 0] + [lindex $px 1]}]
+      }
+    }
+    foreach v [dict get $fd values] {
+      set cw [expr {[font measure $fnt [ase::ui::form_label $sim $type $tgt $v]] \
+                    + $chrome + $pad}]
+      if {$cw > $need} { set need $cw }
+    }
+  }
+  grid columnconfigure $w 0 -minsize $need
+  return $need
+}
+
+# THE DC FORM'S NAME LIST FOR ONE SWEEP KIND: the adapter's
+# `dc_sweep_candidates` over this session's bench and the netlist facts the
+# dialog already holds -- a PEEK, never a netlist; cold facts list no
+# component. {} when the adapter offers none, or for Temperature, whose name
+# row is hidden.
+proc ase::ui::chana_dc_cands {key kind} {
+  if {$kind eq {} || $kind eq {temp}} { return {} }
+  set out {}
+  catch {
+    set sim [ase::ui::chana_sim $key]
+    set h [ase::backend_hook $sim dc_sweep_candidates]
+    if {$h ne {}} {
+      set st [ase::session_state $key]
+      set fx {}
+      catch {set fx [ase::netlist_facts_cached $st]}
+      set out [$h $st $kind $fx]
+    }
+  }
+  return $out
 }
 
 # THE ADVANCED DISCLOSURE. Six controls on a tran form is the right number to
@@ -6569,6 +6739,7 @@ proc ase::ui::chana_cache_clear {key} {
   array unset dlg $key,anshown
   array unset dlg $key,anshownkey
   array unset dlg $key,anbuilt
+  array unset dlg $key,lpadx,*
   # ⚠ THE ROW ADDRESSING GOES OUT WITH THE CACHE (issue 1448). Which row of a
   # type this dialog is editing is the dialog's memory, exactly as the edits
   # are: a reopened Choose Analyses starts from the file, and from the first row
@@ -6908,6 +7079,9 @@ proc ase::ui::chana_show {key} {
   # the two halves of this dialog disagree about which analysis is being edited.
   ase::ui::chana_rows_fill $key
   ase::ui::apply_theme $w
+  ## AND THE LABEL COLUMN'S WIDTH, MEASURED AFTER THE THEME,
+  ## whose font is the one drawn (see ase::ui::chana_label_column)
+  catch {ase::ui::chana_label_column $key $type}
 }
 
 # OK: D6 validation (an ENABLED analysis must satisfy ase::analysis_emit_check
@@ -6989,7 +7163,10 @@ proc ase::ui::chana_merged_row {key type} {
   variable dlg
   set sim [ase::ui::chana_sim $key]
   set row [ase::ui::chana_row $key $type]
-  dict for {f v} [ase::ui::chana_form_vals $key $type $sim] {
+  ## a Temperature choice names the temperature, here as at OK.
+  dict for {f v} [ase::dc_sweep_vals $sim $type \
+                    [ase::ui::chana_form_vals $key $type $sim] \
+                    [ase::session_state $key]] {
     if {[ase::ui::form_is_absent $sim $type $f $v]} {
       set row [dict remove $row $f]
     } else {
@@ -7065,6 +7242,14 @@ proc ase::ui::chana_ok {key} {
   # reading the form alone dropped it in silence. Still one type and still one
   # row: see `ase::ui::chana_commit_vals`.
   set vals [ase::ui::chana_commit_vals $key $type $sim]
+  ## THE TEMPERATURE'S NAME, SUPPLIED BEFORE ANYTHING JUDGES OR
+  ## WRITES THE ROW. The DC form hides the name row for Temperature, so the
+  ## probe and the stored row both get the name the deck needs
+  ## (`ase::dc_sweep_vals`): the row's own when it already is the temperature,
+  ## else the adapter's word. The choice itself rides into the probe -- it is
+  ## what `ase::analysis_emit_check` holds the name against -- and is written
+  ## only for a design-variable sweep (`ase::ui::form_is_absent`).
+  set vals [ase::dc_sweep_vals $sim $type $vals [ase::session_state $key]]
   if {$en} {
     # D6, ISSUE 1416 -- THE DOOR NO LONGER KNOWS WHAT A ROW NEEDS; IT ASKS.
     #
@@ -7086,7 +7271,14 @@ proc ase::ui::chana_ok {key} {
     dict for {f v} $vals {
       if {$v ne {}} { dict set probe $f $v }
     }
-    set bad [ase::analysis_emit_check $sim $probe]
+    ## WITH THE BENCH AND THE ROW'S PLACE IN IT, so a sweep of a
+    ## design variable is refused here for what the bench itself rules out (its
+    ## value, the second sweep, the point count, a measurement on it) -- the
+    ## same tuples the gate and render_deck refuse. -1 is a row not stored yet.
+    set _bst {}
+    catch {set _bst [ase::session_state $key]}
+    set bad [ase::analysis_emit_check $sim $probe $_bst \
+               [ase::ui::chana_row_idx $key $type]]
     if {[llength $bad]} {
       # The FRAME is the caller's, the CLAUSE is the reader's -- issue 1404's
       # split. The first offence is the one reported; a field-by-field surface

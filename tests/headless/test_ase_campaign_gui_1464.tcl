@@ -424,9 +424,13 @@ if {[catch {
 set DC_E [q_ans ase::analysis_entry ngspice dc]
 set DC_F {}
 foreach fd [q_ans ase::state_get $DC_E fields] { lappend DC_F [q_ans ase::state_get $fd name] }
+## ⚠ `swkind` LEADS THE LIST AND IS NOT A LEVEL:
+## it is the DC form's choice of WHAT the first level sweeps -- Temperature,
+## Design variable or Component -- and no template spends it, which DC2 below
+## still pins. The two levels are the eight fields after it.
 check {DC1 the `dc` analysis declares exactly TWO sweep levels, so a form built\
  from the registry cannot ask for the third one ngspice accepts and discards} \
-  $DC_F {source start stop step source2 start2 stop2 step2}
+  $DC_F {swkind source start stop step source2 start2 stop2 step2}
 ## ⚠ THE OTHER DIRECTION: the EMIT template must spend exactly those slots. A
 ## registry with two levels and a template that concatenated a third would put
 ## one on the card without any field ever showing it.
