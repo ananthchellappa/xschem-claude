@@ -190,9 +190,10 @@ check "F1 past the end clamps to the endpoint"       [lp] {200 0}
 check "F2 ... and the wire is not extended (S5)"     [spans] {{0 0 200 0}}
 
 # G: the gnd/vdd-on-a-device-pin idiom -- 1919 labels in the shipped libraries (36%) sit on a
-#    device pin with NO wire under them (spec §5.8).  Today connect_by_kissing() mints the stub
-#    that keeps such a label attached; with #4 gone the leash must hold it, so its owner is the
-#    PIN ANCHOR itself and the label springs back.
+#    device pin with NO wire under them (spec §5.8).  REVISED 2026-11-10 (user ruling, spec
+#    §14.2): such a label has no copper to slide along, so springing it back made a connected drag
+#    unable to move it at all.  connect_by_kissing() mints its stub again and the drag stretches it
+#    into a wire from the pin to the dropped label; the leash leaves that label alone.
 scene
 xschem instance {res.sym} 0 0 0 0 {name=R1 value=1k}
 set pc [lrange [xschem instance_pin_coord R1 name P] 1 2]
@@ -200,9 +201,28 @@ xschem instance {lab_pin.sym} [lindex $pc 0] [lindex $pc 1] 0 0 {name=l1 lab=TOP
 xschem unselect_all
 xschem select instance 1
 xschem move_objects 0 -100 kissing
-check "G1 label on a bare device pin springs back"   [lp] $pc
-check "G2 ... and no rescue wire is created"         [xschem get wires] 0
+set gt [list [lindex $pc 0] [expr {[lindex $pc 1] - 100}]]
+check "G1 label on a bare device pin moves where it is dropped" [lp] $gt
+check "G2 ... and one wire joins it to the pin"      [spans] [list [list {*}$gt {*}$pc]]
 check "G3 ... no strand"                             [st] 0
+check "G4 ... and the wire carries the label's net"  [xschem getprop wire 0 lab] {TOP}
+# G5-G6: the same drag perpendicular to the pin, and undo puts back exactly the pre-drag sheet.
+xschem undo
+check "G5 undo removes the wire and returns the label" [list [lp] [xschem get wires]] [list $pc 0]
+xschem unselect_all
+xschem select instance 1
+xschem move_objects 100 0 kissing
+set gh [list [expr {[lindex $pc 0] + 100}] [lindex $pc 1]]
+check "G6 a perpendicular drag stretches the stub too" [list [lp] [spans]] \
+  [list $gh [list [list {*}$pc {*}$gh]]]
+# G7: a label on ANOTHER label's pin is on a naming anchor, not copper: no wire, no leash.
+scene
+xschem instance {lab_pin.sym} 0 0 0 0 {name=l2 lab=TOP}
+xschem instance {lab_pin.sym} 0 0 0 0 {name=l1 lab=TOP}
+xschem unselect_all
+xschem select instance 1
+xschem move_objects 0 -100 kissing
+check "G7 a label on another label's pin gets no wire" [list [lp] [xschem get wires]] {{0 -100} 0}
 
 # M1: vertical owner (the projection must not be axis-specific).
 scene

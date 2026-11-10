@@ -8490,6 +8490,12 @@ static void label_ride_capture(void)
      * to nothing. It skips SELECTED objects too, which would silently change the answer depending
      * on what else the gesture grabbed. */
       if(owner < 0 && fluid_point_on_copper(ax, ay, i) != 1) continue;
+      /* ...except a label on a bare DEVICE pin (revised §14.2, user ruling 2026-11-10):
+       * connect_by_kissing() has minted its stub, and the drag stretches that into the wire that
+       * keeps it connected. Leashing it to the pin would spring it back, which is the reported
+       * defect. The kissing stub is degenerate, so the wire walk above never took it as owner.
+       * The predicate is the one connect_by_kissing() used, read before the stub can matter. */
+      if(owner < 0 && label_on_bare_device_pin(i)) continue;
     }
     my_realloc(_ALLOC_ID_, &xctx->label_ride, (xctx->label_ride_n + 1) * sizeof(Label_ride));
     {

@@ -3287,6 +3287,41 @@ void clear_partial_selected_wires(void)
 }
 
 
+/* A selected net label whose single pin sits on a stationary device pin with no stationary
+ * wire under it (doc/claude/specs/wire_label_ride.md §14.2, revised 2026-11-10). Shared by
+ * connect_by_kissing(), which mints the stub such a label drags into a wire, and
+ * label_ride_capture(), which must then not leash it. Another net label's pin does not count:
+ * a naming anchor is not copper. */
+int label_on_bare_device_pin(int inst)
+{
+  const xSymbol *sym;
+  double ax, ay;
+  int i, p, np;
+  if(inst < 0 || inst >= xctx->instances || xctx->inst[inst].ptr < 0) return 0;
+  if(!inst_is_netlabel(inst)) return 0;
+  sym = xctx->inst[inst].ptr + xctx->sym;
+  if(sym->rects[PINLAYER] < 1) return 0;        /* never trust a silent (0,0) pin */
+  get_inst_pin_coord(inst, 0, &ax, &ay);
+  for(i = 0; i < xctx->wires; ++i) {
+    const xWire *w = &xctx->wire[i];
+    if(w->sel) continue;
+    if(w->x1 == w->x2 && w->y1 == w->y2) continue; /* degenerate: touch() matches all */
+    if(touch(w->x1, w->y1, w->x2, w->y2, ax, ay)) return 0; /* on a wire: the leash owns it */
+  }
+  for(i = 0; i < xctx->instances; ++i) {
+    if(i == inst || xctx->inst[i].ptr < 0 || xctx->inst[i].sel) continue;
+    if(inst_is_netlabel(i)) continue;
+    sym = xctx->inst[i].ptr + xctx->sym;
+    np = sym->rects[PINLAYER];
+    for(p = 0; p < np; ++p) {
+      double px, py;
+      get_inst_pin_coord(i, p, &px, &py);
+      if(px == ax && py == ay) return 1;
+    }
+  }
+  return 0;
+}
+
 /* Add wires when moving instances or wires */
 int connect_by_kissing(void)
 {
@@ -3324,8 +3359,16 @@ int connect_by_kissing(void)
      * NEVER ship this skip without that leash -- alone it turns an ugly-but-connected stub into
      * a silent orphan. ipin/opin/iopin and every device pin are untouched (inst_is_netlabel is
      * strcmp "label", not IS_LABEL_OR_PIN), and so is the wire-endpoint arm below (change #8,
-     * which must ship with RIDE in S3). */
-    if(inst_is_netlabel(inst)) continue;
+     * which must ship with RIDE in S3).
+     * EXCEPTION, the bare-pin label (user ruling 2026-11-10, spec §14.2 as revised): a net label
+     * sitting on a stationary DEVICE pin with no wire under it has no copper to slide along, so the
+     * leash used to spring it back and a connected drag could not move it at all. For that label
+     * the stub IS minted again, as before S1, and the drag stretches it into a real wire from the
+     * pin to where the label is dropped; label_ride_capture() gives such a label no leash.
+     * fluid_point_on_copper() would also accept a wire, so the two tests are spelled out here:
+     * no unselected non-degenerate wire touches the anchor, and an unselected non-label
+     * instance pin sits exactly on it. */
+    if(inst_is_netlabel(inst) && !label_on_bare_device_pin(inst)) continue;
     npin = symbol->rects[PINLAYER];
     for(i=0;i<npin; ++i) {
       get_inst_pin_coord(inst, i, &pinx0, &piny0);

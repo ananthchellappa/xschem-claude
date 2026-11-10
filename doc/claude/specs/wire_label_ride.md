@@ -1141,6 +1141,15 @@ So a rider whose anchor has no wire under it but does have another instance's pi
 the anchor and the label springs back (`test_label_ride.tcl` G1–G3). A label with *nothing* under
 its anchor gets no rider at all and moves freely (L1–L3): R9 tolerance, see 14.6.
 
+**REVISED 2026-11-10 (user ruling).** Springing back made a label on a bare device pin impossible
+to move with a connected drag: there is no copper for it to slide along, so every drag was
+discarded (reported on `my_buf3`'s ENB gate labels). Such a label now takes the pre-S1 path:
+`connect_by_kissing()` mints its stub, the drag stretches it into a wire from the pin to the dropped
+label, and `label_ride_capture()` gives it no leash. Both read one predicate,
+`label_on_bare_device_pin()` (actions.c): no stationary non-degenerate wire under the anchor, and a
+stationary non-label instance pin exactly on it. R1's "no extruded segment" still holds for every
+label that sits on a wire, which is what it was written for. `test_label_ride.tcl` G1–G7.
+
 ### 14.3 Hazard (D) does not arise for LEASH — correct the committed origin by the ANCHOR delta
 
 §11 (D) prescribes target-pin → rot/flip → solve-for-origin, because rotating an instance whose pin

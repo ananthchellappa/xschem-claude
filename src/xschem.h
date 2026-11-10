@@ -3454,6 +3454,7 @@ extern int place_sch_pin(const char *name, const char *dir);
 extern int place_wire_label(const char *name, int vjust);
 extern int point_on_wire_or_pin(double x, double y);
 extern int inst_is_netlabel(int i);  /* wire_label_ride.md §5.2: symbol type is exactly "label" */
+extern int label_on_bare_device_pin(int inst); /* wire_label_ride.md §14.2 (revised): label on a wire-less device pin */
 extern int wire_label_try_commit(void);
 extern void attach_labels_to_inst(int interactive);
 extern void clear_partial_selected_wires(void);
