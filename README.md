@@ -9,6 +9,8 @@ Very early-stage intro video : https://www.youtube.com/watch?v=gtipAPsql_M
 
 The core feature is the [connected-drag](https://youtu.be/3W1Wa5XLRAQ?si=JDjivWFHSbSzXXRp) (YouTube)
 
+Latest additions (label drag, Alt-Shift-Q for Edit with Apply to All Selected, Check-and-Save, DC sweep a variable, etc) : https://xschem.blogspot.com/2026/11/since-waveform-viewer-in-xschem-free.html
+
 ![Logo](https://github.com/ananthchellappa/xschem-claude/blob/main/doc/xschem_poster.png)
 
 [Manual and instructions](http://repo.hu/projects/xschem/xschem_man/xschem_man.html)
