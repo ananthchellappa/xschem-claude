@@ -2983,7 +2983,7 @@ check "S24 D6: groupDelay carries the degrees-per-Hz conversion" \
 #   rmsNoise  dup() *      -> x^2      integ() -> ∫x^2 df     sqrt()
 #   dBm       log10() 10 * -> dB(W)    30 +    -> dBm
 #   groupDelay cph() deriv() -> dφ/df in degrees/Hz, / -360 -> -dφ/dω in seconds
-#   phaseDegUnwrapped  dup() -180 == 360 * + -> first point -180 lifted to +180   cph() -> unwrap
+#   phaseDegUnwrapped  dup() -180 == 360 * + -> a first point of -180 lifted to +180   cph() -> unwrap
 foreach {nm want} {
     rms        {dup() * avg() sqrt()}
     rmsNoise   {dup() * integ() sqrt()}

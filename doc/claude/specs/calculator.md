@@ -1051,7 +1051,7 @@ opcode, **✘** = out of scope v1.
 | `gainBwProd` | scalar | gain × bandwidth | T |
 | `gainMargin` / `phaseMargin` | scalar | loop stability margins | T |
 | `groupDelay` | wave | −dφ/dω | C — **`cph() deriv() -360 /`** (was "`cph() deriv()`, negated" — see below) |
-| `phaseDegUnwrapped` | wave | unwrapped phase in degrees (ADE's verb) | C — **`dup() -180 == 360 * + cph()`**, applied to a `ph()` column; see below |
+| `phaseDegUnwrapped` | wave | unwrapped phase in degrees (ADE's verb) | C — **`dup() -180 == 360 * + cph()`** on a `ph()` column; infix `phaseDegUnwrapped(vf(out))`; see below |
 | `dft` | wave | discrete Fourier transform | **N** |
 | `psd` | wave | power spectral density | **N** |
 | `spectrum` / `spectralPower` | wave/scalar | spectrum, power in it | N (on `dft`) |
@@ -1400,16 +1400,27 @@ it into a silent `-1` for the whole expression.
   `tests/headless/test_del_negative_arg.tcl`.
 - **`phaseDegUnwrapped` is `cph()` with its first point anchored** (added 2026-11-11). ADE:
   "Calculates the unwrapped phase in degrees of a waveform and returns a waveform." The
-  first point is put at its principal value in (−180, 180]: `atan2` in the raw reader can
-  return exactly −180, and `dup() -180 == 360 * +` lifts that one value to +180. Each later
-  point is `cph()`'s, i.e. the branch nearest the point before, which a whole-turn shift of
-  the input does not change. So it gives the same numbers as `ph(w) cph()` except when the
-  first point is exactly −180. There is still one unwrap rule, with `cph()`'s limit: a true
-  step of more than 180° between adjacent points unwraps the wrong way. This language has
-  no complex type, so the operand is the **phase column** (`ph(out)` in an ac database),
-  as for `groupDelay`. A real signal's phase column holds 0 or ±180: one that keeps its sign
-  reads a constant 0 or 180, while a sign change is a step of exactly 180°, which `cph()`'s
-  `floor(… + 0.5)` always settles downward (0 → −180, 180 → 0).
+  first point is put at its principal value in (−180, 180]: a raw `ph()` column's `atan2`
+  can be exactly −180, and `dup() -180 == 360 * +` lifts that one value to +180. (The recipe
+  stays short because a click reports it on the status line, which elides to the window's
+  width; a two-sided fold was cut mid-token there.) Each later point is `cph()`'s, i.e. the branch nearest the point
+  before, which a whole-turn shift of the input does not change. So it gives the same
+  numbers as `ph(w) cph()` except when the first point is exactly −180. There is still one
+  unwrap rule, with `cph()`'s limit: a true step of more than 180° between adjacent points
+  unwraps the wrong way. A real signal's phase column holds 0 or ±180: one that keeps its
+  sign reads a constant 0 or 180, while a sign change is a step of exactly 180°, which
+  `cph()`'s `floor(… + 0.5)` always settles downward (0 → −180, 180 → 0).
+  - **Postfix** (the catalogue row): the operand is the **phase column**, `ph(out)` in an ac
+    database, as for `groupDelay`, because this language has no complex type.
+  - **Infix** (Outputs, Eval): ADE's own spelling, **`phaseDegUnwrapped(vf(out))`**, or
+    `if(name)` for a current. The translator (`calc::ix_phase_call`) reads the signal's
+    phase column (`v(out)` → `ph(out)`, `i(x)` → `ph(i(x))`). ADE's `-w` negates the
+    complex wave, so **`phaseDegUnwrapped(-vf(out))`** reads `ph(out) 180 + dup() 180 > 360 * -`
+    — the phase plus 180, folded back into (−180, 180] — never the phase numbers times −1. Any other argument is refused with a sentence saying what to
+    write: an expression (`vf(a)/vf(b)`, `2*vf(out)`), whose phase the engine cannot form,
+    takes one AC signal; `vt()`, `vdc()`, `vs()` and a plain `v()` name `vf()`. A plain
+    `v()` is refused, not read, because R208d's analysis check reads the translated postfix,
+    where the signal has already become its phase column.
   Fence: `tests/headless/test_calc_phase_unwrapped.tcl`.
 - **`groupDelay` needed the units conversion the old recipe left out.** `cph()` is in
   **degrees** and `deriv()` differentiates against the sweep variable, which for an AC raw

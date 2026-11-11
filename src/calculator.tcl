@@ -11960,15 +11960,20 @@ proc calc::fn_reason {route} {
 # says what a built answer looks like and not whether one can be built yet.
 # `phaseDegUnwrapped` is ADE's verb of that name, and it is `cph()` with one
 # step in front.  The step anchors the FIRST point at its principal value in
-# (-180,180]: atan2 can return exactly -180, and `dup() -180 == 360 * +` lifts
-# that one value to +180.  Every later point is unchanged, because `cph()` takes
-# the branch nearest the point before, and a whole turn added to the input does
-# not change that.  So the verb gives the same numbers as `ph(w) cph()` except
-# when the first point is exactly -180.  There is still one unwrap rule, the
-# engine's `case CPH`, and it has the same limit: a true step of more than 180
-# degrees between two adjacent points unwraps the wrong way.  This tree's
-# language has no complex type, so the operand is a PHASE column (`ph(out)` in
-# an ac database), exactly as for `groupDelay`.
+# (-180,180] for any raw `ph()` column: atan2 can return exactly -180, and
+# `dup() -180 == 360 * +` lifts that one value to +180.  Every later point is
+# unchanged by the step, because `cph()` takes the branch nearest the point
+# before and a whole turn added to the input does not change that.  So the verb
+# gives the same numbers as `ph(w) cph()` except when the first point is exactly
+# -180.  There is still one unwrap rule, the engine's `case CPH`, with its
+# limit: a true step of more than 180 degrees between two adjacent points
+# unwraps the wrong way.  In postfix the operand is a PHASE column (`ph(out)` in
+# an ac database), as for `groupDelay`; infix takes ADE's spelling instead
+# (`calc::ix_phase_call`), which folds a shifted phase into (-180,180] itself.
+# ⚠ The recipe is kept SHORT on purpose: a click reports it on the status line
+# (`function <name>: inserted <recipe>`), which `calc::status_fit` elides to the
+# window's width, and a two-sided fold here (48 characters) was cut mid-token
+# there -- row S23 of test_calc_skeleton caught it.
 # Fence: tests/headless/test_calc_phase_unwrapped.tcl.
 proc calc::catalogue {} {
     return {
@@ -14728,8 +14733,13 @@ proc calc::ix_fns {} {
     dict set out log  {1 {ln()}}
     dict set out mag  {1 {abs()}}
     dict set out pow  {2 {**}}
+    dict set out phasedegunwrapped [list 1 [calc::ix_phase_recipe]]
     return $out
 }
+
+# phaseDegUnwrapped's postfix, read from its catalogue row so the two doors
+# cannot drift apart.
+proc calc::ix_phase_recipe {} { return [lindex [calc::fn_row phaseDegUnwrapped] 4] }
 
 # The sentences the translator owns.  Builder contract as `calc::aq_msg`'s:
 # three arguments, one `pattern { return ... }` per physical line, and no prose
@@ -14750,6 +14760,8 @@ proc calc::ix_msg {kind {a {}} {b {}}} {
         nestbad { return "Cannot evaluate: $a's answer is not a number ($b)." }
         case { return "Cannot evaluate: write '$b', not '$a'." }
         deep { return "Cannot evaluate: the expression is nested more than $a deep." }
+        phasearg { return "Cannot evaluate: $a takes one AC signal, such as vf(out) or -vf(out)." }
+        phasean { return "Cannot evaluate: $a needs an AC signal; write $b." }
     }
     return {}
 }
@@ -15000,10 +15012,44 @@ proc calc::ix_call {} {
         set w "$want arguments"
         if {$want == 1} { set w "1 argument" }
         if {$want == 0} { set w "no argument" }
+        if {$nm eq {phasedegunwrapped}} { set nm phaseDegUnwrapped }
         calc::ix_fault arity $nm $w
     }
+    if {$nm eq {phasedegunwrapped}} { return [calc::ix_phase_call $nm [lindex $args 0] $suffix] }
     set out {}
     foreach a $args { set out [concat $out $a] }
+    return [concat $out $suffix]
+}
+
+# `phaseDegUnwrapped(w)` in infix, ADE's spelling: `w` is ONE complex AC signal
+# -- `vf(out)` or `if(name)`, ADE's VF/IF -- and the call reads that signal's PHASE column, which is how the raw
+# reader stores the complex value (`v(out)` -> `ph(out)`, `i(x)` -> `ph(i(x))`).
+# ADE's `-w` negates the complex wave, i.e. adds 180 degrees to its phase, so
+# a negated signal reads `ph(..) 180 + dup() 180 > 360 * -`: the phase plus
+# 180, folded from [0,360] back into (-180,180] so it anchors like a raw one.
+# Nothing else is accepted: this
+# language has no complex type, so the phase of any other expression (a sum,
+# a scaled signal) is not something the engine can form, and the refusal says
+# what to write rather than answering the phase of the magnitude.  A plain
+# `v(..)` is refused too, naming `vf(..)`: the analysis check (R208d) reads the
+# translated postfix, where the signal has already become its phase column.
+proc calc::ix_phase_call {nm arg suffix} {
+    set neg 0
+    if {[llength $arg] == 3 && [lrange $arg 1 2] eq {-1 *}} {
+        set neg 1
+        set arg [lrange $arg 0 0]
+    }
+    if {[llength $arg] != 1
+        || ![regexp {^([vViI])([a-zA-Z]*)\((.+)\)$} [lindex $arg 0] -> fam q net]} {
+        calc::ix_fault phasearg phaseDegUnwrapped
+    }
+    set fam [string tolower $fam]
+    set q [string tolower $q]
+    if {$q ne {f}} { calc::ix_fault phasean phaseDegUnwrapped "${fam}f($net)" }
+    set net [string trim $net {"}]
+    if {$fam eq {v}} { set col "ph($net)" } else { set col "ph(i($net))" }
+    set out [list $col]
+    if {$neg} { lappend out 180 + dup() 180 > 360 * - }
     return [concat $out $suffix]
 }
 
