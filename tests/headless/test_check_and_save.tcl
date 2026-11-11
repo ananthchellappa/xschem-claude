@@ -9,7 +9,8 @@
 #   CS9        a placed symbol that is missing
 #   CS10-CS12  it saves: modified flag, file on disk, a symbol view, a read-only cell
 #   CS13       the symbol path in the cellview layout (lib/cell/{schematic,symbol})
-#   CS14-CS18  the report window, and Esc closing it (display arm only)
+#   CS14-CS19  the report window: it takes the keyboard, Esc closes it, the keyboard
+#              goes back (display arm only)
 # Run: tests/headless/run_suites.sh [--nogui] test_check_and_save
 source [file join [file dirname [info script]] scratch.tcl]
 
@@ -151,8 +152,8 @@ if {[info commands winfo] ne {} && [info exists has_x]} {
   xschem load -undo_reset $D/amp.sch   ;# CS10 saved the loose R3 into it
   focus -force .drw ; update
   check_and_save ; update
-  check {CS14 findings open the report, one line each, keyboard left on the canvas} \
-    [list [winfo ismapped .chksave] [expr {int([.chksave.t index end-1c]) - 1}] [focus]] {1 2 .drw}
+  check {CS14 findings open the report, one line each, and it takes the keyboard} \
+    [list [winfo ismapped .chksave] [expr {int([.chksave.t index end-1c]) - 1}] [focus]] {1 2 .chksave.t}
   check {CS15 the summary line repeats the status line} [.chksave.sum cget -text] \
     {Check and Save: 0 errors, 2 warnings, saved}
   eval [.chksave.t tag bind f0 <Button-1>]
@@ -160,19 +161,39 @@ if {[info commands winfo] ne {} && [info exists has_x]} {
   xschem delete
   check_and_save ; update
   check {CS17 a clean re-check closes the report} [winfo exists .chksave] 0
-  # CS18 -- Esc closes the report once the user has clicked into it.
+  # CS18 -- Esc, pressed straight after the report opens (no click into it
+  # first), closes it.  The key goes wherever the keyboard is, so a report
+  # that did not take it would not see the Esc.
   xschem instance {res.sym} 400 0 0 0 {name=R3 value=1k}
+  focus -force .drw ; update
   check_and_save ; update
   set opened [winfo exists .chksave]
-  focus -force .chksave.t ; update
-  event generate .chksave.t <KeyPress> -keysym Escape -when now
+  set f [focus]
+  if {$f eq {}} { set f .drw }
+  event generate $f <KeyPress> -keysym Escape -when now
   update
-  check {CS18 Esc in the report closes it} [list $opened [winfo exists .chksave]] {1 0}
+  check {CS18 Esc straight after the report opens closes it, and the keyboard goes back to the canvas} \
+    [list $opened $f [winfo exists .chksave] [focus]] {1 .chksave.t 0 .drw}
+  # CS19 -- the keyboard goes back to where it was taken from, even when that
+  # is not the main window: here an entry in another toplevel.  Under openbox
+  # (T1's display arm) the window manager refocuses that window itself, so the
+  # row discriminates chksave::give_back only on a display with no window
+  # manager, where Tk alone puts the keyboard on the main window.
+  toplevel .cs19 ; entry .cs19.e ; pack .cs19.e ; update
+  focus -force .cs19.e ; update
+  check_and_save ; update
+  set f [focus]
+  if {$f eq {}} { set f .cs19.e }
+  event generate $f <KeyPress> -keysym Escape -when now
+  update
+  check {CS19 closing the report gives the keyboard back to the window it was taken from} \
+    [list $f [winfo exists .chksave] [focus]] {.chksave.t 0 .cs19.e}
+  destroy .cs19
 } else {
-  puts "SKIP: CS14-CS18 need a display (the report window)"
+  puts "SKIP: CS14-CS19 need a display (the report window)"
 }
 
-set floor [expr {([info commands winfo] ne {} && [info exists has_x]) ? 20 : 15}]
+set floor [expr {([info commands winfo] ne {} && [info exists has_x]) ? 21 : 15}]
 if {$npass + $fail < $floor} {
   puts "FAIL: CSFLOOR ran [expr {$npass + $fail}] checks, below the floor of $floor"
   incr fail

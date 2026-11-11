@@ -14678,18 +14678,17 @@ proc chksave::report {findings summary} {
   global has_x
   if {![info exists has_x]} return
   set w .chksave
-  set old [focus]
   if {![winfo exists $w]} {
     toplevel $w
     wm title $w {Check and Save}
     frame $w.b
     button $w.b.close -text Close -command [list destroy $w]
     pack $w.b.close -side right
-    # Esc closes it, from anywhere inside it.  The report opens without taking
-    # the keyboard (see the end of this proc), so Esc reaches it once the user
-    # has clicked into it -- a finding or the title bar; until then Esc stays
-    # the canvas's own key.
+    # Esc closes it, from anywhere inside it; the report takes the keyboard
+    # when it opens (the end of this proc), so Esc works at once.  Closing it
+    # by any route puts the keyboard back where it was ($chksave::back).
     bind $w <Escape> [list destroy $w]
+    bind $w <Destroy> [list chksave::give_back %W $w]
     label $w.sum -anchor w
     text $w.t -width 80 -height 14 -wrap word -cursor arrow \
       -yscrollcommand [list $w.sb set]
@@ -14718,8 +14717,22 @@ proc chksave::report {findings summary} {
   $w.t configure -state disabled
   wm deiconify $w
   raise $w
-  # never take the keyboard away from the canvas the user is working in
-  if {$old ne {}} { after idle [list catch [list focus $old]] }
+  # The report takes the keyboard, so Esc dismisses it straight away (the
+  # user's ruling for this window, 2026-11-11), remembering where it was.
+  set f [focus]
+  if {$f ne {} && ![string match $w* $f]} { set ::chksave::back $f }
+  focus $w.t
+}
+
+# The report's <Destroy>: it fires once per widget inside it, so act on the
+# toplevel's own only, and hand the keyboard back to where it was taken from.
+# Deferred to idle: during <Destroy> Tk has yet to move the focus off the dying
+# window, and would move it again after us.
+proc chksave::give_back {win w} {
+  variable back
+  if {$win ne $w || ![info exists back]} return
+  after idle [list catch [list focus $back]]
+  unset back
 }
 
 # Check and Save (Virtuoso's Shift+X). Returns the findings.
