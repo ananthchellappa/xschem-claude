@@ -14741,6 +14741,108 @@ proc check_and_save {} {
   return $findings
 }
 
+# Toggle Case: swap the letter case of every selected pin, net label, symbol pin and
+# text (case -> CASE, CASE -> case, cAsE -> CaSe), as ONE undo step. Ctrl-5 in the
+# Cadence profile (edit.toggle_case), and Edit > Toggle Case.
+#   * a pin or label (ipin/opin/iopin/label/... instances) changes its `lab`;
+#   * a symbol's pin (a box on the pin layer) changes its `name`;
+#   * a text changes its string, except @attribute tokens (@name stays @name, or the
+#     substitution would break) and a tcleval(...) text, which is code.
+# Other selected objects (devices, wires, lines) are left alone. Only what is selected
+# changes: a pin's unselected net labels keep their old case.
+namespace eval togglecase {}
+
+proc togglecase::swap {s} {
+  set out {}
+  foreach ch [split $s {}] {
+    if {[string is upper $ch]} {
+      append out [string tolower $ch]
+    } elseif {[string is lower $ch]} {
+      append out [string toupper $ch]
+    } else {
+      append out $ch
+    }
+  }
+  return $out
+}
+
+# Swap a text's string, leaving each @token as it is. A tcleval(...) text is returned
+# unchanged.
+proc togglecase::swap_text {s} {
+  if {[string match {tcleval(*} $s]} { return $s }
+  set out {} ; set pos 0
+  foreach r [regexp -all -inline -indices {@[A-Za-z_][A-Za-z0-9_:.#]*} $s] {
+    lassign $r a b
+    append out [swap [string range $s $pos [expr {$a - 1}]]] [string range $s $a $b]
+    set pos [expr {$b + 1}]
+  }
+  append out [swap [string range $s $pos end]]
+  return $out
+}
+
+# The changes the selection asks for, each {kind index attr value}. Nothing is changed.
+proc togglecase::changes {} {
+  set ch {}
+  foreach o [xschem objects -selected] {
+    array unset d ; array set d $o
+    switch -- $d(type) {
+      instance {
+        set t [xschem getprop instance $d(index) cell::type]
+        if {$t ni {label ipin opin iopin scope show_label bus_tap}} continue
+        set cur [xschem getprop instance $d(index) lab]
+        if {[string match {tcleval(*} $cur]} continue
+        set new [swap $cur]
+        if {$new ne $cur} { lappend ch [list instance $d(index) lab $new] }
+      }
+      rect {
+        if {$d(layer) != 5} continue
+        set cur [xschem getprop rect 5 $d(index) name]
+        set new [swap $cur]
+        if {$new ne $cur} { lappend ch [list rect $d(index) name $new] }
+      }
+      text {
+        set cur [xschem text_string $d(index)]
+        set new [swap_text $cur]
+        if {$new ne $cur} { lappend ch [list text $d(index) txt_ptr $new] }
+      }
+    }
+  }
+  return $ch
+}
+
+# Returns the number of objects changed.
+proc toggle_case {} {
+  if {[xschem get readonly]} {
+    catch {xschem statusmsg -hold {Toggle Case: read-only}}
+    return 0
+  }
+  if {[xschem get lastsel] == 0} {
+    catch {xschem statusmsg -hold {Toggle Case: select pins, labels or text first}}
+    return 0
+  }
+  set ch [togglecase::changes]
+  if {![llength $ch]} {
+    catch {xschem statusmsg -hold {Toggle Case: nothing in the selection has letters to change}}
+    return 0
+  }
+  xschem push_undo
+  foreach c $ch {
+    lassign $c kind idx attr val
+    switch -- $kind {
+      instance {
+        xschem setprop -fast instance $idx $attr $val
+        xschem recompute_inst_bbox $idx
+      }
+      rect { xschem setprop -fast rect 5 $idx $attr $val }
+      text { xschem setprop -fast text $idx $attr $val }
+    }
+  }
+  xschem set_modify 1
+  xschem redraw
+  catch {xschem statusmsg -hold "Toggle Case: [llength $ch] changed"}
+  return [llength $ch]
+}
+
 proc editdata {{data {}} {title {Edit data}} {wrap {none}} {ro 1}} {
   global text_tabs_setting tabstop
   set window .editdata
@@ -16442,6 +16544,7 @@ proc edit_menu_post {topwin} {
     "Vertical Flip selected objects"
     "Horizontal Flip selected objects"
     "Rotate selected objects"
+    "Toggle Case"
   }
   foreach lbl $edit_labels {
     catch {$m entryconfigure $lbl -state $st}
@@ -18715,6 +18818,7 @@ proc build_widgets { {topwin {} } } {
      -command {xschem flip} -accelerator {Shift-F}
   $topwin.menubar.edit add command -label "Rotate selected objects" -state normal \
       -command {xschem rotate} -accelerator {Shift-R}
+  $topwin.menubar.edit add command -label "Toggle Case" -command toggle_case
   $topwin.menubar.edit add radiobutton -label "Unconstrained move" -variable constr_mv \
      -selectcolor $selectcolor -background grey60 -value 0 -command {xschem set constr_mv 0}
   $topwin.menubar.edit add radiobutton -label "Constrained Horizontal move" -variable constr_mv \

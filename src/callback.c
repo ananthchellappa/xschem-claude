@@ -6261,6 +6261,12 @@ static ActionDef action_registry[] = {
    * lives in utils/bus_resize.tcl (busresize_apply), sourced by cadence_style_rc. Ship
    * UNBOUND; cadence_style_rc binds them to Alt-wheel, any user can rebind via
    * `xschem bind`. doc/claude/specs/bus_thickness_scroll.md. */
+  /* Toggle Case: swap the letter case of the selected pins, net labels, symbol pins and
+   * texts in one undo step (toggle_case in src/xschem.tcl). Tcl-backed, mutates=1. Ships
+   * UNBOUND, because plain Ctrl-5 selects drawing layer 5 natively; cadence_style_rc
+   * binds it to Ctrl-5. */
+  { "edit.toggle_case", NULL, "toggle_case",
+    "Toggle the letter case of selected pins, labels and text", 1 },
   { "edit.grow_selection",   NULL, "busresize_apply grow",
     "Grow selected: wire thickness / bus width [N:M]", 1 },
   { "edit.shrink_selection", NULL, "busresize_apply shrink",

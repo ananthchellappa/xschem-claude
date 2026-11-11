@@ -102,6 +102,11 @@ xschem bind wheel down alt canvas edit.shrink_selection
 # floored at 0 (something[N:0] stays). See bus_transpose_scroll.md.
 xschem bind wheel up   alt+shift canvas edit.transpose_up_selection
 xschem bind wheel down alt+shift canvas edit.transpose_down_selection
+# Ctrl-5 : toggle the letter case of the selected pins, net labels and text
+# (case -> CASE, CASE -> case, cAsE -> CaSe), one undo step. Replaces the native
+# Ctrl-5 "select drawing layer 5" in this profile only (layer 5 is still on the
+# Layers menu). edit.toggle_case -> toggle_case in src/xschem.tcl.
+xschem bind key 53 ctrl canvas edit.toggle_case
 
 # Ctrl+Alt+Shift+LMB on a wire (or a net-label, or an instance pin) : select the
 # whole LOGICAL net -- every wire segment carrying that net name, INCLUDING the
