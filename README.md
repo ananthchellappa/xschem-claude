@@ -7,6 +7,8 @@ Please send me your feature requests. Or open up a new discussion on a feature. 
 
 Very early-stage intro video : https://www.youtube.com/watch?v=gtipAPsql_M
 
+Latest additions (label drag, Alt-Shift-Q for Edit with Apply to All Selected, Check-and-Save, DC sweep a variable, etc) : https://xschem.blogspot.com/2026/11/since-waveform-viewer-in-xschem-free.html
+
 ![Logo](doc/xschem_poster.png)
 
 [Manual and instructions](http://repo.hu/projects/xschem/xschem_man/xschem_man.html)
