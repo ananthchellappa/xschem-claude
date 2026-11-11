@@ -14685,6 +14685,11 @@ proc chksave::report {findings summary} {
     frame $w.b
     button $w.b.close -text Close -command [list destroy $w]
     pack $w.b.close -side right
+    # Esc closes it, from anywhere inside it.  The report opens without taking
+    # the keyboard (see the end of this proc), so Esc reaches it once the user
+    # has clicked into it -- a finding or the title bar; until then Esc stays
+    # the canvas's own key.
+    bind $w <Escape> [list destroy $w]
     label $w.sum -anchor w
     text $w.t -width 80 -height 14 -wrap word -cursor arrow \
       -yscrollcommand [list $w.sb set]

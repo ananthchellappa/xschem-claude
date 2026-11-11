@@ -9,7 +9,7 @@
 #   CS9        a placed symbol that is missing
 #   CS10-CS12  it saves: modified flag, file on disk, a symbol view, a read-only cell
 #   CS13       the symbol path in the cellview layout (lib/cell/{schematic,symbol})
-#   CS14-CS17  the report window (display arm only)
+#   CS14-CS18  the report window, and Esc closing it (display arm only)
 # Run: tests/headless/run_suites.sh [--nogui] test_check_and_save
 source [file join [file dirname [info script]] scratch.tcl]
 
@@ -160,11 +160,19 @@ if {[info commands winfo] ne {} && [info exists has_x]} {
   xschem delete
   check_and_save ; update
   check {CS17 a clean re-check closes the report} [winfo exists .chksave] 0
+  # CS18 -- Esc closes the report once the user has clicked into it.
+  xschem instance {res.sym} 400 0 0 0 {name=R3 value=1k}
+  check_and_save ; update
+  set opened [winfo exists .chksave]
+  focus -force .chksave.t ; update
+  event generate .chksave.t <KeyPress> -keysym Escape -when now
+  update
+  check {CS18 Esc in the report closes it} [list $opened [winfo exists .chksave]] {1 0}
 } else {
-  puts "SKIP: CS14-CS17 need a display (the report window)"
+  puts "SKIP: CS14-CS18 need a display (the report window)"
 }
 
-set floor [expr {([info commands winfo] ne {} && [info exists has_x]) ? 19 : 15}]
+set floor [expr {([info commands winfo] ne {} && [info exists has_x]) ? 20 : 15}]
 if {$npass + $fail < $floor} {
   puts "FAIL: CSFLOOR ran [expr {$npass + $fail}] checks, below the floor of $floor"
   incr fail
