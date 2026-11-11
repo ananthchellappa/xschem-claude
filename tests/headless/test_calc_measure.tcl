@@ -4357,7 +4357,7 @@ group MT11 {
         [list [expr {[info procs ::calc::fn_argspec] ne {} ? 1 : 0}] \
               [pcall calc::fn_fields] \
               [llength [pcall calc::catalogue]] $agbadarity] \
-        [list 1 {name category route returns insert help} 109 {}]
+        [list 1 {name category route returns insert help} 110 {}]
     # ⚠ THE CONTROL FOR EVERY `{}` BELOW.  An empty answer and a missing proc are
     # the same empty string to a careless reader; `ag_spec` tells them apart, and
     # without this row the fall-through sweep would be green on a tree with no
@@ -4394,7 +4394,7 @@ group MT11 {
         if {[llength $rows] != 0} { lappend agempty $nm=([ag_canon $rows]) }
     }
     check "MT11 the route-T fall-through is LEGIBLE rather than accidental: every catalogue name that is not one of the clickable set answers an EMPTY spec, and each member of that set answers a non-empty one -- swept over the whole table, with both counts riding along so neither direction can be vacuous" \
-        [list $agnswept $agnonempty $agempty] {109 14 {}}
+        [list $agnswept $agnonempty $agempty] {110 14 {}}
 
     # --- the specifications, by literal, ONE ROW EACH ------------------------
     # ⚠ TWO PAIRS OF CATALOGUE NAMES ARE NOW SERVED BY ONE `switch` ARM EACH
@@ -5216,7 +5216,7 @@ group MT13 {
     check "MT13 ...and the four-way census of those decisions is the shape the catalogue really has: every row decides INSERT, MEASURE or UNAVAILABLE, ZERO rows decide `inert`, and ZERO decide nothing -- so `calc::inert`'s phase-5 promise is UNREACHABLE from a browser click today, which is a derived property of the live table and the reason the `inert` arm is a DEFENSIVE one" \
         [list $ac_cnt(insert) $ac_cnt(measure) $ac_cnt(unavailable) \
               $ac_cnt(inert) $ac_cnt(none) $ac_n] \
-        {60 35 14 0 0 109}
+        {61 35 14 0 0 110}
     # the census above pins four numbers; this row is what keeps the FIRST of
     # them honest against the field it is supposed to be counting, since
     # `insert` is the only one of the six catalogue fields the decision reads.

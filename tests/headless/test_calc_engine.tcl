@@ -532,6 +532,18 @@ proc ce14_expect {name xs ys} {
                                     ([lindex $xs $p] - [lindex $xs $j])) / -360.0}]
             }
         }
+    } elseif {$name eq {phaseDegUnwrapped}} {
+        # the first point at its principal value in (-180, 180], then each
+        # point on the branch nearest the one before -- written from ADE's
+        # definition, not from the recipe's tokens
+        foreach y $ys {
+            if {$out eq {}} {
+                lappend out [expr {$y == -180.0 ? 180.0 : double($y)}]
+            } else {
+                set q [lindex $out end]
+                lappend out [expr {$y - 360.0 * floor(($y - $q) / 360.0 + 0.5)}]
+            }
+        }
     } else {
         return {}
     }
@@ -2423,7 +2435,8 @@ group CE14 {
         rms        [list {v(ramp)} tran scalar {dup() * avg() sqrt()}] \
         rmsNoise   [list {v(ramp)} tran scalar {dup() * integ() sqrt()}] \
         dBm        [list {v(ramp)} tran wave   {log10() 10 * 30 +}] \
-        groupDelay [list {ph(lp)}  ac   wave   {cph() deriv() -360 /}]]
+        groupDelay [list {ph(lp)}  ac   wave   {cph() deriv() -360 /}] \
+        phaseDegUnwrapped [list {ph(lp)} ac wave {dup() -180 == 360 * + cph()}]]
     check "CE14 SET EQUALITY: every route-C row derived from the catalogue has a drive here, and every drive is still route C -- so a fifth composition reddens this band rather than going unmeasured" \
         [lsort [dict keys $drive]] [lsort $cpop]
 

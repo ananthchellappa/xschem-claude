@@ -1051,6 +1051,7 @@ opcode, **✘** = out of scope v1.
 | `gainBwProd` | scalar | gain × bandwidth | T |
 | `gainMargin` / `phaseMargin` | scalar | loop stability margins | T |
 | `groupDelay` | wave | −dφ/dω | C — **`cph() deriv() -360 /`** (was "`cph() deriv()`, negated" — see below) |
+| `phaseDegUnwrapped` | wave | unwrapped phase in degrees (ADE's verb) | C — **`dup() -180 == 360 * + cph()`**, applied to a `ph()` column; see below |
 | `dft` | wave | discrete Fourier transform | **N** |
 | `psd` | wave | power spectral density | **N** |
 | `spectrum` / `spectralPower` | wave/scalar | spectrum, power in it | N (on `dft`) |
@@ -1397,6 +1398,19 @@ it into a silent `-1` for the whole expression.
   bare `del()`, which is a *right* shift — the opposite of its own help.)
   A positive `del()` is untouched by the fix, pinned by `DN2`/`DN7`/`DN10` of
   `tests/headless/test_del_negative_arg.tcl`.
+- **`phaseDegUnwrapped` is `cph()` with its first point anchored** (added 2026-11-11). ADE:
+  "Calculates the unwrapped phase in degrees of a waveform and returns a waveform." The
+  first point is put at its principal value in (−180, 180]: `atan2` in the raw reader can
+  return exactly −180, and `dup() -180 == 360 * +` lifts that one value to +180. Each later
+  point is `cph()`'s, i.e. the branch nearest the point before, which a whole-turn shift of
+  the input does not change. So it gives the same numbers as `ph(w) cph()` except when the
+  first point is exactly −180. There is still one unwrap rule, with `cph()`'s limit: a true
+  step of more than 180° between adjacent points unwraps the wrong way. This language has
+  no complex type, so the operand is the **phase column** (`ph(out)` in an ac database),
+  as for `groupDelay`. A real signal's phase column holds 0 or ±180: one that keeps its sign
+  reads a constant 0 or 180, while a sign change is a step of exactly 180°, which `cph()`'s
+  `floor(… + 0.5)` always settles downward (0 → −180, 180 → 0).
+  Fence: `tests/headless/test_calc_phase_unwrapped.tcl`.
 - **`groupDelay` needed the units conversion the old recipe left out.** `cph()` is in
   **degrees** and `deriv()` differentiates against the sweep variable, which for an AC raw
   is **Hz, not ω**, so `cph() deriv()` negated is degrees per hertz — short of −dφ/dω by

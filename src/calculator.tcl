@@ -11958,6 +11958,18 @@ proc calc::fn_reason {route} {
 # answers one number and R417's negative delay is still one number, and its own
 # `nth` 0 DEFERS -- a disposition rather than a `returns` value, since the field
 # says what a built answer looks like and not whether one can be built yet.
+# `phaseDegUnwrapped` is ADE's verb of that name, and it is `cph()` with one
+# step in front.  The step anchors the FIRST point at its principal value in
+# (-180,180]: atan2 can return exactly -180, and `dup() -180 == 360 * +` lifts
+# that one value to +180.  Every later point is unchanged, because `cph()` takes
+# the branch nearest the point before, and a whole turn added to the input does
+# not change that.  So the verb gives the same numbers as `ph(w) cph()` except
+# when the first point is exactly -180.  There is still one unwrap rule, the
+# engine's `case CPH`, and it has the same limit: a true step of more than 180
+# degrees between two adjacent points unwraps the wrong way.  This tree's
+# language has no complex type, so the operand is a PHASE column (`ph(out)` in
+# an ac database), exactly as for `groupDelay`.
+# Fence: tests/headless/test_calc_phase_unwrapped.tcl.
 proc calc::catalogue {} {
     return {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
@@ -11994,6 +12006,7 @@ proc calc::catalogue {} {
 {gainMargin {Special Functions} T scalar {} {Gain stability margin of the loop}}
 {phaseMargin {Special Functions} T scalar {} {Phase stability margin of the loop}}
 {groupDelay {Special Functions} C wave {cph() deriv() -360 /} {Group delay in seconds: the phase slope, degrees per Hz, negated}}
+{phaseDegUnwrapped {Special Functions} C wave {dup() -180 == 360 * + cph()} {Unwrapped phase in degrees of a ph() wave; first point in (-180,180]}}
 {dft {Special Functions} N wave {} {Discrete Fourier transform: needs a new C opcode, not in v1}}
 {psd {Special Functions} N wave {} {Power spectral density: needs a new C opcode, not in v1}}
 {spectrum {Special Functions} N wave {} {Spectrum of the wave: stands on dft, which is not in v1}}
@@ -12463,8 +12476,8 @@ proc calc::fn_click {name} {
 #      rot silently, and `calc::buf_set_number` is the whole of it.
 #
 # WARN THE ARGUMENT SPEC IS A PROC AND NOT A SEVENTH CATALOGUE FIELD, MEASURED
-# RATHER THAN PREFERRED.  The `insert` field is non-empty for all 56 route-P and
-# all 4 route-C rows and EMPTY for every route-T row, and two registered rows in
+# RATHER THAN PREFERRED.  The `insert` field is non-empty for every route-P and
+# route-C row and EMPTY for every route-T row, and two registered rows in
 # test_calc_skeleton FORBID filling it for a T row -- so it is not an empty slot
 # waiting for a call template.  A seventh field would be worse still: it reddens
 # row S24's arity leg and row D3's schema leg AND SILENTLY SKIPS two S23 loops

@@ -2279,9 +2279,9 @@ set fnitems [pcall .calc.fn.list find withtag fnentry]
 if {[string match ERR:* $fnitems]} { set fnitems {} }
 set fnnames {}
 foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
-check "S23 the default category renders all 57 of its entries" [llength $fnitems] 57
+check "S23 the default category renders all 58 of its entries" [llength $fnitems] 58
 check "S23 ...and they are the catalogue's names, alphabetically" \
-    [list [llength $fnnames] $fnnames] [list 57 [lsort -dictionary $fnnames]]
+    [list [llength $fnnames] $fnnames] [list 58 [lsort -dictionary $fnnames]]
 set catnames {}
 foreach row [pcall calc::fn_entries {Special Functions}] { lappend catnames [lindex $row 0] }
 check "S23 the rendered names are exactly the table's for that category" \
@@ -2324,7 +2324,7 @@ foreach id $fnitems {
     if {$fg ne $want} { lappend badgrey $nm=$fg }
 }
 check "S23 exactly the N-route and out-of-scope entries are greyed (RULING-3)" \
-    [list [llength $fnitems] $badgrey] [list 57 {}]
+    [list [llength $fnitems] $badgrey] [list 58 {}]
 check_true "S23 the greyed colour is not the live one (or the check above is vacuous)" \
     [expr {$c_disabledfg ne $c_fieldfg}]
 check "S23 all fourteen greyed entries are RENDERED, not removed" \
@@ -2347,7 +2347,7 @@ foreach id $fnitems {
     if {$fg ne $want} { lappend badcouple $nm=route[lindex $row 2]/$fg }
 }
 check "S23 the greying is read off the table's route field, not a second list" \
-    [list [llength $fnitems] $badcouple] [list 57 {}]
+    [list [llength $fnitems] $badcouple] [list 58 {}]
 # ...and the coupling check above only sees a DIVERGENCE, so MAKE one: move the
 # dead-route set at runtime and repaint. If fn_fill reads the table, every
 # T-route special greys out with it; if it carries its own list of names,
@@ -2393,9 +2393,9 @@ set fnitems [pcall .calc.fn.list find withtag fnentry]
 if {[string match ERR:* $fnitems]} { set fnitems {} }
 set fnnames {}
 foreach id $fnitems { lappend fnnames [pcall .calc.fn.list itemcget $id -text] }
-check "S23 the repaint left the same 57 entries behind" \
+check "S23 the repaint left the same 58 entries behind" \
     [list [llength $fnitems] [lsort -dictionary $fnnames]] \
-    [list 57 [lsort -dictionary $catnames]]
+    [list 58 [lsort -dictionary $catnames]]
 # ...and the refusal a click gives comes from the SAME field, for every dead
 # entry the browser drew — not from a per-name string beside the renderer.
 set badrefuse {}
@@ -2441,7 +2441,7 @@ foreach id $fnitems {
     }
 }
 check "S23 every entry carries its own click and hover binding" \
-    [list [llength $fnitems] $badbind] [list 57 {}]
+    [list [llength $fnitems] $badbind] [list 58 {}]
 
 # R413: hover writes THE TABLE'S help for that entry — and does not record it.
 # ⚠ The no-record half is the crew's phase-1d amendment to R507 and it has
@@ -2630,7 +2630,7 @@ foreach fnrow [pcall calc::catalogue] {
     }
 }
 check "S23 every catalogue row the decision sends to `insert` is clicked FOR REAL against a SEEDED buffer, and each one appends exactly its own token after the seed and reports exactly that token -- the population derived from the catalogue and the decision rather than listed, with its size riding along, and the only place names carrying parentheses or operator characters are exercised at all" \
-    [list $fnsweepn $fnsweepbad] {60 {}}
+    [list $fnsweepn $fnsweepbad] {61 {}}
 pcall .calc.buf delete 1.0 end
 pcall .calc.buf edit reset
 pcall calc::status {}
@@ -2713,7 +2713,7 @@ pcall event generate .calc.fn.cat <<ComboboxSelected>>
 update idletasks
 check "S23 the All category shows every row of the table" \
     [list [llength [pcall .calc.fn.list find withtag fnentry]] \
-          [llength [pcall calc::catalogue]]] {109 109}
+          [llength [pcall calc::catalogue]]] {110 110}
 
 # A REPOPULATE MUST ALSO RESET THE VIEW. A canvas keeps its xview/yview across
 # a `delete all`; only the scrollregion changes. Measured before the fix:
@@ -2773,7 +2773,7 @@ foreach id [pcall .calc.fn.list find withtag fnentry] {
 # alphabet is back — before the fix `average` itself was above the top edge.
 check "S23 ...and the head of the alphabet is on screen again" \
     [list $nseen [lsearch -exact $offview average] [lsearch -exact $offview bandwidth] \
-          [lsearch -exact $offview clip]] {57 -1 -1 -1}
+          [lsearch -exact $offview clip]] {58 -1 -1 -1}
 
 # --- S24 the catalogue table (R413's "one table, not two") -------------------
 # ⚠ THE SPEC'S §3.2 TOKEN LIST, WRITTEN OUT HERE. This is the whole point of
@@ -2839,9 +2839,9 @@ check "S24 every row is a well-formed six-field row" $badrow {}
 set catcounts {}
 foreach cat $fncats { lappend catcounts [llength [pcall calc::fn_entries $cat]] }
 check "S24 every §7.1 category has entries, in the spec's numbers" \
-    $catcounts {57 26 12 4 3 3 4 109}
+    $catcounts {58 26 12 4 3 3 4 110}
 check "S24 the DEFAULT category is the one that must not be empty (D1)" \
-    [llength [pcall calc::fn_entries {Special Functions}]] 57
+    [llength [pcall calc::fn_entries {Special Functions}]] 58
 # ...and no row carries a category that is not one of the eight (`All` being
 # synthetic, no row may carry it either)
 set badcat {}
@@ -2851,7 +2851,7 @@ foreach row $rows {
 }
 check "S24 every row's category is a §7.1 value, and never the synthetic All" $badcat {}
 check "S24 All is the union, not a category" \
-    [list [llength [pcall calc::fn_entries All]] [llength $rows]] {109 109}
+    [list [llength [pcall calc::fn_entries All]] [llength $rows]] {110 110}
 
 # NO TWO ROWS SHARE A NAME WITHIN A CATEGORY (and in fact not across the table:
 # calc::fn_row looks a name up globally, so a global duplicate would silently
@@ -2864,7 +2864,7 @@ foreach row $rows {
     set ::seen($key) 1
 }
 check "S24 no two rows share a name within a category" \
-    [list [llength $rows] $dupes] {109 {}}
+    [list [llength $rows] $dupes] {110 {}}
 array unset ::seen ; array set ::seen {}
 set gdupes {}
 foreach row $rows {
@@ -2873,7 +2873,7 @@ foreach row $rows {
     set ::seen($nm) 1
 }
 check "S24 no name is duplicated across the whole table either" \
-    [list [llength $rows] $gdupes] {109 {}}
+    [list [llength $rows] $gdupes] {110 {}}
 
 # THE PRIMITIVES ARE §3.2, EXACTLY: one entry per token, inserting the token
 # verbatim (§7.1: "everything in §3.2 is exposed through the non-Special
@@ -2929,7 +2929,7 @@ foreach row $rows {
 # the count of rows that actually emitted something rides along, or a table
 # that emits nothing at all passes this (measured against HEAD)
 check "S24 every emitted token is one the engine lexes, or a number" \
-    [list $nemit $badtok] {60 {}}
+    [list $nemit $badtok] {61 {}}
 # ...and L3: a composed expression must CONTAIN WHITESPACE, or callers do not
 # treat it as an expression at all (strpbrk(express, " \n\t"))
 set badcomp {}
@@ -2940,7 +2940,7 @@ foreach row $rows {
     if {[llength [lindex $row 4]] < 2} { lappend badcomp [lindex $row 0] }
 }
 check "S24 every C-route composition is more than one token (L3)" \
-    [list $ncomp $badcomp] {4 {}}
+    [list $ncomp $badcomp] {5 {}}
 # a route that cannot emit yet must emit NOTHING, rather than something wrong
 set badempty {}
 foreach row $rows {
@@ -2953,7 +2953,7 @@ foreach row $rows {
     }
 }
 check "S24 P and C rows emit, T/N/X rows emit nothing" \
-    [list [llength $rows] $badempty] {109 {}}
+    [list [llength $rows] $badempty] {110 {}}
 
 # THE THREE AUDITED DEFECTS, each pinned by the row it was found in
 # (recon/catalogue_defects.md D1-D3, D6).
@@ -2983,11 +2983,13 @@ check "S24 D6: groupDelay carries the degrees-per-Hz conversion" \
 #   rmsNoise  dup() *      -> x^2      integ() -> ∫x^2 df     sqrt()
 #   dBm       log10() 10 * -> dB(W)    30 +    -> dBm
 #   groupDelay cph() deriv() -> dφ/df in degrees/Hz, / -360 -> -dφ/dω in seconds
+#   phaseDegUnwrapped  dup() -180 == 360 * + -> first point -180 lifted to +180   cph() -> unwrap
 foreach {nm want} {
     rms        {dup() * avg() sqrt()}
     rmsNoise   {dup() * integ() sqrt()}
     dBm        {log10() 10 * 30 +}
     groupDelay {cph() deriv() -360 /}
+    phaseDegUnwrapped {dup() -180 == 360 * + cph()}
 } {
     check "S24 the C-route composition for $nm is exactly the ruled RPN" \
         [lindex [pcall calc::fn_row $nm] 4] $want
@@ -2996,7 +2998,7 @@ foreach {nm want} {
 set crows {}
 foreach row $rows { if {[lindex $row 2] eq {C}} { lappend crows [lindex $row 0] } }
 check "S24 ...and those are every C-route row there is" \
-    [lsort $crows] {dBm groupDelay rms rmsNoise}
+    [lsort $crows] {dBm groupDelay phaseDegUnwrapped rms rmsNoise}
 
 # RULING-3: the disabled set is exactly the N routes and the out-of-scope rows,
 # and it is what the browser greys.
@@ -3021,7 +3023,7 @@ foreach row $rows {
     }
 }
 check "S24 every help line is short enough for the status entry" \
-    [list [llength $rows] $longhelp] {109 {}}
+    [list [llength $rows] $longhelp] {110 {}}
 # ⚠ AND THE STRING fn_click ACTUALLY COMPOSES, which is the one that overflowed.
 # The bound above covers the table's `help` field; the refusal a greyed entry
 # gives is `function <name> is not available: <reason>` and is built at click
@@ -3062,7 +3064,7 @@ update idletasks
 check "S23 a fresh window opens on Special Functions" \
     [pcall .calc.fn.cat get] {Special Functions}
 check "S23 a fresh window renders that category" \
-    [llength [pcall .calc.fn.list find withtag fnentry]] 57
+    [llength [pcall .calc.fn.list find withtag fnentry]] 58
 check "S22 a fresh window still has no digit key" \
     [list [winfo exists .calc.pad.k12] [winfo exists .calc.pad.k13]] {1 0}
 
