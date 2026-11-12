@@ -7,8 +7,11 @@ proc sky130_fet_drc {instance symbol model w l {nf 1}} {
   set res {}
   # puts "$instance $model $symbol w=$w l=$l nf=$nf"
   if { [string is double $w] && [string is double $l] && [string is integer $nf]} {
-    # not *_nf.sym devices: get single finger width
-    if {![regexp {fet.*_nf\.sym$} $symbol]} {
+    # not *_nf devices: get single finger width. The *_nf symbols take W per finger
+    # already. The name may come without `.sym`: the registry-only workareas name
+    # symbols lib/cell (sky130_fd_pr/nfet_01v8_lvt_nf), and a `.sym`-only match divided
+    # those twice and warned on a legal device.
+    if {![regexp {fet.*_nf(\.sym)?$} $symbol]} {
       set w [expr { double($w) / double($nf)}]
     }
     switch -regexp $model {

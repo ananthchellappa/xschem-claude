@@ -17,6 +17,8 @@
 #   DL9  the correction is part of the edit's undo step: one undo restores the start
 #   DL10 a value inside the limits is not touched and says nothing
 #   DL11 the PDK's own drc= check runs again (it was gated on a proc nobody defines)
+#   DL12 sky130_fet_drc takes an *_nf symbol's W as per finger whether or not its name
+#        ends in .sym (registry workareas name it lib/cell), and still divides others
 # Run: tests/headless/run_suites.sh --nogui test_device_limits
 
 set fail 0 ; set npass 0
@@ -142,8 +144,16 @@ place $IHP_N $P0
 check {DL11 the PDK drc= check runs: it reports l=0.05u, and nothing on a clean instance} \
   [list $r [xschem drc_check 0]] {1 0}
 
+# DL12 -- the reported false warning: test_nmos M9, nfet_01v8_lvt_nf W=0.5 nf=2.
+check {DL12 sky130_fet_drc: an _nf symbol's W=0.5 nf=2 is legal by either name; a plain one at 0.25/finger is not} \
+  [list [sky130_fet_drc M9 sky130_fd_pr/nfet_01v8_lvt_nf nfet_01v8_lvt 0.5 0.15 2] \
+        [sky130_fet_drc M9 nfet_01v8_lvt_nf.sym nfet_01v8_lvt 0.5 0.15 2] \
+        [string match {*finger width is too small*} \
+           [sky130_fet_drc M9 sky130_fd_pr/nfet_01v8_lvt nfet_01v8_lvt 0.5 0.15 2]]] \
+  {{} {} 1}
+
 xschem clear force schematic
-set floor 12
+set floor 13
 if {$npass + $fail < $floor} {
   puts "FAIL: DLFLOOR ran [expr {$npass + $fail}] checks, below the floor of $floor"
   incr fail
