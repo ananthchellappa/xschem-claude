@@ -10728,6 +10728,71 @@ proc ase::ui::optsheet_key {sim name key} {
   return [dict get $d $key]
 }
 
+# THE NETLIST THE NEXT RUN RENDERS FROM, AS THE OPTIONS PREVIEW NEEDS IT: the
+# text of <rundir>/<cell>.spice, read the way ase::ui::netlist_display_text
+# reads it -- no netlisting, nothing written -- or {} when there is none yet or
+# it cannot be read. The preview hands it to ase::opt_preview so a netlist that
+# seeds itself (ase::run_seed_user) keeps the default seed out of the pane as it
+# keeps it out of the deck.
+#
+# The sheet refills on every key typed in its Find box, so the answer keeps only
+# the lines that rule reads -- dot cards with their `+` continuations, and the
+# `.control` blocks whole -- and is remembered per file, size and modification
+# time. DECLARED LIMIT: a rewrite of the same size within the same second of the
+# remembered one is not seen until the next change.
+#
+# ⚠ IT QUERIES THE RUN DIRECTORY AND NEVER RESOLVES IT (R602e, the rule stated
+# above ase::ui::rsel_resolve_input): ase::rundir creates a missing directory
+# and, for a bench with no run directory, runs set_netlist_dir, which creates
+# the shared simulations directory and moves ::netlist_dir -- from a preview
+# that runs on every keystroke. So the state's `rundir` key is read as it is,
+# and a bench without one looks in the ::netlist_dir already set, else
+# $USER_CONF_DIR/simulations, creating neither. DECLARED LIMIT: with
+# local_netlist_dir set, the schematic-local directory `simuldir` would choose
+# is not looked in.
+proc ase::ui::optsheet_netlist_text {key} {
+  variable optsheet_nlcache
+  if {![info exists optsheet_nlcache]} { set optsheet_nlcache [dict create] }
+  set st {}
+  if {[catch {set st [ase::session_state $key]}]} { return {} }
+  if {[catch {dict get $st design cell} cell]} { return {} }
+  set rd {}
+  catch {set rd [ase::state_get $st rundir]}
+  if {$rd eq {}} {
+    if {[info exists ::netlist_dir] && $::netlist_dir ne {}} {
+      set rd $::netlist_dir
+    } elseif {[info exists ::USER_CONF_DIR]} {
+      set rd [file join $::USER_CONF_DIR simulations]
+    }
+  }
+  if {$rd eq {} || ![file isdirectory $rd]} { return {} }
+  set f [file join $rd $cell.spice]
+  if {![file isfile $f]} { return {} }
+  set stamp {}
+  if {[catch {set stamp [list [file size $f] [file mtime $f]]}]} { return {} }
+  if {[dict exists $optsheet_nlcache $f]} {
+    set c [dict get $optsheet_nlcache $f]
+    if {[lindex $c 0] eq $stamp} { return [lindex $c 1] }
+  }
+  set nl {}
+  if {[catch {set fd [::open $f r] ; set nl [::read $fd] ; ::close $fd}]} {
+    catch {::close $fd}
+    return {}
+  }
+  set keep {} ; set inctl 0 ; set kept 0
+  foreach l [split $nl "\n"] {
+    set tl [string trim $l]
+    if {[string equal -nocase $tl .control]} { set inctl 1 }
+    set c [string index $tl 0]
+    set kept [expr {$inctl || $c eq {.} || ($c eq {+} && $kept)}]
+    if {$kept} { lappend keep $l }
+    if {[string equal -nocase $tl .endc]} { set inctl 0 }
+  }
+  set red [join $keep "\n"]
+  dict set optsheet_nlcache $f [list $stamp $red]
+  return $red
+}
+
 # ⚠ THE LIVE DECK PREVIEW. Four slots and a notes block, straight out of
 # `ase::opt_preview` -- which reads the body `render_deck` runs, so a line here
 # IS a line there. An empty slot prints nothing but its own heading, because
@@ -10739,7 +10804,8 @@ proc ase::ui::optsheet_preview {key} {
   if {![winfo exists $w.prev.t]} { return }
   set sim [ase::ui::chana_sim $key]
   set pv {}
-  if {[catch {ase::opt_preview $sim [ase::session_state $key]} pv]} {
+  if {[catch {ase::opt_preview $sim [ase::session_state $key] {} \
+                [ase::ui::optsheet_netlist_text $key]} pv]} {
     set pv [dict create deck {} control {} cmdline {} prefile {} \
                         notes [list [list {} error [ase::ui::simdlg_plain $pv]]]]
   }

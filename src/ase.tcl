@@ -7476,16 +7476,77 @@ proc ase::opt_fallback_line {sim name value} {
 #   * a campaign shard (`sweep` has a `point`): it carries its campaign's seed,
 #     or is deliberately unseeded so each shard is its own sample
 #     (ase::campaign_shard_state);
+#   * a bench whose OWN text sets the seed option or re-draws under it
+#     (ase::run_seed_user): its pre-commands, an enabled row's verbatim lines,
+#     the netlist's own .control and the netlist's option cards, each line
+#     judged by the adapter's `user_seed_line` hook. Measured 2026-11-12 on
+#     stock ngspice 45.2 and the ver_53 fork: the default re-seeds at every
+#     re-parse, so `setseed 42` then `reset` in the bench's .control drew seed
+#     1's silicon instead of seed 42's, and a hand-written `reset` loop drew
+#     the same value on every pass where it drew a new one each pass before.
+#     Beside the netlist's own `.option seed=` card the default moved no draw
+#     (the netlist is read first and its card wins) but made ngspice warn that
+#     it found two seed options. A bare `setseed` with no re-parse after it is
+#     not counted: it seeds the interpreter's draws, which the default does not
+#     touch (same measurement), and the default keeps the netlist's own draw
+#     repeatable;
 #   * a simulator whose adapter names no seed option.
-# A seed in the user's own netlist needs no test here: the netlist is written
-# before these lines, and ngspice keeps the first `.options seed` it reads.
+#
+# `netlist_text` is the netlist the deck is rendered from; render_deck passes
+# it. A caller without one (the options preview) judges the bench's rows and
+# pre-commands alone.
 #
 # The answer is the deck line, or {} for none. It is NOT a row in the bench's
 # options: the bench did not ask for it, and ase::opt_deck_plan's records are
 # the bench's own rows. render_deck writes it right after those rows, and
 # ase::opt_preview shows it in the deck slot with a note saying ASE-L added it.
 proc ase::run_seed_default {} { return 1 }
-proc ase::run_seed_line {sim state} {
+# THE FIRST LINE OF THE BENCH'S OWN TEXT THAT SETS THE SEED OR RE-DRAWS UNDER
+# IT, as `{where line}` (`where` as ase::preflight_lint_sources spells it, or
+# `card` for a netlist line outside .control), or {} -- always {} for an adapter
+# with no `user_seed_line` hook, since which commands touch the seed is a fact
+# about one simulator. Never raises. DECLARED LIMIT: only the netlist's own text
+# is read, so a seed card inside an `.include`d or `.lib` file is not seen; the
+# measured cost is ngspice's "Multiple 'option seed'" warning, since the
+# netlist is read first and its card wins.
+proc ase::run_seed_user {sim state {netlist_text {}}} {
+  set h {}
+  catch {set h [ase::backend_hook $sim user_seed_line]}
+  if {$h eq {}} { return {} }
+  set src {}
+  catch {set src [ase::preflight_lint_sources $state $netlist_text]}
+  foreach pair $src {
+    set hit 0
+    catch {set hit [$h control [lindex $pair 1]]}
+    if {$hit} { return $pair }
+  }
+  ## Cards are judged as ngspice reads them: a `+` line continues the card
+  ## above it, so each card is judged once with its continuations joined.
+  set inctl 0 ; set cards {} ; set cur {}
+  foreach l [split $netlist_text "\n"] {
+    set tl [string trim $l]
+    if {[string equal -nocase $tl .control]} { set inctl 1 }
+    if {$inctl} {
+      if {$cur ne {}} { lappend cards $cur ; set cur {} }
+      if {[string equal -nocase $tl .endc]} { set inctl 0 }
+      continue
+    }
+    if {[string index $tl 0] eq {+} && $cur ne {}} {
+      append cur " [string range $tl 1 end]"
+      continue
+    }
+    if {$cur ne {}} { lappend cards $cur }
+    set cur $l
+  }
+  if {$cur ne {}} { lappend cards $cur }
+  foreach l $cards {
+    set hit 0
+    catch {set hit [$h card $l]}
+    if {$hit} { return [list card $l] }
+  }
+  return {}
+}
+proc ase::run_seed_line {sim state {netlist_text {}}} {
   set sopt [ase::campaign_seed_option $sim]
   if {$sopt eq {}} { return {} }
   if {[llength [ase::campaign_get $state point]]} { return {} }
@@ -7494,6 +7555,7 @@ proc ase::run_seed_line {sim state} {
       return {}
     }
   }
+  if {[llength [ase::run_seed_user $sim $state $netlist_text]]} { return {} }
   set l {}
   if {[catch {ase::opt_line $sim $sopt [ase::run_seed_default]} l]} { set l {} }
   return $l
@@ -8208,7 +8270,7 @@ proc ase::effective_report {sim state diff} {
 # refusal reachable -- `ase::predeck_plan` never returns lines AND a refusal at
 # once, so a preview built only from its own call can never exercise the guard
 # that drops them, and a row over it would be one whose fixtures cannot disagree.
-proc ase::opt_preview {sim state {plan {}}} {
+proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
   set deck {} ; set ctl {} ; set cmd {} ; set pre {} ; set notes [dict create]
   foreach rec [ase::opt_deck_plan $sim $state] {
     lassign $rec name value status door line
@@ -8221,7 +8283,7 @@ proc ase::opt_preview {sim state {plan {}}} {
   ## The default seed render_deck writes after the bench's own rows: the deck
   ## contains it, so the window shows it, and says ASE-L chose it.
   set rsl {}
-  catch {set rsl [ase::run_seed_line $sim $state]}
+  catch {set rsl [ase::run_seed_line $sim $state $netlist_text]}
   if {$rsl ne {}} {
     set rsn [ase::campaign_seed_option $sim]
     lappend deck [list $rsn $rsl]
@@ -26439,8 +26501,9 @@ namespace eval ase::backend::ngspice {
       if {$rdopline ne {}} { lappend lines $rdopline }
     }
     ## An ordinary run is repeatable: the default seed, when the bench sets none
-    ## (ase::run_seed_line; doc/claude/FAQ.md Q93).
-    set rdseed [ase::run_seed_line $rdopsim $state]
+    ## (ase::run_seed_line; doc/claude/FAQ.md Q93), and none where the bench's
+    ## own text or its netlist sets or re-draws the seed (ase::run_seed_user).
+    set rdseed [ase::run_seed_line $rdopsim $state $netlist_text]
     if {$rdseed ne {}} { lappend lines $rdseed }
     # UI v2 Save-All blanket (item 07 D12): all-terminal-currents ->
     # `.options savecurrents`, emitted unconditionally while the flag is 1 —
@@ -34217,6 +34280,32 @@ $_leg
   # (`srand(getpid()); TausSeed();`, `wallace.c:76-86`) at `:1371`, AFTER it.
   proc campaign_seed_option {} { return seed }
 
+  # DOES A LINE OF THE BENCH'S OWN TEXT SET THE SEED OR RE-DRAW UNDER IT? (hook
+  # user_seed_line; ase::run_seed_user asks it, and a 1 keeps the run's default
+  # seed out of the deck.) `kind` is `control`, a line inside `.control` -- a
+  # pre-command, a verbatim line or the netlist's own block -- or `card`, a
+  # netlist line outside it. In `.control`, `reset` and `mc_source` re-parse
+  # the circuit, which re-seeds from a deck-level `.options seed` and so would
+  # override whatever the bench seeded before them, and `option ... seed=`
+  # sets the option itself (measured 2026-11-12, stock 45.2 and the ver_53
+  # fork). Outside `.control` only an option card counts: `eval_opt` reads
+  # `seed=` on option cards, so a device named `reset` or a `.param seed=` is
+  # not one. A bare `setseed` is not in the list: it seeds the interpreter's
+  # own draws, which the default leaves alone, and the re-parse that would
+  # undo it is in the list already (see ase::run_seed_line).
+  # An inline comment is cut first: ngspice ends a line at `;`, at `//`, and at
+  # a `$` that follows white space, so `.options method=gear $ seed=5` sets no
+  # seed (measured 2026-11-12, stock 45.2: three runs, three draws) and must
+  # keep the default.
+  proc user_seed_line {kind line} {
+    regsub {(;|//|\s\$).*$} $line {} line
+    if {$kind eq {control}} {
+      if {[regexp -nocase {^\s*(reset|mc_source)(\s|$)} $line]} { return 1 }
+      return [regexp -nocase {^\s*\.?opt\w*\s.*\mseed\s*=} $line]
+    }
+    return [regexp -nocase {^\s*\.opt\w*\s.*\mseed\s*=} $line]
+  }
+
   # THE SEEDS THAT OPTION HONOURS, AS TYPED: 1 ... 2147483647 (issue 1469).
   #
   # `eval_opt()` (`src/frontend/inp.c`, the `seed=` branch) does
@@ -35399,6 +35488,7 @@ $_leg
     campaign_axis_kinds     ::ase::backend::ngspice::campaign_axis_kinds \
     campaign_control_lines  ::ase::backend::ngspice::campaign_control_lines \
     campaign_seed_option    ::ase::backend::ngspice::campaign_seed_option \
+    user_seed_line          ::ase::backend::ngspice::user_seed_line \
     campaign_seed_range     ::ase::backend::ngspice::campaign_seed_range \
     campaign_seed_notes     ::ase::backend::ngspice::campaign_seed_notes \
     campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals \

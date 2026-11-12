@@ -1004,6 +1004,34 @@ check_true {UI17 and the note that a shown line will not arrive is on the pane t
   [expr {[string first {not delivered} $uitxt] >= 0
       && [string first units $uitxt] >= 0}]
 
+## ⚠ AND THE DEFAULT SEED LINE FOLLOWS THE NETLIST THE NEXT RUN RENDERS FROM
+## (ase::ui::optsheet_netlist_text): shown beside a plain netlist, gone beside
+## one whose own .control resets, as render_deck leaves it out of the deck.
+## The plain netlist is written first so the absence is the rule's, not a pane
+## that shows no seed at all; each file has its own size, so the remembered copy
+## must be dropped between them.
+set uinl [file join [ase::rundir [ase::session_state $ukey]] nfet_ui.spice]
+set ui_had [file exists $uinl] ; set ui_old {}
+if {$ui_had} { set f [open $uinl r] ; set ui_old [read $f] ; close $f }
+file mkdir [file dirname $uinl]
+set f [open $uinl w] ; puts -nonewline $f "* plain\nr1 a 0 1k\n.end\n" ; close $f
+ase::ui::optsheet_preview $ukey
+update
+set ui_plain [string first {.options seed=1} [$top.simopt.prev.t get 1.0 end]]
+set f [open $uinl w]
+puts -nonewline $f "* resets\nr1 a 0 1k\n.control\nreset\n.endc\n.end\n"
+close $f
+ase::ui::optsheet_preview $ukey
+update
+set ui_reset [string first {.options seed=1} [$top.simopt.prev.t get 1.0 end]]
+if {$ui_had} {
+  set f [open $uinl w] ; puts -nonewline $f $ui_old ; close $f
+} else { file delete $uinl }
+ase::ui::optsheet_preview $ukey
+update
+check_true {UI17d the pane shows the default seed beside a plain netlist and drops it beside one that resets} \
+  [expr {$ui_plain >= 0 && $ui_reset < 0}]
+
 ## The detail line: what the selected row is, in words.
 $top.simopt.tv selection set 0
 ase::ui::optsheet_detail $ukey
