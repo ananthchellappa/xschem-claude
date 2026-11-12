@@ -904,16 +904,22 @@ int drc_check(int i)
   int start = 0;
   int end = xctx->instances;
 
-  if(!tcleval("info procs fet_drc")[0]) {
-    return ret;
-  }
+  /* Each symbol names its own checker in drc= (the bundled workareas' are
+   * sky130_fet_drc / sg13g2_fet_drc); a symbol whose checker is not loaded is skipped
+   * below. The old gate -- run only when a proc called `fet_drc` existed -- never
+   * opened in this tree, where no PDK defines that name, so every check was dead. */
   if(i >= 0 && i < xctx->instances) {
     start = i;
     end = i + 1;
   }
   for(j = start; j < end; j++) {
+    if(xctx->inst[j].ptr < 0) continue;
     my_strdup(_ALLOC_ID_, &drc, get_tok_value(xctx->sym[xctx->inst[j].ptr].prop_ptr, "drc", 2));
-    if(drc) {
+    if(drc && drc[0]) {
+      char proc[200];
+      if(sscanf(drc, " %199[^ \t\n{}]", proc) != 1) continue;
+      tclsetvar("devlim::a_proc", proc);
+      if(!tcleval("info procs [list $devlim::a_proc]")[0]) continue;
       my_strdup(_ALLOC_ID_, &res, translate3(drc, 1,
                 xctx->inst[j].prop_ptr, xctx->sym[xctx->inst[j].ptr].templ, NULL, NULL));
       dbg(1, "drc_check(): res = |%s|, drc=|%s|\n", res, drc);
@@ -934,9 +940,11 @@ int drc_check(int i)
   if(res) my_free(_ALLOC_ID_, &res);
   if(check_result) {
     if(has_x) {
-      /* tclvareval("alert_ {", check_result, "} {}", NULL); */
-      statusmsg(check_result, 3);
-      tcleval("show_infotext 1");
+      /* to the CIW, one warning line per finding: a popup at every load of a design
+       * that carries an old violation would be noise (user request 2026-11-12) */
+      tclsetvar("devlim::a_drc", check_result);
+      tcleval("foreach l [split $devlim::a_drc \\n] {"
+              " if {[string trim $l] ne {}} { catch {ciw_echo \"warning: $l\" note} } }");
     } else {
       dbg(0, "%s\n", check_result);
     }
@@ -1184,6 +1192,37 @@ int propagate_pin_rename(int src_inst, const char *oldlab)
  * the dedicated Name field as authoritative -- an instance name is arbitrary and a source
  * change must not re-prefix it; issue 0058). All other behavior (re-point master, name
  * uniqueness, bbox) is unchanged. */
+/* Device geometry limits (user request 2026-11-12): after an edit has written instance
+ * <i>'s property string, let the PDK's registered limits correct a W/L the edit took
+ * below its minimum or above its maximum, with a CIW warning (devlim::clamp_edit,
+ * src/property_form.tcl). <new_prop>/<old_prop> are the form's after/before strings,
+ * which tell the clamp what this edit changed. No provider registered: a no-op. */
+static void devlim_clamp(int i, const char *new_prop, const char *old_prop)
+{
+  char *cell = NULL, *model = NULL, *dot;
+  const char *base, *res;
+  if(!tcleval("info procs ::devlim::clamp_edit")[0]) return;
+  if(!xctx->inst[i].name || xctx->inst[i].ptr < 0) return;
+  base = strrchr(xctx->inst[i].name, '/');
+  my_strdup2(_ALLOC_ID_, &cell, base ? base + 1 : xctx->inst[i].name);
+  dot = strstr(cell, ".sym");
+  if(dot && !dot[4]) *dot = '\0';
+  my_strdup2(_ALLOC_ID_, &model, get_tok_value(xctx->inst[i].prop_ptr, "model", 0));
+  if(!model[0])
+    my_strdup2(_ALLOC_ID_, &model, get_tok_value(xctx->sym[xctx->inst[i].ptr].templ, "model", 0));
+  tclsetvar("devlim::a_inst", xctx->inst[i].instname ? xctx->inst[i].instname : "");
+  tclsetvar("devlim::a_cell", cell);
+  tclsetvar("devlim::a_model", model);
+  tclsetvar("devlim::a_old", old_prop ? old_prop : "");
+  tclsetvar("devlim::a_new", new_prop ? new_prop : "");
+  tclsetvar("devlim::a_prop", xctx->inst[i].prop_ptr ? xctx->inst[i].prop_ptr : "");
+  res = tcleval("devlim::clamp_edit $devlim::a_inst $devlim::a_cell $devlim::a_model"
+                " $devlim::a_old $devlim::a_new $devlim::a_prop");
+  if(res && res[0]) my_strdup(_ALLOC_ID_, &xctx->inst[i].prop_ptr, res);
+  my_free(_ALLOC_ID_, &cell);
+  my_free(_ALLOC_ID_, &model);
+}
+
 static int apply_symbol_prop(const char *new_prop, const char *old_prop,
                              int displayed_inst, const char *scope, int keep_name)
 {
@@ -1246,6 +1285,7 @@ static int apply_symbol_prop(const char *new_prop, const char *old_prop,
         if( set_different_token(&ss, new_prop, old_prop) ) {
           if(!pushed) { xctx->push_undo(); pushed=1;}
           my_strdup(_ALLOC_ID_, &xctx->inst[*ii].prop_ptr, ss);
+          devlim_clamp(*ii, new_prop, old_prop); /* same undo slot as the edit */
         }
         my_free(_ALLOC_ID_, &ss);
       }

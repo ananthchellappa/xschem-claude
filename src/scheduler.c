@@ -3710,7 +3710,8 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* drc_check [i]
      *   Perform DRC rulecheck of instances.
      *   if i is specified do check of specified instance
-     *   otherwise check all instances in current schematic. */
+     *   otherwise check all instances in current schematic.
+     *   Returns 1 when a check reported something, else 0. */
     else if(!strcmp(argv[1], "drc_check"))
     {
       int i = -1;
@@ -3719,7 +3720,7 @@ static int xschem_cmds_d(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, "xschem drc_check: instance not found", TCL_STATIC);
         return TCL_ERROR;
       }
-      drc_check(i);
+      Tcl_SetResult(interp, drc_check(i) ? "1" : "0", TCL_STATIC);
     }
     else { *cmd_found = 0;}
   return TCL_OK;

@@ -162,3 +162,25 @@ if {[info commands ::op_annot::register] ne {}} {
 } else {
   puts stderr {gf180_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
 }
+
+# Geometry limits for the property-edit clamp (devlim, src/property_form.tcl; user
+# request 2026-11-12), in microns. Minimums are the GF180MCU design rules, which the
+# symbols' own defaults also carry; maximums are the outer edges of the BSIM4 bins in
+# models/sm141064.ngspice (L 50u, W 100u per finger). Keyed on the CELL, because the
+# native device's symbol names the plain nfet_06v0 model. W is per finger (W/nf).
+# The _dss devices are not listed: pfet_06v0_dss defaults to L=0.50u, below the 6 V
+# pmos rule, so their rule differs and is not in this tree.
+proc gf180_fet_limits {cell model} {
+  set c [regsub {^([np]fet)3_} $cell {\1_}]
+  switch -exact -- $c {
+    nfet_03v3 - pfet_03v3 { set w 0.22 ; set l 0.28 }
+    nfet_05v0             { set w 0.3  ; set l 0.6 }
+    pfet_05v0             { set w 0.3  ; set l 0.5 }
+    nfet_06v0             { set w 0.3  ; set l 0.7 }
+    pfet_06v0             { set w 0.3  ; set l 0.55 }
+    nfet_06v0_nvt         { set w 0.8  ; set l 1.8 }
+    default { return {} }
+  }
+  return [dict create unit u rules [list [list W $w 100 nf] [list L $l 50]]]
+}
+if {[info procs ::devlim::register] ne {}} { devlim::register gf180_fet_limits }

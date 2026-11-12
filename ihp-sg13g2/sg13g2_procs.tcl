@@ -861,3 +861,16 @@ if {[info commands ::op_annot::register] ne {}} {
 } else {
   puts stderr {sg13g2_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
 }
+
+# Geometry limits for the property-edit clamp (devlim, src/property_form.tcl; user
+# request 2026-11-12): sg13g2_fet_drc's own numbers, in microns. w is per finger (w/ng).
+proc sg13g2_fet_limits {cell model} {
+  switch -regexp -- $model {
+    {sg13_lv_[np]mos$} { set w {0.13 10} ; set l {0.13 10} }
+    {sg13_hv_nmos$}    { set w {0.3 10}  ; set l {0.45 10} }
+    {sg13_hv_pmos$}    { set w {0.3 10}  ; set l {0.4 10} }
+    default { return {} }
+  }
+  return [dict create unit u rules [list [list w {*}$w ng] [list l {*}$l]]]
+}
+if {[info procs ::devlim::register] ne {}} { devlim::register sg13g2_fet_limits }

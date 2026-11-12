@@ -1665,3 +1665,103 @@ proc slickprop::edit_form {txtlabel} {
   # which applies mid-session via `xschem apply_properties`.
   return $::tctx::rcode
 }
+
+# ============================================================================
+# Device geometry limits (user request 2026-11-12): "if user edits a property and
+# sets a value below minimum, Xschem should print a warning in CIW and change the
+# value to the minimum. Same for maximum."
+#
+# A PDK workarea registers a PROVIDER: `devlim::register <proc>`. apply_symbol_prop
+# (src/editprop.c) calls devlim::clamp_edit after an instance's property string has
+# been written, so the clamp lands in the same undo step as the edit. The provider
+# is called as `<proc> <cell> <model>` and answers {} (not its device) or a dict:
+#   unit   u  -> values are SPICE numbers in metres with SI suffixes (IHP, gf180);
+#          {} -> bare numbers in microns (sky130, whose decks scale by 1e-6)
+#   rules  a list of {token min max ?finger_token?}, limits in microns, either
+#          limit {} for none; with a finger token the limit applies to token/fingers,
+#          which is what the BSIM4 bins and the PDK's own checks measure.
+# Only a token THIS edit changed is checked (its finger token counts), so an old
+# out-of-range value elsewhere on the instance is left as the user had it. A value
+# that is not a plain number (a parameter, an expression) is never touched.
+# ============================================================================
+namespace eval devlim {
+  variable providers {}
+  variable last {}      ;# the messages of the last clamp_edit, for tests and callers
+}
+proc devlim::register {p} {
+  variable providers
+  if {[lsearch -exact $providers $p] < 0} { lappend providers $p }
+}
+proc devlim::spec {cell model} {
+  variable providers
+  foreach p $providers {
+    set d {}
+    if {[catch {set d [$p $cell $model]}]} continue
+    if {[llength $d]} { return $d }
+  }
+  return {}
+}
+# <s> in microns, or {} when it is not a plain number in this unit system.
+proc devlim::to_um {s unit} {
+  if {![regexp {^\s*([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)\s*([a-zA-Z]*)\s*$} \
+          $s -> n suf]} { return {} }
+  if {$unit eq {}} { return [expr {$suf eq {} ? double($n) : {}}] }
+  switch -- [string tolower $suf] {
+    {}  { return [expr {$n * 1e6}] }
+    f   { return [expr {$n * 1e-9}] }
+    p   { return [expr {$n * 1e-6}] }
+    n   { return [expr {$n * 1e-3}] }
+    u   { return [expr {double($n)}] }
+    m   { return [expr {$n * 1e3}] }
+    default { return {} }
+  }
+}
+proc devlim::fmt {um unit} {
+  set v [format %.6g $um]
+  return [expr {$unit eq {} ? $v : "${v}u"}]
+}
+# Clamp the tokens this edit changed. <old>/<new> are the form's before/after strings,
+# <prop> the instance's property string as written. Answers the corrected string, or
+# {} when nothing needed correcting; each correction is said in the CIW.
+proc devlim::clamp_edit {inst cell model old new prop} {
+  variable last
+  set last {}
+  set d [devlim::spec $cell $model]
+  if {![llength $d]} { return {} }
+  set unit {} ; catch {set unit [dict get $d unit]}
+  set out $prop
+  foreach rule [dict get $d rules] {
+    lassign $rule tok min max ftok
+    set touched [expr {[xschem get_tok $old $tok] ne [xschem get_tok $new $tok]}]
+    if {$ftok ne {} && [xschem get_tok $old $ftok] ne [xschem get_tok $new $ftok]} { set touched 1 }
+    if {!$touched} continue
+    set raw [xschem get_tok $out $tok]
+    set um [devlim::to_um $raw $unit]
+    if {$um eq {}} continue
+    set nf 1
+    if {$ftok ne {}} {
+      set f [xschem get_tok $out $ftok]
+      if {$f ne {}} {
+        if {![string is integer -strict $f] || $f < 1} continue
+        set nf $f
+      }
+    }
+    set per [expr {$um / $nf}]
+    set lim {} ; set word {}
+    if {$min ne {} && $per < $min - 1e-9} { set lim $min ; set word {below the minimum} }
+    if {$max ne {} && $per > $max + 1e-9} { set lim $max ; set word {above the maximum} }
+    if {$lim eq {}} continue
+    set fixed [devlim::fmt [expr {$lim * $nf}] $unit]
+    set out [xschem subst_tok $out $tok $fixed]
+    if {$nf > 1} {
+      set msg "$inst ($model): $tok/$ftok=[devlim::fmt $per $unit] is $word\
+ [devlim::fmt $lim $unit] per finger; $tok set to $fixed"
+    } else {
+      set msg "$inst ($model): $tok=$raw is $word [devlim::fmt $lim $unit]; $tok set to $fixed"
+    }
+    lappend last $msg
+    catch {ciw_echo "warning: $msg" note}
+  }
+  if {$out eq $prop} { return {} }
+  return $out
+}

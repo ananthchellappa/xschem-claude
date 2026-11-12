@@ -457,3 +457,27 @@ if {[info commands ::op_annot::register] ne {}} {
   puts stderr {sky130_procs.tcl: op_annot::register not available, OP annotation descriptors not registered}
 }
 
+
+# Geometry limits for the property-edit clamp (devlim, src/property_form.tcl; user
+# request 2026-11-12). Bare numbers in microns, as the sky130 decks use them. Minimums
+# are sky130_fet_drc's; maximums are the model bins' outer edges
+# (models/libs.tech/combined/continuous/models_fet), beyond which ngspice finds no bin.
+# W is checked per finger (W/nf), as the bins and sky130_fet_drc measure it.
+# Native and 20 V devices come in fixed sizes and are not listed.
+proc sky130_fet_limits {cell model} {
+  set m [string map {sky130_fd_pr__ {}} $model]
+  switch -regexp -- $m {
+    {^[np]fet_01v8$}      { set w {0.42 1010} ; set l {0.15 20.2} }
+    {^nfet_01v8_lvt$}     { set w {0.42 1010} ; set l {0.15 20.2} }
+    {^pfet_01v8_lvt$}     { set w {0.42 1010} ; set l {0.35 20.2} }
+    {^pfet_01v8_hvt$}     { set w {0.42 1010} ; set l {0.15 20.2} }
+    {^[np]fet_g5v0d10v5$} { set w {0.42 1010} ; set l {0.5 20.2} }
+    {^nfet_g5v0d16v0$}    { set w {5 1010}    ; set l {0.7 20.2} }
+    {^pfet_g5v0d16v0$}    { set w {5 1010}    ; set l {0.66 20.2} }
+    default { return {} }
+  }
+  # the *_nf symbols take W per finger already
+  set ftok [expr {[string match *_nf $cell] ? {} : {nf}}]
+  return [dict create unit {} rules [list [list W {*}$w $ftok] [list L {*}$l]]]
+}
+if {[info procs ::devlim::register] ne {}} { devlim::register sky130_fet_limits }
