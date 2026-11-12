@@ -10,3 +10,9 @@ D4. Stage A: a bare `setseed N` in the bench's control text does NOT make the de
     stock ngspice 45.2 — the user's ruling is "tt_mm should give same result each time".
 D5. Stage A includes the options-preview follow-up (crew A's item 5): the preview must show
     what the deck carries (row RS4's promise), so it is not deferred.
+D6. Stage A residuals accepted (A-verify.md Re-verify): four seed spellings ngspice honours
+    are not recognised (`;` inside a quoted string, comment/blank line before a `+` line,
+    `+ ;`); each only adds ngspice's "Multiple seed" warning while the bench's own draw
+    repeats. Sabotage Y1 (cut at any `$`) survives the suite; warning-only. Not pursued.
+D7. Stage C waits on the user's yes/no for xschem-private's focus-loss clamp patch, which
+    touches the same devlim code; take it first if yes.

@@ -119,3 +119,71 @@ These are fence gaps, not product defects. Suggested fix: add `RESETX`-style, `.
 - `source` in `.control` as a re-parse, unmeasured (declared by the receipt).
 - My first probes ran with cwd at the repo root and briefly created `rd/`, `rd2/` and `e2e.sp`
   there. They were moved or removed immediately, and `git status` shows nothing of mine.
+
+## Re-verify (after the fixes, commit 5f88a7c65; base 5f88a7c65^ = e615a1801)
+
+Setup:
+- A worktree at 5f88a7c65 under the scratchpad, built and then removed.
+- My own Xvfb `:286` plus openbox; both pids were killed and confirmed dead.
+- `unset DISPLAY` on every command. No tracked file was edited, and ~/gc26 was not touched.
+- Headless probes ran on the main tree's `src/`, which `git diff --quiet HEAD -- src` confirms is
+  at HEAD.
+
+**Verdict: nothing blocks.** D1–D4 are closed. What is left is warning-only false negatives and one
+surviving fence gap (Y1), all below.
+
+| item | verdict | evidence |
+|---|---|---|
+| D1: the reader makes no directory and leaves `::netlist_dir` alone | **CLOSED** | probe3 at HEAD: a missing rundir stays missing (`exists=0`); with an empty key, `netlist_dir={}` and `sims=0` after the reader, where the previous round gave `1`, the path, and `1`. probe6: with an empty key and an existing `$USER_CONF_DIR/simulations/<cell>.spice`, the reader finds it (`read=1`) and `::netlist_dir` stays `{}`. A relative rundir key resolves against the cwd and creates nothing. That is the same resolution `ase::rundir`'s `file normalize` gives, so it is not new. |
+| D1: RS10 is red on the old reader | **CONFIRMED** | The first-round `ase_window.tcl` with the new suite gives `2 FAILED (9 passed)`: `RS10 -> {missing_made=1 nd_moved=1 sims_mad…`, plus RS9 (its card file is now the two-line form). |
+| D2: the strip matches ngspice 45.2 | **CLOSED, no false positive left** | Stock ngspice, an agauss draw, three runs per case (table below). Every case that is unseeded in ngspice now keeps the default, and those decks repeat at 886.0342. No legal seed is lost in the dangerous direction: every seed ASE-L now misses leaves the default beside a card that still governs. |
+| D3: `+` continuations are joined | **CLOSED** | `.options method=gear` + `+ seed=5` is judged as a card, and a device `+ … seed=5` keeps the default. Sabotaging the join turns RS6 and RS9 red. |
+| D4: X1, X2, X3 and X5 redden | **CONFIRMED** | X1, X2 and X3 each give `1 FAILED (10 passed)` on RS6. X5 gives `1 FAILED (10 passed)` on RS9. Each was restored and `cmp` ok. |
+
+D2/D3 measurements: what ngspice 45.2 does, and what ASE-L now decides.
+
+| card text | ngspice 45.2 | ASE-L | cost if they disagree |
+|---|---|---|---|
+| `.options method=gear $ seed=5` | unseeded | keeps the default | – (correct) |
+| `.options method=gear //seed=5` | unseeded (`//` needs no space) | keeps the default | – (correct) |
+| `.options method=gear$ seed=5` (no space before `$`) | **seeded** 931.21 | card, drops the default | – (correct) |
+| `.options method=gear$seed=5` | seeded | drops the default | – |
+| `.options seed=5$note` | seeded | drops the default | – |
+| `.options seed=5 ; note` / `// note` | seeded | drops the default | – |
+| `.options noinit filetype="a;b" seed=5` (`;` inside a quoted string) | **seeded**: ngspice does not cut inside quotes | **keeps the default** (the strip cuts at `;`) | warning only: the rendered deck gives 931.2134 twice plus the "Multiple" warning |
+| `.options method=gear` / `* c` / `+ seed=5` (comment line between) | seeded | keeps the default (`+` joins onto the comment) | warning only, 931.21 ×2 |
+| `.options method=gear` / blank line / `+ seed=5` | seeded | keeps the default | warning only, 931.21 ×2 |
+| `.options method=gear` / `+ ; x` / `+ seed=5` | seeded (`;` ends only its own physical line) | keeps the default (the join happens before the strip) | warning only, 931.21 ×2 |
+| control `option seed = $s` | – | drops the default | correct: the `=` survives the `\s\$` cut |
+| control `option reltol=1e-3 ; seed=5` then `reset` | – | drops it via `reset` | correct |
+
+Sabotages beyond D4, on the final files (each restored, `cmp` ok):
+
+| # | sabotage | result |
+|---|---|---|
+| Y1 | the strip cuts at any `$`, not only one after white space | **survives** (ALL PASS 11). No RS6 case has `$` without a space. Impact: `method=gear$seed=5` would be misjudged unseeded, which is warning only. A non-blocking fence gap; one `card-dollar-nospace` look-alike would close it. |
+| Y2 | the strip runs for control lines only | reddens RS6 |
+| Y3 | the strip loses the `;` arm | reddens RS6 |
+| D3s | the continuation join is replaced by a drop | reddens RS6 and RS9 |
+
+Suites at 5f88a7c65 (own Xvfb :286):
+
+| suite | counted | display | receipt §7a |
+|---|---|---|---|
+| test_ase_run_seed | ALL PASS (11) | ALL PASS (11) | 11/11 ✓ |
+| test_ase_optsheet_1441 | ALL PASS (64) | ALL PASS (90) | ✓ |
+| test_ase_netlist_display | ALL PASS (5) | ALL PASS (6) | ✓ |
+| test_ase_core | ALL PASS (674) | ALL PASS (674) | ✓ |
+
+Not checked this round:
+- The test_ase_optier_0963 display-arm TIMEOUT that §7a calls pre-existing. Not asked, and it costs
+  two 600 s runs.
+- The other suites in §7a.
+- Anything on the fork ngspice.
+
+Optional, cheap follow-ups:
+- Y1's look-alike.
+- A strip that ignores `;` inside double quotes.
+- Comment and blank lines skipped when joining `+` continuations.
+
+All of these are warning-only.
