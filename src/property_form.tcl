@@ -557,6 +557,7 @@ proc slickprop::build_fields {parent prop template} {
       bind $e <<Paste>>    [list after idle [list slickprop::update_dirty name]]
       bind $e <<Cut>>      [list after idle [list slickprop::update_dirty name]]
       bind $e <FocusIn> +[list slickprop::on_focus name]
+      slickprop::watch_limits $e
       continue
     }
     # a themed divider before the first undeclared "Extra" token (fixed widget
@@ -614,6 +615,8 @@ proc slickprop::build_fields {parent prop template} {
     # P3: flag a varying field in the footer when this field gains focus
     # (appended so it coexists with the placeholder-clear FocusIn handler)
     bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
+    # device limits when the field loses focus (slickprop::limits_check)
+    slickprop::watch_limits $parent.e$r
     incr r
   }
   # --- instance-form BOOL rows (issue 1625) ---------------------------------
@@ -719,6 +722,93 @@ proc slickprop::collect_changes {} {
 proc slickprop::result {} {
   variable cur
   return [slickprop::apply $cur(orig) [slickprop::collect_changes]]
+}
+
+# ---------------------------------------------------------------------------
+# Device limits when a field loses focus (user request 2026-11-12): "If user enters
+# a value and hits Tab to move to another field, it's as good as entering a value
+# and the form needs to take appropriate action and apply the clamp."
+# When a text field of the instance form loses focus (Tab, Shift-Tab, a click on
+# another field), the form's current values are checked against the instance's
+# values as loaded, by the rule apply uses (devlim::corrections, with the inputs
+# apply_symbol_prop hands it). A value the rule corrects is written into its field
+# at once, and the CIW gets the warning apply says (devlim::say). Only the form
+# changes: nothing is applied and no undo step is pushed, so OK/Apply afterwards
+# commit a value that is already legal and say nothing more. A legal field says
+# nothing, and leaving it again says nothing; a parameter or an expression is never
+# touched; leaving a finger field (nf, ng) re-checks W per finger. On a read-only
+# sheet the form stays editable and the check runs the same way. A click on a Tk
+# button does not move the focus, so Return or OK pressed with the focus still in
+# a field takes the apply path (clamp_edit) exactly as before.
+# Declared limit: with several instances in the "Apply to" scope, only the displayed
+# instance is checked here (its fingers, its model); apply still clamps each one.
+# ---------------------------------------------------------------------------
+
+# Hook text field entry <e> into the check. A bindtag of its own rather than a widget
+# binding, because set_placeholder replaces the widget's <FocusOut> binding outright.
+proc slickprop::watch_limits {e} {
+  bind SlickPropLimits <FocusOut> {slickprop::limits_check}
+  if {[lsearch -exact [bindtags $e] SlickPropLimits] < 0} {
+    bindtags $e [linsert [bindtags $e] 1 SlickPropLimits]
+  }
+}
+
+# {inst cell model} for the rule, taken as apply_symbol_prop's devlim_clamp
+# (src/editprop.c) takes them for the displayed instance: its name and master as
+# they are on the sheet, and the model the edit <new> writes (else the template's).
+proc slickprop::limits_inputs {new} {
+  variable nav
+  variable loaded_prop
+  global symbol
+  set idx -1
+  if {[info exists nav(disp_id)] && $nav(disp_id) ne {} && $nav(disp_id) >= 0} {
+    set idx [xschem instance_index $nav(disp_id)]
+  }
+  if {$idx >= 0} {
+    set inst [xschem getprop instance $idx name]
+    set sym  [xschem getprop instance $idx cell::name]
+  } else {
+    set inst [xschem get_tok $loaded_prop name]
+    set sym  $symbol
+  }
+  set cell [lindex [split $sym /] end]
+  set dot [string first .sym $cell]
+  if {$dot >= 0 && $dot == [string length $cell] - 4} { set cell [string range $cell 0 end-4] }
+  set model [xschem get_tok $new model]
+  if {$model eq {}} { set model [xschem get_tok [slickprop::template_of $sym] model] }
+  return [list $inst $cell $model]
+}
+
+# Write <value> into text field <tok>'s entry. Answers 0, writing nothing, for a token
+# with no text entry or one showing its placeholder (nothing typed there).
+proc slickprop::set_field {tok value} {
+  variable cur
+  if {![info exists cur(entry,$tok)] || $cur(entry,$tok) eq {}} { return 0 }
+  if {[info exists cur(bool,$tok)] || [info exists cur(custom,$tok)]} { return 0 }
+  if {$cur(placeholder,$tok) || ![winfo exists $cur(entry,$tok)]} { return 0 }
+  $cur(entry,$tok) delete 0 end
+  $cur(entry,$tok) insert 0 $value
+  slickprop::update_dirty $tok
+  return 1
+}
+
+# The check itself, bound to every text field's <FocusOut> by watch_limits.
+proc slickprop::limits_check {} {
+  variable cur
+  variable loaded_prop
+  if {![info exists ::slickprop_form_open] || !$::slickprop_form_open} return
+  if {![winfo exists .dialog] || ![info exists cur(tokens)] || ![info exists loaded_prop]} return
+  foreach tok $cur(tokens) {
+    # a rebuild in progress (Apply, Next/Prev) leaves no form to read
+    if {$cur(entry,$tok) ne {} && ![winfo exists $cur(entry,$tok)]} return
+  }
+  set new [slickprop::result]
+  lassign [slickprop::limits_inputs $new] inst cell model
+  lassign [devlim::corrections $inst $cell $model $loaded_prop $new $new] out fixes
+  foreach fix $fixes {
+    lassign $fix tok value msg
+    if {[slickprop::set_field $tok $value]} { devlim::say $msg }
+  }
 }
 
 # Apply the current change set to the "Apply to" scope via the C engine (P2).
@@ -1673,7 +1763,9 @@ proc slickprop::edit_form {txtlabel} {
 #
 # A PDK workarea registers a PROVIDER: `devlim::register <proc>`. apply_symbol_prop
 # (src/editprop.c) calls devlim::clamp_edit after an instance's property string has
-# been written, so the clamp lands in the same undo step as the edit. The provider
+# been written, so the clamp lands in the same undo step as the edit. The instance
+# form runs the same rule when one of its fields loses focus (slickprop::limits_check),
+# so a value is corrected in the form before anything is applied. The provider
 # is called as `<proc> <cell> <model>` and answers {} (not its device) or a dict:
 #   unit   u  -> values are SPICE numbers in metres with SI suffixes (IHP, gf180);
 #          {} -> bare numbers in microns (sky130, whose decks scale by 1e-6)
@@ -1720,14 +1812,16 @@ proc devlim::fmt {um unit} {
   set v [format %.6g $um]
   return [expr {$unit eq {} ? $v : "${v}u"}]
 }
-# Clamp the tokens this edit changed. <old>/<new> are the form's before/after strings,
-# <prop> the instance's property string as written. Answers the corrected string, or
-# {} when nothing needed correcting; each correction is said in the CIW.
-proc devlim::clamp_edit {inst cell model old new prop} {
-  variable last
-  set last {}
+# The limits rule, once. Apply (clamp_edit, below) and the instance form's focus-out
+# check (slickprop::limits_check) both call it, so the two cannot disagree about a
+# value. It says nothing and sets nothing. It checks the tokens of <prop> that the
+# edit <old> -> <new> changed (a rule's finger token counts for the rule) and answers
+# {out fixes}: <out> is <prop> with every correction made, <fixes> one
+# {token value message} per correction, in rule order.
+proc devlim::corrections {inst cell model old new prop} {
+  set fixes {}
   set d [devlim::spec $cell $model]
-  if {![llength $d]} { return {} }
+  if {![llength $d]} { return [list $prop $fixes] }
   set unit {} ; catch {set unit [dict get $d unit]}
   set out $prop
   foreach rule [dict get $d rules] {
@@ -1759,8 +1853,24 @@ proc devlim::clamp_edit {inst cell model old new prop} {
     } else {
       set msg "$inst ($model): $tok=$raw is $word [devlim::fmt $lim $unit]; $tok set to $fixed"
     }
-    lappend last $msg
-    catch {ciw_echo "warning: $msg" note}
+    lappend fixes [list $tok $fixed $msg]
+  }
+  return [list $out $fixes]
+}
+# Say one correction in the CIW. Apply and the form's focus-out check both say it here.
+proc devlim::say {msg} {
+  catch {ciw_echo "warning: $msg" note}
+}
+# Clamp the tokens this edit changed. <old>/<new> are the form's before/after strings,
+# <prop> the instance's property string as written. Answers the corrected string, or
+# {} when nothing needed correcting; each correction is said in the CIW.
+proc devlim::clamp_edit {inst cell model old new prop} {
+  variable last
+  set last {}
+  lassign [devlim::corrections $inst $cell $model $old $new $prop] out fixes
+  foreach fix $fixes {
+    lappend last [lindex $fix 2]
+    devlim::say [lindex $fix 2]
   }
   if {$out eq $prop} { return {} }
   return $out
