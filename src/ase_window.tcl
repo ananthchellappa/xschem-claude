@@ -14631,17 +14631,72 @@ proc ase::ui::do_stop {key} {
   if {$stopmsg ne {}} { catch {::ase::echo $stopmsg} }
 }
 
-# Simulation > Netlist > Display: the circuit netlist artifact in a read-only
-# textwindow (shared infra — deliberately NOT ASE-themed).
+# Simulation > Netlist > Display: the FINAL deck, as ADE-L's Netlist > Display
+# shows input.scs -- the circuit netlist plus the model and include cards, the
+# options, the analyses, the saves and the control block. It used to open the
+# bare circuit netlist (<cell>.spice), which is only the first ingredient.
+#
+# ⚠ RENDERED, NOT READ FROM <cell>_ase.spice. That file is written by a Run, so
+# it is absent before the first one and stale after any edit to the bench, and
+# writing it here would break the deck-vs-raw staleness compare (issue 0838).
+# So this renders the deck a Run would write NOW, from the bench as it stands
+# and the last netlist, through the backend's own renderer -- the one a Run
+# uses, which writes nothing to disk (ase::ui::conv_deck is the precedent).
+# ⚠ IT NEVER NETLISTS: a Display is a read (ase::ui::conv_netlist_text's rule).
+# A refusal the renderer raises is said in the CIW, as a Run would say it.
 proc ase::ui::view_netlist {key} {
-  set st [ase::session_state $key]
-  if {[catch {dict get $st design cell} cell]} {
-    catch {::ase::echo "ase: state has no design cell" error}
+  set d [ase::ui::netlist_display_text $key]
+  if {[dict get $d deck] eq {}} {
+    catch {::ase::echo [dict get $d msg] error}
     return
   }
+  set w {}
+  catch {viewdata [dict get $d deck] ro}
+  catch {set w $::viewdata_w}
+  if {$w ne {} && [winfo exists $w]} {
+    wm title $w "Netlist: [dict get $d path]"
+    catch {$w.text mark set insert 1.0 ; $w.text see 1.0}
+  }
+}
+
+# What Display shows, as a dict {deck <text or {}> path <deck file> msg <why
+# none>}. No Tk, so a headless row can ask it.
+proc ase::ui::netlist_display_text {key} {
+  set out [dict create deck {} path {} msg {}]
+  set st [ase::session_state $key]
+  if {[catch {dict get $st design cell} cell]} {
+    dict set out msg "ase: state has no design cell"
+    return $out
+  }
+  dict set out path [ase::deck_file $st]
   set f [file join [ase::rundir $st] $cell.spice]
-  if {[file isfile $f]} { textwindow $f ro } \
-  else { catch {::ase::echo "ase: no netlist yet: $f"} }
+  if {![file isfile $f]} {
+    set door {Simulation > Netlist > Recreate}
+    catch {set door "[ase::ui::lbl_simulation] > [ase::ui::lbl_netlist] >\
+ [ase::ui::lbl_netlist_recreate]"}
+    dict set out msg "ase: no netlist yet: $f. $door."
+    return $out
+  }
+  set nl {}
+  if {[catch {set fd [::open $f r] ; set nl [::read $fd] ; ::close $fd} err]} {
+    dict set out msg "ase: cannot read the netlist $f: $err"
+    return $out
+  }
+  set sim [ase::state_get $st simulator]
+  if {$sim eq {}} {
+    dict set out msg "ase: state has no simulator"
+    return $out
+  }
+  if {[catch {ase::backend_hook $sim render_deck} h]} {
+    dict set out msg "ase: $h"
+    return $out
+  }
+  if {[catch {$h $st $nl} deck]} {
+    dict set out msg "ase: cannot display the deck: $deck"
+    return $out
+  }
+  dict set out deck $deck
+  return $out
 }
 
 # ═══════════════════════════════════════════════════════════════════════════

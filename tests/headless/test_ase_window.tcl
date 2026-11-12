@@ -3162,18 +3162,25 @@ Values:
       [list $a_pre_nwin 1 -1 0 0]
 
     # W5: Simulation > Netlist > Recreate writes the artifact (no viewer);
-    # Display opens the read-only textwindow on it
+    # Display opens a read-only viewer on the FINAL deck a Run would write --
+    # circuit, model card and control block, as ADE-L's Display shows
+    # input.scs (the user's report, 2026-11-11; test_ase_netlist_display).
     $top.mb.sim.netlist invoke Recreate
     update
     set nlpath [file join $rundir nfet_clean.spice]
     check_true "W5 Recreate produced the netlist artifact" [file isfile $nlpath]
     $top.mb.sim.netlist invoke Display
     update
-    set w5 [find_titled_toplevel $nlpath]
-    check_true "W5 netlist textwindow opened (titled with the path)" \
+    set w5 [find_titled_toplevel "Netlist: [file join $rundir nfet_clean_ase.spice]"]
+    check_true "W5 netlist viewer opened (titled with the deck's path)" \
       [expr {$w5 ne {}}]
-    check_true "W5 netlist viewer shows the device line (XM1)" \
-      [expr {$w5 ne {} && [string match "*XM1*" [$w5.text get 1.0 end]]}]
+    set w5t {}
+    if {$w5 ne {}} { set w5t [$w5.text get 1.0 end] }
+    check "W5 netlist viewer shows the final deck: the device line (XM1), the\
+ model card and the control block" \
+      [list [string match "*XM1*" $w5t] \
+            [string match "*[file tail $models]*" $w5t] \
+            [regexp -line {^\.control$} $w5t]] {1 1 1}
     if {$w5 ne {}} { destroy $w5; update }
 
     if {[auto_execok ngspice] eq {}} {

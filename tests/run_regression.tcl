@@ -88,6 +88,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_options_1437" \
                  "headless/test_ase_predeck_1439" \
                  "headless/test_ase_run_seed" \
+                 "headless/test_ase_netlist_display" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_effective_1442" \
                  "headless/test_ase_meas_1443" \
@@ -925,6 +926,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_saved_results_1705" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
+                 "headless/test_ase_netlist_display" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_simwin_variant_1471" \
