@@ -1143,6 +1143,7 @@ group SVR-D1 {
     ase::saved_artifacts neither  ase::runstate_path neither  ase::saved_save_body neither
     ase::saved_runstate_raw neither  ase::live_rawfile listing
     ase::result_plotmap_state neither  ase::ui::meas_results_list reader
+    ase::ui::netlist_display_text writer
   }
   set pat {raw_file|log_file|plotmap_path|meas_path|deck_file|cosim_file|event_vcd_files|s2p_file|ckpt_path|last_rawfile|last_vcdfiles}
   set found {}
