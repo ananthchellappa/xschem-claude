@@ -656,11 +656,11 @@ check {PV1 the preview answers four slots and a notes block, always} \
   [lsort [dict keys [s_ans ase::opt_preview ngspice $PVST]]] \
   {cmdline control deck notes prefile}
 
-check {PV2 the deck slot carries exactly the shared body's lines} \
+check {PV2 the deck slot carries exactly the shared body's lines, then the run's default seed} \
   [s_ans apply {{} {
      set out {}
      foreach e [dict get [ase::opt_preview ngspice $::PVST] deck] { lappend out [lindex $e 1] }
-     return $out }}] {{.options reltol=1e-4} {.options units=degrees}}
+     return $out }}] {{.options reltol=1e-4} {.options units=degrees} {.options seed=1}}
 
 ## ⚠ AND THE DECK SLOT CARRIES THE SPELLER'S SPELLING, NOT A GENERIC
 ## `name=value`. Every row of PVST happens to spell as `name=value`, so a preview
@@ -676,7 +676,7 @@ check {PV2b a flag previews as the valueless card the speller writes, never as n
      dict set st options {{name sqrnoise value 1} {name keepopinfo value 1}}
      set out {}
      foreach e [dict get [ase::opt_preview ngspice $st] deck] { lappend out [lindex $e 1] }
-     return $out }}] {{.options sqrnoise} {.options keepopinfo}}
+     return $out }}] {{.options sqrnoise} {.options keepopinfo} {.options seed=1}}
 
 ## ⚠ THE PRE-DECK HALVES ARE THE SAME PLAN THE RUN USES, NOT A SECOND OPINION.
 check {PV3 a command-line option appears on the command-line slot and nowhere else} \
@@ -735,12 +735,14 @@ check {PV6 an option gets at most one note, however many readers have an opinion
 check {PV7 nothing is written inside the analysis block yet -- §7e owns that slot} \
   [dict get [s_ans ase::opt_preview ngspice $PVST] control] {}
 
-check {PV8 a bench that stores nothing previews four empty slots and no notes} \
+## The default seed is in every ordinary deck (ase::run_seed_line), so the
+## preview shows it, with the note saying ASE-L added it.
+check {PV8 a bench that stores nothing previews only the default seed, noted as ASE-L's} \
   [s_ans apply {{} {
      set pv [ase::opt_preview ngspice [ase::state_default]]
      return [list [dict get $pv deck] [dict get $pv control] \
                   [dict get $pv cmdline] [dict get $pv prefile] [dict get $pv notes]] }}] \
-  {{} {} {} {} {}}
+  {{{seed {.options seed=1}}} {} {} {} {{seed default {added by ASE-L so this run repeats exactly; set seed yourself to choose another}}}}
 
 ## ⚠ THE FILE HALF IS REFUSED WHERE ⚖ R2 REFUSES IT, and the preview must not
 ## show a line that will not be written. A bench naming no run directory falls

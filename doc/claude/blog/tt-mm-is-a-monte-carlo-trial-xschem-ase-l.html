@@ -1,0 +1,70 @@
+<h2>Why my sky130 bandgap gave a different answer every run</h2>
+
+<p>One test in our xschem fork failed two of our last four full regression runs. On its own it always passed, so for weeks it was filed as "the known flaky one". This week we found the cause, and it is not a test problem at all. Every ordinary run of a <code>tt_mm</code> sky130 bench is a fresh Monte Carlo trial.</p>
+
+<h3>What we saw</h3>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>The symptom</strong>
+  <p style="margin:6px 0 0;">The test simulates the bandgap testbench that ships with the open_pdks sky130 examples. Sometimes ngspice ran for about 13 seconds, exited with code 1, and wrote no results file. The failing check moved from run to run.</p>
+  <p style="margin:6px 0 0;">It looked like a load problem, because it only failed inside a full test run. It wasn't.</p>
+</div>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>The evidence</strong>
+  <p style="margin:6px 0 0;">We copied the exact deck the test used and ran it with ngspice directly, 24 times. One run failed:</p>
+  <pre>doAnalyses: TRAN:  Timestep too small; time = 1.63211e-07,
+  timestep = 5e-20: trouble with node "v4#branch"
+tran simulation(s) aborted</pre>
+  <p style="margin:6px 0 0;">The surprise was earlier in the output. ngspice prints its starting solution before the transient begins, and no two runs printed the same one. Most started near 0 V, with noise from 1e-12 down to 1e-53. The failing run started at a non-physical point, with one node at &minus;1.96&times;10<sup>8</sup>&nbsp;V.</p>
+  <p style="margin:6px 0 0;">Same deck, same binary, a different answer every time. Forcing ngspice onto one thread changed nothing, so it wasn't multithreading.</p>
+</div>
+
+<h3>The cause</h3>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>tt_mm means "typical, with mismatch"</strong>
+  <p style="margin:6px 0 0;">The bench's corner symbol says <code>corner=tt_mm</code>. In the sky130 model library, that section sets <code>MC_MM_SWITCH=1</code>, so every transistor draws a random mismatch offset when the netlist is loaded. Plain <code>tt</code> sets it to 0.</p>
+  <p style="margin:6px 0 0;">ngspice has no separate Monte Carlo analysis. Monte Carlo in ngspice means "run again with a different seed". These runs set no seed, so ngspice used a different one every time. Every run was a new random sample of the circuit.</p>
+  <p style="margin:6px 0 0;">Seven of the bundled sky130 example benches use <code>tt_mm</code>, including the two bandgaps, the comparator, <code>lvnand</code> and <code>srlatch</code>.</p>
+</div>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>The proof</strong>
+  <p style="margin:6px 0 0;">Adding one line before the <code>.control</code> block:</p>
+  <pre>.option seed=1</pre>
+  <p style="margin:6px 0 0;">Six concurrent runs then found the same starting solution, and their results files matched byte for byte once ngspice's date line was removed.</p>
+</div>
+
+<h3>Is ngspice broken?</h3>
+
+<p>No. ngspice and the sky130 models are doing what they were designed to do. The bundled <code>sky130_mismatch</code> example even calls <code>setseed 12</code> when it wants a repeatable run.</p>
+
+<p>The bug is the gap between that design and what a Cadence user expects. In Spectre, mismatch only applies inside a Monte Carlo analysis, so an ordinary run gives the same numbers every time. Our ADE-style front end, ASE-L, handed ngspice the deck without pinning a seed. So pressing Run on a <code>tt_mm</code> bench quietly ran one Monte Carlo trial instead of a repeatable simulation. On this bandgap, about one trial in 24 also failed to converge.</p>
+
+<h3>What we're changing</h3>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>Ordinary runs get a fixed seed</strong>
+  <p style="margin:6px 0 0;">ASE-L will pin the random seed for every run that isn't a Monte Carlo run, so a <code>tt_mm</code> bench gives the same answer each time you press Run.</p>
+  <p style="margin:6px 0 0;">Keep one subtlety in mind. A fixed seed gives you one particular mismatch sample, repeatably. It is not the mismatch-free typical device you get from <code>tt</code>. If you want typical numbers, use <code>tt</code>. If you want to see mismatch, run Monte Carlo.</p>
+</div>
+
+<h3>If you use ngspice with sky130 today</h3>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>Check your corner</strong>
+  <p style="margin:6px 0 0;">If your corner ends in <code>_mm</code> and you aren't running Monte Carlo, either switch to the plain corner or put <code>.option seed=1</code> in your deck. Otherwise two runs of the same schematic can disagree, and you'll chase a change you never made.</p>
+</div>
+
+<div style="border:1px solid #c8c8c8;border-radius:8px;padding:12px 16px;margin:12px 0;">
+  <strong>If you work with Claude Code: prompts that found this</strong>
+  <p style="margin:6px 0 0;">A flaky test hides its cause until someone keeps the evidence. These are the requests that got us from "known flaky" to a root cause:</p>
+  <ul style="margin:6px 0 0;">
+    <li><em>"Don't re-run it again. Find out why the simulator exits with error 1."</em></li>
+    <li><em>"Copy the exact deck the test simulates, and run ngspice on it directly, many times, keeping the output of any run that fails."</em></li>
+    <li><em>"Compare a failing run's output with a passing one, and tell me where they first differ."</em></li>
+    <li><em>"Before fixing anything, give me the background: where did this come from, and is the tool itself broken?"</em></li>
+  </ul>
+  <p style="margin:6px 0 0;">The third one cracked it. The difference was before the transient even started, and that pointed straight at the models instead of at the test.</p>
+</div>

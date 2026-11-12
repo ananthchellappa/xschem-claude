@@ -7460,6 +7460,45 @@ proc ase::opt_fallback_line {sim name value} {
   return $l
 }
 
+# AN ORDINARY RUN IS REPEATABLE: the deck line that sets the simulator's seed
+# option to ase::run_seed_default, when nothing else has set it (the user's
+# ruling, 2026-11-11: "tt_mm should give same result each time").
+#
+# Why it is needed: a sky130 `tt_mm` section sets MC_MM_SWITCH=1, so every
+# device draws a random mismatch offset when the netlist loads, and ngspice
+# picks a new seed each run unless one is given. Unseeded, every Run was a
+# fresh Monte Carlo trial (doc/claude/FAQ.md Q93). In ADE an ordinary run is
+# repeatable; mismatch varies only inside Monte Carlo.
+#
+# Left alone:
+#   * a bench whose options already carry the seed row, whatever its value,
+#     `random` included -- the user's choice;
+#   * a campaign shard (`sweep` has a `point`): it carries its campaign's seed,
+#     or is deliberately unseeded so each shard is its own sample
+#     (ase::campaign_shard_state);
+#   * a simulator whose adapter names no seed option.
+# A seed in the user's own netlist needs no test here: the netlist is written
+# before these lines, and ngspice keeps the first `.options seed` it reads.
+#
+# The answer is the deck line, or {} for none. It is NOT a row in the bench's
+# options: the bench did not ask for it, and ase::opt_deck_plan's records are
+# the bench's own rows. render_deck writes it right after those rows, and
+# ase::opt_preview shows it in the deck slot with a note saying ASE-L added it.
+proc ase::run_seed_default {} { return 1 }
+proc ase::run_seed_line {sim state} {
+  set sopt [ase::campaign_seed_option $sim]
+  if {$sopt eq {}} { return {} }
+  if {[llength [ase::campaign_get $state point]]} { return {} }
+  foreach o [ase::state_get $state options] {
+    if {[dict exists $o name] && [string equal -nocase [dict get $o name] $sopt]} {
+      return {}
+    }
+  }
+  set l {}
+  if {[catch {ase::opt_line $sim $sopt [ase::run_seed_default]} l]} { set l {} }
+  return $l
+}
+
 proc ase::opt_deck_plan {sim state} {
   set out {}
   foreach o [ase::state_get $state options] {
@@ -8178,6 +8217,16 @@ proc ase::opt_preview {sim state {plan {}}} {
       dict set notes $name [list off \
         "switched off -- absence is the setting, so no line is written"]
     }
+  }
+  ## The default seed render_deck writes after the bench's own rows: the deck
+  ## contains it, so the window shows it, and says ASE-L chose it.
+  set rsl {}
+  catch {set rsl [ase::run_seed_line $sim $state]}
+  if {$rsl ne {}} {
+    set rsn [ase::campaign_seed_option $sim]
+    lappend deck [list $rsn $rsl]
+    dict set notes $rsn [list default \
+      "added by ASE-L so this run repeats exactly; set $rsn yourself to choose another"]
   }
   ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis, in the order the
   ## deck writes them, each line tagged with the analysis it belongs to -- a
@@ -26389,6 +26438,10 @@ namespace eval ase::backend::ngspice {
       set rdopline [lindex $rdoprec 4]
       if {$rdopline ne {}} { lappend lines $rdopline }
     }
+    ## An ordinary run is repeatable: the default seed, when the bench sets none
+    ## (ase::run_seed_line; doc/claude/FAQ.md Q93).
+    set rdseed [ase::run_seed_line $rdopsim $state]
+    if {$rdseed ne {}} { lappend lines $rdseed }
     # UI v2 Save-All blanket (item 07 D12): all-terminal-currents ->
     # `.options savecurrents`, emitted unconditionally while the flag is 1 —
     # a duplicate line from an explicit `savecurrents` options row above is

@@ -994,6 +994,7 @@ V2 G GND 1.8
 .param Vgs=1.8
 .param Vds=1.0
 .options savecurrents
+.options seed=1
 .temp 27
 .save all
 .save -i(v1)

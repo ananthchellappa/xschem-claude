@@ -576,6 +576,16 @@ set DA [o_render [o_state $AN_OP] $NL]
 # before (0968). What survives unchanged is the property that matters: the
 # request is O(devices), not O(devices x parameters), and nothing device-related
 # is left sitting above the run.
+## The deck-level `.options` lines other than the run's default seed, which
+## ASE-L writes into every ordinary run (ase::run_seed_line) and which names no
+## device: the rows below ask about device options above the run.
+proc o_devopts {deck} {
+  set n 0
+  foreach l [split $deck "\n"] {
+    if {[regexp {^\.options} $l] && $l ne ".options seed=[ase::run_seed_default]"} { incr n }
+  }
+  return $n
+}
 set E1 NOPROC
 if {$DA ne {NOPROC} && ![string match RAISED:* $DA]} {
   set nats 0
@@ -586,7 +596,7 @@ if {$DA ne {NOPROC} && ![string match RAISED:* $DA]} {
     if {[string trim $l] eq {.save all}} { incr nsaveall }
     if {[string first {@} $l] >= 0} { incr ndeckats }
   }
-  set E1 [list [regexp -all -line {^\.options} $DA] $nsaveall $nats $ndeckats]
+  set E1 [list [o_devopts $DA] $nsaveall $nats $ndeckats]
 }
 check {E1 the blanket form asks for each device's operating-point numbers ONCE\
  -- one request per device rather than one per number -- all of them on a\
@@ -1700,7 +1710,7 @@ set E14 NOPROC
 if {$EA ne {NOPROC} && ![string match RAISED:* $EA]} {
   set e14names [o_ctlats $EA]
   lassign [o_ctlorder $EA] e14last e14op
-  set E14 [list [regexp -all -line {^\.options} $EA] \
+  set E14 [list [o_devopts $EA] \
                 [llength [o_deckcards $EA]] \
                 [llength $e14names] \
                 [o_allwild $e14names] \
@@ -1728,7 +1738,7 @@ if {$EAB ne {NOPROC} && ![string match RAISED:* $EAB]} {
   set E16 [list [o_analines $EAB] \
                 [llength [o_ctlats $EAB]] \
                 [expr {($e16last >= 0 && $e16op == $e16last + 1) ? 1 : 0}] \
-                [regexp -all -line {^\.options} $EAB] \
+                [o_devopts $EAB] \
                 [llength [o_deckcards $EAB]]]
 }
 check {E16 issue 0968 with a transient in the same run the device requests are\

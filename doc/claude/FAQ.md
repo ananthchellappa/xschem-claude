@@ -14,6 +14,55 @@ Newest entries on top.
 
 ---
 
+## Q93. Why did `tb_bandgap` give a different answer every run, and why did `test_ase_optier_0963` flake? Is ngspice broken?
+
+- **Asked:** 2026-11-11
+- **Project state:** branch `fluid-editing` at `4e05016b4`. **Fixed since:** an
+  ordinary run's deck gets `.options seed=1` (`ase::run_seed_line` in
+  `src/ase.tcl`, written by `render_deck` after the bench's own option rows, and
+  shown in the options preview with a note). It is skipped when the bench sets a
+  seed itself, and for a campaign shard. A seed in the user's own netlist needs
+  no test: ngspice keeps the first `.options seed` it reads, and the netlist
+  comes first. Suite `tests/headless/test_ase_run_seed.tcl`. Blog version:
+  `doc/claude/blog/tt-mm-is-a-monte-carlo-trial-xschem-ase-l.html`.
+
+**Every ordinary run of a `tt_mm` sky130 bench is a fresh Monte Carlo trial.**
+ngspice is not broken; the gap is between how ngspice and sky130 do mismatch and
+what an ADE user expects from an ordinary run.
+
+- **Where `tt_mm` comes from.** The bench came in with the open_pdks sky130
+  example libraries (`4ac38ae7e`, 2026-07-20). Its corner symbol says
+  `corner=tt_mm`, and the ASE-L migration carried that into
+  `sky130A/xschem_libs/sky130_tests_ase/tb_bandgap/ngspice_state1/tb_bandgap.state`
+  as `section tt_mm`. Seven bundled sky130 benches use it: `tb_bandgap`,
+  `tb_bandgap_opamp`, `test_comparator`, `lvnand`, `srlatch`, `sky130_mismatch`
+  and `montecarlo_mismatch_sim`. The private repo carries the same states.
+- **What it means.** In `sky130A/models/libs.tech/combined/sky130.lib.spice`,
+  `.lib tt_mm` ("Typical corner with mismatch") sets `MC_MM_SWITCH=1`, so every
+  device draws a random mismatch offset when the netlist is loaded. `tt` sets it
+  to 0.
+- **Why every run differs.** ngspice has no Monte Carlo analysis of its own;
+  Monte Carlo there is "run again with another seed". ASE-L's deck sets no seed,
+  so each run is a new sample. Measured on the test's own deck, 24 runs at once:
+  the printed "Initial Transient Solution" differed in every run, mostly near
+  0 V at noise level. One run started at a non-physical point (`x1.e2`
+  −1.96e+08 V, `x1.minus` 6.1 V), and its transient died with "Timestep too
+  small; time = 1.63211e-07 … trouble with node v4#branch". The deck's
+  `$sim_status` check then prints `RUN-FAILED` and does `quit 1` before any
+  `write`, which is exactly the suite's `NORAW rc={1}`.
+- **What it is not.** It is not load or the full-run environment (that
+  correlation was chance: two of the last four gates lost the draw), and not
+  OpenMP (`OMP_NUM_THREADS=1` still varied, though the build links `libgomp`).
+- **The proof.** `.option seed=1` before `.control`: six concurrent runs gave the
+  same starting solution and byte-identical raws once the `Date:` lines were
+  removed.
+- **Cadence parity.** In Spectre, mismatch applies only inside a Monte Carlo
+  analysis, so an ordinary run is repeatable. The user ruled (2026-11-11) that a
+  `tt_mm` run must give the same result each time. A pinned seed gives one fixed
+  mismatch sample, not the mismatch-free typical device; `tt` is that.
+
+---
+
 ## Q92. Where are waveform measurements computed, and how does an optimizer that edits the netlist itself get them?
 
 - **Asked:** 2026-10-22

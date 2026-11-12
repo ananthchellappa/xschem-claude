@@ -87,6 +87,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_persist" \
                  "headless/test_ase_options_1437" \
                  "headless/test_ase_predeck_1439" \
+                 "headless/test_ase_run_seed" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_effective_1442" \
                  "headless/test_ase_meas_1443" \

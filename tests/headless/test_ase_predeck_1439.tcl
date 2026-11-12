@@ -627,9 +627,14 @@ proc p_deck {opts} {
   set d [file join $scratch rdeck] ; file mkdir $d
   return [ase::backend::ngspice::render_deck [p_state rundir $d options $opts] $RDNL]
 }
+## The `.options` cards the bench's own rows wrote. The run's default seed
+## (ase::run_seed_line, which every ordinary run gets when no row sets a seed)
+## is left out: it is not one of these rows, and test_ase_run_seed owns it.
 proc p_cards {opts} {
   set out {}
+  set dflt [ase::run_seed_line ngspice [p_state options $opts]]
   foreach l [split [p_deck $opts] "\n"] {
+    if {$dflt ne {} && $l eq $dflt} { continue }
     if {[string match {.options*} $l]} { lappend out $l }
   }
   return $out
