@@ -1684,6 +1684,10 @@ void edit_property(int x)
  int presel_n = 0;           /* count captured (lastsel may change in the x==0 slick loop) */
 
  if(!has_x) return;
+ /* x==1 hands the text to an external editor and commits whatever comes back, with no
+  * viewer mode; on a read-only sheet refuse it here, so every door (Q, the context
+  * menu, `xschem edit_vi_prop`) is covered. x==0 opens the form as a viewer. */
+ if(x == 1 && begin_edit("edit properties in editor")) return;
  rebuild_selected_array(); /* from the .sel field in objects build */
  /* D-split (cadence_pin_name_text.md): default to the pin-IDENTITY editor; the name-text
   * retarget below flips this so gfxform::selected_type picks the pin-NAME-TEXT editor. */

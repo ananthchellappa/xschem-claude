@@ -927,6 +927,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_optsheet_1441" \
                  "headless/test_ase_conv_gui_1460" \
                  "headless/test_ase_netlist_display" \
+                 "headless/test_prop_form_readonly" \
                  "headless/test_ase_campaign_gui_1464" \
                  "headless/test_ase_trnoise_gui_1467" \
                  "headless/test_ase_simwin_variant_1471" \

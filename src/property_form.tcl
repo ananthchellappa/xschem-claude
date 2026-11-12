@@ -1172,6 +1172,12 @@ proc slickprop::load_pos {pos} {
   slickprop::apply_scope_greying
   slickprop::update_nav_ui
   slickprop::update_warning
+  if {[xschem get readonly]} { slickprop::ro_freeze }
+}
+
+# The read-only freeze for this form: everything but Cancel and Next/Prev.
+proc slickprop::ro_freeze {} {
+  ro_view_freeze .dialog {.dialog.fb.cancel .dialog.fnav.prev .dialog.fnav.next}
 }
 
 # Step the displayed instance by <dir> (+1 Next / -1 Prev) within the selected
@@ -1610,18 +1616,23 @@ proc slickprop::edit_form {txtlabel} {
   bind .dialog <Alt-Left>   {slickprop::nav -1}
   wm protocol .dialog WM_DELETE_WINDOW {slickprop::cancel}
 
-  # Read-only view (issue 0051): the form is a VIEWER, not an editor. It opens so
-  # the user can read — and even experiment with — the values (fields stay
-  # editable), but OK/Apply are greyed and Enter behaves like Esc (Cancel) so
-  # nothing is ever written back. do_apply/maybe_apply_then are also guarded, so
-  # no other path (selection-change prompt, a stray binding) can commit either.
+  # Read-only view (issue 0051, tightened 2026-11-12): the form is a VIEWER, not an
+  # editor. It opens so the user can read the values, but the fields take no edits
+  # (ro_view_freeze, src/xschem.tcl; the user's report: the form "permitting user to
+  # edit values when the schematic is read only"), OK/Apply are greyed and Enter
+  # behaves like Esc (Cancel). Next/Prev stay live, so a selected set can still be
+  # browsed; load_pos re-freezes the rebuilt fields. do_apply/maybe_apply_then are
+  # also guarded, so no other path (selection-change prompt, a stray binding) can
+  # commit either.
   if {[xschem get readonly]} {
+    wm title .dialog {Properties (read-only)}
     .dialog.fb.ok     configure -state disabled -default normal
     .dialog.fb.apply  configure -state disabled
     .dialog.fb.cancel configure -default active
-    .dialog.fb.hint   configure -text "Read-only view — changes cannot be applied (Enter/Esc: close)"
+    .dialog.fb.hint   configure -text "Read-only view (Enter/Esc: close)"
     bind .dialog <Return>   {slickprop::cancel}
     bind .dialog <KP_Enter> {slickprop::cancel}
+    slickprop::ro_freeze
   }
 
   # focus + select the most-likely-to-edit field (the symbol's `select` attr,

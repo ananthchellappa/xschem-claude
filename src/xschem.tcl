@@ -11588,6 +11588,7 @@ proc enter_text {textlabel {preserve_disabled disabled}} {
     bind .dialog <Return>              {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter>            {.dialog.buttons.cancel invoke}
     bind .dialog.f2.txt <Shift-Return> {.dialog.buttons.cancel invoke; break}
+    ro_view_freeze .dialog {.dialog.buttons.cancel}
   }
   .dialog.f2.txt tag add sel 1.0 {end - 1 chars}
   .dialog.f2.txt mark set insert 1.0
@@ -13200,6 +13201,7 @@ proc text_line_slick {txtlabel clear preserve_disabled type} {
     .dialog.hint configure -text "Read-only view — changes cannot be applied"
     bind .dialog <Return>   {.dialog.buttons.cancel invoke}
     bind .dialog <KP_Enter> {.dialog.buttons.cancel invoke}
+    ro_view_freeze .dialog {.dialog.buttons.cancel}
   }
   dialog_minsize_floor .dialog
   # restore this editor type's remembered geometry (size+pos), overriding the initial
@@ -13585,6 +13587,12 @@ proc schpin::edit_form {} {
   pack .dialog.b -side bottom -fill x -pady 3
   bind .dialog <Return> {schpin::apply; destroy .dialog}
   bind .dialog <Escape> {destroy .dialog}
+  # read-only sheet: a viewer, as the instance form (slickprop::edit_form)
+  if {[xschem get readonly]} {
+    wm title .dialog {Pin (read-only)}
+    bind .dialog <Return> {destroy .dialog}
+    ro_view_freeze .dialog {.dialog.b.cancel}
+  }
   raise .dialog
   focus .dialog.f.en
   return {}
@@ -14245,12 +14253,14 @@ proc text_line_legacy {txtlabel clear {preserve_disabled disabled} } {
   bind .dialog.textinput <Shift-KeyRelease-Return> {return_release %W; .dialog.f1.b1 invoke}
   # Read-only view (issue 0051): a property VIEWER — disable OK (the global-props
   # path below also self-guards), force Esc to always cancel, and disable the Mode
-  # selector (changing it commits via set_global_mode). The text stays readable/
-  # editable, but nothing is written back.
+  # selector (changing it commits via set_global_mode). The text is readable, not
+  # editable (ro_view_freeze), and nothing is written back.
   if {[xschem get readonly]} {
     catch {.dialog.f1.b1 configure -state disabled}
     catch {.dialog.f1.r7 configure -state disabled}
     bind .dialog <Escape> {.dialog.f1.b2 invoke}
+    # the token selector (r5) only chooses which token the text shows: keep it
+    ro_view_freeze .dialog {.dialog.f1.b2 .dialog.f1.r5}
   }
   #tkwait visibility .dialog
   #grab set .dialog
@@ -16407,6 +16417,74 @@ proc readonly_notice {} {
   tk_messageBox -type ok -icon info -parent [xschem get topwindow] \
     -title {Read-only view} \
     -message "View is Read Only.\n\nUse Edit > Make Editable to enable editing."
+}
+
+# Read-only property VIEW (user report 2026-11-12, superseding issue 0051's "fields stay
+# editable"): on a read-only sheet a property form shows its values but takes no edits.
+# ro_view_freeze <root> ?keep? walks <root>'s descendants:
+#   * text-holding widgets (entry, text, ttk::entry) get the XschemROView bindtag FIRST
+#     in their bindtags, which swallows every key that would change the text, paste and
+#     middle-click paste, while navigation, selection and copy still work. A bindtag and
+#     not `-state readonly`, because the forms refill these widgets programmatically
+#     (Next/Prev, the token selector) and a readonly widget refuses `insert` too.
+#     Their background takes the dialog's, the usual read-only look.
+#   * every other input (check/radio buttons, comboboxes, spinboxes, scales, buttons) is
+#     disabled, except the widgets named in <keep> (Cancel, Next/Prev, a view selector).
+# Enter inside a frozen text widget runs the toplevel's own <Return> binding, which every
+# read-only form already maps to Cancel. Idempotent: call it again after a rebuild.
+proc ro_view_freeze {root {keep {}}} {
+  if {![winfo exists $root]} return
+  set bg {}
+  catch {set bg [[winfo toplevel $root] cget -background]}
+  set todo [list $root]
+  while {[llength $todo]} {
+    set w [lindex $todo 0]
+    set todo [lrange $todo 1 end]
+    lappend todo {*}[winfo children $w]
+    if {[lsearch -exact $keep $w] >= 0} continue
+    switch -- [winfo class $w] {
+      Entry - Text - TEntry {
+        set tags [bindtags $w]
+        if {[lsearch -exact $tags XschemROView] < 0} {
+          bindtags $w [linsert $tags 0 XschemROView]
+          if {$bg ne {}} { catch {$w configure -background $bg} }
+        }
+      }
+      Checkbutton - Radiobutton - Spinbox - Scale - Button - Menubutton {
+        catch {$w configure -state disabled}
+      }
+      TCheckbutton - TRadiobutton - TCombobox - TSpinbox - TScale - TButton - TMenubutton {
+        catch {$w state disabled}
+      }
+    }
+  }
+}
+
+# Is key <keysym> with modifier state <st> harmless in a frozen text widget? Navigation,
+# focus traversal, Escape and copy/select-all are; everything that types or deletes is not.
+proc ro_view_key_ok {keysym st} {
+  if {$keysym in {Tab ISO_Left_Tab Escape Left Right Up Down Home End Prior Next
+                  Shift_L Shift_R Control_L Control_R Alt_L Alt_R Meta_L Meta_R
+                  Super_L Super_R Caps_Lock Num_Lock}} { return 1 }
+  if {$st & 4} { return [expr {$keysym in {c C a A slash Insert}}] }
+  return 0
+}
+
+proc ro_view_enter {w} {
+  set s [bind [winfo toplevel $w] <Return>]
+  if {$s ne {}} { uplevel #0 $s }
+}
+
+if {[info exists has_x] && $has_x} {
+  bind XschemROView <KeyPress>          {if {![ro_view_key_ok %K %s]} break}
+  bind XschemROView <Return>            {ro_view_enter %W; break}
+  bind XschemROView <KP_Enter>          {ro_view_enter %W; break}
+  bind XschemROView <Shift-Return>      {ro_view_enter %W; break}
+  foreach ev {<<Paste>> <<Cut>> <<Clear>> <<PasteSelection>> <<Undo>> <<Redo>>
+              <Button-2> <ButtonRelease-2>} {
+    bind XschemROView $ev break
+  }
+  unset ev
 }
 
 # Issue 0845, RULED by the user 2026-08-26: the three reopen doors -- Open Most Recent
