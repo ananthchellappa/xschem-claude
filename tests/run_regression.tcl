@@ -106,6 +106,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_regression_concurrency_1476" \
                  "headless/test_issue_stamp" \
                  "headless/test_home_isolation" \
+                 "headless/test_t1_display_arm" \
                  "headless/test_home_isolation_sh" \
                  "headless/test_untitled_autosave_1486" \
                  "headless/test_input_line_inject_1352" \
@@ -1800,6 +1801,140 @@ proc t1_private_reaper_stop {rp rd} {
   t1_home_kill $rp
 }
 
+## ---------------------------------------------------------------------------
+## IS THE DEV DISPLAY IN USE BY SOMEONE ELSE? (backlog 2026-11-12, stage B)
+## ---------------------------------------------------------------------------
+## Two sessions on one machine share the persistent dev display, and a T1 that
+## attaches to it while another run's windows are mapped there measures a
+## display it does not own. So in `auto` (T1_DISPLAY, below) the display arm
+## asks this question first and takes a private Xvfb when the answer is yes.
+##
+## ⚠ BY IDENTITY, NEVER BY PATTERN (CLAUDE.md, "Match shared namespaces by
+## identity"). `pgrep -f run_regression` matches the shell that asked. This
+## reads /proc/<pid>/comm, cmdline and environ, and a process counts only as
+## one of these shapes:
+##   * comm `xschem` whose environment names the dev display (`DISPLAY=:N`);
+##   * a T1 (comm `tclsh*`, an argument whose tail is run_regression.tcl) or a
+##     run_suites.sh / full_audit.sh (by comm, or as the script argument of a
+##     shell), whose EFFECTIVE dev display is this one: its own
+##     XSCHEM_DEVDISPLAY_DIR (else its HOME's default, devdisplay.sh's rule)
+##     names the same state dir, and its DEVDISPLAY_NUM (else 99) the same
+##     number. A run pointed somewhere else -- the old missing-state-dir trick,
+##     a fixture state dir, an AUDIT_DISPLAY naming another display, or
+##     T1_DISPLAY=private -- is not using this display, and is not counted.
+##   * a T1 that has already gone private says so by identity too: a live Xvfb
+##     whose environment carries XSCHEM_TEST_T1_XVFB_TAG=t1.<its pid>.<...>
+##     (t1_private_xvfb's tag) is that run's own display, so the run is not
+##     counted.
+## ⚠ /proc/<pid>/environ is the EXEC-TIME environment, which is exactly what
+## devdisplay.sh's own default reads, so the comparison is like for like.
+## ⚠ SELF, ANCESTORS AND DESCENDANTS ARE NEVER COUNTED: a T1 launched from a
+## suite that runs under run_suites.sh is part of that run, not a rival to it.
+## Returns a list of {pid comm reason}.
+proc t1_proc_words {pid what} {
+  if {[catch {set f [open /proc/$pid/$what r]; fconfigure $f -translation binary
+              set d [read $f]; close $f}]} { return {} }
+  return [lrange [split $d \x00] 0 end-1]
+}
+proc t1_proc_envget {envl name} {
+  set i [lsearch -glob $envl "$name=*"]
+  if {$i < 0} { return {} }
+  return [string range [lindex $envl $i] [string length "$name="] end]
+}
+proc t1_proc_stat {pid} {
+  if {[catch {set f [open /proc/$pid/stat r]; set s [read $f]; close $f}]} { return {} }
+  set r [string last ") " $s]
+  if {$r < 0} { return {} }
+  set l [string first "(" $s]
+  return [list [string range $s [expr {$l + 1}] [expr {$r - 1}]] \
+               [lindex [string range $s [expr {$r + 2}] end] 1]]
+}
+proc t1_dev_display_users {num state} {
+  set state [file normalize $state]
+  set me [pid]
+  array set ppid {} ; array set comm {}
+  foreach p [glob -nocomplain -directory /proc -tails {[0-9]*}] {
+    if {![string is integer -strict $p]} continue
+    set st [t1_proc_stat $p]
+    if {![llength $st]} continue
+    set comm($p) [lindex $st 0]
+    set ppid($p) [lindex $st 1]
+  }
+  ## my ancestors
+  set skip [list $me]
+  set q $me
+  for {set i 0} {$i < 64 && [info exists ppid($q)] && $ppid($q) > 1} {incr i} {
+    set q $ppid($q) ; lappend skip $q
+  }
+  set users {} ; set cand {} ; set private {}
+  foreach p [array names comm] {
+    if {[lsearch -exact $skip $p] >= 0} continue
+    ## my descendants
+    set q $p ; set mine 0
+    for {set i 0} {$i < 64 && [info exists ppid($q)] && $ppid($q) > 1} {incr i} {
+      set q $ppid($q)
+      if {$q == $me} { set mine 1 ; break }
+    }
+    if {$mine} continue
+    set c $comm($p)
+    set role {}
+    if {$c eq {xschem}} {
+      set role xschem
+    } elseif {$c eq {Xvfb}} {
+      set role xvfb
+    } elseif {$c in {run_suites.sh full_audit.sh}} {
+      set role $c
+    } else {
+      set args [t1_proc_words $p cmdline]
+      if {[string match tclsh* $c]} {
+        foreach a [lrange $args 1 end] {
+          if {[file tail $a] eq {run_regression.tcl}} { set role T1 ; break }
+        }
+      } elseif {$c in {sh bash dash}} {
+        foreach a [lrange $args 1 end] {
+          if {[file tail $a] in {run_suites.sh full_audit.sh}} { set role [file tail $a] ; break }
+        }
+      }
+    }
+    if {$role eq {}} continue
+    set e [t1_proc_words $p environ]
+    if {$role eq {xvfb}} {
+      set tag [t1_proc_envget $e XSCHEM_TEST_T1_XVFB_TAG]
+      if {[regexp {^t1\.([0-9]+)\.} $tag -> owner]} { lappend private $owner }
+      continue
+    }
+    if {$role eq {xschem}} {
+      if {[regexp "^:$num\(\\.\[0-9\]+\)?\$" [t1_proc_envget $e DISPLAY]]} {
+        lappend users [list $p xschem "an xschem with DISPLAY=:$num"]
+      }
+      continue
+    }
+    set sd [t1_proc_envget $e XSCHEM_DEVDISPLAY_DIR]
+    if {$sd eq {}} {
+      set h [t1_proc_envget $e HOME]
+      if {$h eq {}} continue
+      set sd [file join $h .claude xschem_dev_display]
+    }
+    if {[file normalize $sd] ne $state} continue
+    set n [t1_proc_envget $e DEVDISPLAY_NUM]
+    if {$n eq {}} { set n 99 }
+    if {$n ne $num} continue
+    if {$role eq {T1}} {
+      if {[string tolower [string trim [t1_proc_envget $e T1_DISPLAY]]] eq {private}} continue
+    } else {
+      set ad [t1_proc_envget $e AUDIT_DISPLAY]
+      if {$ad ne {} && $ad ne {auto} && $ad ne ":$num"} continue
+    }
+    lappend cand [list $p $role]
+  }
+  foreach pr $cand {
+    lassign $pr p role
+    if {$role eq {T1} && [lsearch -exact $private $p] >= 0} continue
+    lappend users [list $p $comm($p) "a $role run on the dev display's state dir"]
+  }
+  return [lsort -integer -index 0 $users]
+}
+
 proc t1_private_xvfb {dd} {
   set ::t1_xvfb_why {}
   if {[auto_execok Xvfb] eq {}} { set ::t1_xvfb_why noxvfb ; return {} }
@@ -2195,6 +2330,136 @@ foreach tc $tcases {
     t1_publish $tcout ${tc}_output.txt
     puts "Finish source ${tc}.tcl"
   }
+  set dd [file join headless devdisplay.sh]
+  ## ⚠ AND EVERY CHILD GETS ITS OWN --logdir (issue 1359).  A GUI xschem
+  ## launched WITHOUT one writes its action log to /tmp/Xschem.log.N, taking the
+  ## lowest free N -- which is exactly where the USER'S OWN interactive sessions
+  ## put theirs.  There are ~20 display-arm cases, so one T1 run claimed the
+  ## first ~20 slots and overwrote whatever was in them.  MEASURED: a single
+  ## solo run destroyed five of the nine /tmp/Xschem.log.* files on this
+  ## machine, and a later one destroyed the log the whole RDW batch had been
+  ## diagnosed from.  The --nogui arms are safe -- a headless run with no
+  ## --logdir creates no log at all (test_action_log.sh case 4) -- so it is
+  ## ONLY this arm, and this is the only line that has to change.
+  ##
+  ## Under the results directory rather than a temp dir, because a display-arm
+  ## case that WANTS its action log (there are such cases) can then read it,
+  ## and because a stray log left behind is a test artifact where a reader
+  ## expects test artifacts.
+  set dlogdir [file join [pwd] results .actionlogs]
+  file mkdir $dlogdir
+  ## ⚠ WHICH DISPLAY THE ARM RUNS ON (DECISIONS D8). This used to be one line,
+  ## `exec $dd start`, run with whatever HOME this process had -- which for a
+  ## stranger meant a PERSISTENT Xvfb + openbox started into their real home and
+  ## never stopped (audit F36), and under a throwaway HOME is exactly how the
+  ## orphan holding :99 on the developer's box was made: started with a HOME
+  ## that was deleted under it. Now, in order:
+  ##   1. attach to the dev display through the carried state dir;
+  ##   2. auto-start it ONLY if that state dir already exists (the tester has
+  ##      used it before), and only with the PRE-switch environment, so that a
+  ##      long-lived display never inherits a HOME that is about to be deleted;
+  ##   3. otherwise, or if that start fails (exit 4 on a foreign :99), a PRIVATE
+  ##      Xvfb for this run only (t1_private_xvfb), killed when the arm is done;
+  ##   4. NODISPLAY only when no Xvfb is installed at all. An Xvfb that is
+  ##      installed and will not start is a COUNTED failure: turning a broken
+  ##      display into silence is what issue 0891 was.
+  ## ⚠ STEP 3 TURNS 11 UNCOUNTED NODISPLAY LINES INTO 11 COUNTED RUNS on every
+  ## box without a dev display, which is why it was measured green on the
+  ## private arm before it landed (doc/claude/outsider_fixes_batch/receipts/S2c-T.md).
+  set dd_state [file join $env(HOME) .claude xschem_dev_display]
+  if {[info exists env(XSCHEM_DEVDISPLAY_DIR)] && $env(XSCHEM_DEVDISPLAY_DIR) ne {}} {
+    set dd_state $env(XSCHEM_DEVDISPLAY_DIR)
+  }
+  set dd_env {}
+  set dd_why {}
+  set dd_where {}
+  set dd_st {}
+  set dd_alive 0
+  ## ⚠ T1_DISPLAY (backlog 2026-11-12, stage B): which display the arm takes.
+  ##   auto     (unset, the default) attach to the dev display as below, UNLESS
+  ##            t1_dev_display_users finds another live run on it -- then a
+  ##            private Xvfb, and the arm says who it stepped aside for;
+  ##   dev      attach whatever else is on it (the pre-stage-B behaviour);
+  ##   private  never attach to, nor start, the dev display.
+  ## Anything else is read as `private` and said so: a typo must fall to the
+  ## direction that cannot disturb another session.
+  set t1_display auto
+  if {[info exists env(T1_DISPLAY)] && [string trim $env(T1_DISPLAY)] ne {}} {
+    set t1_display [string tolower [string trim $env(T1_DISPLAY)]]
+    if {$t1_display ni {auto dev private}} {
+      if {[llength $dcases]} {
+        puts "display arm: T1_DISPLAY=$env(T1_DISPLAY) is not auto, dev or private -- using private"
+      }
+      set t1_display private
+    }
+  }
+  ## No display case, no display: a driver whose list is empty (1476's staged
+  ## copies) must not start an Xvfb it will never use.
+  if {[llength $dcases] && $t1_display eq {private}} {
+    puts "display arm: T1_DISPLAY=private -- not attaching to the dev display"
+  }
+  if {[llength $dcases] && $t1_display ne {private}} {
+    catch {exec $dd status 2>@1} dd_st
+    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+  }
+  if {$dd_alive && $t1_display eq {auto}} {
+    set dd_n 99
+    if {[info exists env(DEVDISPLAY_NUM)] && $env(DEVDISPLAY_NUM) ne {}} { set dd_n $env(DEVDISPLAY_NUM) }
+    regexp -line {^display:\s*:([0-9]+)} $dd_st -> dd_n
+    set dd_users [t1_dev_display_users $dd_n $dd_state]
+    if {[llength $dd_users]} {
+      set dd_who {}
+      foreach u $dd_users { lappend dd_who "pid [lindex $u 0] ([lindex $u 1]: [lindex $u 2])" }
+      puts "display arm: the dev display :$dd_n is IN USE by [join $dd_who {, }] --\
+ using a private Xvfb instead (T1_DISPLAY=dev attaches anyway)"
+      set dd_alive 0
+    }
+  }
+  if {$dd_alive} { set dd_where "attached to the dev display (state dir $dd_state)" }
+  if {[llength $dcases] && !$dd_alive && $t1_display ne {private} && ![info exists dd_users] && [file isdirectory $dd_state]} {
+    set dd_so {}
+    catch {exec {*}[t1_home_preswitch_env] $dd start 2>@1} dd_so
+    catch {exec $dd status 2>@1} dd_st
+    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
+    if {$dd_alive} {
+      set dd_where "started the dev display (state dir $dd_state, with the pre-switch HOME)"
+    } else {
+      puts "display arm: the dev display in $dd_state would not start\
+ ([string trim [lindex [split [string trim $dd_so] \n] 0]]) -- using a private Xvfb"
+    }
+  }
+  if {[llength $dcases] && !$dd_alive} {
+    set px [t1_private_xvfb $dd]
+    if {[llength $px]} {
+      lassign $px dd_num dd_env dd_xpid dd_wm
+      set dd_alive 1
+      set dd_where "PRIVATE Xvfb :$dd_num for this run only (pid $dd_xpid, wm $dd_wm)"
+    } else {
+      set dd_why $t1_xvfb_why
+      set dd_where "NONE -- $dd_why"
+    }
+  }
+  if {[llength $dcases]} { puts "display arm: $dd_where" }
+  ## ⚠ CHOSEN BEFORE THE hcases LOOP, AND HANDED TO IT (stage B). Three hcases
+  ## suites spawn ONE display child each through `devdisplay.sh exec` and skip
+  ## that row when `devdisplay.sh status` says no: test_ev_precision_bound_1606
+  ## (D1-D4), test_typeless_symbol_1603 (N2), test_ps_valid_1350 (V26). They ask
+  ## devdisplay.sh because that is the only router they have, and status is the
+  ## precondition for its exec. With only the carried state dir they could see
+  ## nothing but the dev display, so a private-display gate skipped them where
+  ## an attached gate ran them. Passing the private arm's state dir and number
+  ## points that same router at the display this run actually owns: an attached
+  ## run passes nothing (the carried state dir already names the dev display),
+  ## ⚠ A run that took NO display -- it stepped aside or was told
+  ## T1_DISPLAY=private, and then no private Xvfb would start -- must not pass
+  ## nothing: the carried state dir names the dev display, and the rows would
+  ## route onto the display this run kept off. It hands a state dir that does
+  ## not exist, so they skip (row TD12 of test_t1_display_arm.tcl).
+  set dd_hcvars [lrange $dd_env 1 end]
+  if {[llength $dcases] && ![llength $dd_env] && ![string match {attached *} $dd_where]
+      && ![string match {started *} $dd_where]} {
+    set dd_hcvars [list XSCHEM_DEVDISPLAY_DIR=[file join [pwd] results .no-display-arm]]
+  }
   # Headless self-checks driven directly through the built binary (needs xschem to resolve its
   # share dir: installed, or a source-tree run with XSCHEM_SHAREDIR set). Each case prints
   # "... : FAIL" per failed check (counted by summarize_all's FAIL$ grep) and ends with a
@@ -2254,7 +2519,9 @@ foreach tc $tcases {
     ## forking, so `timeout` stays xschem's own direct parent and rc 124 still
     ## reaches `t1_why`. Section X of tests/headless/test_home_isolation.tcl
     ## pins this; row X2 there shows the row really does go red without it.
-    set hccmd [concat $t1_pre [list env -u DISPLAY \
+    ## $dd_hcvars: the private display arm's state dir and number, or nothing
+    ## (see `set dd_hcvars`); inside the same `env`, so it changes no routing.
+    set hccmd [concat $t1_pre [list env -u DISPLAY {*}$dd_hcvars \
                                     $xschem_cmd --nogui --pipe -q --script ${hc}.tcl]]
     if {[catch {eval exec $hccmd > $hclog 2>@1} msg opt]} {
       set ec [dict get $opt -errorcode]
@@ -2282,82 +2549,6 @@ foreach tc $tcases {
   # exists, routes through devdisplay.sh and does NOT pass --nogui -- because a
   # restored arm that nothing notices the removal of is the trap 0891 already
   # sprang once.
-  set dd [file join headless devdisplay.sh]
-  ## ⚠ AND EVERY CHILD GETS ITS OWN --logdir (issue 1359).  A GUI xschem
-  ## launched WITHOUT one writes its action log to /tmp/Xschem.log.N, taking the
-  ## lowest free N -- which is exactly where the USER'S OWN interactive sessions
-  ## put theirs.  There are ~20 display-arm cases, so one T1 run claimed the
-  ## first ~20 slots and overwrote whatever was in them.  MEASURED: a single
-  ## solo run destroyed five of the nine /tmp/Xschem.log.* files on this
-  ## machine, and a later one destroyed the log the whole RDW batch had been
-  ## diagnosed from.  The --nogui arms are safe -- a headless run with no
-  ## --logdir creates no log at all (test_action_log.sh case 4) -- so it is
-  ## ONLY this arm, and this is the only line that has to change.
-  ##
-  ## Under the results directory rather than a temp dir, because a display-arm
-  ## case that WANTS its action log (there are such cases) can then read it,
-  ## and because a stray log left behind is a test artifact where a reader
-  ## expects test artifacts.
-  set dlogdir [file join [pwd] results .actionlogs]
-  file mkdir $dlogdir
-  ## ⚠ WHICH DISPLAY THE ARM RUNS ON (DECISIONS D8). This used to be one line,
-  ## `exec $dd start`, run with whatever HOME this process had -- which for a
-  ## stranger meant a PERSISTENT Xvfb + openbox started into their real home and
-  ## never stopped (audit F36), and under a throwaway HOME is exactly how the
-  ## orphan holding :99 on the developer's box was made: started with a HOME
-  ## that was deleted under it. Now, in order:
-  ##   1. attach to the dev display through the carried state dir;
-  ##   2. auto-start it ONLY if that state dir already exists (the tester has
-  ##      used it before), and only with the PRE-switch environment, so that a
-  ##      long-lived display never inherits a HOME that is about to be deleted;
-  ##   3. otherwise, or if that start fails (exit 4 on a foreign :99), a PRIVATE
-  ##      Xvfb for this run only (t1_private_xvfb), killed when the arm is done;
-  ##   4. NODISPLAY only when no Xvfb is installed at all. An Xvfb that is
-  ##      installed and will not start is a COUNTED failure: turning a broken
-  ##      display into silence is what issue 0891 was.
-  ## ⚠ STEP 3 TURNS 11 UNCOUNTED NODISPLAY LINES INTO 11 COUNTED RUNS on every
-  ## box without a dev display, which is why it was measured green on the
-  ## private arm before it landed (doc/claude/outsider_fixes_batch/receipts/S2c-T.md).
-  set dd_state [file join $env(HOME) .claude xschem_dev_display]
-  if {[info exists env(XSCHEM_DEVDISPLAY_DIR)] && $env(XSCHEM_DEVDISPLAY_DIR) ne {}} {
-    set dd_state $env(XSCHEM_DEVDISPLAY_DIR)
-  }
-  set dd_env {}
-  set dd_why {}
-  set dd_where {}
-  set dd_st {}
-  set dd_alive 0
-  ## No display case, no display: a driver whose list is empty (1476's staged
-  ## copies) must not start an Xvfb it will never use.
-  if {[llength $dcases]} {
-    catch {exec $dd status 2>@1} dd_st
-    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
-  }
-  if {$dd_alive} { set dd_where "attached to the dev display (state dir $dd_state)" }
-  if {[llength $dcases] && !$dd_alive && [file isdirectory $dd_state]} {
-    set dd_so {}
-    catch {exec {*}[t1_home_preswitch_env] $dd start 2>@1} dd_so
-    catch {exec $dd status 2>@1} dd_st
-    set dd_alive [expr {[string match {*state:*alive*} $dd_st] ? 1 : 0}]
-    if {$dd_alive} {
-      set dd_where "started the dev display (state dir $dd_state, with the pre-switch HOME)"
-    } else {
-      puts "display arm: the dev display in $dd_state would not start\
- ([string trim [lindex [split [string trim $dd_so] \n] 0]]) -- using a private Xvfb"
-    }
-  }
-  if {[llength $dcases] && !$dd_alive} {
-    set px [t1_private_xvfb $dd]
-    if {[llength $px]} {
-      lassign $px dd_num dd_env dd_xpid dd_wm
-      set dd_alive 1
-      set dd_where "PRIVATE Xvfb :$dd_num for this run only (pid $dd_xpid, wm $dd_wm)"
-    } else {
-      set dd_why $t1_xvfb_why
-      set dd_where "NONE -- $dd_why"
-    }
-  }
-  if {[llength $dcases]} { puts "display arm: $dd_where" }
   foreach dc $dcases {
     puts "Start ${dc}.tcl (display arm)"
     incr t1_cases

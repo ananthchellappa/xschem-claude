@@ -1021,6 +1021,12 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
 - **Two runs in one tree both proceed**; a live peer is announced (`another regression
   run is live in this tree (pid: …)`), so **zero such lines in your run's output is
   positive evidence it ran solo.** This exists so no crew is turned away, not for speed.
+- **`T1_DISPLAY=auto|dev|private` (default `auto`) picks the display arm.** `auto` attaches
+  to the dev display unless another live run is on it (an `xschem` with `DISPLAY=:99`, or a
+  T1, `run_suites.sh` or `full_audit.sh` on the same state dir, matched by `/proc` identity),
+  then takes a private Xvfb and prints `display arm: the dev display :99 is IN USE by …`; the
+  `hcases` rows gated on `devdisplay.sh status` follow it there. `dev` attaches regardless;
+  `private` never attaches. Fenced by `test_t1_display_arm`.
 - The lock is only a publish mutex around the final copy. Knobs: `T1_LOG_LOCK_WAIT`
   (60 s), `T1_LOG_LOCK_TTL` (300 s), `T1_VERDICT_KEEP` (86400 s; sweeps dead runs'
   `results.<pid>.log`, never one whose `/proc/<pid>` exists). A stale lock is broken
