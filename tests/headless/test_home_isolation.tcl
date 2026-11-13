@@ -1237,6 +1237,7 @@ proc mkfdir {name {dcases st1} {extra {}}} {
   file mkdir [file join $fd headless]
   foreach f {test_utility.tcl banner_rule.tcl cleanup_debug_file.awk} { file copy -force [file join $::tdir $f] $fd }
   file copy -force $::DDSH [file join $fd headless devdisplay.sh]
+  file copy -force [file join $::tdir headless dev_display_users.tcl] [file join $fd headless dev_display_users.tcl]
   set sa [spit [file join $fd standin.sh] "#!/bin/sh\necho \"STANDIN DISPLAY=\${DISPLAY:-unset} HOME=\$HOME GATE=\${GUI_GATE:-unset}\"\n$extra\necho \"OVERALL: ok\"\nexit 0\n"]
   file attributes $sa -permissions 0755
   set ok [mkdrv [slurp $::RRSRC] [file join $fd drv.tcl] \

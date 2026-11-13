@@ -598,6 +598,9 @@ set fdir [file join $scratch f4] ; file mkdir $fdir
 foreach f {test_utility.tcl banner_rule.tcl cleanup_debug_file.awk} {
   file copy -force [file join $tdir $f] $fdir
 }
+## the driver sources headless/dev_display_users.tcl (stage E of backlog 2026-11-12)
+file mkdir [file join $fdir headless]
+file copy -force [file join $tdir headless dev_display_users.tcl] [file join $fdir headless]
 ## The slow stand-in must emit MORE than one buffer's worth of countable lines,
 ## or run A's verdict never reaches the disk before run B truncates it and the
 ## whole race is invisible.
@@ -797,6 +800,8 @@ set v5dir [file join $scratch v5] ; file mkdir $v5dir
 foreach f {test_utility.tcl banner_rule.tcl cleanup_debug_file.awk} {
   catch {file copy -force [file join $tdir $f] $v5dir}
 }
+catch {file mkdir [file join $v5dir headless]
+       file copy -force [file join $tdir headless dev_display_users.tcl] [file join $v5dir headless]}
 
 ## THE FIVE STAND-IN CASES, and what each one is for:
 ##   s1  two skips and a check count, no failures -- the ordinary lost-coverage

@@ -1525,6 +1525,7 @@ proc summarize_all {fn fd {label {}}} {
 
 source test_utility.tcl  ;# defines $xschem_cmd (used by the headless cases below) + helpers
 source banner_rule.tcl   ;# banner_complete / banner_died / regression_case_failed (issue 0689)
+source [file join headless dev_display_users.tcl] ;# t1_dev_display_users, shared with xvfb_arm.sh (stage E)
 
 ## ⚠ THE CASES WRITE THEIR OWN LOGS, IN THEIR OWN PROCESSES. `tclsh
 ## open_close.tcl` is a separate pid, so this driver and that case cannot both
@@ -1804,138 +1805,13 @@ proc t1_private_reaper_stop {rp rd} {
 }
 
 ## ---------------------------------------------------------------------------
-## IS THE DEV DISPLAY IN USE BY SOMEONE ELSE? (backlog 2026-11-12, stage B)
+## IS THE DEV DISPLAY IN USE BY SOMEONE ELSE? (backlog 2026-11-12, stages B, E)
 ## ---------------------------------------------------------------------------
-## Two sessions on one machine share the persistent dev display, and a T1 that
-## attaches to it while another run's windows are mapped there measures a
-## display it does not own. So in `auto` (T1_DISPLAY, below) the display arm
-## asks this question first and takes a private Xvfb when the answer is yes.
-##
-## ⚠ BY IDENTITY, NEVER BY PATTERN (CLAUDE.md, "Match shared namespaces by
-## identity"). `pgrep -f run_regression` matches the shell that asked. This
-## reads /proc/<pid>/comm, cmdline and environ, and a process counts only as
-## one of these shapes:
-##   * comm `xschem` whose environment names the dev display (`DISPLAY=:N`);
-##   * a T1 (comm `tclsh*`, an argument whose tail is run_regression.tcl) or a
-##     run_suites.sh / full_audit.sh (by comm, or as the script argument of a
-##     shell), whose EFFECTIVE dev display is this one: its own
-##     XSCHEM_DEVDISPLAY_DIR (else its HOME's default, devdisplay.sh's rule)
-##     names the same state dir, and its DEVDISPLAY_NUM (else 99) the same
-##     number. A run pointed somewhere else -- the old missing-state-dir trick,
-##     a fixture state dir, an AUDIT_DISPLAY naming another display, or
-##     T1_DISPLAY=private -- is not using this display, and is not counted.
-##   * a T1 that has already gone private says so by identity too: a live Xvfb
-##     whose environment carries XSCHEM_TEST_T1_XVFB_TAG=t1.<its pid>.<...>
-##     (t1_private_xvfb's tag) is that run's own display, so the run is not
-##     counted.
-## ⚠ /proc/<pid>/environ is the EXEC-TIME environment, which is exactly what
-## devdisplay.sh's own default reads, so the comparison is like for like.
-## ⚠ SELF, ANCESTORS AND DESCENDANTS ARE NEVER COUNTED: a T1 launched from a
-## suite that runs under run_suites.sh is part of that run, not a rival to it.
-## Returns a list of {pid comm reason}.
-proc t1_proc_words {pid what} {
-  if {[catch {set f [open /proc/$pid/$what r]; fconfigure $f -translation binary
-              set d [read $f]; close $f}]} { return {} }
-  return [lrange [split $d \x00] 0 end-1]
-}
-proc t1_proc_envget {envl name} {
-  set i [lsearch -glob $envl "$name=*"]
-  if {$i < 0} { return {} }
-  return [string range [lindex $envl $i] [string length "$name="] end]
-}
-proc t1_proc_stat {pid} {
-  if {[catch {set f [open /proc/$pid/stat r]; set s [read $f]; close $f}]} { return {} }
-  set r [string last ") " $s]
-  if {$r < 0} { return {} }
-  set l [string first "(" $s]
-  return [list [string range $s [expr {$l + 1}] [expr {$r - 1}]] \
-               [lindex [string range $s [expr {$r + 2}] end] 1]]
-}
-proc t1_dev_display_users {num state} {
-  set state [file normalize $state]
-  set me [pid]
-  array set ppid {} ; array set comm {}
-  foreach p [glob -nocomplain -directory /proc -tails {[0-9]*}] {
-    if {![string is integer -strict $p]} continue
-    set st [t1_proc_stat $p]
-    if {![llength $st]} continue
-    set comm($p) [lindex $st 0]
-    set ppid($p) [lindex $st 1]
-  }
-  ## my ancestors
-  set skip [list $me]
-  set q $me
-  for {set i 0} {$i < 64 && [info exists ppid($q)] && $ppid($q) > 1} {incr i} {
-    set q $ppid($q) ; lappend skip $q
-  }
-  set users {} ; set cand {} ; set private {}
-  foreach p [array names comm] {
-    if {[lsearch -exact $skip $p] >= 0} continue
-    ## my descendants
-    set q $p ; set mine 0
-    for {set i 0} {$i < 64 && [info exists ppid($q)] && $ppid($q) > 1} {incr i} {
-      set q $ppid($q)
-      if {$q == $me} { set mine 1 ; break }
-    }
-    if {$mine} continue
-    set c $comm($p)
-    set role {}
-    if {$c eq {xschem}} {
-      set role xschem
-    } elseif {$c eq {Xvfb}} {
-      set role xvfb
-    } elseif {$c in {run_suites.sh full_audit.sh}} {
-      set role $c
-    } else {
-      set args [t1_proc_words $p cmdline]
-      if {[string match tclsh* $c]} {
-        foreach a [lrange $args 1 end] {
-          if {[file tail $a] eq {run_regression.tcl}} { set role T1 ; break }
-        }
-      } elseif {$c in {sh bash dash}} {
-        foreach a [lrange $args 1 end] {
-          if {[file tail $a] in {run_suites.sh full_audit.sh}} { set role [file tail $a] ; break }
-        }
-      }
-    }
-    if {$role eq {}} continue
-    set e [t1_proc_words $p environ]
-    if {$role eq {xvfb}} {
-      set tag [t1_proc_envget $e XSCHEM_TEST_T1_XVFB_TAG]
-      if {[regexp {^t1\.([0-9]+)\.} $tag -> owner]} { lappend private $owner }
-      continue
-    }
-    if {$role eq {xschem}} {
-      if {[regexp "^:$num\(\\.\[0-9\]+\)?\$" [t1_proc_envget $e DISPLAY]]} {
-        lappend users [list $p xschem "an xschem with DISPLAY=:$num"]
-      }
-      continue
-    }
-    set sd [t1_proc_envget $e XSCHEM_DEVDISPLAY_DIR]
-    if {$sd eq {}} {
-      set h [t1_proc_envget $e HOME]
-      if {$h eq {}} continue
-      set sd [file join $h .claude xschem_dev_display]
-    }
-    if {[file normalize $sd] ne $state} continue
-    set n [t1_proc_envget $e DEVDISPLAY_NUM]
-    if {$n eq {}} { set n 99 }
-    if {$n ne $num} continue
-    if {$role eq {T1}} {
-      if {[string tolower [string trim [t1_proc_envget $e T1_DISPLAY]]] eq {private}} continue
-    } else {
-      set ad [t1_proc_envget $e AUDIT_DISPLAY]
-      if {$ad ne {} && $ad ne {auto} && $ad ne ":$num"} continue
-    }
-    lappend cand [list $p $role]
-  }
-  foreach pr $cand {
-    lassign $pr p role
-    if {$role eq {T1} && [lsearch -exact $private $p] >= 0} continue
-    lappend users [list $p $comm($p) "a $role run on the dev display's state dir"]
-  }
-  return [lsort -integer -index 0 $users]
-}
+## t1_dev_display_users and its /proc readers live in
+## tests/headless/dev_display_users.tcl, sourced at the top of this file, so
+## that xvfb_arm.sh (run_suites.sh, full_audit.sh, gated_xschem.sh) asks the
+## SAME question by the same code rather than by a copy that can drift. The
+## rule and its exclusions are documented there.
 
 proc t1_private_xvfb {dd} {
   set ::t1_xvfb_why {}
@@ -2410,9 +2286,7 @@ foreach tc $tcases {
     regexp -line {^display:\s*:([0-9]+)} $dd_st -> dd_n
     set dd_users [t1_dev_display_users $dd_n $dd_state]
     if {[llength $dd_users]} {
-      set dd_who {}
-      foreach u $dd_users { lappend dd_who "pid [lindex $u 0] ([lindex $u 1]: [lindex $u 2])" }
-      puts "display arm: the dev display :$dd_n is IN USE by [join $dd_who {, }] --\
+      puts "display arm: the dev display :$dd_n is IN USE by [t1_dev_display_who $dd_users] --\
  using a private Xvfb instead (T1_DISPLAY=dev attaches anyway)"
       set dd_alive 0
     }

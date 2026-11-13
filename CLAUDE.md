@@ -1259,8 +1259,10 @@ tests/headless/devdisplay.sh status|stop
   `start`.
 - **`test_wave_markers` times out when `run_suites.sh` attaches to a dev display**
   (issue 1488, pre-existing): with `:99` up that `TIMEOUT` is not your change. It passes
-  on the private `xvfb-run` display (dev display down); no knob goes private while
-  `:99` is up.
+  on the private `xvfb-run` display; `AUDIT_DISPLAY=private` takes that arm with `:99` up.
+- **A launcher steps aside for another run on the dev display**, by the same detector as
+  `T1_DISPLAY=auto` (`tests/headless/dev_display_users.tcl`, shared): it then prints
+  `display arm: the dev display :99 is IN USE by …` and takes a private Xvfb.
 
 ### There are three X servers here, and `:0` is not the user's screen
 
@@ -1340,6 +1342,13 @@ its own defects; `=$DISPLAY` for the user's screen) or `=none` (GUI legs self-sk
 default 200, never below 100, since bare `xvfb-run -a` starts at the dev display's `:99`;
 D17.8); `AUDIT_WM` (default `openbox`, `/usr/bin/openbox` 3.6.1 as checked 2026-09-17;
 `none` = empty Xvfb).
+
+- **`AUDIT_DISPLAY=auto|dev|private` (default `auto`) is `T1_DISPLAY`'s vocabulary**: `auto`
+  attaches to the dev display unless another live run holds it, `dev` attaches regardless,
+  `private` never attaches; an explicit display (`:0`, `none`) wins and asks nobody. A
+  launcher that cannot ask (no `tclsh`, helper missing, past `XVFB_ARM_ASK_TIMEOUT`) goes
+  private; one stepping aside with no `xvfb-run` unsets `DISPLAY`, never inheriting it. Fenced
+  by rows `TL1`–`TL11` of `test_t1_display_arm`.
 
 - **`GUI_GATE=0` is forced on the Xvfb arm, not defaulted**: `_gate_enabled` only
   checks that `$DISPLAY` is non-empty, so `gate_start` → `_gate_attention` would move

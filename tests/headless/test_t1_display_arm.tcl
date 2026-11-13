@@ -16,6 +16,15 @@
 #   * obeys T1_DISPLAY=dev (attach anyway) and T1_DISPLAY=private (never
 #     attach); anything else is read as private, the side that disturbs nobody.
 #
+# STAGE E (doc/claude/backlog_1112_batch/receipts/E-launchers.md): the
+# launchers step aside too. The detector moved to
+# tests/headless/dev_display_users.tcl, which run_regression.tcl sources and
+# xvfb_arm.sh runs as a script, so run_suites.sh, full_audit.sh and
+# gated_xschem.sh answer "who holds the dev display" by the same code.
+# AUDIT_DISPLAY takes T1_DISPLAY's vocabulary (auto|dev|private). Rows TL1-TL9
+# run the REAL launchers against the same fixture dev display, with a stand-in
+# binary; TL3 asks a T1 copy and a launcher about one process table at once.
+#
 # THE METHOD. Every row but TD11 runs a COPY of the real run_regression.tcl
 # (rows are measured against the driver as it stands, not a model of it) with
 # empty tcases, one hcases and one dcases entry, and a stand-in for the binary
@@ -74,6 +83,7 @@ set repo  [file normalize [file join $here .. ..]]
 set tdir  [file join $repo tests]
 set RRSRC [file join $tdir run_regression.tcl]
 set DDSH  [file join $here devdisplay.sh]
+set DDU   [file join $here dev_display_users.tcl]
 set S     [test_scratch t1da]
 set PATHV $::env(PATH)
 set XS    [info nameofexecutable]
@@ -128,6 +138,7 @@ proc mkdrv {name} {
   file mkdir [file join $fd headless]
   foreach f {test_utility.tcl banner_rule.tcl cleanup_debug_file.awk} { file copy -force [file join $::tdir $f] $fd }
   file copy -force $::DDSH [file join $fd headless devdisplay.sh]
+  file copy -force $::DDU [file join $fd headless dev_display_users.tcl]
   set sa [spit [file join $fd standin.sh] [join [list \
     {#!/bin/sh} \
     {"$(dirname "$0")/headless/devdisplay.sh" status >/dev/null 2>&1; st=$?} \
@@ -239,6 +250,65 @@ set SH    [exec readlink -f [lindex [auto_execok sh] 0]]
 set TCLSH [exec readlink -f [lindex [auto_execok tclsh] 0]]
 set NAP   [spit [file join $S nap.tcl] "after 120000\n"]
 
+## ---------------------------------------------------------------------------
+## THE LAUNCHERS (stage E). run_suites.sh, full_audit.sh and gated_xschem.sh,
+## the REAL ones in this directory, run with XSCHEM pointing at a stand-in that
+## appends the DISPLAY it was handed to a log, in a clean environment naming
+## the fixture dev display. Their own private Xvfb numbers from
+## $LBASE (AUDIT_XVFB_BASE), clear of the fixture range; AUDIT_WM=none.
+## full_audit.sh runs only files that exist, so it is handed this suite's own
+## name; the stand-in runs in its place, so nothing recurses.
+## ---------------------------------------------------------------------------
+set LBASE [expr {$FN + 20}]
+set LPROBE [spit [file join $S lprobe.tcl] "# a stand-in suite: the stand-in binary never reads it\n"]
+set LSA [spit [file join $S lstandin.sh] [join [list \
+  {#!/bin/sh} \
+  {echo "LSTANDIN DISPLAY=${DISPLAY:-unset}" >> "$LSTANDIN_LOG"} \
+  {echo "RESULT: ALL PASS (1 checks)"} {echo "OVERALL: ok (1 checks)"} {exit 0} {}] \n]]
+file attributes $LSA -permissions 0755
+set ::lch_n 0
+## Run one launcher; returns {rc output displays-the-stand-in-saw}.
+proc runlch {which extra {anc {}}} {
+  global FH FN LBASE LSA LPROBE
+  set log [file join $::S lch_[incr ::lch_n].log]
+  set envl [list PATH=$::PATHV HOME=$FH TMPDIR=$::S DEVDISPLAY_NUM=$FN AUDIT_XVFB_BASE=$LBASE \
+              AUDIT_WM=none GUI_GATE=0 XSCHEM=$LSA LSTANDIN_LOG=$log {*}$extra]
+  switch -- $which {
+    run_suites { set cmd [list bash [file join $::here run_suites.sh] $LPROBE] }
+    full_audit { set cmd [list bash [file join $::here full_audit.sh] test_t1_display_arm] }
+    gated      { set cmd [list bash [file join $::here gated_xschem.sh] --version] }
+  }
+  if {$anc ne {}} { set cmd [list $anc -c {"$@"; exit $?} xschem {*}$cmd] }
+  set rc 0
+  if {[catch {exec timeout 120 env -i {*}$envl {*}$cmd 2>@1} out opt]} {
+    set ec [dict get $opt -errorcode]
+    set rc [expr {[lindex $ec 0] eq {CHILDSTATUS} ? [lindex $ec 2] : 1}]
+  }
+  set seen {}
+  foreach {- d} [regexp -all -inline -line {^LSTANDIN DISPLAY=(\S+)} [slurp $log]] { lappend seen $d }
+  set seen [lsort -unique $seen]
+  return [list $rc $out $seen]
+}
+## The arm a launcher took: {attached :N} | {private :N} | {other <line>}, read
+## from the display the stand-in saw, cross-checked against xvfb_arm's line.
+proc larm_of {out seen} {
+  global FN
+  if {[llength $seen] != 1} { return [list other "stand-in saw [list $seen]"] }
+  if {$seen eq ":$FN" && [regexp -line "^display arm: ATTACHED to persistent dev display :$FN " $out]} {
+    return [list attached $seen]
+  }
+  if {[regexp -line {^display arm: private Xvfb from } $out] && $seen ne ":$FN" && [regexp {^:[0-9]+$} $seen]} {
+    return [list private $seen]
+  }
+  return [list other "saw $seen"]
+}
+## The pids an IN-USE notice names, sorted.
+proc named_pids {out} {
+  set l {} ; regexp -line {IN USE by (.*?) -- using} $out -> l
+  set r {} ; foreach {- p} [regexp -all -inline {pid ([0-9]+)} $l] { lappend r $p }
+  return [lsort -integer $r]
+}
+
 ## Every row below runs inside one catch, so a Tcl error in any of them is a
 ## counted ABORTED line and the fixture display and holders are still stopped
 ## (an uncaught error exits 0 from --nogui and would leave both behind).
@@ -342,8 +412,23 @@ lappend ps5 $ptag
 lappend ps5 [hold [list XSCHEM_TEST_T1_XVFB_TAG=t1.$ptag.0.150.1] [named $TCLSH Xvfb] $NAP]
 lappend ps5 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN AUDIT_DISPLAY=:$other] $rs1]
 lappend ps5 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN] $SH -c {while :; do sleep 1; done # run_regression.tcl run_suites.sh}]
+## stage E: a launcher that already took a private Xvfb (xvfb_arm.sh re-execs it
+## with XSCHEM_XVFB_ARM=1 and the private DISPLAY), and one told
+## AUDIT_DISPLAY=private, are not on the dev display either.
+lappend ps5 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN XSCHEM_XVFB_ARM=1 DISPLAY=:$other] $rs1]
+lappend ps5 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN AUDIT_DISPLAY=private] $rs1]
 lassign [mkdrv d5] fd5 inj5
 lassign [rundrv $fd5 {}] rc5 out5
+## TL4: the same decoys, the same moment, asked by a launcher.
+set tl4 {}
+foreach w {run_suites gated} {
+  lassign [runlch $w {}] lrc lout lseen
+  set la [larm_of $lout $lseen]
+  if {[lindex $la 0] ne {attached} || [has_text $lout {IN USE}]} {
+    set n {} ; regexp -line {IN USE by .*$} $lout n
+    lappend tl4 "$w: rc=$lrc arm=[list $la] notice=[expr {$n eq {} ? {none} : $n}]"
+  }
+}
 set alive5 0 ; foreach p $ps5 { incr alive5 [running $p] }
 unhold $ps5
 set a5 [arm_of $out5]
@@ -351,6 +436,9 @@ set n5 {} ; regexp -line {IN USE by .*$} $out5 n5
 check TD5-auto-ignores-processes-that-merely-look-like-users \
   [expr {$inj5 && $rc5 == 0 && $alive5 == [llength $ps5] && [lindex $a5 0] eq {attached} && $n5 eq {}}] \
   "-- [llength $ps5] decoys, $alive5 still alive when the driver finished (all must be); rc=$rc5 arm=[list $a5] (must be attached); notice: [expr {$n5 eq {} ? {none} : $n5}]"
+check TL4-a-launcher-in-auto-ignores-the-same-decoys-and-attaches \
+  [expr {$alive5 == [llength $ps5] && [llength $tl4] == 0}] \
+  "-- run_suites.sh and gated_xschem.sh asked while the same [llength $ps5] decoys were alive ($alive5 alive at the end). Not attached, or a notice printed (must be none): [expr {[llength $tl4] ? [join $tl4 {; }] : {none}}]"
 
 ## ---------------------------------------------------------------------------
 ## TD6 -- never itself: the driver run UNDER an ancestor named xschem whose
@@ -423,6 +511,159 @@ foreach {lab extra holds} [list private [list T1_DISPLAY=private] 0 auto-in-use 
 check TD12-no-display-arm-at-all-the-hcases-child-is-not-handed-the-dev-display \
   [expr {$td12n == 2 && [llength $td12] == 0}] \
   "-- $td12n drive(s) with an Xvfb that will not start; the hcases stand-in must see a devdisplay.sh status that is NOT 0 (and the arm must say NONE). Not so (must be none): [expr {[llength $td12] ? [join $td12 {; }] : {none}}]"
+
+## ---------------------------------------------------------------------------
+## TL -- THE LAUNCHERS STEP ASIDE TOO (stage E). xvfb_arm.sh asks the same
+## question by the same code (tests/headless/dev_display_users.tcl) for
+## run_suites.sh, full_audit.sh and gated_xschem.sh.
+## TL1 idle: each attaches.  TL2 an xschem on the dev display: each goes
+## private and names it.  TL3 parity: with an xschem and a peer T1 holding it
+## at once, a T1 copy and a launcher name the SAME pids, and a run_suites.sh
+## holder alone is named too.  TL5 a nested launcher that inherited an
+## attached arm (XSCHEM_XVFB_ARM=1, DISPLAY=:N) IS a holder.  TL6 the knobs:
+## AUDIT_DISPLAY=dev attaches anyway, =private never attaches and says so, an
+## explicit display wins and asks nobody.  TL7 never itself: a launcher under
+## an ancestor named xschem on the dev display attaches.  TL8 one
+## implementation.  TL9 a launcher that cannot ask goes private.
+## ---------------------------------------------------------------------------
+set tl1 {} ; set tl2 {}
+foreach w {run_suites full_audit gated} {
+  lassign [runlch $w {}] lrc lout lseen
+  set la [larm_of $lout $lseen]
+  if {[lindex $la 0] ne {attached} || [has_text $lout {IN USE}]} { lappend tl1 "$w: rc=$lrc arm=[list $la]" }
+  set ph [hold [list DISPLAY=:$FN] $hx $NAP]
+  lassign [runlch $w {}] lrc lout lseen
+  unhold [list $ph]
+  set la [larm_of $lout $lseen]
+  if {[lindex $la 0] ne {private} || [named_pids $lout] ne [list $ph]} {
+    lappend tl2 "$w (holder $ph): rc=$lrc arm=[list $la] named=[list [named_pids $lout]]"
+  }
+}
+check TL1-a-launcher-in-auto-with-nobody-on-the-dev-display-attaches \
+  [expr {[llength $tl1] == 0}] \
+  "-- run_suites.sh, full_audit.sh, gated_xschem.sh with the fixture dev display :$FN up and idle; the stand-in must see :$FN. Not so (must be none): [expr {[llength $tl1] ? [join $tl1 {; }] : {none}}]"
+check TL2-a-launcher-in-auto-with-an-xschem-on-the-dev-display-goes-private-and-names-it \
+  [expr {[llength $tl2] == 0}] \
+  "-- the same three, each with an xschem (DISPLAY=:$FN) alive; each must take a private Xvfb from :$LBASE and name exactly that pid. Not so (must be none): [expr {[llength $tl2] ? [join $tl2 {; }] : {none}}]"
+
+set ph1 [hold [list DISPLAY=:$FN] $hx $NAP]
+set ph2 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN] $TCLSH $peerrr]
+lassign [mkdrv dl3] fdl3 injl3
+lassign [rundrv $fdl3 {}] rcl3 outl3
+lassign [runlch run_suites {}] lrc3 lout3 lseen3
+unhold [list $ph1 $ph2]
+set want3 [lsort -integer [list $ph1 $ph2]]
+set t1n [named_pids $outl3] ; set lnn [named_pids $lout3]
+set ph3 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN] $rs1]
+lassign [runlch full_audit {}] lrc3b lout3b lseen3b
+unhold [list $ph3]
+check TL3-a-T1-and-a-launcher-name-the-same-holders-on-one-process-table \
+  [expr {$injl3 && $t1n eq $want3 && $lnn eq $want3 && [lindex [larm_of $lout3 $lseen3] 0] eq {private}
+         && [named_pids $lout3b] eq [list $ph3] && [lindex [larm_of $lout3b $lseen3b] 0] eq {private}}] \
+  "-- holders {xschem $ph1, peer T1 $ph2} at once: the T1 copy named [list $t1n], run_suites.sh named [list $lnn] (both must be [list $want3]) and took [list [larm_of $lout3 $lseen3]]; a run_suites.sh holder $ph3 alone: full_audit.sh named [list [named_pids $lout3b]] and took [list [larm_of $lout3b $lseen3b]]"
+
+set ph5 [hold [list HOME=$FH DEVDISPLAY_NUM=$FN XSCHEM_XVFB_ARM=1 DISPLAY=:$FN] $rs1]
+lassign [runlch run_suites {}] lrc5 lout5 lseen5
+unhold [list $ph5]
+## and one told AUDIT_DISPLAY=dev, which attaches whatever else is there
+## (stage E verify: that holder rule was asserted by no row).
+set ph5d [hold [list HOME=$FH DEVDISPLAY_NUM=$FN AUDIT_DISPLAY=dev] $rs1]
+lassign [runlch run_suites {}] lrc5d lout5d lseen5d
+unhold [list $ph5d]
+check TL5-a-nested-launcher-on-an-attached-arm-or-one-told-dev-is-a-holder \
+  [expr {[named_pids $lout5] eq [list $ph5] && [lindex [larm_of $lout5 $lseen5] 0] eq {private}
+         && [named_pids $lout5d] eq [list $ph5d] && [lindex [larm_of $lout5d $lseen5d] 0] eq {private}}] \
+  "-- a run_suites.sh with XSCHEM_XVFB_ARM=1 and DISPLAY=:$FN (pid $ph5): named [list [named_pids $lout5]], arm [list [larm_of $lout5 $lseen5]]; one with AUDIT_DISPLAY=dev (pid $ph5d): named [list [named_pids $lout5d]], arm [list [larm_of $lout5d $lseen5d]] (both must be named, both arms private)"
+
+set tl6 {}
+set ph6 [hold [list DISPLAY=:$FN] $hx $NAP]
+lassign [runlch run_suites [list AUDIT_DISPLAY=dev]] r o v
+set la [larm_of $o $v]
+if {[lindex $la 0] ne {attached} || [has_text $o {IN USE}]} { lappend tl6 "dev with a holder: arm=[list $la]" }
+lassign [runlch run_suites [list AUDIT_DISPLAY=:$other]] r o v
+if {$v ne ":$other" || [has_text $o {IN USE}] || ![regexp -line "^display arm: :$other \\(explicit" $o]} {
+  lappend tl6 "explicit :$other with a holder: saw [list $v] IN-USE=[has_text $o {IN USE}]"
+}
+unhold [list $ph6]
+lassign [runlch run_suites [list AUDIT_DISPLAY=private]] r o v
+set la [larm_of $o $v]
+if {[lindex $la 0] ne {private} || ![regexp -line {^display arm: AUDIT_DISPLAY=private -- not attaching} $o]} {
+  lappend tl6 "private, idle: arm=[list $la] reason-line=[regexp -line {AUDIT_DISPLAY=private --} $o]"
+}
+check TL6-AUDIT_DISPLAY-dev-attaches-private-never-does-an-explicit-display-wins \
+  [expr {[llength $tl6] == 0}] \
+  "-- run_suites.sh with AUDIT_DISPLAY=dev and an xschem on :$FN (must attach), =:$other with the same holder (must use it verbatim, ask nobody), =private with nobody there (must go private and say why). Not so (must be none): [expr {[llength $tl6] ? [join $tl6 {; }] : {none}}]"
+
+lassign [runlch run_suites [list DISPLAY=:$FN] $anc] r7 o7 v7
+set la7 [larm_of $o7 $v7]
+check TL7-a-launcher-never-counts-itself-or-its-ancestors \
+  [expr {[lindex $la7 0] eq {attached} && ![has_text $o7 {IN USE}]}] \
+  "-- run_suites.sh under `$anc` (comm xschem, DISPLAY=:$FN): rc=$r7 arm=[list $la7] (must be attached)"
+
+## TL8: the rule exists once. Every *.tcl / *.sh under tests/ (scratch and
+## worktree copies aside) is read; exactly one defines t1_dev_display_users,
+## the driver sources that file, and xvfb_arm.sh runs it.
+set defs {}
+foreach f [split [exec find $tdir -type f ( -name *.tcl -o -name *.sh ) -not -path */.scratch/* -not -path */.work.* -not -path */results*] \n] {
+  if {[regexp -line {^\s*proc\s+(::)?t1_dev_display_users\M} [slurp $f]]} { lappend defs [file tail $f] }
+}
+set rrsrc [regexp -line {^\s*source\s+\[file join headless dev_display_users\.tcl\]} [slurp $RRSRC]]
+set xasrc [regexp -line {^\s*who=\$\(env -u DISPLAY tclsh "\$helper" } [slurp [file join $here xvfb_arm.sh]]]
+set xahlp [regexp -line {^\s*helper="\$\(dirname "\$_XVFB_ARM_SELF"\)/dev_display_users\.tcl"} [slurp [file join $here xvfb_arm.sh]]]
+check TL8-one-implementation-the-driver-sources-it-and-xvfb_arm-runs-it \
+  [expr {$defs eq {dev_display_users.tcl} && $rrsrc && $xasrc && $xahlp}] \
+  "-- files under tests/ defining t1_dev_display_users: [list $defs] (must be exactly dev_display_users.tcl); run_regression.tcl sources it=$rrsrc; xvfb_arm.sh names it=$xahlp and runs it=$xasrc"
+
+## TL9: a launcher whose helper is missing cannot ask, and goes private. A copy
+## of this directory's arming files WITHOUT dev_display_users.tcl.
+set cpd [file join $S nohelper] ; file mkdir $cpd
+foreach f {xvfb_arm.sh devdisplay.sh test_home.sh} { file copy -force [file join $here $f] $cpd }
+set log9 [file join $S lch_nohelper.log]
+catch {exec timeout 120 env -i PATH=$::PATHV HOME=$FH TMPDIR=$S DEVDISPLAY_NUM=$FN AUDIT_XVFB_BASE=$LBASE AUDIT_WM=none GUI_GATE=0 \
+         LSTANDIN_LOG=$log9 bash [file join $cpd xvfb_arm.sh] --arm $LSA 2>@1} o9
+set v9 {} ; foreach {- d} [regexp -all -inline -line {^LSTANDIN DISPLAY=(\S+)} [slurp $log9]] { lappend v9 $d }
+check TL9-a-launcher-that-cannot-ask-who-holds-the-dev-display-goes-private \
+  [expr {[regexp -line {^display arm: cannot ask who holds the dev display} $o9] && [llength $v9] == 1 && $v9 ne ":$FN"}] \
+  "-- xvfb_arm.sh --arm from a copy with no dev_display_users.tcl beside it, nobody on :$FN: the stand-in saw [list $v9] (must be one private display), the reason line present=[regexp -line {cannot ask who holds} $o9]"
+
+## TL10 (stage E verify): a helper that HANGS (a tclsh that never returns, the
+## shape of a /proc read stuck on a D-state process) is bounded: the launcher
+## goes private and says the ask failed, inside XVFB_ARM_ASK_TIMEOUT, instead
+## of waiting forever before any suite has a timeout of its own.
+set hangd [file join $S hangbin] ; file mkdir $hangd
+spit [file join $hangd tclsh] "#!/bin/sh\nexec sleep 600\n"
+file attributes [file join $hangd tclsh] -permissions 0755
+set t10 [clock milliseconds]
+lassign [runlch run_suites [list PATH=$hangd:$::PATHV XVFB_ARM_ASK_TIMEOUT=3]] r10 o10 v10
+set t10 [expr {[clock milliseconds] - $t10}]
+set la10 [larm_of $o10 $v10]
+check TL10-a-launcher-whose-ask-hangs-is-bounded-and-goes-private \
+  [expr {$r10 == 0 && [lindex $la10 0] eq {private} && [regexp -line {^display arm: asking who holds the dev display .* failed \(rc=124} $o10] && $t10 < 60000}] \
+  "-- run_suites.sh with a tclsh that never returns first on PATH, XVFB_ARM_ASK_TIMEOUT=3, nobody on :$FN: rc=$r10 (must be 0, not the outer timeout's 124) after ${t10}ms, arm=[list $la10] (must be private), the ask-failed line present=[regexp -line {asking who holds the dev display .* failed} $o10]"
+
+## TL11 (stage E verify): stepping aside must never land on the INHERITED
+## display. With no xvfb-run on PATH the spawn path falls back to whatever
+## DISPLAY the launcher inherited -- the user's real screen here -- where HEAD
+## attached the dev display. A launcher that stepped aside (auto, with a holder)
+## or was told private runs with DISPLAY unset instead, and says so.
+set noxr [file join $S noxr] ; file mkdir $noxr
+foreach dir [split $::PATHV :] {
+  foreach f [glob -nocomplain -directory $dir *] {
+    set b [file tail $f]
+    if {$b eq {xvfb-run} || [file exists [file join $noxr $b]]} continue
+    catch {file link -symbolic [file join $noxr $b] $f}
+  }
+}
+set tl11 {}
+set ph11 [hold [list DISPLAY=:$FN] $hx $NAP]
+lassign [runlch run_suites [list PATH=$noxr DISPLAY=:$other]] r o v
+if {$v ne {unset} || ![has_text $o {IN USE}]} { lappend tl11 "auto with a holder: rc=$r saw [list $v]" }
+unhold [list $ph11]
+lassign [runlch run_suites [list PATH=$noxr DISPLAY=:$other AUDIT_DISPLAY=private]] r o v
+if {$v ne {unset}} { lappend tl11 "private: rc=$r saw [list $v]" }
+check TL11-stepping-aside-without-xvfb-run-never-inherits-the-launchers-display \
+  [expr {[llength $tl11] == 0}] \
+  "-- run_suites.sh with no xvfb-run on PATH and DISPLAY=:$other inherited (standing for the user's screen); the stand-in must see DISPLAY unset. Not so (must be none): [expr {[llength $tl11] ? [join $tl11 {; }] : {none}}]"
 
 ## ---------------------------------------------------------------------------
 ## TD11 -- the population: every registered hcases suite whose `skip:` line is

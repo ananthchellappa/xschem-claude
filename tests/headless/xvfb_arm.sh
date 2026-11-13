@@ -57,10 +57,17 @@
 # INTERFACE
 #
 #   AUDIT_DISPLAY   unset | auto  attach to the persistent dev display if one
-#                                 is up (devdisplay.sh), else spawn a private
-#                                 Xvfb                                (DEFAULT)
+#                                 is up (devdisplay.sh) and no other run holds
+#                                 it, else spawn a private Xvfb      (DEFAULT)
+#                   dev           attach to the dev display even if another
+#                                 run holds it (private Xvfb if it is down)
+#                   private       never attach; always a private Xvfb
 #                   none          run with DISPLAY unset; GUI legs self-skip
 #                   :0  (or any)  use that display verbatim
+#                   (auto/private with no xvfb-run: DISPLAY unset, never
+#                   the inherited one)
+#   XVFB_ARM_ASK_TIMEOUT  seconds `auto` may spend asking who holds the dev
+#                   display (default 20); past it, a private Xvfb
 #   AUDIT_SCREEN    Xvfb screen spec, default 1920x1080x24
 #   AUDIT_WM        window manager to run inside the Xvfb session.
 #                   default `openbox`; `none` for the old WM-less behaviour;
@@ -105,18 +112,58 @@ _xvfb_dev_display() {
   # XSCHEM_DEVDISPLAY_DIR, and the fallback reads through XSCHEM_TEST_REAL_HOME so a
   # caller that switched HOME without carrying it still finds the dev display
   # rather than silently spawning a private one (the 1397 trap).
-  local sf="${XSCHEM_DEVDISPLAY_DIR:-${XSCHEM_TEST_REAL_HOME:-$HOME}/.claude/xschem_dev_display}/display"
+  local sf; sf="$(_xvfb_dev_state)/display"
   [ -r "$sf" ] || return 1
   local d; d=$(cat "$sf" 2>/dev/null)
   [ -n "$d" ] || return 1
   echo "$d"
 }
 
+_xvfb_dev_state() {
+  echo "${XSCHEM_DEVDISPLAY_DIR:-${XSCHEM_TEST_REAL_HOME:-$HOME}/.claude/xschem_dev_display}"
+}
+
+# IS THE LIVE DEV DISPLAY <dpy> HELD BY ANOTHER RUN? (backlog 2026-11-12, stage
+# E.) Succeeds -- "held, step aside" -- and prints the notice when it is. The
+# question is answered by tests/headless/dev_display_users.tcl, the very code
+# T1's display arm sources (t1_dev_display_users), so a launcher and a T1 can
+# never disagree about who holds it: an xschem with DISPLAY=<dpy>, or a T1 /
+# run_suites.sh / full_audit.sh on the same state dir, matched by /proc
+# identity, never this run ($$), its ancestors or its descendants.
+# ⚠ When the question cannot be asked (no tclsh, the helper missing or
+# failing) the answer is "held": the direction that disturbs nobody.
+_xvfb_dev_display_held() {   # <dpy>
+  local n="${1#:}" who rc helper
+  n="${n%%.*}"
+  helper="$(dirname "$_XVFB_ARM_SELF")/dev_display_users.tcl"
+  if ! command -v tclsh >/dev/null 2>&1 || [ ! -r "$helper" ]; then
+    echo "display arm: cannot ask who holds the dev display $1 (no tclsh, or $helper missing) -- using a private Xvfb (AUDIT_DISPLAY=dev attaches anyway)" >&2
+    return 0
+  fi
+  # Bounded (stage E verify, row TL10): a /proc read can block on a process in
+  # D state, and this runs before any suite has a timeout of its own.
+  local tmo="${XVFB_ARM_ASK_TIMEOUT:-20}"
+  case "$tmo" in ''|*[!0-9]*) tmo=20 ;; esac
+  if command -v timeout >/dev/null 2>&1; then
+    who=$(timeout -k 2 "$tmo" env -u DISPLAY tclsh "$helper" --root "$$" "$n" "$(_xvfb_dev_state)" 2>&1); rc=$?
+  else
+    who=$(env -u DISPLAY tclsh "$helper" --root "$$" "$n" "$(_xvfb_dev_state)" 2>&1); rc=$?
+  fi
+  [ "$rc" = 124 ] && who="timed out after ${tmo}s"
+  if [ "$rc" != 0 ]; then
+    echo "display arm: asking who holds the dev display $1 failed (rc=$rc: ${who%%$'\n'*}) -- using a private Xvfb (AUDIT_DISPLAY=dev attaches anyway)" >&2
+    return 0
+  fi
+  [ -n "$who" ] || return 1
+  echo "display arm: the dev display $1 is IN USE by $who -- using a private Xvfb instead (AUDIT_DISPLAY=dev attaches anyway)" >&2
+  return 0
+}
+
 # Re-exec self under a private Xvfb unless told otherwise. Idempotent: the
 # re-exec sets XSCHEM_XVFB_ARM so the second pass falls straight through.
 xvfb_arm() {
   local self="$1"; shift
-  local _dpy
+  local _dpy _xvfb_aside=0
 
   if [ "${XSCHEM_XVFB_ARM:-0}" = 1 ]; then
     return 0
@@ -129,20 +176,31 @@ xvfb_arm() {
       echo "display arm: none (DISPLAY unset; GUI legs will self-skip)" >&2
       return 0
       ;;
-    auto|"")
+    auto|""|dev|private)
       # Prefer a PERSISTENT dev display if one is up (devdisplay.sh). Attaching
       # is better than spawning: no ~1 s xvfb-run per invocation, one stable
       # display shared by every entry point and every worktree, and -- the
       # reason it exists -- the same display a bare `./src/xschem --script ...`
       # gets from the shell, which no arming script can reach.
       # doc/claude/specs/dev_display.md
-      if _dpy=$(_xvfb_dev_display); then
+      # ⚠ BUT NOT ONE ANOTHER RUN HOLDS (stage E; T1_DISPLAY's vocabulary):
+      #   auto     attach unless _xvfb_dev_display_held says another run is
+      #            on it -- then a private Xvfb, naming the holder;
+      #   dev      attach whatever else is on it (the pre-stage-E behaviour);
+      #   private  never attach to the dev display.
+      if [ "${AUDIT_DISPLAY:-auto}" = private ]; then
+        echo "display arm: AUDIT_DISPLAY=private -- not attaching to the dev display" >&2
+        _xvfb_aside=1
+      elif _dpy=$(_xvfb_dev_display) &&
+           { [ "${AUDIT_DISPLAY:-auto}" = dev ] || ! _xvfb_dev_display_held "$_dpy"; }; then
         export XSCHEM_XVFB_ARM=1
         export DISPLAY="$_dpy"
         # forced for the same reason as the spawn path -- see "THE HAZARD" above
         export GUI_GATE=0
         echo "display arm: ATTACHED to persistent dev display $DISPLAY (devdisplay.sh), GUI_GATE=0" >&2
         return 0
+      elif [ -n "${_dpy:-}" ]; then
+        _xvfb_aside=1   # up, but held (or unaskable): stepped aside
       fi
       ;;   # no persistent display -- fall through and spawn a private one
     *)
@@ -155,6 +213,14 @@ xvfb_arm() {
 
   if ! command -v xvfb-run >/dev/null 2>&1; then
     export XSCHEM_XVFB_ARM=1
+    # Stepping aside, or AUDIT_DISPLAY=private, must never land on the
+    # INHERITED display -- the user's real screen here -- where the old
+    # behaviour attached the dev display (stage E verify, row TL11).
+    if [ "${_xvfb_aside:-0}" = 1 ]; then
+      unset DISPLAY
+      echo "display arm: xvfb-run NOT FOUND and the dev display is not ours to use -> DISPLAY unset; GUI legs will self-skip" >&2
+      return 0
+    fi
     echo "display arm: xvfb-run NOT FOUND -> falling back to inherited DISPLAY=${DISPLAY:-<unset>}" >&2
     echo "             (install xvfb, or set AUDIT_DISPLAY explicitly to silence this)" >&2
     return 0

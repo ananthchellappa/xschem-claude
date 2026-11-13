@@ -70,3 +70,17 @@ file that nothing defines/creates, so it never runs and never says so. For each 
 show it is dead (a measurement, not a reading), then fix it (wire the real name) or delete the
 dead branch, with a row that is red on the dead version. Report the search method and its
 blind spots.
+
+## Stage E — follow-up: run_suites.sh and full_audit.sh step aside too
+
+User's words, 2026-11-12: "proceed with that fix as well" — after the xschem-private session
+reported that stage B (c24560855) covers T1 only, and `tests/headless/run_suites.sh` and
+`full_audit.sh` (through `xvfb_arm.sh`) still attach the dev display :99 whatever else is on it.
+
+Deliver: the same rule as T1's `auto` for those launchers — attach :99 only when no other live
+user holds it (same /proc-identity detection as `t1_dev_display_users`, ONE implementation
+shared or provably equivalent, never a second hand-kept copy that can drift), otherwise a private
+Xvfb, saying so; a documented knob forcing either choice (reuse `T1_DISPLAY`'s vocabulary);
+`AUDIT_DISPLAY` keeps its meaning and wins. A fence, red first. CLAUDE.md's display-arm and
+persistent-dev-display sections updated in the same commit, one short bullet each (the sentence
+"no knob goes private while :99 is up" under issue 1488 must become true or be removed).
