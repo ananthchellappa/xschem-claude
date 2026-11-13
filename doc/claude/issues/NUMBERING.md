@@ -4797,7 +4797,15 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   alphabet to 7 characters), and when `create_tmpdir()` gives up, `init_undo()` still marks
   undo initialised with a NULL `undo_dirname`, so `delete_undo()` SIGSEGVs. Filed, not fixed.
 
-**The next free number is 1707.**
+~~**The next free number is 1707.**~~
+
+- **1707–1711** — skipped here: `~/private/xschem-private` holds issue files 1707–1710 and its
+  own pointer advertised 1711 as free on 2026-11-12, so all five are treated as taken.
+- **1712** — `test_annot_declutter_1244` row A22's call-site census counted a comment in
+  `src/draw.c` (added with issue 1623) as an extra `text_hidden_inst(` site, so the row was red
+  at HEAD. The census now blanks C comments; the golden is unchanged.
+
+**The next free number is 1713.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

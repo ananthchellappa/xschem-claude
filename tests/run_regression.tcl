@@ -921,6 +921,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_toggle_case" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
+                 "headless/test_annot_declutter_1244" \
                  "headless/test_lib_new_path_guards_0799" \
                  "headless/test_lib_dialog_wayout_0999" \
                  "headless/test_ase_simdlg_0937" \

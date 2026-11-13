@@ -219,6 +219,29 @@ proc dc_ngrep {path re} {
   }
   return $n
 }
+## Count the lines of the C file <path> matching <re> AFTER every `/* ... */`
+## comment is blanked (its newlines kept, so line structure survives); -1 when
+## the file is absent. Issue 1712: row A22 counted a SENTENCE in a comment in
+## src/draw.c that names the predicate, and read it as a fifth call site.
+## `dc_c_blank` is exported for the row's own non-vacuity leg.
+proc dc_c_blank {d} {
+  set out {} ; set i 0
+  while {[regexp -indices -start $i {/\*.*?\*/} $d m]} {
+    lassign $m a b
+    append out [string range $d $i [expr {$a - 1}]]
+    append out [regsub -all {[^\n]} [string range $d $a $b] {}]
+    set i [expr {$b + 1}]
+  }
+  append out [string range $d $i end]
+  return $out
+}
+proc dc_c_ngrep {path re} {
+  if {![file isfile $path]} { return -1 }
+  set fd [open $path r] ; set d [read $fd] ; close $fd
+  set n 0
+  foreach l [split [dc_c_blank $d] \n] { if {[regexp -- $re $l]} { incr n } }
+  return $n
+}
 ## THE ANSWER DISCIPLINE -- an absent proc must never satisfy a golden. Copied
 ## from b_ans, tests/headless/test_annot_blank_cause_0909.tcl:117. Without it
 ## "invalid command name cadence::_annot_declutter_clause" would satisfy a row
@@ -1911,14 +1934,26 @@ check "A21 THE ELEVENTH SITE, STRUCTURAL: get_annot_overlay still carries the sy
 ## regexp widened: widening it so the count does not move is verbatim the
 ## "the suite stays green while the feature changes" failure this batch has now
 ## filed three times against this very suite (1248, 1254).
+## ⚠ ISSUE 1712: THE CENSUS READS CODE, NOT PROSE. It used opa_n_grep, which
+## counts every line, and 15b76baef (issue 1623) put a comment in src/draw.c
+## that names the predicate -- so the row counted a draw.c site the code does
+## not have, and stayed red. It now counts with C comments blanked
+## (dc_c_ngrep). The golden is unchanged: the code did not move.
+## The trailing leg is the strip's own self-test on a fixed sample: a call
+## inside a one-line and a two-line comment must vanish, the call outside them
+## must stay, and the line count must survive.
 check "A22 CALL-SITE CENSUS: exactly nine instance-aware calls (draw 4, svg 2, ps 2, select 1) and no two-argument instance-context call left behind" \
-  [list [opa_n_grep $A_DRAW {text_hidden_inst\(}] [opa_n_grep $A_SVGD {text_hidden_inst\(}] \
-        [opa_n_grep $A_PS {text_hidden_inst\(}]   [opa_n_grep $A_SEL {text_hidden_inst\(}] \
-        [expr {[opa_n_grep $A_DRAW {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
-               [opa_n_grep $A_SVGD {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
-               [opa_n_grep $A_PS   {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
-               [opa_n_grep $A_SEL  {text_hidden\(.*TEXT_CTX_INSTANCE}]}]] \
-  {4 2 2 1 0}
+  [list [dc_c_ngrep $A_DRAW {text_hidden_inst\(}] [dc_c_ngrep $A_SVGD {text_hidden_inst\(}] \
+        [dc_c_ngrep $A_PS {text_hidden_inst\(}]   [dc_c_ngrep $A_SEL {text_hidden_inst\(}] \
+        [expr {[dc_c_ngrep $A_DRAW {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [dc_c_ngrep $A_SVGD {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [dc_c_ngrep $A_PS   {text_hidden\(.*TEXT_CTX_INSTANCE}] + \
+               [dc_c_ngrep $A_SEL  {text_hidden\(.*TEXT_CTX_INSTANCE}]}] \
+        [apply {{} {
+          set t [dc_c_blank "x /* text_hidden_inst( */ y\n/* a\ntext_hidden_inst( */\ntext_hidden_inst(1, n);"]
+          list [regexp -all -line {text_hidden_inst\(} $t] [llength [split $t \n]]
+        }}]] \
+  {4 2 2 1 0 {1 4}}
 
 # --- A23, A24: ISSUE 1246, THE TWO HARD SETS --------------------------------
 # `Waves > Op Annotate` and `Graphs > Annotate Operating Point into schematic`
@@ -4419,5 +4454,15 @@ check "R1 registered by glob, listed in none of nogui_tests / logdir_tests / nol
 dc_setmask 0
 catch {xschem set rectcolor 4}
 
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
-else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }
+# T1 registers this suite in `dcases` (issue 1712). banner_complete in
+# tests/banner_rule.tcl needs a WHOLE-LINE "OVERALL: ok" as well as the RESULT
+# line; without it the case scores a HARNESS failure with every check passing.
+if {$fail == 0} {
+  puts "RESULT: ALL PASS ($npass checks)"
+  puts "OVERALL: ok ($npass checks)"
+} else {
+  puts "RESULT: $fail FAILED ($npass passed)"
+  puts "OVERALL: notok"
+}
+flush stdout
+exit [expr {$fail == 0 ? 0 : 1}]
