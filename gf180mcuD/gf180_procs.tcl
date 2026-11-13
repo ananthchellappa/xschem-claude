@@ -168,8 +168,17 @@ if {[info commands ::op_annot::register] ne {}} {
 # symbols' own defaults also carry; maximums are the outer edges of the BSIM4 bins in
 # models/sm141064.ngspice (L 50u, W 100u per finger). Keyed on the CELL, because the
 # native device's symbol names the plain nfet_06v0 model. W is per finger (W/nf).
-# The _dss devices are not listed: pfet_06v0_dss defaults to L=0.50u, below the 6 V
-# pmos rule, so their rule differs and is not in this tree.
+# The drain-SAB (_dss) devices: each subcircuit in models/sm141064.ngspice wraps the
+# plain device of its voltage (its m0 instantiates nfet_03v3, pfet_03v3, nfet_06v0 or
+# pfet_06v0 at the same l and w), so below that device's bins it has no model, and a
+# symbol's own default is taken to be legal. A minimum is listed only where those two
+# meet: the 3.3 V pair (bins from L 0.28u, W 0.22u; symbols L=0.28u W=0.22u) and W of
+# the 6 V pair (bins from W 0.3u; symbols W=0.30u). L of the 6 V pair is not settled
+# here: nfet_06v0_dss's bins start at 0.6u and its symbol defaults to 0.70u, and
+# pfet_06v0_dss's symbol defaults to L=0.50u, below the plain 6 V pmos minimum above.
+# The 6 V pair's L has the bins' maximum only (owed rule gf180-dss-lmin).
+# Resistors and capacitors are not listed: their symbols carry no drc= check and their
+# subcircuits (models/sm141064.ngspice, sm141064_mim.ngspice) state no geometry range.
 proc gf180_fet_limits {cell model} {
   set c [regsub {^([np]fet)3_} $cell {\1_}]
   switch -exact -- $c {
@@ -179,6 +188,8 @@ proc gf180_fet_limits {cell model} {
     nfet_06v0             { set w 0.3  ; set l 0.7 }
     pfet_06v0             { set w 0.3  ; set l 0.55 }
     nfet_06v0_nvt         { set w 0.8  ; set l 1.8 }
+    nfet_03v3_dss - pfet_03v3_dss { set w 0.22 ; set l 0.28 }
+    nfet_06v0_dss - pfet_06v0_dss { set w 0.3  ; set l {} }
     default { return {} }
   }
   return [dict create unit u rules [list [list W $w 100 nf] [list L $l 50]]]

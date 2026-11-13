@@ -1196,8 +1196,10 @@ int propagate_pin_rename(int src_inst, const char *oldlab)
  * <i>'s property string, let the PDK's registered limits correct a W/L the edit took
  * below its minimum or above its maximum, with a CIW warning (devlim::clamp_edit,
  * src/property_form.tcl). <new_prop>/<old_prop> are the form's after/before strings,
- * which tell the clamp what this edit changed. No provider registered: a no-op. */
-static void devlim_clamp(int i, const char *new_prop, const char *old_prop)
+ * which tell the clamp what this edit changed. No provider registered: a no-op.
+ * Also called by `xschem setprop instance` (scheduler.c), so a scripted edit is
+ * clamped the same way. */
+void devlim_clamp(int i, const char *new_prop, const char *old_prop)
 {
   char *cell = NULL, *model = NULL, *dot;
   const char *base, *res;

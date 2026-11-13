@@ -874,3 +874,28 @@ proc sg13g2_fet_limits {cell model} {
   return [dict create unit u rules [list [list w {*}$w ng] [list l {*}$l]]]
 }
 if {[info procs ::devlim::register] ne {}} { devlim::register sg13g2_fet_limits }
+
+# Resistor and capacitor geometry limits for the same clamp, in microns, keyed on the
+# model as sg13g2_res_drc and sg13g2_mim_drc key on it. Minimums only where nothing
+# gives a maximum.
+#   rsil, rppd  w, l >= 0.5    sg13g2_res_drc (the rsil$|rppd$ arm)
+#   rhigh       w >= 0.5, l >= 0.96    sg13g2_res_drc (the rhigh$ arm)
+#   cap_cmim    w >= 1.14      sg13g2_mim_drc. Its area window (1.3 to 5625 um2) is a
+#               rule over w and l together, which no single-token limit can express,
+#               so it is not clamped; the drc= check still reports it.
+#   cap_rfcmim  w, l 7 to 75, wfeed 1 to 30    the notes above `.subckt cap_rfcmim` in
+#               models/capacitors_mod.lib ("valid parameter range for w and l: 7um to
+#               75um", "for wfeed: 1um to 30um"). That note's coupled cap, wfeed at most
+#               w-1.2um, is not clamped.
+# sg13_svaricap is not listed: sg13g2_svaricap_drc allows two (w,l) pairs, not a range.
+proc sg13g2_rescap_limits {cell model} {
+  switch -exact -- $model {
+    rsil - rppd { set r {{w 0.5 {}} {l 0.5 {}}} }
+    rhigh       { set r {{w 0.5 {}} {l 0.96 {}}} }
+    cap_cmim    { set r {{w 1.14 {}}} }
+    cap_rfcmim  { set r {{w 7 75} {l 7 75} {wfeed 1 30}} }
+    default { return {} }
+  }
+  return [dict create unit u rules $r]
+}
+if {[info procs ::devlim::register] ne {}} { devlim::register sg13g2_rescap_limits }

@@ -22,6 +22,26 @@
 #   DL13 apply reaches the rule through devlim::corrections: a trace on it fires once
 #        for the edit, handed the edit's before/after strings
 #   DL14 a finger count changed alone re-checks w per finger
+#   DL15 IHP rsil/rppd: w and l below 0.5u are set to it (sg13g2_res_drc's minimum)
+#   DL16 IHP rhigh: l below 0.96u is set to it, w below 0.5u to 0.5u
+#   DL17 IHP cap_cmim: w below 1.14u is set to it; l alone has no limit (the area
+#        rule spans w and l) and is left as typed
+#   DL18 IHP cap_rfcmim: w, l kept to 7u..75u and wfeed to 1u..30u (the model note)
+#   DL19 gf180 3.3 V _dss: L and W below 0.28u / 0.22u are set to them
+#   DL20 gf180 6 V _dss: W below 0.3u is set to it, L above 50u to 50u, and L below
+#        every candidate minimum is left as typed (owed rule gf180-dss-lmin)
+#   DL21 sky130 and gf180 resistors and capacitors, and IHP sg13_svaricap, have no
+#        limit in this tree: a tiny W/L is left as typed and says nothing
+#
+# A scripted edit is clamped too: `xschem setprop instance <i> <tok> <val>` (scheduler.c)
+# calls devlim_clamp (src/editprop.c), the hook apply_symbol_prop uses.
+#   SP1  setprop w below the minimum: set to the minimum, with apply's CIW sentence
+#   SP2  the correction rides setprop's undo step: one undo restores the start
+#   SP3  -fast and -fastundo are clamped the same way
+#   SP4  setprop of another token leaves an old out-of-range w/l alone
+#   SP5  setprop allprops with an out-of-range w is clamped
+#   SP6  setprop of a parameter is left alone and says nothing
+#   SP7  setprop of a finger count alone re-checks w per finger
 #
 # The instance form corrects a value when its field loses focus. The user's request,
 # 2026-11-12: "If user enters a value and hits Tab to move to another field, it's as
@@ -71,7 +91,8 @@ foreach f {ihp-sg13g2/sg13g2_procs.tcl sky130A/sky130_procs.tcl gf180mcuD/gf180_
   if {[catch {uplevel #0 [list source [file join $repo $f]]} e]} { puts "note: sourcing $f: $e" }
 }
 check {DL0 all three workareas register a limits provider} \
-  [lsort $::devlim::providers] [lsort {sg13g2_fet_limits sky130_fet_limits gf180_fet_limits}]
+  [lsort $::devlim::providers] \
+  [lsort {sg13g2_fet_limits sg13g2_rescap_limits sky130_fet_limits gf180_fet_limits}]
 
 proc symf {pdk lib cell} {
   global repo
@@ -209,6 +230,146 @@ edit 0 $P0 [xschem subst_tok $P0 ng 10]
 check {DL14 a finger count changed alone re-checks w per finger: ng=10 at w=1u sets w to 1.3u} \
   [list [tok 0 w] [tok 0 ng] [lindex $::devlim::last 0]] \
   [list 1.3u 10 {M1 (sg13_lv_nmos): w/ng=0.1u is below the minimum 0.13u per finger; w set to 1.3u}]
+
+# DL15..DL21 -- resistors and capacitors, and the gf180 drain-SAB devices. Each row
+# edits through apply (edit), as DL1..DL14 do.
+proc edit_tok {i props args} {
+  set new $props
+  foreach {t v} $args { set new [xschem subst_tok $new $t $v] }
+  edit $i $props $new
+  return [llength $::devlim::last]
+}
+set IHP_RSIL  [symf ihp-sg13g2 sg13g2_pr rsil]
+set IHP_RPPD  [symf ihp-sg13g2 sg13g2_pr rppd]
+set IHP_RHIGH [symf ihp-sg13g2 sg13g2_pr rhigh]
+set IHP_CMIM  [symf ihp-sg13g2 sg13g2_pr cap_cmim]
+set IHP_RFC   [symf ihp-sg13g2 sg13g2_pr cap_rfcmim]
+set IHP_SVAR  [symf ihp-sg13g2 sg13g2_pr sg13_svaricap]
+
+set R0 {name=R1 w=0.5e-6 l=0.5e-6 model=rsil body=sub! spiceprefix=X b=0 m=1}
+place $IHP_RSIL $R0
+set n [edit_tok 0 $R0 w 0.2e-6 l 0.1u]
+set a [list [tok 0 w] [tok 0 l] $n [lindex $::devlim::last 0]]
+set R1 [xschem subst_tok $R0 model rppd]
+place $IHP_RPPD $R1
+edit_tok 0 $R1 w 0.3u l 0.2u
+check {DL15 IHP rsil w=0.2e-6 l=0.1u -> 0.5u 0.5u with two lines; rppd w=0.3u l=0.2u -> 0.5u 0.5u} \
+  [list {*}$a [tok 0 w] [tok 0 l]] \
+  [list 0.5u 0.5u 2 {R1 (rsil): w=0.2e-6 is below the minimum 0.5u; w set to 0.5u} 0.5u 0.5u]
+
+set R2 {name=R1 w=0.5e-6 l=0.96e-6 model=rhigh body=sub! spiceprefix=X b=0 m=1}
+place $IHP_RHIGH $R2
+edit_tok 0 $R2 w 0.4u l 0.6u
+check {DL16 IHP rhigh w=0.4u l=0.6u -> 0.5u 0.96u} [list [tok 0 w] [tok 0 l]] {0.5u 0.96u}
+
+set C0 {name=C1 model=cap_cmim w=7.0e-6 l=7.0e-6 m=1 spiceprefix=X}
+place $IHP_CMIM $C0
+set n [edit_tok 0 $C0 w 1u l 0.5u]
+check {DL17 IHP cap_cmim w=1u -> 1.14u; l=0.5u alone is not limited and stays, one line} \
+  [list [tok 0 w] [tok 0 l] $n] {1.14u 0.5u 1}
+
+set C1 {name=C1 model=cap_rfcmim lvs_model=rfcmim w=10.0e-6 l=10.0e-6 wfeed=5.0e-6 spiceprefix=X}
+place $IHP_RFC $C1
+set n [edit_tok 0 $C1 w 100u l 5u wfeed 0.5u]
+set a [list [tok 0 w] [tok 0 l] [tok 0 wfeed] $n]
+place $IHP_RFC $C1
+edit_tok 0 $C1 wfeed 40u l 80u w 5u
+check {DL18 IHP cap_rfcmim w=100u l=5u wfeed=0.5u -> 75u 7u 1u with three lines; wfeed=40u l=80u w=5u -> 30u 75u 7u} \
+  [list {*}$a [tok 0 wfeed] [tok 0 l] [tok 0 w]] {75u 7u 1u 3 30u 75u 7u}
+
+set GF_N3D [symf gf180mcuD gf180mcu_pr nfet_03v3_dss]
+set GF_P3D [symf gf180mcuD gf180mcu_pr pfet_03v3_dss]
+set GF_N6D [symf gf180mcuD gf180mcu_pr nfet_06v0_dss]
+set GF_P6D [symf gf180mcuD gf180mcu_pr pfet_06v0_dss]
+set D3 {name=M1 L=0.28u W=0.22u nf=1 m=1 model=nfet_03v3_dss spiceprefix=X}
+place $GF_N3D $D3
+edit_tok 0 $D3 L 0.1u W 0.1u
+set a [list [tok 0 L] [tok 0 W]]
+set D3p [xschem subst_tok $D3 model pfet_03v3_dss]
+place $GF_P3D $D3p
+edit_tok 0 $D3p L 0.1u W 0.1u
+check {DL19 gf180 nfet_03v3_dss and pfet_03v3_dss each: L=0.1u W=0.1u -> 0.28u 0.22u} \
+  [list {*}$a [tok 0 L] [tok 0 W]] {0.28u 0.22u 0.28u 0.22u}
+
+set D6 {name=M1 L=0.70u W=0.30u nf=1 m=1 model=nfet_06v0_dss spiceprefix=X}
+place $GF_N6D $D6
+set n [edit_tok 0 $D6 L 0.3u W 0.1u]
+set a [list [tok 0 L] [tok 0 W] $n]
+set D6p {name=M1 L=0.50u W=0.30u nf=1 m=1 model=pfet_06v0_dss spiceprefix=X}
+place $GF_P6D $D6p
+set n [edit_tok 0 $D6p L 0.3u]
+lappend a [tok 0 L] $n
+place $GF_P6D $D6p
+edit_tok 0 $D6p L 60u
+check {DL20 gf180 6 V _dss: nfet L=0.3u stays and W=0.1u -> 0.3u (one line); pfet L=0.3u stays silent; L=60u -> 50u} \
+  [list {*}$a [tok 0 L]] {0.3u 0.3u 1 0.3u 0 50u}
+
+set got {}
+foreach {pdk lib cell props toks} [list \
+    sky130A sky130_fd_pr res_high_po {name=R1 W=1 L=1 model=res_high_po spiceprefix=X mult=1} {W 0.01 L 0.01} \
+    sky130A sky130_fd_pr cap_mim_m3_1 {name=C1 model=cap_mim_m3_1 W=1 L=1 MF=1 spiceprefix=X} {W 0.01 L 0.01} \
+    gf180mcuD gf180mcu_pr ppolyf_u_1k {name=R1 W=1e-6 L=1e-6 model=ppolyf_u_1k spiceprefix=X m=1} {W 1e-9 L 1e-9} \
+    gf180mcuD gf180mcu_pr cap_mim_2f0fF {name=C1 W=1e-6 L=1e-6 model=cap_mim_2f0fF spiceprefix=X m=1} {W 1e-9 L 1e-9} \
+    ihp-sg13g2 sg13g2_pr sg13_svaricap {name=C1 model=sg13_hv_svaricap w=3.74u l=0.3u Nx=1 spiceprefix=X} {w 1n l 1n}] {
+  place [symf $pdk $lib $cell] $props
+  set n [edit_tok 0 $props {*}$toks]
+  lappend got "$cell [tok 0 [lindex $toks 0]] [tok 0 [lindex $toks 2]] $n"
+}
+check {DL21 no limit in this tree: sky130/gf180 res and cap and IHP svaricap keep a tiny W/L, no line} $got \
+  {{res_high_po 0.01 0.01 0} {cap_mim_m3_1 0.01 0.01 0} {ppolyf_u_1k 1e-9 1e-9 0} {cap_mim_2f0fF 1e-9 1e-9 0} {sg13_svaricap 1n 1n 0}}
+
+# SP1..SP7 -- `xschem setprop instance` goes through the same clamp. The CIW is recorded
+# (ciw_echo replaced for the band) and devlim::last holds the clamp's own messages.
+# Only lines starting `warning: ` are recorded, as the FL band's `warnings` does: under
+# --logdir (T1's dcases arm) the action log mirrors each `xschem setprop` command into
+# the CIW untagged, and that line is not the clamp speaking.
+set sp_had_ciw [llength [info commands ::ciw_echo]]
+if {$sp_had_ciw} { rename ::ciw_echo ::sp_ciw_echo_saved }
+set ::sp_ciw {}
+proc ::ciw_echo {line {tag {}}} {
+  if {[string match {warning: *} $line]} { lappend ::sp_ciw [list $tag $line] }
+}
+proc sp {args} { set ::devlim::last {} ; set ::sp_ciw {} ; xschem setprop {*}$args }
+
+place $IHP_N $P0
+sp instance 0 w 0.05u
+check {SP1 setprop w=0.05u -> 0.13u, with apply's sentence once in the CIW as a note} \
+  [list [tok 0 w] $::sp_ciw] \
+  [list 0.13u [list {note {warning: M1 (sg13_lv_nmos): w=0.05u is below the minimum 0.13u; w set to 0.13u}}]]
+
+set a [tok 0 w]
+xschem undo
+check {SP2 the correction rides setprop's undo step: w=0.13u, and one undo restores w=1u} \
+  [list $a [tok 0 w]] {0.13u 1u}
+
+place $IHP_N $P0
+sp -fast instance 0 l 20u
+set a [list [tok 0 l] [llength $::sp_ciw]]
+place $IHP_N $P0
+sp -fastundo instance 0 w 2e-8
+check {SP3 -fast l=20u -> 10u and -fastundo w=2e-8 -> 0.13u, each with its line} \
+  [list {*}$a [tok 0 w] [llength $::sp_ciw]] {10u 1 0.13u 1}
+
+place $IHP_N $Pbad
+sp instance 0 m 2
+check {SP4 setprop m=2 leaves the old out-of-range l=0.05u alone and says nothing} \
+  [list [tok 0 m] [tok 0 l] $::sp_ciw] {2 0.05u {}}
+
+place $IHP_N $P0
+sp instance 0 allprops [xschem subst_tok $P0 w 0.01u]
+check {SP5 setprop allprops with w=0.01u -> 0.13u} [list [tok 0 w] [llength $::sp_ciw]] {0.13u 1}
+
+place $IHP_N $P0
+sp instance 0 w wp
+check {SP6 setprop w=wp (a parameter) is left alone and says nothing} [list [tok 0 w] $::sp_ciw] {wp {}}
+
+place $IHP_N $P0
+sp instance 0 ng 10
+check {SP7 setprop ng=10 alone at w=1u re-checks w per finger: w -> 1.3u} \
+  [list [tok 0 w] [tok 0 ng] [llength $::sp_ciw]] {1.3u 10 1}
+
+rename ::ciw_echo {}
+if {$sp_had_ciw} { rename ::sp_ciw_echo_saved ::ciw_echo }
 
 # ---------------------------------------------------------------------------
 # FL -- the instance form's focus-out check (rows listed in the header).
@@ -421,7 +582,7 @@ if {[catch {winfo exists .}]} {
 }
 
 xschem clear force schematic
-set floor [expr {$fl_ran ? 27 : 15}]
+set floor [expr {$fl_ran ? 41 : 29}]
 if {$npass + $fail < $floor} {
   puts "FAIL: DLFLOOR ran [expr {$npass + $fail}] checks, below the floor of $floor"
   incr fail

@@ -13591,6 +13591,8 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   If 'val' not given (no attribute value) delete attribute from instance
      *   If 'tok' not given clear completely instance attribute string
      *   If '-fast' argument if given does not redraw and is not undoable
+     *   A device W/L set past its PDK limit is corrected to the limit, with a
+     *   CIW warning, as in the property form (devlim_clamp)
      *
      * setprop symbol name tok [val]
      *   Set attribute 'tok' of symbol name 'name' to 'val'
@@ -13663,10 +13665,12 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           int sym_number = -1;
           char *subst = NULL, *old_name = NULL;;
           char *old_lab = NULL; /* pin name before the edit (pin-rename propagation) */
+          char *old_prop = NULL, *new_prop = NULL; /* before/after, for devlim_clamp */
 
           /* copied before the property write: get_tok_value's buffer is rotating
            * (doc/claude/specs/pin_rename_propagation.md) */
           my_strdup2(_ALLOC_ID_, &old_lab, get_tok_value(xctx->inst[inst].prop_ptr, "lab", 0));
+          my_strdup2(_ALLOC_ID_, &old_prop, xctx->inst[inst].prop_ptr);
 
           if(!fast) {
             symbol_bbox(inst, &xctx->inst[inst].x1, &xctx->inst[inst].y1, &xctx->inst[inst].x2, &xctx->inst[inst].y2);
@@ -13697,6 +13701,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           }
           hash_names(inst, XDELETE);
           new_prop_string(inst, subst, tclgetboolvar("disable_unique_names"));
+          /* Device geometry limits: a W/L this edit took past the PDK's limit is
+           * corrected with a CIW warning, as an edit in the property form is
+           * (devlim_clamp, editprop.c), and in the same undo step as the edit. */
+          my_strdup2(_ALLOC_ID_, &new_prop, xctx->inst[inst].prop_ptr);
+          devlim_clamp(inst, new_prop, old_prop);
+          my_free(_ALLOC_ID_, &new_prop);
+          my_free(_ALLOC_ID_, &old_prop);
           if(old_name) {
             update_attached_floaters(old_name, inst, 0);
           }

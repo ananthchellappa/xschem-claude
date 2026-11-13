@@ -467,6 +467,9 @@ if {[info commands ::op_annot::register] ne {}} {
 # (models/libs.tech/combined/continuous/models_fet), beyond which ngspice finds no bin.
 # W is checked per finger (W/nf), as the bins and sky130_fet_drc measure it.
 # Native and 20 V devices come in fixed sizes and are not listed.
+# Resistors and capacitors are not listed: their symbols carry no drc= check and their
+# subcircuits (models/libs.tech/combined/continuous/models_resistors.spice,
+# models_capacitors.spice) state no geometry range.
 proc sky130_fet_limits {cell model} {
   set m [string map {sky130_fd_pr__ {}} $model]
   switch -regexp -- $m {
