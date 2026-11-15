@@ -4819,7 +4819,19 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   as free; run both checks before minting, and treat a 1713/1714 arriving from that clone as a
   collision, not as these issues.
 
-**The next free number is 1715.**
+~~**The next free number is 1715.**~~
+
+- **1715** — `go_back` loads a `cell~.sch` this session never wrote as the parent's unsaved
+  edits (`load_backup_as` checks neither ownership nor age), so an untouched parent prompts
+  "has unsaved changes", Yes saves the backup's geometry into the cell, and No deletes what
+  may be another session's crash recovery. Found by the selection-look batch's
+  realistic-timing crew, present at its base; this fork's, not upstream's. Filed, not fixed.
+- **1716** — an Escape-aborted fluid drag leaves the sheet modified and writes its mid-drag
+  geometry to `cell~.sch`, because `insert_exit_stubs()` calls `set_modify(1)` on every live
+  reroute step. Same crew, present at its base; this fork's, not upstream's. Filed, not fixed.
+  ⚠ Both minted 2026-11-15 after both checks; no other clone held either number.
+
+**The next free number is 1717.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
