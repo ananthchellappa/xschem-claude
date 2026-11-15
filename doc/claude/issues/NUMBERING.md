@@ -4805,7 +4805,21 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   `src/draw.c` (added with issue 1623) as an extra `text_hidden_inst(` site, so the row was red
   at HEAD. The census now blanks C comments; the golden is unchanged.
 
-**The next free number is 1713.**
+~~**The next free number is 1713.**~~
+
+- **1713** — under the tabbed interface, with a real top-level window current and a tab other
+  than the main one in front, an Expose of `.drw` pastes the MAIN tab's pixmap over the front
+  tab (`switch_no_tcl_ctx` resolves `.drw` to slot 0). Found by the selection-look batch
+  (finding K6), present at its base; this fork's, not upstream's. Filed, not fixed.
+- **1714** — an explicit `AUDIT_DISPLAY=:<n>` leaves the GUI-test gate armed, so
+  `run_suites.sh` launched the shared panel onto a crew's private Xvfb, and `lookshot.sh`'s
+  `-name xschem` then photographed the panel. Filed, not fixed.
+  ⚠ Both minted 2026-11-15 after both checks. `~/private/xschem-private`'s own pointer still
+  read **1711** that day while it already held a 1712 file, so it may advertise 1713 and 1714
+  as free; run both checks before minting, and treat a 1713/1714 arriving from that clone as a
+  collision, not as these issues.
+
+**The next free number is 1715.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
