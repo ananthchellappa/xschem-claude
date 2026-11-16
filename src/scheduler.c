@@ -22,6 +22,7 @@
 
 #include "xschem.h"
 #include <stdarg.h>
+#include <errno.h> /* win_snap_region() */
 /* n=1: messages in status bar
  * n=2: append str in ERC window messages
  * n=3: set ERC messages to str */
@@ -15229,6 +15230,34 @@ static int win_snap_slot(Tcl_Interp *interp, const char *s, int need_image)
   }
   return (int)i;
 }
+
+/* `pixels` region arguments: each an integer in int range, and x + w, y + h in int range too,
+ * or -1 with the interp error set. The sums were plain int additions, which overflow (undefined
+ * behaviour) once x + w passes INT_MAX (receipts/C-verify.md in
+ * doc/claude/selection_look_batch/, LOW). Clipping to the capture is the caller's. */
+static int win_snap_region(Tcl_Interp *interp, const char *argv[], int *x0, int *y0, int *x1, int *y1)
+{
+  long v[4];
+  int k;
+  for(k = 0; k < 4; ++k) {
+    char *end = NULL;
+    errno = 0;
+    v[k] = strtol(argv[k], &end, 10);
+    if(end == argv[k] || *end || errno == ERANGE || v[k] < INT_MIN || v[k] > INT_MAX) {
+      Tcl_SetResult(interp, "xschem window_snapshot pixels: x y w h are integers", TCL_STATIC);
+      return -1;
+    }
+  }
+  if((v[2] > 0 && v[0] > INT_MAX - v[2]) || (v[2] < 0 && v[0] < INT_MIN - v[2]) ||
+     (v[3] > 0 && v[1] > INT_MAX - v[3]) || (v[3] < 0 && v[1] < INT_MIN - v[3])) {
+    Tcl_SetResult(interp, "xschem window_snapshot pixels: x + w and y + h must be integers too",
+                  TCL_STATIC);
+    return -1;
+  }
+  *x0 = (int)v[0]; *y0 = (int)v[1];
+  *x1 = (int)(v[0] + v[2]); *y1 = (int)(v[1] + v[3]);
+  return 0;
+}
 #endif
 
 /* `xschem w...` commands, moved verbatim from the xschem() dispatcher
@@ -15443,8 +15472,7 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
           Tcl_SetResult(interp, "xschem window_snapshot: colours need a TrueColor visual", TCL_STATIC);
           return TCL_ERROR;
         }
-        x0 = atoi(argv[4]); y0 = atoi(argv[5]);
-        x1 = x0 + atoi(argv[6]); y1 = y0 + atoi(argv[7]);
+        if(win_snap_region(interp, argv + 4, &x0, &y0, &x1, &y1) < 0) return TCL_ERROR;
         if(x0 < 0) x0 = 0;
         if(y0 < 0) y0 = 0;
         if(x1 > win_snap_img[i]->width) x1 = win_snap_img[i]->width;
