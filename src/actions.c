@@ -7117,6 +7117,7 @@ void zoom_rectangle(int what)
   {
     xctx->nl_x1=xctx->nl_x2=xctx->mousex_snap;xctx->nl_y1=xctx->nl_y2=xctx->mousey_snap;
     xctx->ui_state |= STARTZOOM;
+    xctx->rubber_shown &= ~STARTZOOM; /* nothing stroked yet (sel_rubbers_restamp(), move.c) */
   }
   if( what & END)
   {
@@ -7141,6 +7142,7 @@ void zoom_rectangle(int what)
     xctx->nl_xx1=xctx->nl_x1;xctx->nl_yy1=xctx->nl_y1;xctx->nl_xx2=xctx->nl_x2;xctx->nl_yy2=xctx->nl_y2;
     RECTORDER(xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
     drawtemprect(xctx->gctiled,NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+    xctx->rubber_shown &= ~STARTZOOM;
     xctx->nl_x2=xctx->mousex_snap;xctx->nl_y2=xctx->mousey_snap;
 
 
@@ -7159,6 +7161,7 @@ void zoom_rectangle(int what)
      * of everything inside the band bbox, and restoring it is not part of the band. */
     if(!(what & CLEAR)) {
       drawtemprect(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      xctx->rubber_shown |= STARTZOOM;
     }
   }
 }
@@ -7327,6 +7330,9 @@ void new_wire(int what, double mx_snap, double my_snap)
       draw();
       /* draw_hilight_net(1);*/  /* for updating connection bubbles on hilight nets */
     }
+    /* a new segment, not stroked yet: unless the click stored nothing and the stroke on screen is
+     * already this same point (sel_rubbers_restamp(), move.c) */
+    if(!(xctx->ui_state & STARTWIRE) || modified) xctx->rubber_shown &= ~STARTWIRE;
     xctx->nl_x1 = xctx->nl_x2=mx_snap; xctx->nl_y1 = xctx->nl_y2=my_snap;
     xctx->ui_state |= STARTWIRE;
     if(modified) set_modify(1);
@@ -7336,10 +7342,12 @@ void new_wire(int what, double mx_snap, double my_snap)
   }
   if( (what & RUBBER)  ) {
     drawtemp_manhattanline(xctx->gctiled, NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+    xctx->rubber_shown &= ~STARTWIRE;
     restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
     xctx->nl_x2 = mx_snap; xctx->nl_y2 = my_snap;
     if(!(what & CLEAR)) {
       drawtemp_manhattanline(xctx->gc[WIRELAYER], NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+      xctx->rubber_shown |= STARTWIRE;
     }
   }
 }
@@ -7413,12 +7421,14 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
     xctx->nl_xx1 = xctx->nl_xx2 = xctx->nl_x1 = xctx->nl_x2 = xctx->nl_x3 = mousex_snap;
     xctx->nl_yy1 = xctx->nl_yy2 = xctx->nl_y1 = xctx->nl_y2 = xctx->nl_y3 = mousey_snap;
     xctx->ui_state |= STARTARC;
+    xctx->rubber_shown &= ~STARTARC; /* nothing stroked yet (sel_rubbers_restamp(), move.c) */
   }
   if(what & SET) {
     if(xctx->nl_state==0) {
       xctx->nl_x2 = xctx->mousex_snap;
       xctx->nl_y2 = xctx->mousey_snap;
       drawtempline(xctx->gctiled, NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      xctx->rubber_shown &= ~STARTARC; /* the line is gone and no arc is stroked yet */
       restore_selection(xctx->nl_xx1, xctx->nl_yy1, xctx->nl_xx2, xctx->nl_yy2);
       xctx->nl_state=1;
     } else if(xctx->nl_state==1) {
@@ -7442,6 +7452,7 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
   if(what & RUBBER) {
     if(xctx->nl_state==0) {
       drawtempline(xctx->gctiled, NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+      xctx->rubber_shown &= ~STARTARC;
       restore_selection(xctx->nl_xx1, xctx->nl_yy1, xctx->nl_xx2, xctx->nl_yy2);
       xctx->nl_x2 = xctx->mousex_snap;xctx->nl_y2 = xctx->mousey_snap;
       xctx->nl_xx1 = xctx->nl_x1; /* This **is** needed. Don't remove! */
@@ -7452,6 +7463,7 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       /* RUBBER|CLEAR: erase only -- see new_polygon() above (abort_shape_draw(), callback.c) */
       if(!(what & CLEAR)) {
         drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1,xctx->nl_yy1,xctx->nl_xx2,xctx->nl_yy2);
+        xctx->rubber_shown |= STARTARC;
       }
     }
     else if(xctx->nl_state==1) {
@@ -7459,6 +7471,7 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
       xctx->nl_y3 = xctx->mousey_snap;
       if(xctx->nl_r>0.)
           drawtemparc(xctx->gctiled, NOW, xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b);
+      xctx->rubber_shown &= ~STARTARC;
       arc_3_points(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2,
           xctx->nl_x3, xctx->nl_y3, &xctx->nl_x, &xctx->nl_y, &xctx->nl_r, &xctx->nl_a, &xctx->nl_b);
       restore_selection(xctx->nl_xx1, xctx->nl_yy1, xctx->nl_xx2, xctx->nl_yy2);
@@ -7466,8 +7479,11 @@ void new_arc(int what, double sweep, double mousex_snap, double mousey_snap)
                 &xctx->nl_xx1, &xctx->nl_yy1, &xctx->nl_xx2, &xctx->nl_yy2);
       if(xctx->nl_sweep_angle==360.) xctx->nl_b=360.;
       /* RUBBER|CLEAR: erase only -- see new_polygon() (abort_shape_draw(), callback.c) */
-      if(!(what & CLEAR) && xctx->nl_r>0.) drawtemparc(xctx->gc[xctx->rectcolor], NOW,
+      if(!(what & CLEAR) && xctx->nl_r>0.) {
+        drawtemparc(xctx->gc[xctx->rectcolor], NOW,
            xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b);
+        xctx->rubber_shown |= STARTARC;
+      }
     }
   }
 }
@@ -7531,6 +7547,11 @@ void new_line(int what, double mx_snap, double my_snap)
       }
       if(modified) set_modify(1);
     }
+    /* a new segment, not stroked yet: see new_wire(). A click that stored nothing keeps the bit
+     * only where the stroke on screen is the point clicked: a click with no motion before it may
+     * land elsewhere, and the new segment there is not stroked */
+    if(!(xctx->ui_state & STARTLINE) || modified || xctx->nl_x1 != mx_snap || xctx->nl_y1 != my_snap ||
+       xctx->nl_x2 != mx_snap || xctx->nl_y2 != my_snap) xctx->rubber_shown &= ~STARTLINE;
     xctx->nl_x1=xctx->nl_x2=mx_snap;xctx->nl_y1=xctx->nl_y2=my_snap;
     xctx->ui_state |= STARTLINE;
   }
@@ -7540,10 +7561,12 @@ void new_line(int what, double mx_snap, double my_snap)
   }
   if( (what & RUBBER)  ) {
     drawtemp_manhattanline(xctx->gctiled, NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+    xctx->rubber_shown &= ~STARTLINE;
     restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
     xctx->nl_x2 = mx_snap; xctx->nl_y2 = my_snap;
     if(!(what & CLEAR)) {
       drawtemp_manhattanline(xctx->gc[xctx->rectcolor], NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+      xctx->rubber_shown |= STARTLINE;
     }
   }
 }
@@ -7570,6 +7593,8 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
       xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
     modified = 1;
    }
+   /* a new rectangle, not stroked yet: see new_wire() */
+   if(!(xctx->ui_state & STARTRECT) || modified) xctx->rubber_shown &= ~STARTRECT;
    xctx->nl_x1 = xctx->nl_x2 = mousex_snap;xctx->nl_y1 = xctx->nl_y2 = mousey_snap;
    xctx->ui_state |= STARTRECT;
    if(modified) set_modify(1);
@@ -7583,6 +7608,7 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
    nl_xx1 = xctx->nl_x1;nl_yy1 = xctx->nl_y1;nl_xx2 = xctx->nl_x2;nl_yy2 = xctx->nl_y2;
    RECTORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
    drawtemprect(xctx->gctiled,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+   xctx->rubber_shown &= ~STARTRECT;
    restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
    xctx->nl_x2 = xctx->mousex_snap;xctx->nl_y2 = xctx->mousey_snap;
    nl_xx1 = xctx->nl_x1;nl_yy1 = xctx->nl_y1;nl_xx2 = xctx->nl_x2;nl_yy2 = xctx->nl_y2;
@@ -7591,6 +7617,7 @@ void new_rect(int what, double mousex_snap, double mousey_snap)
     * reason in new_polygon() above (abort_shape_draw(), callback.c). */
    if(!(what & CLEAR)) {
      drawtemprect(xctx->gc[xctx->rectcolor], NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+     xctx->rubber_shown |= STARTRECT;
    }
   }
 }
@@ -7617,6 +7644,7 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
          xctx->nl_polyy[xctx->nl_points-1]); */
      xctx->nl_x1=xctx->nl_x2=mousex_snap;xctx->nl_y1=xctx->nl_y2=mousey_snap;
      xctx->ui_state |= STARTPOLYGON;
+     xctx->rubber_shown &= ~STARTPOLYGON; /* nothing stroked yet (sel_rubbers_restamp(), move.c) */
      /* ISSUE 0270 -- the set_modify(1) that used to sit HERE has moved to the commit branch, beside
       * store_poly(). It was the polygon's ONLY modify write, and it fired at the ARM: `xschem
       * polygon gui` on a clean document reported the buffer dirty with nothing stored (measured,
@@ -7690,6 +7718,7 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
      if(mousey_snap > xctx->nl_y2) xctx->nl_y2 = mousey_snap;
      /* fprintf(errfp, "new_poly: RUBBER\n"); */
      drawtemppolygon(xctx->gctiled, NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+     xctx->rubber_shown &= ~STARTPOLYGON;
      xctx->nl_polyy[xctx->nl_points] = mousey_snap;
      xctx->nl_polyx[xctx->nl_points] = mousex_snap;
      restore_selection(xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2);
@@ -7700,6 +7729,7 @@ void new_polygon(int what, double mousex_snap, double mousey_snap)
       * it. The `nl_points+1` above is load-bearing: index nl_points is the live rubber vertex. */
      if(!(what & CLEAR)) {
        drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points+1, 0);
+       xctx->rubber_shown |= STARTPOLYGON;
      }
    }
 }
@@ -8059,6 +8089,11 @@ void select_rect(int stretch, int what, int select)
  double nl_xx1, nl_yy1, nl_xx2, nl_yy2;
  int incremental_select = tclgetboolvar("incremental_select");
  int sel_touch = tclgetboolvar("select_touch");
+ /* the styled selection overlay (selection_style not classic) does not erase the old band with
+  * gctiled nor repaint the whole selection: the band's edges are repaired with whatever the band
+  * (de)selected, and the new band is painted last, over the selection (sel_band_damage() in
+  * move.c). Classic keeps its own sequence. */
+ int styled = (sel_style_eff() != SEL_STYLE_CLASSIC);
  dbg(1, "select_rect(): what=%d, mousex_save=%g mousey_save=%g, mousex=%g mousey=%g\n",
         what, xctx->mx_double_save, xctx->my_double_save, xctx->mousex, xctx->mousey);
  if(what & RUBBER)
@@ -8069,7 +8104,8 @@ void select_rect(int stretch, int what, int select)
     }
     nl_xx1=xctx->nl_xr;nl_xx2=xctx->nl_xr2;nl_yy1=xctx->nl_yr;nl_yy2=xctx->nl_yr2;
     RECTORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
-    drawtemprect(xctx->gctiled,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+    if(styled) sel_band_damage(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+    else drawtemprect(xctx->gctiled,NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
     xctx->nl_xr2=xctx->mousex;xctx->nl_yr2=xctx->mousey;
 
     if(!xctx->nl_sel || (incremental_select && xctx->nl_dir == 0))
@@ -8078,10 +8114,17 @@ void select_rect(int stretch, int what, int select)
        select_touch(nl_xx1, nl_yy1, nl_xx2, nl_yy2, xctx->nl_sel);
     nl_xx1=xctx->nl_xr;nl_xx2=xctx->nl_xr2;nl_yy1=xctx->nl_yr;nl_yy2=xctx->nl_yr2;
     RECTORDER(nl_xx1,nl_yy1,nl_xx2,nl_yy2);
-    drawtemprect(xctx->gc[SELLAYER],NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
+    if(styled) {
+      rebuild_selected_array();
+      sel_overlay_flush();
+      xctx->band_shown = 1;
+      sel_band_paint();
+    } else {
+      drawtemprect(xctx->gc[SELLAYER],NOW, nl_xx1,nl_yy1,nl_xx2,nl_yy2);
 
-    rebuild_selected_array();
-    draw_selection(xctx->gc[SELLAYER], 0);
+      rebuild_selected_array();
+      draw_selection(xctx->gc[SELLAYER], 0);
+    }
  }
  else if(what & START)
  {
@@ -8107,14 +8150,18 @@ void select_rect(int stretch, int what, int select)
  else if(what & END)
  {
     RECTORDER(xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2);
-    drawtemprect(xctx->gctiled, NOW, xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2);
+    if(styled) sel_band_damage(xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2);
+    else drawtemprect(xctx->gctiled, NOW, xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2);
 
     if(!sel_touch || xctx->nl_dir == 0)
       select_inside(stretch, xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2, xctx->nl_sel);
     else
       select_touch(xctx->nl_xr,xctx->nl_yr,xctx->nl_xr2,xctx->nl_yr2, xctx->nl_sel);
 
-    draw_selection(xctx->gc[SELLAYER], 0);
+    if(styled) {
+      rebuild_selected_array();
+      sel_overlay_flush();
+    } else draw_selection(xctx->gc[SELLAYER], 0);
     xctx->ui_state &= ~STARTSELECT;
     xctx->nl_sem=0;
  }

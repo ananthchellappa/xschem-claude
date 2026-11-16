@@ -609,6 +609,12 @@ void create_gc(void)
    * style set in build_colors(). hover_type 0 = nothing currently outlined. */
   xctx->gc_hover = XCreateGC(display,xctx->window,0L,NULL);
   xctx->hover_type = 0;
+  /* dedicated GCs for the selection overlay when selection_style is not classic
+   * (draw_selection() in move.c); colour in build_colors(), widths in sel_style_sync() (the
+   * brightbox box's in build_colors(), with the hover GC whose width it shares). */
+  xctx->gc_sel = XCreateGC(display,xctx->window,0L,NULL);
+  xctx->gc_selhalo = XCreateGC(display,xctx->window,0L,NULL);
+  xctx->gc_selbox = XCreateGC(display,xctx->window,0L,NULL);
   /* dedicated GC for the hover fly-line overlay (doc/claude/specs/hover_flylines.md);
    * foreground + dashed line style set in build_colors() from flylines_color/width/dash. */
   xctx->gc_flyline = XCreateGC(display,xctx->window,0L,NULL);
@@ -629,6 +635,9 @@ void free_gc()
   }
   XFreeGC(display,xctx->gc_scope);
   XFreeGC(display,xctx->gc_hover);
+  XFreeGC(display,xctx->gc_sel);
+  XFreeGC(display,xctx->gc_selhalo);
+  XFreeGC(display,xctx->gc_selbox);
   XFreeGC(display,xctx->gc_flyline);
   XFreeGC(display,xctx->gc_hilight);
   XFreeGC(display,xctx->gc_graph_active);
@@ -1309,6 +1318,132 @@ static void xwin_exit(void)
  *
  *
  */
+/* A selection-look number: 1 and *v if s is a finite number, surrounding blanks allowed; 0 for
+ * anything else (unset, empty, `abc`, `16px`, `nan`, `inf`, `1e400`, `12 13`). atof()/atoi() read
+ * a non-numeric word as 0 (doc/claude/selection_look_batch/receipts/M1-verify.md, F2, and
+ * C-fences.md, F-C2). v - v == 0.0 is false for a NaN and for an infinity. */
+static int sel_num(const char *s, double *v)
+{
+  char *end = NULL;
+  double d;
+  if(!s || !s[0]) return 0;
+  d = strtod(s, &end);
+  if(!end || end == s) return 0; /* nothing was read */
+  while(*end && isspace((unsigned char)*end)) ++end; /* only blanks may follow it */
+  if(*end || d - d != 0.0) return 0;
+  *v = d;
+  return 1;
+}
+
+/* Resolve the selection-overlay settings into xctx (selection_style, selection_halo_width,
+ * selection_text_style, selection_text_own_px) and size the two selection GCs from the current
+ * line width. Called by build_colors() (startup, a
+ * theme switch, the View menu), by change_linewidth() (zoom moves the base width) and at the top
+ * of draw(), so `set selection_style ...` takes effect on the next redraw. The style is CACHED
+ * between redraws on purpose: an erase must use the style its draw used, and both happen between
+ * two draw() calls. An unset, empty or unknown style word is the branch default (brightbox, user
+ * ruling 2026-11-15). */
+void sel_style_sync(void)
+{
+  const char *s, *hw, *ts, *op;
+  int w, lw;
+  double v;
+  if(!xctx) return;
+  s = tclgetvar("selection_style");
+  hw = tclgetvar("selection_halo_width");
+  ts = tclgetvar("selection_text_style");
+  op = tclgetvar("selection_text_own_px");
+  /* compare_schematics paints its mismatches through draw_selection() with its own GC, so a
+   * compare view keeps the classic overlay whatever the style */
+  if(s && !strcmp(s, "classic")) xctx->sel_style = SEL_STYLE_CLASSIC;
+  else if(tclgetboolvar("compare_sch")) xctx->sel_style = SEL_STYLE_CLASSIC;
+  else if(s && !strcmp(s, "bright")) xctx->sel_style = SEL_STYLE_BRIGHT;
+  else if(s && !strcmp(s, "halo")) xctx->sel_style = SEL_STYLE_HALO;
+  else xctx->sel_style = SEL_STYLE_BRIGHTBOX;
+  /* `own` and `colour` (or `color`) in every styled look; `auto`, the default, and any other word:
+   * own in halo, colour in bright and brightbox (user ruling 2026-11-15,
+   * doc/claude/selection_look_batch/PLAN.md) */
+  if(ts && !strcmp(ts, "own")) xctx->sel_text_style = SEL_TEXT_OWN;
+  else if(ts && (!strcmp(ts, "colour") || !strcmp(ts, "color"))) xctx->sel_text_style = SEL_TEXT_COLOUR;
+  else xctx->sel_text_style = (xctx->sel_style == SEL_STYLE_HALO) ? SEL_TEXT_OWN : SEL_TEXT_COLOUR;
+  /* selection_text_own_px: a number (sel_num()), else the default; a non-numeric word read as 0
+   * would be the band on every text, the heaviest look, the one the cut-off exists to prevent */
+  if(!sel_num(op, &v)) v = SEL_TEXT_OWN_PX;
+  xctx->sel_text_own_px = v < 0.0 ? 0.0 : v;
+  if(xctx->sel_style == SEL_STYLE_CLASSIC) xctx->sel_pend_n = 0;
+  /* selection_halo_width: a number (sel_num()), else 3, the Tcl default (set_ne in xschem.tcl);
+   * clamped to 0..20 before the conversion, and a fraction truncated as atoi() did */
+  if(!sel_num(hw, &v)) v = 3.0;
+  if(v < 0.0) v = 0.0;
+  if(v > 20.0) v = 20.0;
+  w = (int)v;
+  xctx->sel_halo_px = w;
+  if(has_x && xctx->gc_sel && xctx->gc_selhalo) {
+    lw = XLINEWIDTH(xctx->lw);
+    XSetLineAttributes(display, xctx->gc_sel, lw, LineSolid, LINECAP, LINEJOIN);
+    XSetLineAttributes(display, xctx->gc_selhalo, lw + 2 * w, LineSolid, LINECAP, LINEJOIN);
+  }
+}
+
+/* Clip every GC a window-only overlay paints through to xr[0..n-1], for the styled overlay
+ * repair (sel_overlay_flush() in move.c); undone by sel_reset_clip_rects(), which puts back a
+ * bbox-limited redraw's clip if one is in force. Text glyphs, the one thing the overlay paints
+ * with cairo, are clipped per text instead (sel_cairo_clip() in draw.c), each to the one rect
+ * holding it: cairo antialiases a glyph run a multi-box clip cuts across differently from the
+ * run unclipped. */
+void sel_set_clip_rects(XRectangle *xr, int n)
+{
+  int i;
+  for(i = 0; i < cadlayers; ++i) {
+    XSetClipRectangles(display, xctx->gc[i], 0, 0, xr, n, Unsorted);
+    XSetClipRectangles(display, xctx->gcstipple[i], 0, 0, xr, n, Unsorted);
+  }
+  XSetClipRectangles(display, xctx->gctiled, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_hilight, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_sel, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_selhalo, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_selbox, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_scope, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_hover, 0, 0, xr, n, Unsorted);
+  XSetClipRectangles(display, xctx->gc_flyline, 0, 0, xr, n, Unsorted);
+  sel_cairo_clip(xr, n);
+}
+
+/* Wall-clock ms once the X server has carried out every request sent so far: the drag probe's
+ * frame clock (sel_styled_show() in move.c). */
+double sel_frame_clock(void)
+{
+  Tcl_Time t;
+  #ifdef __unix__
+  XSync(display, False);
+  #else
+  XFlush(display);
+  #endif
+  Tcl_GetTime(&t);
+  return (double)t.sec * 1000.0 + (double)t.usec / 1000.0;
+}
+
+void sel_reset_clip_rects(void)
+{
+  int i;
+  sel_cairo_clip(NULL, 0);
+  for(i = 0; i < cadlayers; ++i) {
+    XSetClipMask(display, xctx->gc[i], None);
+    XSetClipMask(display, xctx->gcstipple[i], None);
+  }
+  XSetClipMask(display, xctx->gctiled, None);
+  XSetClipMask(display, xctx->gc_hilight, None);
+  XSetClipMask(display, xctx->gc_sel, None);
+  XSetClipMask(display, xctx->gc_selhalo, None);
+  XSetClipMask(display, xctx->gc_selbox, None);
+  XSetClipMask(display, xctx->gc_scope, None);
+  XSetClipMask(display, xctx->gc_hover, None);
+  XSetClipMask(display, xctx->gc_flyline, None);
+  /* a bbox-limited redraw's X clip (xctx->xrect[0] is its rect again by now); its cairo clip
+   * was never touched, and set_clip_mask(SET) only intersects it with the same rect again */
+  if(xctx->bbox_set) set_clip_mask(SET);
+}
+
 int build_colors(double dim, double dim_bg)
 {
     int i;
@@ -1357,6 +1492,39 @@ int build_colors(double dim, double dim_bg)
       XSetForeground(display, xctx->gc_scope, find_best_color((char *)hc));
       XSetLineAttributes(display, xctx->gc_scope, width, LineSolid, LINECAP, LINEJOIN);
     }
+    /* selection overlay colour (selection_style not classic). Theme-aware default, overridable
+     * by ::selection_color. NOT white on dark: white is the apply-scope outline (gc_scope above),
+     * which draw() strokes ON TOP of the selection and must still read as a separate cue; yellow
+     * is the hover dash, cyan/green/red are wires/symbols/pins, and amber (#fdb200) is the last
+     * hilight-net layer of both palettes. Orange is the hue left over: bright on black and, as a
+     * deeper orange, strong on white, so selection reads as one hue in both themes. Inside a halo
+     * band it also keeps the green symbol stroke legible, which amber measured weaker at. An
+     * unparseable name falls back to the default rather than to whatever the allocator guesses. */
+    if(has_x) {
+      const char *sc = tclgetvar("selection_color");
+      const char *defc = tclgetboolvar("dark_colorscheme") ? "#ff8000" : "#e05a00";
+      unsigned int pix;
+      #ifdef __unix__
+      XColor sxc, sxce;
+      if(!sc || !sc[0] || !XLookupColor(display, colormap, sc, &sxce, &sxc)) {
+        sc = defc;
+        XLookupColor(display, colormap, sc, &sxce, &sxc);
+      }
+      #else
+      Tk_Window mainwindow = Tk_MainWindow(interp);
+      XColor sxc, *sxp;
+      if(!sc || !sc[0]) sc = defc;
+      sxp = Tk_GetColor(interp, mainwindow, sc);
+      if(!sxp) { sc = defc; sxp = Tk_GetColor(interp, mainwindow, sc); }
+      if(sxp) { sxc = *sxp; Tk_FreeColor(sxp); } else { sxc.red = 65535; sxc.green = 32768; sxc.blue = 0; }
+      #endif
+      pix = find_best_color((char *)sc);
+      XSetForeground(display, xctx->gc_sel, pix);
+      XSetForeground(display, xctx->gc_selhalo, pix);
+      XSetForeground(display, xctx->gc_selbox, pix);
+      xctx->sel_rgb[0] = sxc.red; xctx->sel_rgb[1] = sxc.green; xctx->sel_rgb[2] = sxc.blue;
+    }
+    sel_style_sync();
     /* hover (awareness) highlight GC: a MILD, DASHED outline (default yellow,
      * minimum weight) under the tracking cursor. Color via hover_highlight_color,
      * weight via hover_highlight_width (screen px; 0 = thinnest server line). The
@@ -1372,6 +1540,10 @@ int build_colors(double dim, double dim_bg)
       XSetLineAttributes(display, xctx->gc_hover, width, LineOnOffDash, LINECAP, LINEJOIN);
       dashes[0] = 4; dashes[1] = 4;
       XSetDashes(display, xctx->gc_hover, 0, dashes, 2);
+      /* selection_style brightbox's box: the hover outline's width, solid, in the selection
+       * colour set above (draw_sel_entry() in move.c) */
+      XSetLineAttributes(display, xctx->gc_selbox, width, LineSolid, LINECAP, LINEJOIN);
+      xctx->sel_box_px = width;
     }
     /* hover fly-line overlay GC (doc/claude/specs/hover_flylines.md): a thin DASHED colored
      * line from the hovered net to its implicitly-connected clusters. flylines_color is a
@@ -1431,6 +1603,10 @@ void set_clip_mask(int what)
     /* net highlight scratch GC must honor the same bbox clip as the layer GCs,
      * else highlights smear outside a partial/bbox-bounded redraw */
     XSetClipRectangles(display, xctx->gc_hilight, 0,0, xctx->xrect, 1, Unsorted);
+    /* the styled selection overlay is drawn where gc[SELLAYER] was, so it clips the same */
+    XSetClipRectangles(display, xctx->gc_sel, 0,0, xctx->xrect, 1, Unsorted);
+    XSetClipRectangles(display, xctx->gc_selhalo, 0,0, xctx->xrect, 1, Unsorted);
+    XSetClipRectangles(display, xctx->gc_selbox, 0,0, xctx->xrect, 1, Unsorted);
     #endif
     #if HAS_CAIRO==1
     cairo_rectangle(xctx->cairo_ctx, xctx->xrect[0].x, xctx->xrect[0].y,
@@ -1448,6 +1624,9 @@ void set_clip_mask(int what)
     }
     XSetClipMask(display, xctx->gctiled, None);
     XSetClipMask(display, xctx->gc_hilight, None);
+    XSetClipMask(display, xctx->gc_sel, None);
+    XSetClipMask(display, xctx->gc_selhalo, None);
+    XSetClipMask(display, xctx->gc_selbox, None);
     #if HAS_CAIRO==1
     cairo_reset_clip(xctx->cairo_ctx);
     cairo_reset_clip(xctx->cairo_save_ctx);
@@ -2794,6 +2973,7 @@ void change_linewidth(double w)
     }
     XSetLineAttributes (display, xctx->gctiled, linew, LineSolid, LINECAP , LINEJOIN);
   }
+  sel_style_sync(); /* the selection GCs' widths ride the line width (gc_selhalo = lw + 2 band) */
   if(!xctx->only_probes) {
     xctx->areax1 = -2*INT_LINE_W(xctx->lw);
     xctx->areay1 = -2*INT_LINE_W(xctx->lw);

@@ -3431,10 +3431,15 @@ opa_l_sht 0
 # flag lives in ONE file — set_text_flags parses it, text_hidden interprets it —
 # and the four render/geometry files ask instead of testing. The second element
 # keeps a "delete the tests" reading from passing.
-check {L27 THE REFACTOR HAPPENED: HIDE_TEXT survives in ONE .c, and five .c files call text_hidden} \
+# move.c joined the caller set with the selection looks
+# (doc/claude/selection_look_batch/): sel_text_own_layer() asks text_hidden() before
+# repainting a selected floating text in its own colour, so a hidden text gets none.
+# It asks; it does not test HIDE_TEXT itself. That the asking works is
+# row H2 of tests/headless/test_selection_look_pixels.tcl (display arm).
+check {L27 THE REFACTOR HAPPENED: HIDE_TEXT survives in ONE .c, and six .c files call text_hidden} \
   [list [opa_l_cfiles [file join $repo src] HIDE_TEXT] \
         [opa_l_cfiles [file join $repo src] text_hidden]] \
-  {actions.c {actions.c draw.c psprint.c select.c svgdraw.c}}
+  {actions.c {actions.c draw.c move.c psprint.c select.c svgdraw.c}}
 
 # ⚠ THE PER-TAB HOLE. src/xschem.tcl is NOT in the step's Files cell but must
 # change twice: a `set_ne annot_show 0` default (without it every sync logs a
@@ -8336,9 +8341,13 @@ check {U18 PS BACK END: the voltage's RGB statement differs from layer 15's, and
 # ⚠ THE SOURCE-SET ROW, L27's technique. The colour override has the same
 # three-back-end fan-out the visibility test has, and draw.c's site is the ONE
 # the user actually looks at and the one no headless row can execute.
+# move.c is the screen's selection overlay (doc/claude/selection_look_batch/):
+# sel_text_own_layer() repaints a selected annotation text in the colour
+# annot_text_layer() gives it, so the overlay and the plain draw agree. It is the
+# same screen back end as draw.c, not a fourth one.
 check {U19 the colour override reaches all three back ends from ONE helper} \
   [opa_l_cfiles [file join $repo src] annot_text_layer] \
-  {actions.c draw.c psprint.c svgdraw.c}
+  {actions.c draw.c move.c psprint.c svgdraw.c}
 
 # ⚠ U19 IS A FILE SET AND THAT IS NOT ENOUGH — THE PRIOR ART PROVES IT. A
 # stopped crew's partial patch carries the comment "six colour sites (draw.c x2,

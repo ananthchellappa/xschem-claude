@@ -5161,14 +5161,24 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
              * the grey selection overlay with gc[SELLAYER], which aliases gc[GRIDLAYER]
              * (both == layer 2). A grid toggle must leave it LineSolid; see
              * doc/claude/issues/0082-grid-toggle-corrupts-selection-gc.md.
-             * Usage: xschem get gc_line_style [<layer>]  (default SELLAYER) */
-            int ly = (argc > 3) ? atoi(argv[3]) : SELLAYER;
+             * That is the classic look; the other selection looks stroke with their own GCs,
+             * named here as sel, selhalo and selbox (tests/headless/test_grid_toggle_sel_gc.tcl).
+             * Usage: xschem get gc_line_style [<layer>|sel|selhalo|selbox]  (default SELLAYER) */
+            int ly = SELLAYER, named = 0;
+            if(argc > 3) {
+              if(!strcmp(argv[3], "sel")) named = 1;
+              else if(!strcmp(argv[3], "selhalo")) named = 2;
+              else if(!strcmp(argv[3], "selbox")) named = 3;
+              else ly = atoi(argv[3]);
+            }
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             if(!has_x || ly < 0 || ly >= cadlayers) {
               Tcl_SetResult(interp, "-1", TCL_STATIC);
             } else {
               XGCValues gcv;
-              XGetGCValues(display, xctx->gc[ly], GCLineStyle, &gcv);
+              GC g = named == 1 ? xctx->gc_sel : named == 2 ? xctx->gc_selhalo :
+                     named == 3 ? xctx->gc_selbox : xctx->gc[ly];
+              XGetGCValues(display, g, GCLineStyle, &gcv);
               Tcl_SetResult(interp, my_itoa(gcv.line_style), TCL_VOLATILE);
             }
           }
@@ -5549,6 +5559,29 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
           case 's':
           if(!strcmp(argv[2], "sellayer")) { /* layer number for selection */
             Tcl_SetResult(interp, my_itoa(SELLAYER),TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "selection_look")) {
+            /* The selection overlay settings as sel_style_sync() (xinit.c) last resolved them
+             * from the Tcl variables, read from the xctx cache: "style <classic|bright|
+             * brightbox|halo> text_style <colour|own> text_own_px <px> halo_px <px> box_px <px>".
+             * It reports and does not resolve: an erase must use the style its draw used, so a
+             * read between the two must not move the cache. The resolution runs on build_colors,
+             * change_linewidth() and a full draw(). box_px is set beside the hover GC, with X
+             * only. Introspection for tests/headless/test_selection_look_plumbing.tcl. */
+            char s[200];
+            const char *st;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            switch(xctx->sel_style) {
+              case SEL_STYLE_CLASSIC: st = "classic"; break;
+              case SEL_STYLE_BRIGHT: st = "bright"; break;
+              case SEL_STYLE_HALO: st = "halo"; break;
+              case SEL_STYLE_BRIGHTBOX: st = "brightbox"; break;
+              default: st = "unknown"; break;
+            }
+            my_snprintf(s, S(s), "style %s text_style %s text_own_px %g halo_px %d box_px %d", st,
+              xctx->sel_text_style == SEL_TEXT_OWN ? "own" : "colour", xctx->sel_text_own_px,
+              xctx->sel_halo_px, xctx->sel_box_px);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
           }
           else if(!strcmp(argv[2], "semaphore")) { /* used for debug */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -13931,6 +13964,14 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
 
         if(!fast) {
           bbox(START,0.0,0.0,0.0,0.0);
+          /* A selected text under the styled overlay (selection_style not classic, move.c) is
+           * painted past the text_bbox() this redraw is limited to: the own style's band reaches
+           * outside it. Record its footprint as it is now as overlay damage, so the repair at the
+           * end of draw() also wipes the old look outside that rect; the new footprint is marked
+           * the same way once the change is made (below), since brightbox's box and halo's band
+           * reach past the new text_bbox() too (tests/headless/test_selection_look_pixels.tcl,
+           * rows r24/r25 at box width 9). */
+          if(t->sel == SELECTED && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(xTEXT, n, TEXTLAYER);
         }
         if(argc > 5) {
          char *estr = NULL;
@@ -13993,6 +14034,8 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
                   &xx1,&yy1,&xx2,&yy2, &tmp, &dtmp);
           my_free(_ALLOC_ID_, &estr);
           if(!fast) bbox(ADD, xx1, yy1, xx2, yy2);
+          if(!fast && t->sel == SELECTED && sel_style_eff() != SEL_STYLE_CLASSIC)
+            sel_mark_object(xTEXT, n, TEXTLAYER);
         }
         if(!fast) {
           /* redraw rect with new props */
@@ -15125,6 +15168,69 @@ static int xschem_cmds_v(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* Captures for the `xschem window_snapshot` test hook (in xschem_cmds_w() below): XGetImage
+ * copies of a window's drawing area, one per slot. */
+#define WIN_SNAP_SLOTS 8
+#if defined(__unix__)
+static XImage *win_snap_img[WIN_SNAP_SLOTS];
+
+static void win_snap_free(int i)
+{
+  if(win_snap_img[i]) XDestroyImage(win_snap_img[i]);
+  win_snap_img[i] = NULL;
+}
+
+/* one 8-bit channel of a TrueColor pixel, from the visual's mask for it */
+static unsigned int win_snap_chan(unsigned long p, unsigned long mask)
+{
+  int shift = 0, bits = 0;
+  unsigned long v;
+  if(!mask) return 0;
+  while(!(mask & 1UL)) { mask >>= 1; ++shift; }
+  while(mask & 1UL) { mask >>= 1; ++bits; }
+  v = (p >> shift) & ((1UL << bits) - 1UL);
+  if(bits >= 8) return (unsigned int)(v >> (bits - 8));
+  return (unsigned int)(v * 255UL / ((1UL << bits) - 1UL));
+}
+
+static void win_snap_rgb(unsigned long p, char *buf, size_t n)
+{
+  my_snprintf(buf, n, "#%02x%02x%02x", win_snap_chan(p, visual->red_mask),
+    win_snap_chan(p, visual->green_mask), win_snap_chan(p, visual->blue_mask));
+}
+
+static int win_snap_cmp_ul(const void *a, const void *b)
+{
+  unsigned long x = *(const unsigned long *)a, y = *(const unsigned long *)b;
+  return x < y ? -1 : (x > y ? 1 : 0);
+}
+
+/* a pixel value and how often it occurs; sorted most frequent first */
+typedef struct { unsigned long pix; long n; } Win_snap_count;
+static int win_snap_cmp_count(const void *a, const void *b)
+{
+  const Win_snap_count *x = (const Win_snap_count *)a, *y = (const Win_snap_count *)b;
+  if(x->n != y->n) return x->n > y->n ? -1 : 1;
+  return x->pix < y->pix ? -1 : (x->pix > y->pix ? 1 : 0);
+}
+
+/* the slot named by s, or -1 with the interp error set */
+static int win_snap_slot(Tcl_Interp *interp, const char *s, int need_image)
+{
+  char *end = NULL;
+  long i = strtol(s, &end, 10);
+  if(end == s || *end || i < 0 || i >= WIN_SNAP_SLOTS) {
+    Tcl_SetResult(interp, "xschem window_snapshot: a slot is an integer 0-7", TCL_STATIC);
+    return -1;
+  }
+  if(need_image && !win_snap_img[i]) {
+    Tcl_SetResult(interp, "xschem window_snapshot: that slot holds no capture", TCL_STATIC);
+    return -1;
+  }
+  return (int)i;
+}
+#endif
+
 /* `xschem w...` commands, moved verbatim from the xschem() dispatcher
  * (dispatcher decomposition batch 3). Sets *cmd_found = 0 when argv[1]
  * matches no command in this group; early returns propagate unchanged. */
@@ -15220,6 +15326,145 @@ static int xschem_cmds_w(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 2) {
         windowid(argv[2]);
       }
+    }
+    /* window_snapshot take <slot> | diff <a> <b> | colors <a> <b> | pixels <slot> <x> <y> <w> <h>
+     *                 | free
+     *   TEST HOOK: read back the pixels the current window's drawing area shows. The selection
+     *   overlay is painted on the window only, so neither the backing pixmap
+     *   (net_hilight_dump_pixmap) nor `xschem print` holds it; this lets a display suite compare
+     *   the screen with a fresh redraw in process, with no capture tool
+     *   (tests/headless/test_selection_look_pixels.tcl). Slots are 0-7.
+     *     take <slot>      capture xctx->window into the slot (replacing it) after a cairo flush
+     *                      and an XSync, so every request already issued is in; returns "w h"
+     *     diff <a> <b>     the pixels that differ between two captures of one size and their
+     *                      bounding box, "n x1 y1 x2 y2" (all four -1 when n is 0)
+     *     colors <a> <b>   the colours capture b holds where it differs from capture a, as
+     *                      #rrggbb count pairs, most frequent first (TrueColor visuals only)
+     *     pixels <slot> <x> <y> <w> <h>  the colours of a rectangle of one capture, row by
+     *                      row, as #rrggbb, clipped to the capture (TrueColor visuals only)
+     *     free             release every capture
+     *   Never used in production. */
+    else if(!strcmp(argv[1], "window_snapshot"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      if(scheduler_needs_x_reject(interp, "window_snapshot")) return TCL_ERROR;
+      if(argc < 3) {
+        Tcl_SetResult(interp, "xschem window_snapshot: take|diff|colors|pixels|free", TCL_STATIC);
+        return TCL_ERROR;
+      }
+#if defined(__unix__)
+      if(!strcmp(argv[2], "free")) {
+        int i;
+        for(i = 0; i < WIN_SNAP_SLOTS; ++i) win_snap_free(i);
+        Tcl_ResetResult(interp);
+      }
+      else if(!strcmp(argv[2], "take") && argc > 3) {
+        int i;
+        char s[64];
+        XWindowAttributes wa;
+        if((i = win_snap_slot(interp, argv[3], 0)) < 0) return TCL_ERROR;
+        win_snap_free(i);
+        #if HAS_CAIRO==1
+        if(xctx->cairo_sfc) cairo_surface_flush(xctx->cairo_sfc);
+        if(xctx->cairo_save_sfc) cairo_surface_flush(xctx->cairo_save_sfc);
+        #endif
+        XSync(display, False);
+        if(!xctx->window || !XGetWindowAttributes(display, xctx->window, &wa) ||
+           wa.width <= 0 || wa.height <= 0 || wa.map_state != IsViewable) {
+          Tcl_SetResult(interp, "xschem window_snapshot: the window is not viewable", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        win_snap_img[i] = XGetImage(display, xctx->window, 0, 0, (unsigned int)wa.width,
+                                    (unsigned int)wa.height, AllPlanes, ZPixmap);
+        if(!win_snap_img[i]) {
+          Tcl_SetResult(interp, "xschem window_snapshot: XGetImage failed", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        my_snprintf(s, S(s), "%d %d", wa.width, wa.height);
+        Tcl_SetResult(interp, s, TCL_VOLATILE);
+      }
+      else if((!strcmp(argv[2], "diff") || !strcmp(argv[2], "colors")) && argc > 4) {
+        int a, b, x, y, w, h, colors = !strcmp(argv[2], "colors");
+        int bx1 = -1, by1 = -1, bx2 = -1, by2 = -1;
+        long n = 0, k, m;
+        unsigned long *pv = NULL;
+        Win_snap_count *cnt = NULL;
+        char s[128];
+        if((a = win_snap_slot(interp, argv[3], 1)) < 0) return TCL_ERROR;
+        if((b = win_snap_slot(interp, argv[4], 1)) < 0) return TCL_ERROR;
+        w = win_snap_img[a]->width; h = win_snap_img[a]->height;
+        if(w != win_snap_img[b]->width || h != win_snap_img[b]->height) {
+          Tcl_SetResult(interp, "xschem window_snapshot: the two captures differ in size", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(colors && visual->class != TrueColor) {
+          Tcl_SetResult(interp, "xschem window_snapshot: colours need a TrueColor visual", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        if(colors) pv = my_malloc(_ALLOC_ID_, sizeof(unsigned long) * (size_t)w * (size_t)h);
+        for(y = 0; y < h; ++y) for(x = 0; x < w; ++x) {
+          unsigned long pb = XGetPixel(win_snap_img[b], x, y);
+          if(XGetPixel(win_snap_img[a], x, y) == pb) continue;
+          if(colors) pv[n] = pb;
+          ++n;
+          if(bx1 < 0 || x < bx1) bx1 = x;
+          if(by1 < 0) by1 = y;
+          if(x > bx2) bx2 = x;
+          by2 = y;
+        }
+        if(!colors) {
+          my_snprintf(s, S(s), "%ld %d %d %d %d", n, bx1, by1, bx2, by2);
+          Tcl_SetResult(interp, s, TCL_VOLATILE);
+        } else {
+          Tcl_Obj *res = Tcl_NewListObj(0, NULL);
+          qsort(pv, (size_t)n, sizeof(unsigned long), win_snap_cmp_ul);
+          if(n > 0) cnt = my_malloc(_ALLOC_ID_, sizeof(Win_snap_count) * (size_t)n);
+          for(m = 0, k = 0; k < n; ++k) {
+            if(m > 0 && cnt[m - 1].pix == pv[k]) { cnt[m - 1].n++; continue; }
+            cnt[m].pix = pv[k]; cnt[m].n = 1; ++m;
+          }
+          if(m > 0) qsort(cnt, (size_t)m, sizeof(Win_snap_count), win_snap_cmp_count);
+          for(k = 0; k < m; ++k) {
+            win_snap_rgb(cnt[k].pix, s, S(s));
+            Tcl_ListObjAppendElement(interp, res, Tcl_NewStringObj(s, -1));
+            Tcl_ListObjAppendElement(interp, res, Tcl_NewLongObj(cnt[k].n));
+          }
+          my_free(_ALLOC_ID_, &pv);
+          if(cnt) my_free(_ALLOC_ID_, &cnt);
+          Tcl_SetObjResult(interp, res);
+        }
+      }
+      else if(!strcmp(argv[2], "pixels") && argc > 7) {
+        int i, x, y, x0, y0, x1, y1;
+        char s[16];
+        Tcl_Obj *res;
+        if((i = win_snap_slot(interp, argv[3], 1)) < 0) return TCL_ERROR;
+        if(visual->class != TrueColor) {
+          Tcl_SetResult(interp, "xschem window_snapshot: colours need a TrueColor visual", TCL_STATIC);
+          return TCL_ERROR;
+        }
+        x0 = atoi(argv[4]); y0 = atoi(argv[5]);
+        x1 = x0 + atoi(argv[6]); y1 = y0 + atoi(argv[7]);
+        if(x0 < 0) x0 = 0;
+        if(y0 < 0) y0 = 0;
+        if(x1 > win_snap_img[i]->width) x1 = win_snap_img[i]->width;
+        if(y1 > win_snap_img[i]->height) y1 = win_snap_img[i]->height;
+        res = Tcl_NewListObj(0, NULL);
+        for(y = y0; y < y1; ++y) for(x = x0; x < x1; ++x) {
+          win_snap_rgb(XGetPixel(win_snap_img[i], x, y), s, S(s));
+          Tcl_ListObjAppendElement(interp, res, Tcl_NewStringObj(s, -1));
+        }
+        Tcl_SetObjResult(interp, res);
+      }
+      else {
+        Tcl_SetResult(interp, "xschem window_snapshot: take <slot> | diff <a> <b> | "
+                      "colors <a> <b> | pixels <slot> <x> <y> <w> <h> | free", TCL_STATIC);
+        return TCL_ERROR;
+      }
+#else
+      Tcl_SetResult(interp, "xschem window_snapshot: needs a unix build", TCL_STATIC);
+      return TCL_ERROR;
+#endif
     }
     /* windows
      *   List open schematic contexts, one Tcl sublist each:

@@ -414,6 +414,96 @@ int set_text_custom_font(xText *txt)
 
 
 #if HAS_CAIRO==1
+/* > 0 only while the selection overlay paints the band of selection_text_style own
+ * (draw_temp_string_parts): cairo_draw_string_line() then strokes each line's glyph outlines
+ * with this width instead of filling them, through the same layout as the glyphs themselves. */
+static double cairo_text_band_w = 0.0;
+
+/* The styled overlay repair's rects while sel_overlay_flush() paints through a real X clip,
+ * set by sel_cairo_clip(). Cairo does not clip text the way X clips a stroke: a glyph run whose
+ * extents a clip region cuts, or which spans more than one box of a multi-box region, is
+ * composited through a mask and comes out with different antialiasing than the same run
+ * unclipped (measured: the bottom antialiased row of a text lying wholly inside a two-box
+ * region went missing). A clip box containing the run's extents is dropped by cairo, so each
+ * text is clipped to the ONE repair rect that holds it, which sel_overlay_flush() guarantees
+ * for every text it meets (sel_close_texts() in move.c). */
+static const XRectangle *sel_cclip_xr = NULL;
+static int sel_cclip_n = 0;
+
+/* For a text of size xscale with schematic bbox x1..y2, clip the window cairo context for its
+ * glyphs: to the repair rect holding its background restore box (draw_temp_string_parts(), the
+ * same pad) if there is one (1), else to the union of the rects (2). -1 if the text misses every
+ * rect, 0 if no repair is painting. A clip > 0 is undone with cairo_restore(). */
+static int sel_cairo_text_clip(double x1, double y1, double x2, double y2, double xscale)
+{
+  int i, hit = 0, pad = 2 + sel_text_band_for(xscale);
+  double sx1, sy1, sx2, sy2;
+  XRectangle w = xctx->xrect[0];
+  if(sel_cclip_n <= 0 || !sel_cclip_xr) return 0;
+  sx1 = X_TO_SCREEN(x1) - pad; sy1 = Y_TO_SCREEN(y1) - pad;
+  sx2 = X_TO_SCREEN(x2) + pad + 1; sy2 = Y_TO_SCREEN(y2) + pad + 1;
+  RECTORDER(sx1, sy1, sx2, sy2);
+  if(sx1 < w.x) sx1 = w.x;
+  if(sy1 < w.y) sy1 = w.y;
+  if(sx2 > w.x + w.width) sx2 = w.x + w.width;
+  if(sy2 > w.y + w.height) sy2 = w.y + w.height;
+  for(i = 0; i < sel_cclip_n; ++i) {
+    const XRectangle *r = &sel_cclip_xr[i];
+    if(sx1 >= r->x && sy1 >= r->y && sx2 <= r->x + r->width && sy2 <= r->y + r->height) {
+      cairo_save(xctx->cairo_ctx);
+      cairo_new_path(xctx->cairo_ctx);
+      cairo_rectangle(xctx->cairo_ctx, r->x, r->y, r->width, r->height);
+      cairo_clip(xctx->cairo_ctx);
+      return 1;
+    }
+    if(sx2 > r->x && sx1 < r->x + r->width && sy2 > r->y && sy1 < r->y + r->height) hit = 1;
+  }
+  if(!hit) return -1;
+  cairo_save(xctx->cairo_ctx);
+  cairo_new_path(xctx->cairo_ctx);
+  for(i = 0; i < sel_cclip_n; ++i) {
+    cairo_rectangle(xctx->cairo_ctx, sel_cclip_xr[i].x, sel_cclip_xr[i].y,
+                    sel_cclip_xr[i].width, sel_cclip_xr[i].height);
+  }
+  cairo_clip(xctx->cairo_ctx);
+  return 2;
+}
+#endif /* HAS_CAIRO */
+
+/* start (n > 0) or end (n 0) a styled overlay repair's per-text cairo clip, see
+ * sel_cairo_text_clip(); a no-op without cairo */
+void sel_cairo_clip(const XRectangle *xr, int n)
+{
+  #if HAS_CAIRO==1
+  sel_cclip_xr = n > 0 ? xr : NULL;
+  sel_cclip_n = n > 0 ? n : 0;
+  #else
+  (void)xr; (void)n;
+  #endif
+}
+
+/* A bbox-limited redraw clips the window's cairo context to its rect (set_clip_mask(SET)), and a
+ * repair of the styled overlay run inside it (sel_overlay_flush() in move.c) reaches past that
+ * rect: its X restores do, so its glyphs and bands must too, or a text the rect cuts is restored
+ * whole and repainted only in part. 0 lifts the clip for the repair, 1 puts the redraw's back. */
+void sel_cairo_bbox_clip(int on)
+{
+  #if HAS_CAIRO==1
+  if(!xctx->cairo_ctx) return;
+  cairo_reset_clip(xctx->cairo_ctx);
+  if(on) {
+    cairo_new_path(xctx->cairo_ctx);
+    cairo_rectangle(xctx->cairo_ctx, xctx->xrect[0].x, xctx->xrect[0].y,
+                    xctx->xrect[0].width, xctx->xrect[0].height);
+    cairo_clip(xctx->cairo_ctx);
+  }
+  #else
+  (void)on;
+  #endif
+}
+
+#if HAS_CAIRO==1
+
 static void cairo_draw_string_line(cairo_t *c_ctx, char *s,
     double x, double y, short rot, short flip,
     int lineno, double fontheight, double fontascent, double fontdescent,
@@ -453,12 +543,33 @@ static void cairo_draw_string_line(cairo_t *c_ctx, char *s,
   cairo_rotate(c_ctx, XSCH_PI/2*rot1);
 
   cairo_move_to(c_ctx, 0, 0);
-  cairo_show_text(c_ctx, s);
+  if(cairo_text_band_w > 0.0) { /* selection_text_style own: the outline, stroked wide */
+    cairo_text_path(c_ctx, s);
+    cairo_set_line_width(c_ctx, cairo_text_band_w);
+    cairo_set_line_join(c_ctx, CAIRO_LINE_JOIN_ROUND);
+    cairo_stroke(c_ctx);
+  } else cairo_show_text(c_ctx, s);
   cairo_restore(c_ctx);
 }
 
-/* CAIRO version */
+/* CAIRO version. The body is draw_string_cairo() so the selection overlay can paint glyphs in
+ * the selection colour (rgb != NULL) into the window alone (to_win=1, to_pix=0) through the very
+ * same layout code; draw_string() passes rgb NULL and the live draw_window/draw_pixmap, so its
+ * output is unchanged. */
+static void draw_string_cairo(int layer, const unsigned short *rgb, int to_win, int to_pix,
+                 const char *str, short rot, short flip, int hcenter, int vcenter,
+                 double x, double y, double xscale, double yscale);
+
 void draw_string(int layer, int what, const char *str, short rot, short flip, int hcenter, int vcenter,
+                 double x, double y, double xscale, double yscale)
+{
+  (void)what; /* UNUSED in cairo version, avoid compiler warning */
+  draw_string_cairo(layer, NULL, xctx->draw_window, xctx->draw_pixmap,
+                    str, rot, flip, hcenter, vcenter, x, y, xscale, yscale);
+}
+
+static void draw_string_cairo(int layer, const unsigned short *rgb, int to_win, int to_pix,
+                 const char *str, short rot, short flip, int hcenter, int vcenter,
                  double x, double y, double xscale, double yscale)
 {
   double textx1,textx2,texty1,texty2;
@@ -470,8 +581,8 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
   cairo_font_extents_t fext;
   int llength=0, no_of_lines;
   double longest_line;
+  int win_clip = 0;
 
-  (void)what; /* UNUSED in cairo version, avoid compiler warning */
   if(str==NULL || !has_x ) return;
   size = xscale*52.*cairo_font_scale;
   /*fprintf(errfp, "size=%.16g\n", size*xctx->mooz); */
@@ -507,12 +618,18 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
     if(rot == 3 && flip == 1 ) { x=textx1;}
   }
 
-  set_cairo_color(layer);
+  if(rgb) cairo_set_source_rgb(xctx->cairo_ctx,
+            (double)rgb[0]/65535.0, (double)rgb[1]/65535.0, (double)rgb[2]/65535.0);
+  else set_cairo_color(layer);
   cairo_set_font_size(xctx->cairo_ctx, size*xctx->mooz);
   cairo_set_font_size(xctx->cairo_save_ctx, size*xctx->mooz);
   cairo_font_extents(xctx->cairo_ctx, &fext);
   dbg(1, "draw_string(): size * mooz=%g height=%g ascent=%g descent=%g\n",
        size * xctx->mooz, fext.height, fext.ascent, fext.descent);
+  if(to_win) {
+    win_clip = sel_cairo_text_clip(textx1, texty1, textx2, texty2, xscale);
+    if(win_clip < 0) to_win = 0;
+  }
   llength=0;
   my_strdup2(_ALLOC_ID_, &sss, estr);
   tt=ss=sss;
@@ -521,9 +638,9 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
     if(c=='\n' || c==0) {
       *ss='\0';
       /*fprintf(errfp, "cairo_draw_string(): tt=%s, longest line: %d\n", tt, longest_line); */
-      if(xctx->draw_window) cairo_draw_string_line(xctx->cairo_ctx, tt, x, y, rot, flip,
+      if(to_win) cairo_draw_string_line(xctx->cairo_ctx, tt, x, y, rot, flip,
          lineno, fext.height, fext.ascent, fext.descent, llength, no_of_lines, longest_line);
-      if(xctx->draw_pixmap) cairo_draw_string_line(xctx->cairo_save_ctx, tt, x, y, rot, flip,
+      if(to_pix) cairo_draw_string_line(xctx->cairo_save_ctx, tt, x, y, rot, flip,
          lineno, fext.height, fext.ascent, fext.descent, llength, no_of_lines, longest_line);
       ++lineno;
       if(c==0) break;
@@ -535,6 +652,7 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
     }
     ++ss;
   }
+  if(win_clip > 0) cairo_restore(xctx->cairo_ctx);
   my_free(_ALLOC_ID_, &sss);
   my_free(_ALLOC_ID_, &estr);
 }
@@ -612,14 +730,107 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
 
 #endif /* HAS_CAIRO */
 
+static int sel_fp_add(double x1, double y1, double x2, double y2); /* see sel_measure() */
+
+/* Restore a schematic-coordinate box, padded by `pad` screen px, from the backing pixmap into
+ * the window: erases whatever window-only overlay is inside it. Clipped to the drawing area.
+ * Inside sel_measure() it only records the box. */
+void sel_restore_box(double x1, double y1, double x2, double y2, int pad)
+{
+  double sx1, sy1, sx2, sy2;
+  if(!has_x) return;
+  sx1 = X_TO_SCREEN(x1) - pad; sy1 = Y_TO_SCREEN(y1) - pad;
+  sx2 = X_TO_SCREEN(x2) + pad; sy2 = Y_TO_SCREEN(y2) + pad;
+  RECTORDER(sx1, sy1, sx2, sy2);
+  if(!rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2, &sx1, &sy1, &sx2, &sy2)) return;
+  if(sel_fp_add(sx1, sy1, sx2 + 1, sy2 + 1)) return;
+  MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], (int)sx1, (int)sy1,
+              (unsigned int)(sx2 - sx1) + 1, (unsigned int)(sy2 - sy1) + 1, (int)sx1, (int)sy1);
+}
+
+/* Screen px the own text style's band reaches past a glyph outline: one, whatever the halo
+ * width. A letter is far thinner than the line a halo outlines, and a wider band closes the gaps
+ * between the letters of a text at the default size and makes it read as a smudge. 0 in the
+ * colour style, or without cairo, which has no outline to stroke. This is the style; whether ONE
+ * text gets the band is sel_text_band_for(). */
+int sel_text_band_px(void)
+{
+  #if HAS_CAIRO==1
+  if(xctx->sel_text_style != SEL_TEXT_OWN || xctx->sel_style == SEL_STYLE_CLASSIC) return 0;
+  return 1;
+  #else
+  return 0;
+  #endif
+}
+
+/* The band ONE text of size xscale gets: sel_text_band_px() if the text is rendered at
+ * xctx->sel_text_own_px or larger, else 0, i.e. the text is drawn in the colour style. The size
+ * is the font size cairo renders the text at, in screen px, computed exactly as
+ * draw_string_cairo() computes it, so it follows the text size, the zoom and cairo_font_scale,
+ * and a custom font is rendered at that size too. Below it the band closes the letters' counters
+ * and the gaps between them and the text reads as a smudge (measured,
+ * doc/claude/selection_look_batch/receipts/A6-labels.md). EVERY overlay path that paints,
+ * erases, clips or sizes a text asks this, with the text's own xscale (get_sym_text_size() for a
+ * symbol text), so a text is never painted one way and erased or measured the other. */
+int sel_text_band_for(double xscale)
+{
+  #if HAS_CAIRO==1
+  int b = sel_text_band_px();
+  if(b <= 0) return 0;
+  if(xscale*52.*cairo_font_scale*xctx->mooz < xctx->sel_text_own_px) return 0;
+  return b;
+  #else
+  (void)xscale;
+  return 0;
+  #endif
+}
+
+/* The text parts (SELP_TEXTS bits) a pass asking for `parts` paints for ONE text of size xscale:
+ * a text with the band (sel_text_band_for()) has no selection-colour glyphs (SELP_GLYPH), one
+ * without it has no band and no own-colour glyphs (SELP_TXTBAND, SELP_GLYPHOWN). 0 = nothing,
+ * so a caller can skip the text before translating it. */
+int sel_text_parts(int parts, double xscale)
+{
+  if(sel_text_band_for(xscale) > 0) return parts & ~SELP_GLYPH;
+  return parts & ~(SELP_TXTBAND | SELP_GLYPHOWN);
+}
+
+/* nonzero only while the halo/bright own-colour glyph pass repaints an instance's texts through
+ * draw_symbol() (draw_sel_entry() in move.c): draw_symbol() then paints only the texts that get
+ * the band, and no pin name, which the overlay never restores or bands, so that pass paints
+ * exactly the texts sel_text_parts() gives SELP_GLYPHOWN */
+static int sel_own_glyph_only = 0;
+void sel_glyph_own_filter(int on)
+{
+  sel_own_glyph_only = on;
+}
+
 void draw_temp_string(GC gctext, int what, const char *str, short rot, short flip, int hcenter, int vcenter,
                  double x1,double y1, double xscale, double yscale)
 {
+  draw_temp_string_parts(gctext, what, SELP_TEXTBOX, str, rot, flip, hcenter, vcenter,
+                         x1, y1, xscale, yscale);
+}
+
+/* A selection-overlay text in up to three parts (SELP_* in xschem.h): SELP_TEXTBOX is the
+ * classic bbox outline with gctext; SELP_TEXTBG copies the bbox (plus an antialiasing margin)
+ * back from the pixmap, which is both the glyph ERASE and what makes a glyph REDRAW idempotent
+ * (cairo blends edge pixels, so painting the same text twice over itself thickens it);
+ * SELP_GLYPH paints the text itself in the selection colour, window only. The caller has
+ * already set any custom font on cairo_ctx (set_text_custom_font). Without cairo a glyph
+ * request falls back to the bbox outline. */
+void draw_temp_string_parts(GC gctext, int what, int parts, const char *str, short rot, short flip,
+                 int hcenter, int vcenter, double x1,double y1, double xscale, double yscale)
+{
  double textx1,textx2,texty1,texty2;
- int tmp;
+ int tmp, band;
  double dtmp;
  char *estr = NULL;
  if(!has_x) return;
+ /* the own-or-colour choice for this text: no band and no selection-colour glyphs together */
+ parts = sel_text_parts(parts, xscale);
+ if(!(parts & (SELP_TEXTBOX | SELP_GLYPH | SELP_TEXTBG | SELP_TXTBAND))) return;
+ band = sel_text_band_for(xscale);
 
  estr = my_expand(str, tclgetintvar("tabstop"));
  dbg(2, "draw_string(): string=%s\n",estr);
@@ -628,7 +839,28 @@ void draw_temp_string(GC gctext, int what, const char *str, short rot, short fli
    my_free(_ALLOC_ID_, &estr);
    return;
  }
- drawtemprect(gctext,what, textx1,texty1,textx2,texty2);
+ if(parts & SELP_TEXTBOX) drawtemprect(gctext,what, textx1,texty1,textx2,texty2);
+ /* the background restore covers the glyphs' antialiased edge and, for a text with the own
+  * text style's band, the band around the letters (sel_text_band_for()) */
+ if(parts & SELP_TEXTBG) sel_restore_box(textx1, texty1, textx2, texty2, 2 + band);
+ #if HAS_CAIRO==1
+ if((parts & SELP_TXTBAND) && xctx->cairo_ctx && band > 0) {
+   cairo_text_band_w = 2.0 * band;
+   draw_string_cairo(TEXTLAYER, xctx->sel_rgb, 1, 0, str, rot, flip, hcenter, vcenter,
+                     x1, y1, xscale, yscale);
+   cairo_text_band_w = 0.0;
+ }
+ #endif
+ if(parts & SELP_GLYPH) {
+   #if HAS_CAIRO==1
+   if(xctx->cairo_ctx) {
+     draw_string_cairo(TEXTLAYER, xctx->sel_rgb, 1, 0, str, rot, flip, hcenter, vcenter,
+                       x1, y1, xscale, yscale);
+   }
+   #else
+   drawtemprect(gctext, NOW, textx1,texty1,textx2,texty2);
+   #endif
+ }
  my_free(_ALLOC_ID_, &estr);
 }
 
@@ -938,7 +1170,9 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
         double yy1 = y0 + y1;
         double xx2 = x0 + x2;
         double yy2 = y0 + y2;
-        draw_image(1, rect, &xx1, &yy1, &xx2, &yy2, rot, flip);
+        /* never re-painted by the halo own-colour pass: an image covers like a fill
+         * (sel_own_fill_skip()) */
+        if(!xctx->sel_own_fillmax) draw_image(1, rect, &xx1, &yy1, &xx2, &yy2, rot, flip);
       } else
       #endif
       {
@@ -981,6 +1215,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       text = symptr->text[j];
       if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
       if(text_hidden_inst(text.flags, n)) continue;
+      if(sel_own_glyph_only && !sel_text_band_for(xscale)) continue; /* see sel_glyph_own_filter() */
       /* 1249: ONE keep-name predicate for all three back ends (invariant I1). The
        * three byte-identical strcmp pairs this replaces missed `@spiceprefix@name`,
        * so at hide_symbols=2 gf180's whole FET family lost its names. */
@@ -1083,7 +1318,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
      * BEFORE get_pin_name_layout(), so the pnm/pfont malloc/free pair is never reached
      * for a pin the declutter hides, and it is byte-identical in draw.c, svgdraw.c and
      * psprint.c. Rows A36..A39 of tests/headless/test_annot_declutter_1244.tcl. */
-    if(!hide && !pin_names_all_off()) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
+    if(!hide && !pin_names_all_off() && !sel_own_glyph_only) for(j = 0; j < symptr->rects[PINLAYER]; ++j) {
       xRect *pin = &(symptr->rect[PINLAYER])[j];
       Pin_name_layout lay;
       char *pnm = NULL, *pfont = NULL;
@@ -1138,6 +1373,17 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
         double xoffset, double yoffset)
                             /* draws current layer only, should be called within */
 {                           /* a "for(i=0;i<cadlayers; ++i)" loop */
+  draw_temp_symbol_parts(what, gc, n, layer, tmp_flip, rot, xoffset, yoffset,
+                         SELP_STROKE | SELP_TEXTBOX);
+}
+
+/* draw_temp_symbol() with the overlay split into parts (SELP_* in xschem.h): SELP_STROKE the
+ * symbol's geometry with gc, the text bits forwarded to draw_temp_string_parts(). The layer-0
+ * visibility bookkeeping (inst flags bit 0) runs whatever the parts, so a texts-only pass still
+ * skips an off-screen instance on its later layers. */
+void draw_temp_symbol_parts(int what, GC gc, int n,int layer,short tmp_flip, short rot,
+        double xoffset, double yoffset, int parts)
+{
  int j, hide = 0;
  double x0,y0,x1,y1,x2,y2;
  short flip;
@@ -1192,13 +1438,14 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
    }
    else if(!xctx->only_probes && (xctx->inst[n].x2 - xctx->inst[n].x1) * xctx->mooz < 3 &&
                       (xctx->inst[n].y2 - xctx->inst[n].y1) * xctx->mooz < 3) {
-     drawtemprect(gc, what, xctx->inst[n].xx1 + xoffset, xctx->inst[n].yy1 + yoffset,
-                            xctx->inst[n].xx2 + xoffset, xctx->inst[n].yy2 + yoffset);
+     if(parts & SELP_STROKE)
+       drawtemprect(gc, what, xctx->inst[n].xx1 + xoffset, xctx->inst[n].yy1 + yoffset,
+                              xctx->inst[n].xx2 + xoffset, xctx->inst[n].yy2 + yoffset);
      xctx->inst[n].flags|=1;
      return;
    }
    else xctx->inst[n].flags&=~1;
-   if(hide) {
+   if(hide && (parts & SELP_STROKE)) {
      /*
       * symptr = (xctx->inst[n].ptr+ xctx->sym);
       * x0=xctx->inst[n].x0;
@@ -1222,6 +1469,7 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
  y0=xctx->inst[n].y0 + yoffset;
  symptr = (xctx->inst[n].ptr+ xctx->sym);
  if(!hide) {
+   if(parts & SELP_STROKE) {
    for(j=0;j< symptr->lines[layer]; ++j)
    {
     line = &(symptr->line[layer])[j];
@@ -1275,8 +1523,10 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
      ROTATION(rot, flip, 0.0, 0.0,arc->x,arc->y,x1,y1);
      drawtemparc(gc, what, x0+x1, y0+y1, arc->r, angle, arc->b);
    }
+   } /* if(parts & SELP_STROKE) */
 
-   if( !(xctx->inst[n].flags & HIDE_SYMBOL_TEXTS) &&  layer==SELLAYER && xctx->sym_txt)
+   if( (parts & SELP_TEXTS) &&
+       !(xctx->inst[n].flags & HIDE_SYMBOL_TEXTS) &&  layer==SELLAYER && xctx->sym_txt)
    {
     char *txtptr = NULL;
     for(j=0;j< symptr->texts; ++j)
@@ -1287,6 +1537,8 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
      text = symptr->text[j];
      if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
      if(text_hidden_inst(text.flags, n)) continue;
+     /* nothing asked for applies to this text (sel_text_parts()): skip it before translating */
+     if(!sel_text_parts(parts & SELP_TEXTS, xscale)) continue;
      ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&text);
@@ -1301,7 +1553,7 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
        const char *vstacked = sym_text_vstack(n, text.txt_ptr, txtptr);
        if(vstacked != txtptr) my_strdup2(_ALLOC_ID_, &txtptr, vstacked);
      }
-     if(txtptr[0]) draw_temp_string(gc, what, txtptr,
+     if(txtptr[0]) draw_temp_string_parts(gc, what, parts & SELP_TEXTS, txtptr,
        (text.rot + ( (flip && (text.rot & 1) ) ? rot+2 : rot) ) & 0x3,
        flip^text.flip, text.hcenter, text.vcenter, x0+x1, y0+y1, xscale, yscale);
      my_free(_ALLOC_ID_, &txtptr);
@@ -1959,6 +2211,21 @@ void draw_hilight_dot(unsigned int fg, double x, double y, double r)
              (int)(xx2 - xx1), (int)(yy2 - yy1), 0, 360 * 64);
 }
 
+/* An erase with gctiled is done by copying each primitive's padded bbox back from the backing
+ * pixmap (instead of stroking with the tiled GC) on a GPU with broken tiled fill, on Windows, and
+ * inside a styled selection erase (xctx->sel_erase_pad, set only by move.c's styled erase): the
+ * copy restores fills and wide halo bands that a stroke of the object's own width would miss. */
+#define TILED_BY_COPY(gc) ((fix_broken_tiled_fill || !_unix || xctx->sel_erase_pad) && \
+                           (gc) == xctx->gctiled)
+
+/* Extra line width a temp-primitive GC carries on top of the layer width: the halo GC is the
+ * base width plus a band on each side, and a THICK stroke must keep that extra across its
+ * width change and restore. 0 for every other GC, so the classic overlay is untouched. */
+static int temp_gc_extra(GC gc)
+{
+  return (gc == xctx->gc_selhalo) ? 2 * xctx->sel_halo_px : 0;
+}
+
 void drawtempline(GC gc, int what, double linex1,double liney1,double linex2,double liney2)
 {
   static int i = 0;
@@ -1970,7 +2237,7 @@ void drawtempline(GC gc, int what, double linex1,double liney1,double linex2,dou
 
  if(!has_x) return;
 
- if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled && what == ADD) what = NOW;
+ if(TILED_BY_COPY(gc) && what == ADD) what = NOW;
  if(what & ADD)
  {
   if(i>=CADDRAWBUFFERSIZE)
@@ -2005,7 +2272,7 @@ void drawtempline(GC gc, int what, double linex1,double liney1,double linex2,dou
   y2=Y_TO_SCREEN(liney2);
   if( clip(&x1,&y1,&x2,&y2) )
   {
-   if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled) {
+   if(TILED_BY_COPY(gc)) {
      RECTORDER(linex1, liney1, linex2, liney2);
      MyXCopyAreaDouble(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
          linex1, liney1, linex2, liney2, linex1, liney1, xctx->lw);
@@ -2022,14 +2289,16 @@ void drawtempline(GC gc, int what, double linex1,double liney1,double linex2,dou
   y2=Y_TO_SCREEN(liney2);
   if( clip(&x1,&y1,&x2,&y2) )
   {
-   if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled) {
+   if(TILED_BY_COPY(gc)) {
      RECTORDER(linex1, liney1, linex2, liney2);
      MyXCopyAreaDouble(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
          linex1, liney1, linex2, liney2, linex1, liney1, BUS_WIDTH * xctx->lw);
    } else {
-     XSetLineAttributes (display, gc, INT_BUS_WIDTH(xctx->lw), LineSolid, LINECAP , LINEJOIN);
+     XSetLineAttributes (display, gc, INT_BUS_WIDTH(xctx->lw) + temp_gc_extra(gc),
+                         LineSolid, LINECAP , LINEJOIN);
      XDrawLine(display, xctx->window, gc, (int)x1, (int)y1, (int)x2, (int)y2);
-     XSetLineAttributes (display, gc, XLINEWIDTH(xctx->lw), LineSolid, LINECAP , LINEJOIN);
+     XSetLineAttributes (display, gc, XLINEWIDTH(xctx->lw) + temp_gc_extra(gc),
+                         LineSolid, LINECAP , LINEJOIN);
    }
   }
  }
@@ -2099,7 +2368,7 @@ void drawtemparc(GC gc, int what, double x, double y, double r, double a, double
  double xx1, yy1, xx2, yy2; /* complete circle bbox in screen coords */
 
  if(!has_x) return;
- if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled && what == ADD) what = NOW;
+ if(TILED_BY_COPY(gc) && what == ADD) what = NOW;
  if(what & ADD)
  {
   if(i>=CADDRAWBUFFERSIZE)
@@ -2141,7 +2410,7 @@ void drawtemparc(GC gc, int what, double x, double y, double r, double a, double
   sy2=Y_TO_SCREEN(y2);
   if( rectclip(xctx->areax1,xctx->areay1,xctx->areax2,xctx->areay2,&sx1,&sy1,&sx2,&sy2) )
   {
-    if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled) {
+    if(TILED_BY_COPY(gc)) {
       MyXCopyAreaDouble(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
           x1, y1, x2, y2, x1, y1, xctx->lw);
     } else {
@@ -2190,6 +2459,20 @@ void arc_3_points(double x1, double y1, double x2, double y2, double x3, double 
   } else {
     *r = -1.0; /* no circle thru aligned points */
   }
+}
+
+/* The halo own-colour pass (sel_styled_draw() in move.c) re-paints a selected object in its own
+ * colours, window only, over its selection band. A FILL re-painted there would cover whatever
+ * draw() painted inside the shape afterwards (texts, wires, other instances) for as long as the
+ * shape stays selected. So, while xctx->sel_own_fillmax is set, a fill is kept only when its
+ * screen bbox is no wider than the band in at least one direction: every point of such a fill is
+ * within half a band of the outline the band strokes, so the fill lies inside the band it is
+ * painted over and cannot hide anything the band does not. Returns 1 to skip the fill. */
+static int sel_own_fill_skip(double x1, double y1, double x2, double y2)
+{
+  if(xctx->sel_own_fillmax <= 0) return 0;
+  return fabs(x2 - x1) * xctx->mooz > xctx->sel_own_fillmax &&
+         fabs(y2 - y1) * xctx->mooz > xctx->sel_own_fillmax;
 }
 
 void filledarc(int c, int what, double x, double y, double r, double a, double b)
@@ -2263,6 +2546,9 @@ void drawarc(int c, int what, double x, double y, double r, double a, double b, 
  double xx1, yy1, xx2, yy2; /* complete circle bbox in screen coords */
  GC gc;
  int width;
+
+ /* the band strokes only the curve, so a pie is inside it only if the whole circle is */
+ if(arc_fill && (what & (ADD | NOW)) && sel_own_fill_skip(x - r, y - r, x + r, y + r)) arc_fill = 0;
 
  if(bus == -1.0) {
    what = NOW;
@@ -2384,6 +2670,7 @@ void filledrect(int c, int what, double rectx1,double recty1,double rectx2,doubl
  if(!has_x) return;
  if(!xctx->fill_pattern) return;
  if(fill != 2 && !xctx->fill_type[c]) return;
+ if((what & (ADD | NOW)) && sel_own_fill_skip(rectx1, recty1, rectx2, recty2)) return;
  if(fill == 2) { /* full fill */
    gc = xctx->gc[c];
    r = rf;
@@ -2630,6 +2917,7 @@ void drawpolygon(int c, int what, double *x, double *y, int points, int poly_fil
   }
 
   polygon_bbox(x, y, points, &x1,&y1,&x2,&y2);
+  if(poly_fill && sel_own_fill_skip(x1, y1, x2, y2)) poly_fill = 0;
   x1=X_TO_SCREEN(x1);
   x2=X_TO_SCREEN(x2);
   y1=Y_TO_SCREEN(y1);
@@ -2713,13 +3001,14 @@ void drawtemppolygon(GC gc, int what, double *x, double *y, int points, int flag
 
     bezier = (flags & 1) && (points > 2);
     drawpoints = (flags & 2);
-    if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled) {
+    if(TILED_BY_COPY(gc)) {
       MyXCopyAreaDouble(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
           x1 - xctx->cadhalfdotsize, y1 - xctx->cadhalfdotsize,
           x2 + xctx->cadhalfdotsize, y2 + xctx->cadhalfdotsize,
           x1 - xctx->cadhalfdotsize, y1 - xctx->cadhalfdotsize, xctx->lw);
     } else {
-      if(drawpoints && (gc == xctx->gc[SELLAYER] || gc == xctx->gctiled) ) for(i = 0; i < points; i++) {
+      if(drawpoints && (gc == xctx->gc[SELLAYER] || gc == xctx->gc_sel || gc == xctx->gctiled) )
+        for(i = 0; i < points; i++) {
         if( POINTINSIDE(X_TO_SCREEN(x[i]), Y_TO_SCREEN(y[i]), xctx->areax1, xctx->areay1,
                xctx->areax2, xctx->areay2)) {
           drawtemparc(gc, NOW, x[i], y[i], xctx->cadhalfdotsize, 0., 360.);
@@ -2849,7 +3138,7 @@ void drawtemprect(GC gc, int what, double rectx1,double recty1,double rectx2,dou
  double x1,y1,x2,y2;
 
  if(!has_x) return;
- if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled && what == ADD) what = NOW;
+ if(TILED_BY_COPY(gc) && what == ADD) what = NOW;
 
  if(what & NOW)
  {
@@ -2860,7 +3149,7 @@ void drawtemprect(GC gc, int what, double rectx1,double recty1,double rectx2,dou
   /* if( (x2-x1)< 3.0 && (y2-y1)< 3.0) return; */
   if( rectclip(xctx->areax1,xctx->areay1,xctx->areax2,xctx->areay2,&x1,&y1,&x2,&y2) )
   {
-   if((fix_broken_tiled_fill || !_unix) && gc == xctx->gctiled) {
+   if(TILED_BY_COPY(gc)) {
      /*
       * MyXCopyAreaDouble(display, xctx->save_pixmap, xctx->window, xctx->gc[0],
       *     rectx1, recty1, rectx2, recty2, rectx1, recty1, xctx->lw);
@@ -11582,10 +11871,11 @@ void draw_scope_highlight(void)
  * size and Cairo custom fonts. Returns 1 and fills *x1..*y2 if at least one text was
  * found, else 0. Used by draw_hover_shape() so hovering a net label outlines its name
  * text rather than the tiny pin stub. See doc/claude/specs/hover_netlabel_text.md */
-static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
+static int inst_text_bbox(int n, short rot_add, short flip_xor,
+                          double *x1, double *y1, double *x2, double *y2)
 {
   xSymbol *symptr = xctx->inst[n].ptr + xctx->sym;
-  short flip = xctx->inst[n].flip, rot = xctx->inst[n].rot;
+  short flip = xctx->inst[n].flip ^ flip_xor, rot = (xctx->inst[n].rot + rot_add) & 0x3;
   double x0 = xctx->inst[n].x0, y0 = xctx->inst[n].y0;
   int j, found = 0, tmp;
   double dtmp;
@@ -11630,23 +11920,37 @@ static int inst_text_bbox(int n, double *x1, double *y1, double *x2, double *y2)
   return found;
 }
 
+/* The rect draw_hover_shape() outlines for instance n, in x1..y2 (ordered): for a net label or
+ * pin the union of its visible texts, else the symbol's bbox without texts. rot_add / flip_xor
+ * re-orient the texts about the instance origin as update_symbol_bboxes() (move.c) re-orients
+ * xx1..yy2 during a rotated or flipped move: 0, 0 for the hover itself. Shared with
+ * selection_style brightbox's box (draw_sel_entry() in move.c), so the two cannot disagree.
+ * Returns 0 if n is not an instance. */
+int hover_inst_rect(int n, short rot_add, short flip_xor,
+                    double *x1, double *y1, double *x2, double *y2)
+{
+  const char *symtype;
+  if(n < 0 || n >= xctx->instances) return 0;
+  symtype = xctx->inst[n].ptr >= 0 ? (xctx->inst[n].ptr + xctx->sym)->type : NULL;
+  /* for net labels/pins the body is a tiny stub at the attachment point; outline
+   * the visible net-name text the user is actually pointing at instead */
+  if(symtype && IS_LABEL_SH_OR_PIN(symtype) && inst_text_bbox(n, rot_add, flip_xor, x1, y1, x2, y2)) {
+    /* x1..y2 already hold the text union bbox */
+  } else {
+    *x1 = xctx->inst[n].xx1; *y1 = xctx->inst[n].yy1;
+    *x2 = xctx->inst[n].xx2; *y2 = xctx->inst[n].yy2;
+  }
+  RECTORDER(*x1, *y1, *x2, *y2);
+  return 1;
+}
+
 void draw_hover_shape(GC g, int type, int n, int c)
 {
   switch(type) {
     case ELEMENT:
-      if(n >= 0 && n < xctx->instances) {
+      {
         double x1, y1, x2, y2;
-        const char *symtype = (xctx->inst[n].ptr + xctx->sym)->type;
-        /* for net labels/pins the body is a tiny stub at the attachment point; outline
-         * the visible net-name text the user is actually pointing at instead */
-        if(symtype && IS_LABEL_SH_OR_PIN(symtype) && inst_text_bbox(n, &x1, &y1, &x2, &y2)) {
-          /* x1..y2 already hold the text union bbox */
-        } else {
-          x1 = xctx->inst[n].xx1; y1 = xctx->inst[n].yy1;
-          x2 = xctx->inst[n].xx2; y2 = xctx->inst[n].yy2;
-        }
-        RECTORDER(x1, y1, x2, y2);
-        drawtemprect(g, ADD, x1, y1, x2, y2);
+        if(hover_inst_rect(n, 0, 0, &x1, &y1, &x2, &y2)) drawtemprect(g, ADD, x1, y1, x2, y2);
       }
       break;
     case WIRE:
@@ -11827,6 +12131,9 @@ void draw(void)
   xctx->crosshair_layer = tclgetintvar("crosshair_layer");
   if(xctx->crosshair_layer < 0 ) xctx->crosshair_layer = 2;
   if(xctx->crosshair_layer >= cadlayers ) xctx->crosshair_layer = 2;
+  /* a changed selection_style / halo width takes effect on the next FULL redraw: a bbox-limited
+   * one repaints only part of the overlay, so it must keep the style the rest was painted in */
+  if(!xctx->bbox_set) sel_style_sync();
   #if HAS_CAIRO==1
   #ifndef __unix__
   clear_cairo_surface(xctx->cairo_save_ctx,
@@ -12053,8 +12360,29 @@ void draw(void)
                       xctx->xrect[0].width, xctx->xrect[0].height);
       #endif
     }
+    /* a full redraw that reached the window: the styled overlay's repair now knows this tab's
+     * drawing is what a shared .drw canvas shows (sel_ctx_on_screen() in move.c). print_image()
+     * draws into the pixmap only and does not count. */
+    if(!xctx->bbox_set && (xctx->draw_window || (xctx->draw_pixmap && xctx->do_copy_area)))
+      sel_note_canvas();
+    else if(xctx->bbox_set && xctx->draw_window) /* drawn straight into the window: as a paste */
+      sel_note_paste(xctx->xrect[0].x, xctx->xrect[0].y,
+                     xctx->xrect[0].x + xctx->xrect[0].width, xctx->xrect[0].y + xctx->xrect[0].height);
     if(tclgetboolvar("compare_sch") /* && xctx->sch_to_compare[0]*/ ){
       compare_schematics("");
+    } else if(sel_style_eff() != SEL_STYLE_CLASSIC) {
+      /* the styled overlay (selection_style not classic, move.c): a full redraw has just wiped
+       * every window-only overlay and anything waiting for repair; a bbox-limited one only its
+       * own area, so whatever is still waiting is repaired below, with it. The crosshair, the
+       * snap cursor and the area-select band are painted again only by draw_crosshair() / the
+       * next motion. */
+      if(!xctx->bbox_set) {
+        sel_pend_clear();
+        xctx->xhair_shown = 0;
+        xctx->snapc_shown = 0;
+        xctx->band_shown = 0;
+      }
+      draw_selection_base(xctx->gc[SELLAYER]);
     } else {
       draw_selection(xctx->gc[SELLAYER], 0); /* 20181009 moved outside of cadlayers loop */
     }
@@ -12081,6 +12409,9 @@ void draw(void)
      * no separate one is owed there. No-op when this context has no wave
      * highlights (the test is inside the drawer -- landmine 44). */
     draw_wave_hilight(0);
+    /* styled overlay: damage left over from before a bbox-limited redraw (nothing is left after
+     * a full one) */
+    if(xctx->sel_pend_n) sel_overlay_flush();
   } /* if(has_x) */
 }
 
@@ -12101,6 +12432,8 @@ void MyXCopyArea(Display* display, Drawable src, Drawable dest, GC gc, int src_x
      unsigned int width, unsigned int height, int dest_x, int dest_y)
 {
   dbg(1, "MyXCopyArea(%d, %d, %u, %u)\n", src_x, src_y, width, height);
+  if(xctx && dest == xctx->window) /* which tab's drawing the canvas holds (sel_note_paste(), move.c) */
+    sel_note_paste(dest_x, dest_y, dest_x + (int)width, dest_y + (int)height);
   #if !defined(__unix__)
   XCopyArea(display, src, dest, gc, src_x, src_y, width, height, dest_x, dest_y);
   #if HAS_CAIRO==1
@@ -12116,6 +12449,50 @@ void MyXCopyArea(Display* display, Drawable src, Drawable dest, GC gc, int src_x
   #endif
 }
 
+/* Footprint measurement for the styled selection overlay (move.c). Between sel_measure(START) and
+ * sel_measure(END) every pixmap-to-window restore MyXCopyAreaDouble() or sel_restore_box() would
+ * make is NOT made, only recorded: START merges them into one screen rect, which END hands back
+ * (returning 1 if anything was recorded); ADD sends each one to the context's list of damaged
+ * rects (sel_pend_add()) instead; SET hands each one to sel_pend_close(), which grows that list
+ * to contain it if it meets it. Driven through gctiled with xctx->sel_erase_pad set, so every
+ * temp primitive takes the copy path (TILED_BY_COPY), this measures exactly what an erase of the
+ * same object would restore, padded past its halo band, without touching the window. */
+static int sel_fp_mode = 0; /* 0 off, START, ADD or SET */
+static int sel_fp_got = 0;
+static double sel_fp[4];
+static int sel_fp_add(double x1, double y1, double x2, double y2)
+{
+  if(!sel_fp_mode) return 0;
+  RECTORDER(x1, y1, x2, y2);
+  if(sel_fp_mode == ADD) {
+    sel_pend_add(x1, y1, x2, y2);
+  } else if(sel_fp_mode == SET) {
+    sel_pend_close(x1, y1, x2, y2);
+  } else if(!sel_fp_got) {
+    sel_fp[0] = x1; sel_fp[1] = y1; sel_fp[2] = x2; sel_fp[3] = y2;
+  } else {
+    if(x1 < sel_fp[0]) sel_fp[0] = x1;
+    if(y1 < sel_fp[1]) sel_fp[1] = y1;
+    if(x2 > sel_fp[2]) sel_fp[2] = x2;
+    if(y2 > sel_fp[3]) sel_fp[3] = y2;
+  }
+  sel_fp_got = 1;
+  return 1;
+}
+
+int sel_measure(int what, double *r)
+{
+  int got;
+  if(what == START || what == ADD || what == SET) { sel_fp_mode = what; sel_fp_got = 0; return 0; }
+  got = sel_fp_got;
+  if(got && r && sel_fp_mode == START) {
+    r[0] = sel_fp[0]; r[1] = sel_fp[1]; r[2] = sel_fp[2]; r[3] = sel_fp[3];
+  }
+  sel_fp_mode = 0;
+  sel_fp_got = 0;
+  return got;
+}
+
 void MyXCopyAreaDouble(Display* display, Drawable src, Drawable dest, GC gc,
      double sx1, double sy1, double sx2, double sy2,
      double dx1, double dy1, double lw)
@@ -12123,17 +12500,21 @@ void MyXCopyAreaDouble(Display* display, Drawable src, Drawable dest, GC gc,
   double isx1, isy1, isx2, isy2, idx1, idy1;
   unsigned int width, height;
   int intlw = INT_LINE_W(lw);
+  int pad = 2 * intlw + xctx->sel_erase_pad; /* sel_erase_pad: 0 except in a styled selection erase */
   dbg(1, "MyXCopyAreaDouble(%g, %g, %g, %g, intlw=%d)\n", sx1, sy1, sx2, sy2, intlw);
-  isx1=X_TO_SCREEN(sx1) - 2 * intlw;
-  isy1=Y_TO_SCREEN(sy1) - 2 * intlw;
-  isx2=X_TO_SCREEN(sx2) + 2 * intlw;
-  isy2=Y_TO_SCREEN(sy2) + 2 * intlw;
+  isx1=X_TO_SCREEN(sx1) - pad;
+  isy1=Y_TO_SCREEN(sy1) - pad;
+  isx2=X_TO_SCREEN(sx2) + pad;
+  isy2=Y_TO_SCREEN(sy2) + pad;
 
-  idx1=X_TO_SCREEN(dx1) - 2 * intlw;
-  idy1=Y_TO_SCREEN(dy1) - 2 * intlw;
+  idx1=X_TO_SCREEN(dx1) - pad;
+  idy1=Y_TO_SCREEN(dy1) - pad;
 
   width = (unsigned int)isx2 - (unsigned int)isx1;
   height = (unsigned int)isy2 - (unsigned int)isy1;
+  if(sel_fp_add(isx1, isy1, isx1 + width, isy1 + height)) return; /* sel_measure(): record only */
+  if(dest == xctx->window) /* which tab's drawing the canvas holds (sel_note_paste(), move.c) */
+    sel_note_paste((int)idx1, (int)idy1, (int)idx1 + (int)width, (int)idy1 + (int)height);
   #if !defined(__unix__)
   XCopyArea(display, src, dest, gc, (int)isx1, (int)isy1, width, height, (int)idx1, (int)idy1);
   #if HAS_CAIRO==1

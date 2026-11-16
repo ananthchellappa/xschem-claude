@@ -609,6 +609,7 @@ void start_line(double mx, double my)
 }
 
 static void draw_snap_cursor(int action);   /* defined below; used by the gate right here */
+static void snapc_damage(double x, double y, int size); /* styled overlay, defined below */
 
 /* THE ESCAPE TERMINAL (issue 0245) -- the body of `case XK_Escape:` in handle_key_press(), lifted
  * out verbatim so it has a NAME and, through scheduler.c's `xschem escape`, a Tcl entry point.
@@ -4208,6 +4209,31 @@ static void draw_snap_cursor(int action) {
   /* Save current drawing context */
   xctx->draw_pixmap = 0;
   xctx->draw_window = 1;
+  if(sel_style_eff() != SEL_STYLE_CLASSIC) {
+    /* styled overlay (selection_style not classic): the old cursor's area is REPAIRED, which
+     * also repaints whatever overlay it covered; the new one is stamped on top, last, as the
+     * repair stamps it (overlay_paint_snapc()) */
+    if(pos_changed || action == 5) {
+      if((action & 1) && xctx->snapc_shown) {
+        xctx->snapc_shown = 0;
+        snapc_damage(xctx->prev_snapx, xctx->prev_snapy, snapcursor_size);
+        sel_overlay_flush();
+      }
+      if(action & 2) {
+        double new_x, new_y;
+        find_snap_position(&new_x, &new_y, pos_changed);
+        xctx->prev_gridx = xctx->mousex_snap;
+        xctx->prev_gridy = xctx->mousey_snap;
+        xctx->prev_snapx = new_x;
+        xctx->prev_snapy = new_y;
+        xctx->snapc_shown = 1;
+        overlay_paint_snapc();
+      }
+    }
+    xctx->draw_window = prev_draw_window;
+    xctx->draw_pixmap = prev_draw_pixmap;
+    return;
+  }
   if(pos_changed || action == 5) {
     /* Erase the cursor */
     if (action & 1) {
@@ -4264,6 +4290,59 @@ static void draw_crosshair_shape(GC gc, double x, double y, int size)
     draw_xhair_line(gc, size, xctx->areax1, screen_y, xctx->areax2, screen_y);
     draw_xhair_line(gc, size, screen_x, xctx->areay1, screen_x, xctx->areay2);
   }
+}
+
+/* Styled overlay (selection_style not classic, see sel_overlay_flush() in move.c): the screen
+ * rects a crosshair / snap cursor at x, y covers, recorded as damage, and the re-stamp of the one
+ * on screen, which every repair paints after the selection, scope, hover and fly-lines, exactly
+ * as draw() orders them. A full-span crosshair spans the whole window, also when the call comes
+ * from inside a bbox-limited redraw. */
+static void xhair_damage(double x, double y, int size)
+{
+  double sx = X_TO_SCREEN(x), sy = Y_TO_SCREEN(y);
+  int m = INT_LINE_W(xctx->lw) + 2;
+  XRectangle w = xctx->bbox_set ? xctx->savexrect : xctx->xrect[0];
+  if(size) {
+    sel_pend_add(sx - size - m, sy - size - m, sx + size + m + 1, sy + size + m + 1);
+  } else {
+    sel_pend_add(w.x, sy - m, w.x + w.width, sy + m + 1);
+    sel_pend_add(sx - m, w.y, sx + m + 1, w.y + w.height);
+  }
+}
+
+static void snapc_damage(double x, double y, int size)
+{
+  double sx = X_TO_SCREEN(x), sy = Y_TO_SCREEN(y);
+  int m = INT_LINE_W(xctx->lw) + 2;
+  sel_pend_add(sx - size - m, sy - size - m, sx + size + m + 1, sy + size + m + 1);
+}
+
+void overlay_paint_xhair(void)
+{
+  int sdw, sdp, sx1, sy1, sx2, sy2;
+  if(!has_x || !xctx->xhair_shown) return;
+  sdw = xctx->draw_window; sdp = xctx->draw_pixmap;
+  sx1 = xctx->areax1; sy1 = xctx->areay1; sx2 = xctx->areax2; sy2 = xctx->areay2;
+  if(xctx->bbox_set) { /* a full-span crosshair spans the window, not a redraw's bbox */
+    xctx->areax1 = xctx->savex1; xctx->areay1 = xctx->savey1;
+    xctx->areax2 = xctx->savex2; xctx->areay2 = xctx->savey2;
+  }
+  xctx->draw_pixmap = 0; xctx->draw_window = 1;
+  draw_crosshair_shape(xctx->gc[xctx->crosshair_layer], xctx->prev_crossx, xctx->prev_crossy,
+                       tclgetintvar("crosshair_size"));
+  xctx->areax1 = sx1; xctx->areay1 = sy1; xctx->areax2 = sx2; xctx->areay2 = sy2;
+  xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+}
+
+void overlay_paint_snapc(void)
+{
+  int sdw, sdp;
+  if(!has_x || !xctx->snapc_shown) return;
+  sdw = xctx->draw_window; sdp = xctx->draw_pixmap;
+  xctx->draw_pixmap = 0; xctx->draw_window = 1;
+  draw_snap_cursor_shape(xctx->gc[xctx->crosshair_layer], xctx->prev_snapx, xctx->prev_snapy,
+                         tclgetintvar("snap_cursor_size"));
+  xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
 }
 
 /* what == 3 (+4) : delete and draw (force)
@@ -4339,6 +4418,36 @@ void draw_crosshair(int what, int state)
   dbg(1, "draw %d\n", what);
   xctx->draw_pixmap = 0;
   xctx->draw_window = 1;
+  if(sel_style_eff() != SEL_STYLE_CLASSIC) {
+    /* styled overlay: the old crosshair's strips are REPAIRED (sel_overlay_flush()), which
+     * repaints the selection and every other overlay they crossed, and the new crosshair is
+     * stamped on top (then the snap cursor, which draw()'s order puts above it). The repair
+     * runs where the classic erase runs, so a rubber band the caller paints between a delete
+     * and a draw is not cut by the draw. Inside a bbox-limited draw() the new strips are
+     * repaired too: that redraw's clip would cut a stamp to its bbox. */
+    if((what & 1) && xctx->xhair_shown) {
+      xctx->xhair_shown = 0;
+      xhair_damage(xctx->prev_crossx, xctx->prev_crossy, xhair_size);
+      if(!(what & 2) || !xctx->bbox_set) sel_overlay_flush();
+    }
+    if(what & 2) {
+      xctx->prev_crossx = mx;
+      xctx->prev_crossy = my;
+      xctx->prev_m_crossx = xctx->mousex_snap;
+      xctx->prev_m_crossy = xctx->mousey_snap;
+      xctx->xhair_shown = 1;
+      if(xctx->bbox_set) {
+        xhair_damage(mx, my, xhair_size);
+        sel_overlay_flush();
+      } else {
+        overlay_paint_xhair();
+        overlay_paint_snapc();
+      }
+    }
+    xctx->draw_window = sdw;
+    xctx->draw_pixmap = sdp;
+    return;
+  }
   if(what & 1) { /* delete previous */
     if(fix_broken_tiled_fill || !_unix) {
       erase_crosshair(xhair_size);
@@ -4403,6 +4512,24 @@ void draw_hover(int force)
 
   xctx->draw_pixmap = 0;
   xctx->draw_window = 1;
+  if(sel_style_eff() != SEL_STYLE_CLASSIC) {
+    /* styled overlay: the old and new outlines' rects are REPAIRED (sel_overlay_flush()), which
+     * paints the new outline in draw()'s order, under the crosshair, instead of on top of
+     * everything; the rects come from measuring the outline's own erase (sel_measure(ADD)) */
+    xctx->sel_erase_pad = tclgetintvar("hover_highlight_width") + 2;
+    sel_measure(ADD, NULL);
+    if(prev_type) draw_hover_shape(xctx->gctiled, prev_type, xctx->hover_n, xctx->hover_col);
+    if(newsel.type) draw_hover_shape(xctx->gctiled, newsel.type, (int)newsel.n, newsel.col);
+    sel_measure(END, NULL);
+    xctx->sel_erase_pad = 0;
+    xctx->hover_type = newsel.type;
+    xctx->hover_n = (int)newsel.n;
+    xctx->hover_col = newsel.col;
+    sel_overlay_flush();
+    xctx->draw_window = sdw;
+    xctx->draw_pixmap = sdp;
+    return;
+  }
   if(prev_type) { /* erase the previous outline, then repair selection/scope overlays */
     /* draw_selection() repaints from sel_array/lastsel (it is the move-time drawer);
      * on the motion/hover path that snapshot can be stale (lastsel==0) while objects
@@ -10071,6 +10198,12 @@ static void handle_expose(int mx,int my,int button,int aux)
    * here -- this is the second landmine in the same function.
    * See doc/claude/headless_crashes_batch/receipts/A-map.md and doc/claude/issues/0227-*.md */
   if(!has_x) return;
+  if(sel_style_eff() != SEL_STYLE_CLASSIC && !tclgetboolvar("compare_sch")) {
+    /* styled overlay: the exposed rect is repaired, every window-only overlay included, and a
+     * shape being placed is stroked again (sel_expose_repair(), move.c) */
+    sel_expose_repair(mx, my, button, aux);
+    return;
+  }
   MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], mx,my,button,aux,mx,my);
   xr[0].x=(short)mx;
   xr[0].y=(short)my;

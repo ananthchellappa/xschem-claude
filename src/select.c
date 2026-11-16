@@ -1272,6 +1272,9 @@ void unselect_all(int dr)
 {
  int i,c;
  char str[PATH_MAX];
+ /* a styled selection overlay (selection_style not classic) records each object's footprint as
+  * damage (sel_mark_object()) and repairs it all once at the end; classic keeps its own erase */
+ int styled = (sel_style_eff() != SEL_STYLE_CLASSIC);
  #if HAS_CAIRO==1
  int customfont;
  #endif
@@ -1288,6 +1291,7 @@ void unselect_all(int dr)
         int lim = rects < xctx->inst[i].pin_sel_size ? rects : xctx->inst[i].pin_sel_size;
         double px, py, h = PIN_SEL_HANDLE_H;
         for(p = 0; p < lim; ++p) if(xctx->inst[i].pin_sel[p]) {
+          if(styled) { sel_mark_object(INST_PIN, i, p); continue; }
           get_inst_pin_coord(i, p, &px, &py);
           drawtemprect(xctx->gctiled, ADD, px - h, py - h, px + h, py + h);
         }
@@ -1307,7 +1311,8 @@ void unselect_all(int dr)
      if(xctx->wire[i].sel)
      {
       xctx->wire[i].sel = 0;
-      {
+      if(dr && styled) sel_mark_object(WIRE, i, WIRELAYER);
+      else {
         if(dr) {
           if(xctx->wire[i].bus == -1.0)
             drawtempline(xctx->gctiled, THICK, xctx->wire[i].x1, xctx->wire[i].y1,
@@ -1324,7 +1329,8 @@ void unselect_all(int dr)
      if(xctx->inst[i].sel == SELECTED)
      {
       xctx->inst[i].sel = 0;
-      if(dr) for(c=0;c<cadlayers; ++c)
+      if(dr && styled) sel_mark_object(ELEMENT, i, WIRELAYER);
+      else if(dr) for(c=0;c<cadlayers; ++c)
         draw_temp_symbol(ADD, xctx->gctiled, i, c,0,0,0.0,0.0);
      }
     }
@@ -1333,7 +1339,8 @@ void unselect_all(int dr)
      if(xctx->text[i].sel == SELECTED)
      {
       xctx->text[i].sel = 0;
-      if(dr) {
+      if(dr && styled) sel_mark_object(xTEXT, i, TEXTLAYER);
+      else if(dr) {
         #if HAS_CAIRO==1
         customfont = set_text_custom_font(& xctx->text[i]); /* needed for bbox calculation */
         #endif
@@ -1356,7 +1363,8 @@ void unselect_all(int dr)
       if(xctx->arc[c][i].sel)
       {
        xctx->arc[c][i].sel = 0;
-       if(dr) drawtemparc(xctx->gctiled, ADD, xctx->arc[c][i].x, xctx->arc[c][i].y,
+       if(dr && styled) sel_mark_object(ARC, i, c);
+       else if(dr) drawtemparc(xctx->gctiled, ADD, xctx->arc[c][i].x, xctx->arc[c][i].y,
                                  xctx->arc[c][i].r, xctx->arc[c][i].a, xctx->arc[c][i].b);
       }
      }
@@ -1365,7 +1373,8 @@ void unselect_all(int dr)
       if(xctx->rect[c][i].sel)
       {
        xctx->rect[c][i].sel = 0;
-       if(dr) drawtemprect(xctx->gctiled, ADD, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
+       if(dr && styled) sel_mark_object(xRECT, i, c);
+       else if(dr) drawtemprect(xctx->gctiled, ADD, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                   xctx->rect[c][i].x2, xctx->rect[c][i].y2);
       }
      }
@@ -1374,7 +1383,8 @@ void unselect_all(int dr)
       if(xctx->line[c][i].sel)
       {
        xctx->line[c][i].sel = 0;
-       if(dr) {
+       if(dr && styled) sel_mark_object(LINE, i, c);
+       else if(dr) {
          if(xctx->line[c][i].bus == -1.0)
            drawtempline(xctx->gctiled, THICK, xctx->line[c][i].x1, xctx->line[c][i].y1,
                                         xctx->line[c][i].x2, xctx->line[c][i].y2);
@@ -1392,7 +1402,8 @@ void unselect_all(int dr)
        int bezier = 2 + !strboolcmp(get_tok_value(xctx->poly[c][i].prop_ptr, "bezier", 0), "true");
        for(k=0;k<xctx->poly[c][i].points; ++k) xctx->poly[c][i].selected_point[k] = 0;
        xctx->poly[c][i].sel = 0;
-       if(dr) {
+       if(dr && styled) sel_mark_object(POLYGON, i, c);
+       else if(dr) {
          drawtemppolygon(xctx->gctiled, NOW,
                xctx->poly[c][i].x, xctx->poly[c][i].y, xctx->poly[c][i].points, bezier);
        }
@@ -1405,6 +1416,8 @@ void unselect_all(int dr)
       drawtempline(xctx->gctiled,END, 0.0, 0.0, 0.0, 0.0);
     }
     xctx->ui_state &= ~SELECTION;
+    /* a batch: repaired now, before a caller paints a rubber band where it was */
+    if(dr && styled) sel_overlay_flush();
     my_snprintf(str, S(str), "%s/%s", user_conf_dir, ".selection.sch"); /* 20161115  PWD->HOME */
     xunlink(str);
     dbg(2, "unselect_all(1): done\n");
@@ -1438,7 +1451,10 @@ void select_wire(int i,unsigned short select_mode, int fast, int override_lock)
     xctx->wire[i].sel = select_mode;
   }
   if( xctx->wire[i].sel == SELECTED) set_first_sel(WIRE, i, 0);
-  if(select_mode) {
+  if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) {
+   sel_mark_object(WIRE, i, WIRELAYER);
+  }
+  else if(select_mode) {
    dbg(1, "select(): wire[%d].end1=%d, ,end2=%d\n", i, xctx->wire[i].end1, xctx->wire[i].end2);
    if(xctx->wire[i].bus == -1.0) {
      if(!(fast & 2)) drawtempline(xctx->gc[SELLAYER], THICK, xctx->wire[i].x1, xctx->wire[i].y1,
@@ -1564,7 +1580,12 @@ void select_element(int i,unsigned short select_mode, int fast, int override_loc
   }
   xctx->inst[i].sel = select_mode;
   if(select_mode == SELECTED) set_first_sel(ELEMENT, i, 0);
-  if(!(fast & 2) ) {
+  if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) {
+    if(!select_mode)
+      symbol_bbox(i, &xctx->inst[i].x1, &xctx->inst[i].y1, &xctx->inst[i].x2, &xctx->inst[i].y2 );
+    sel_mark_object(ELEMENT, i, WIRELAYER);
+  }
+  else if(!(fast & 2) ) {
     if(select_mode) {
       for(c=0;c<cadlayers; ++c) {
         draw_temp_symbol(ADD, xctx->gc[SELLAYER], i,c,0,0,0.0,0.0);
@@ -1612,15 +1633,18 @@ void select_pin(int i, int j, unsigned short select_mode, int fast)
   if(select_mode) {
     xctx->inst[i].pin_sel[j] = 1;
     xctx->pin_sel_active = 1; /* hint for unselect_all() (see its top-of-function note) */
-    if(!(fast & 2)) { /* box + cross in the SELECTION colour (D4): NOT the pin's own
+    if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(INST_PIN, i, j);
+    else if(!(fast & 2)) { /* box + cross in the SELECTION colour (D4): NOT the pin's own
                        * red PINLAYER colour, which would be invisible on the pin */
       drawtemprect(xctx->gc[SELLAYER], NOW, px - h, py - h, px + h, py + h);
       drawtempline(xctx->gc[SELLAYER], NOW, px - h, py - h, px + h, py + h);
       drawtempline(xctx->gc[SELLAYER], NOW, px - h, py + h, px + h, py - h);
     }
   } else {
+    if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(INST_PIN, i, j);
     xctx->inst[i].pin_sel[j] = 0;
-    if(!(fast & 2)) drawtemprect(xctx->gctiled, NOW, px - h, py - h, px + h, py + h);
+    if(!(fast & 2) && sel_style_eff() == SEL_STYLE_CLASSIC)
+      drawtemprect(xctx->gctiled, NOW, px - h, py - h, px + h, py + h);
   }
   xctx->need_reb_sel_arr = 1;
 }
@@ -1647,11 +1671,18 @@ void select_text(int i, unsigned short select_mode, int fast, int override_lock)
     statusmsg(str,1);
   }
   xctx->text[i].sel = select_mode;
+  if(select_mode) set_first_sel(xTEXT, i, 0);
+  /* styled: marked BEFORE this text's custom font is set, which must not reach the measurement
+   * (sel_mark_object() sets the font it needs itself) */
+  if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) {
+    sel_mark_object(xTEXT, i, TEXTLAYER);
+    xctx->need_reb_sel_arr=1;
+    return;
+  }
   #if HAS_CAIRO==1
   customfont = set_text_custom_font(&xctx->text[i]);
   #endif
   if(select_mode) {
-    set_first_sel(xTEXT, i, 0);
     if(!(fast & 2)) draw_temp_string(xctx->gc[SELLAYER],ADD, get_text_floater(i),
       xctx->text[i].rot, xctx->text[i].flip, xctx->text[i].hcenter, xctx->text[i].vcenter,
       xctx->text[i].x0, xctx->text[i].y0,
@@ -1702,11 +1733,13 @@ void select_box(int c, int i, unsigned short select_mode, int fast, int override
     } else {
       xctx->rect[c][i].sel |= select_mode;
     }
-    if(!(fast & 2)) drawtemprect(xctx->gc[SELLAYER], ADD, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
+    if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(xRECT, i, c);
+    else if(!(fast & 2)) drawtemprect(xctx->gc[SELLAYER], ADD, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                     xctx->rect[c][i].x2, xctx->rect[c][i].y2);
   } else {
     xctx->rect[c][i].sel = 0;
-    if(!(fast & 2)) drawtemprect(xctx->gctiled, NOW, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
+    if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(xRECT, i, c);
+    else if(!(fast & 2)) drawtemprect(xctx->gctiled, NOW, xctx->rect[c][i].x1, xctx->rect[c][i].y1,
                                xctx->rect[c][i].x2, xctx->rect[c][i].y2);
   }
   if( xctx->rect[c][i].sel == (SELECTED1|SELECTED2|SELECTED3|SELECTED4)) xctx->rect[c][i].sel = SELECTED;
@@ -1737,11 +1770,13 @@ void select_arc(int c, int i, unsigned short select_mode, int fast, int override
   }
   if(select_mode) {
     xctx->arc[c][i].sel = select_mode;
-   if(!(fast & 2))  drawtemparc(xctx->gc[SELLAYER], ADD, xctx->arc[c][i].x, xctx->arc[c][i].y,
+   if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(ARC, i, c);
+   else if(!(fast & 2))  drawtemparc(xctx->gc[SELLAYER], ADD, xctx->arc[c][i].x, xctx->arc[c][i].y,
                               xctx->arc[c][i].r, xctx->arc[c][i].a, xctx->arc[c][i].b);
   } else {
     xctx->arc[c][i].sel = 0;
-    if(!(fast & 2)) drawtemparc(xctx->gctiled, NOW, xctx->arc[c][i].x, xctx->arc[c][i].y,
+    if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) sel_mark_object(ARC, i, c);
+    else if(!(fast & 2)) drawtemparc(xctx->gctiled, NOW, xctx->arc[c][i].x, xctx->arc[c][i].y,
                               xctx->arc[c][i].r, xctx->arc[c][i].a, xctx->arc[c][i].b);
   }
   if(xctx->arc[c][i].sel == SELECTED) set_first_sel(ARC, i, c);
@@ -1770,7 +1805,10 @@ void select_polygon(int c, int i, unsigned short select_mode, int fast, int over
   }
   bezier = 2 + !strboolcmp(get_tok_value(xctx->poly[c][i].prop_ptr, "bezier", 0), "true");
   xctx->poly[c][i].sel = select_mode;
-  if(select_mode) {
+  if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) {
+    sel_mark_object(POLYGON, i, c);
+  }
+  else if(select_mode) {
     if(!(fast & 2)) drawtemppolygon(xctx->gc[SELLAYER], NOW,
        xctx->poly[c][i].x, xctx->poly[c][i].y, xctx->poly[c][i].points, bezier);
   }
@@ -1809,7 +1847,10 @@ void select_line(int c, int i, unsigned short select_mode, int fast, int overrid
     xctx->line[c][i].sel = select_mode;
   }
   if(xctx->line[c][i].sel == SELECTED) set_first_sel(LINE, i, c);
-  if(select_mode) {
+  if(!(fast & 2) && sel_style_eff() != SEL_STYLE_CLASSIC) {
+   sel_mark_object(LINE, i, c);
+  }
+  else if(select_mode) {
    if(xctx->line[c][i].bus == -1.0) {
      if(!(fast & 2)) drawtempline(xctx->gc[SELLAYER], THICK, xctx->line[c][i].x1, xctx->line[c][i].y1,
                                        xctx->line[c][i].x2, xctx->line[c][i].y2);
@@ -1885,7 +1926,11 @@ Selected select_object(double mx,double my, unsigned short select_mode,
 
    if(!select_mode) {
      rebuild_selected_array();
-     draw_selection(xctx->gc[SELLAYER], 0);
+     /* styled overlay: the deselect recorded its footprint as damage, and the repair repaints
+      * the neighbours it covered; the whole selection need not be painted again (the shift
+      * area-select band deselects through here on every motion) */
+     if(sel_style_eff() != SEL_STYLE_CLASSIC) sel_overlay_flush();
+     else draw_selection(xctx->gc[SELLAYER], 0);
    }
 
    /* action-log (issue 0005, doc/claude/specs/select_at.md): a coordinate hit-
@@ -2087,6 +2132,17 @@ void select_attached_nets(void)
   }
 }
 
+/* The fast argument select_inside() and select_touch() pass for a wire, text or instance that
+ * the area select puts in state want while it is in state now. The styled selection overlay
+ * draws nothing here: it records the object's footprint as damage (sel_mark_object()), and an
+ * object already in that state looks the same, so bit 2 (draw nothing) skips the record. The
+ * band (select_rect()) calls these on every motion, and without this every selected object
+ * inside it was repainted on every motion. Classic draws each object, so it is not changed. */
+static int sel_area_fast(int styled, unsigned short now, unsigned short want)
+{
+  return (styled && now == want) ? 3 : 1;
+}
+
 void select_inside(int stretch, double x1,double y1, double x2, double y2, int sel)
 {
  int c,i, tmpint;
@@ -2098,6 +2154,7 @@ void select_inside(int stretch, double x1,double y1, double x2, double y2, int s
  int customfont;
  #endif
  char *estr = NULL;
+ int styled = (sel_style_eff() != SEL_STYLE_CLASSIC);
 
  for(i=0;i<xctx->wires; ++i)
  {
@@ -2105,7 +2162,7 @@ void select_inside(int stretch, double x1,double y1, double x2, double y2, int s
      if(RECT_INSIDE(xctx->wire[i].x1,xctx->wire[i].y1,xctx->wire[i].x2,xctx->wire[i].y2, x1,y1,x2,y2))
      {
        xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
-       select_wire(i, SELECTED, 1, 0);
+       select_wire(i, SELECTED, sel_area_fast(styled, xctx->wire[i].sel, SELECTED), 0);
      }
      else if(stretch && POINTINSIDE(xctx->wire[i].x1,xctx->wire[i].y1, x1,y1,x2,y2) )
      {
@@ -2121,7 +2178,7 @@ void select_inside(int stretch, double x1,double y1, double x2, double y2, int s
      if(RECT_INSIDE(xctx->wire[i].x1,xctx->wire[i].y1,xctx->wire[i].x2,xctx->wire[i].y2, x1,y1,x2,y2))
      {
        xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
-       select_wire(i, 0, 1, 0);
+       select_wire(i, 0, sel_area_fast(styled, xctx->wire[i].sel, 0), 0);
      }
    }
  }
@@ -2147,7 +2204,8 @@ void select_inside(int stretch, double x1,double y1, double x2, double y2, int s
   if(RECT_INSIDE(xx1,yy1, xx2, yy2,x1,y1,x2,y2))
   {
    xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
-   sel ? select_text(i, SELECTED, 1, 0): select_text(i, 0, 1, 0);
+   sel ? select_text(i, SELECTED, sel_area_fast(styled, xctx->text[i].sel, SELECTED), 0):
+         select_text(i, 0, sel_area_fast(styled, xctx->text[i].sel, 0), 0);
   }
  }
  for(i=0;i<xctx->instances; ++i)
@@ -2156,12 +2214,12 @@ void select_inside(int stretch, double x1,double y1, double x2, double y2, int s
    {
      xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
      if(sel) {
-       select_element(i, SELECTED, 1, 0);
+       select_element(i, SELECTED, sel_area_fast(styled, xctx->inst[i].sel, SELECTED), 0);
        /* following not done in select_element() due to fast=1 argument */
        select_attached_floaters(i, get_tok_value(xctx->inst[i].prop_ptr, "attach", 0));
 
      } else {
-       select_element(i, 0, 1, 0);
+       select_element(i, 0, sel_area_fast(styled, xctx->inst[i].sel, 0), 0);
      }
    }
    #if 0
@@ -2324,6 +2382,7 @@ void select_touch(double x1,double y1, double x2, double y2, int sel) /*added un
  int customfont;
  #endif
  char *estr = NULL;
+ int styled = (sel_style_eff() != SEL_STYLE_CLASSIC);
 
  for(i=0;i<xctx->wires; ++i)
  {
@@ -2334,7 +2393,8 @@ void select_touch(double x1,double y1, double x2, double y2, int sel) /*added un
   ly2 = xctx->wire[i].y2;
   if(lineclip(&lx1, &ly1, &lx2, &ly2, x1,y1,x2,y2)) {
    xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
-   sel ? select_wire(i,SELECTED, 1, 0): select_wire(i,0, 1, 0);
+   sel ? select_wire(i,SELECTED, sel_area_fast(styled, xctx->wire[i].sel, SELECTED), 0):
+         select_wire(i,0, sel_area_fast(styled, xctx->wire[i].sel, 0), 0);
   }
  }
  for(i=0;i<xctx->texts; ++i)
@@ -2360,7 +2420,8 @@ void select_touch(double x1,double y1, double x2, double y2, int sel) /*added un
   if(RECT_TOUCH(xx1, yy1, xx2, yy2,x1,y1,x2,y2))
   {
    xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
-   sel ? select_text(i, SELECTED, 1, 0): select_text(i, 0, 1, 0);
+   sel ? select_text(i, SELECTED, sel_area_fast(styled, xctx->text[i].sel, SELECTED), 0):
+         select_text(i, 0, sel_area_fast(styled, xctx->text[i].sel, 0), 0);
   }
  }
  for(i=0;i<xctx->instances; ++i)
@@ -2369,11 +2430,11 @@ void select_touch(double x1,double y1, double x2, double y2, int sel) /*added un
   {
    xctx->ui_state |= SELECTION; /* set xctx->ui_state to SELECTION also if unselecting by area ???? */
    if(sel) {
-     select_element(i, SELECTED, 1, 0);
+     select_element(i, SELECTED, sel_area_fast(styled, xctx->inst[i].sel, SELECTED), 0);
      /* following not done in select_element() due to fast=1 argument */
      select_attached_floaters(i, get_tok_value(xctx->inst[i].prop_ptr, "attach", 0));
    } else {
-     select_element(i, 0, 1, 0);
+     select_element(i, 0, sel_area_fast(styled, xctx->inst[i].sel, 0), 0);
    }
   }
  }

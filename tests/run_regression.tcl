@@ -164,7 +164,18 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_dc_param_sweep" \
                   "headless/test_wave_subwindows" \
                   "headless/test_drag_tclvar_reads" \
-                  "headless/test_drag_abort_backup_1716"]
+                  "headless/test_drag_abort_backup_1716" \
+                  "headless/test_selection_look_plumbing"]
+## `headless/test_selection_look_plumbing` IS IN `hcases` ALONE, registered in the
+## commit that creates it (doc/claude/selection_look_batch/, the selection looks):
+## how `selection_style`, `selection_text_style`, `selection_text_own_px` and
+## `selection_halo_width` reach the context through sel_style_sync() (src/xinit.c),
+## read back through `xschem get selection_look`, plus an rc file's value winning over
+## the default (a child xschem with --rcfile). Every row runs under --nogui, so a
+## `dcases` entry would measure nothing more; the pixels and the menu are
+## `headless/test_selection_look_pixels`, in `dcases`. Its epilogue was captured in
+## exactly this loop's shape and scored with `banner_complete` SOURCED from
+## tests/banner_rule.tcl before this entry went in.
 ## `headless/test_drag_abort_backup_1716` IS IN BOTH LISTS, registered in the commit
 ## that creates it (doc/claude/drag_perf_batch/, stage D): issue 1716 (an aborted or
 ## refused fluid drag must leave the modified flag and the cellName~ backup exactly as
@@ -995,7 +1006,23 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_cadence_q_scope" \
                  "headless/test_ase_dc_param_sweep" \
                   "headless/test_wave_subwindows" \
-                  "headless/test_drag_abort_backup_1716"]
+                  "headless/test_drag_abort_backup_1716" \
+                  "headless/test_selection_look_pixels" \
+                  "headless/test_grid_toggle_sel_gc"]
+## `headless/test_selection_look_pixels` IS IN THIS LIST ALONE, registered in the commit
+## that creates it (doc/claude/selection_look_batch/): the selection looks read off the
+## window itself through `xschem window_snapshot` (src/scheduler.c) -- after each
+## gesture the canvas equals a fresh full redraw in brightbox, bright and halo, the box
+## brightbox adds, classic's colour, hidden texts, and the View > Selection look menu.
+## Under --nogui it self-skips to zero checks (`RESULT: SKIP (no X: ...)`, the word
+## SKIP not at column 0), so a counted entry would measure nothing.
+## `headless/test_grid_toggle_sel_gc` IS IN THIS LIST ALONE (issue 0082, extended by the
+## same batch to the three selection GCs). It was in neither list until then, and it
+## could not have gone into one as it stood: it stored its fixture rect at position
+## 100 of an empty array and aborted at exit (rc 134) after printing its banner. Under
+## --nogui it prints an uppercase `SKIP:` and zero checks. Both suites' epilogues were
+## captured in exactly this loop's shape and scored with `banner_complete` SOURCED from
+## tests/banner_rule.tcl before these entries went in.
 ## `headless/test_drag_abort_backup_1716` IS ALSO IN `hcases` (see the note there):
 ## this entry is its display arm, where band E drives issue 1716's own gesture with real
 ## Tk events (press, twelve motions, Escape, release) and issue 1715's walk, both with

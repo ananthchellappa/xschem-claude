@@ -14,6 +14,38 @@ Newest entries on top.
 
 ---
 
+## Q94. Selected objects now get a solid box. How do I get Halo back, or Bright without the box?
+
+- **Asked:** 2026-11-15
+- **Project state:** branch `fluid-editing` at `e6b38ba83`, plus the selection-look
+  batch (`doc/claude/selection_look_batch/`), whose stage A7 added **Bright with
+  box** and made it the default.
+
+**Pick the look from the menu: View → Selection look.** It has four entries:
+Classic, Bright, Bright with box (the default) and Halo. The menu applies your
+choice at once.
+
+- **To keep a look across sessions,** add one line to your rc file:
+  - `set selection_style bright` for Bright without the box;
+  - `set selection_style halo` for Halo;
+  - `set selection_style classic` for the old look.
+
+  For an installed xschem the rc file is `./xschemrc` in the directory you start it
+  from when there is one, and `~/.xschem/xschemrc` only when there is not. Run from
+  the source tree, xschem reads neither, so put the line in the file you start it
+  with `--script` (for the PDK launchers, `<pdk>/cadence_style_rc`).
+- **Typed in the command window** instead of picked from the menu, the choice
+  takes effect on the next redraw.
+- **Halo's text.** In Halo, a selected object's text keeps its own colour, with a
+  thin selection-colour band around the letters. For plain selection-colour
+  letters instead, also add `set selection_text_style colour`.
+- **The box** is the hover outline's box (the dashed yellow one), drawn solid in
+  the selection colour and as wide as `hover_highlight_width`. On a wire or line
+  the box lies on the bright stroke itself: at the default width of 1 it does not
+  show there, and at 3 or more it shows as a band along the stroke.
+
+---
+
 ## Q93. Why did `tb_bandgap` give a different answer every run, and why did `test_ase_optier_0963` flake? Is ngspice broken?
 
 - **Asked:** 2026-11-11

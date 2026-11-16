@@ -19051,6 +19051,12 @@ proc build_widgets { {topwin {} } } {
           reset_colors 1
          }
 
+  $topwin.menubar.view add cascade -label "Selection look" -menu $topwin.menubar.view.sellook
+  menu $topwin.menubar.view.sellook -tearoff 0 -takefocus 0
+  foreach {sl_lab sl_val} {Classic classic Bright bright {Bright with box} brightbox Halo halo} {
+    $topwin.menubar.view.sellook add radiobutton -label $sl_lab -variable selection_style \
+      -value $sl_val -selectcolor $selectcolor -command {xschem build_colors; xschem redraw}
+  }
   $topwin.menubar.view add checkbutton -label "Toggle variable line width" -variable change_lw \
      -selectcolor $selectcolor -accelerator {_} -command {xschem set change_lw $change_lw}
   # Off by default: the automatic line width and the junction/pin dot radius then
@@ -20680,6 +20686,34 @@ set_ne auto_hilight_graph_nodes 0
 set_ne hover_highlight 1
 set_ne hover_highlight_color yellow
 set_ne hover_highlight_width 1
+## selection look (doc/claude/selection_look_batch/PLAN.md), read in C (sel_style_sync), four
+## values, also on View > Selection look:
+##   classic   = upstream's grey strokes and a box per text;
+##   bright    = the same shapes in selection_color, texts as glyphs;
+##   brightbox = bright plus a solid selection_color box around each selected object, the
+##               hover outline's shape and hover_highlight_width (the default, user ruling
+##               2026-11-15; an unknown word means brightbox too);
+##   halo      = the object keeps its own colours over a band of selection_color
+##               selection_halo_width screen px wide, texts as glyphs.
+## selection_color empty = theme default (orange on dark, deep orange on light); any X color
+## name / #rrggbb. A change takes effect on the next redraw (the View menu entry rebuilds colors
+## and redraws).
+set_ne selection_style brightbox
+set_ne selection_color {}
+set_ne selection_halo_width 3
+## how a selected text reads in bright, brightbox and halo (no menu entry): colour (or color) =
+## glyphs in selection_color; own = glyphs keep their own colour over a thin band of
+## selection_color that follows the letter outlines; auto, the default (user ruling 2026-11-15),
+## and ANY OTHER WORD = own in halo, colour in bright and brightbox. Where own applies, a text
+## rendered smaller than selection_text_own_px screen px (its font size as drawn: text size x
+## zoom x cairo_font_scale) is drawn as colour instead, since the band would fill its letters;
+## measured in
+## doc/claude/selection_look_batch/receipts/A6-labels.md, MIRRORED IN C (SEL_TEXT_OWN_PX).
+## Without cairo every text is colour. Both take effect on the next full redraw. The default 16
+## is the user's ruling of 2026-11-15 (the ladder's first open counters were at 12 px, but 12-14 px
+## band text read heavy).
+set_ne selection_text_style auto
+set_ne selection_text_own_px 16
 ## ASE waveform viewer active-strip marker (issue 0151,
 ## doc/claude/specs/waveform_viewer_modes.md): the bar drawn down the right edge
 ## of the viewer's TARGET strip while more than one strip is up. Color is an X

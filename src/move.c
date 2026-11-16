@@ -50,29 +50,32 @@ void flip_rotate_ellipse(xRect *r, int rot, int flip)
   }
 }
 
-void rebuild_selected_array() /* can be used only if new selected set is lower */
-                              /* that is, xctx->sel_array[] size can not increase */
+/* Append every selected object to *arr (grown as needed, *last entries used, *max allocated) in
+ * the order draw_selection() strokes the selection: texts, instances, selected instance pins,
+ * wires, then per layer arcs, rects, lines, polygons. rebuild_selected_array() fills
+ * xctx->sel_array with it; the styled-overlay repair in this file collects a private copy, so it
+ * never reorders or reallocates a sel_array a caller may be iterating. */
+#define SEL_GROW() do { if(*last >= *max) { \
+    *max = (1 + *last / MAXGROUP) * MAXGROUP; \
+    my_realloc(_ALLOC_ID_, arr, sizeof(Selected) * *max); } } while(0)
+static void sel_collect(Selected **arr, int *last, int *max)
 {
  int i,c;
-
- dbg(2, "rebuild selected array\n");
- if(!xctx->need_reb_sel_arr) return;
- xctx->lastsel=0;
  for(i=0;i<xctx->texts; ++i)
   if(xctx->text[i].sel)
   {
-   check_selected_storage();
-   xctx->sel_array[xctx->lastsel].type = xTEXT;
-   xctx->sel_array[xctx->lastsel].n = i;
-   xctx->sel_array[xctx->lastsel++].col = TEXTLAYER;
+   SEL_GROW();
+   (*arr)[*last].type = xTEXT;
+   (*arr)[*last].n = i;
+   (*arr)[(*last)++].col = TEXTLAYER;
   }
  for(i=0;i<xctx->instances; ++i)
   if(xctx->inst[i].sel)
   {
-   check_selected_storage();
-   xctx->sel_array[xctx->lastsel].type = ELEMENT;
-   xctx->sel_array[xctx->lastsel].n = i;
-   xctx->sel_array[xctx->lastsel++].col = WIRELAYER;
+   SEL_GROW();
+   (*arr)[*last].type = ELEMENT;
+   (*arr)[*last].n = i;
+   (*arr)[(*last)++].col = WIRELAYER;
   }
  /* emit one INST_PIN entry per selected pin (pin_selection.md). This is independent
   * of inst.sel, so a pins-only instance contributes pin entries but no ELEMENT entry.
@@ -85,55 +88,65 @@ void rebuild_selected_array() /* can be used only if new selected set is lower *
    int lim = rects < xctx->inst[i].pin_sel_size ? rects : xctx->inst[i].pin_sel_size;
    for(p = 0; p < lim; ++p) if(xctx->inst[i].pin_sel[p])
    {
-    check_selected_storage();
-    xctx->sel_array[xctx->lastsel].type = INST_PIN;
-    xctx->sel_array[xctx->lastsel].n = i;
-    xctx->sel_array[xctx->lastsel++].col = (unsigned int)p;
+    SEL_GROW();
+    (*arr)[*last].type = INST_PIN;
+    (*arr)[*last].n = i;
+    (*arr)[(*last)++].col = (unsigned int)p;
    }
   }
  for(i=0;i<xctx->wires; ++i)
   if(xctx->wire[i].sel)
   {
-   check_selected_storage();
-   xctx->sel_array[xctx->lastsel].type = WIRE;
-   xctx->sel_array[xctx->lastsel].n = i;
-   xctx->sel_array[xctx->lastsel++].col = WIRELAYER;
+   SEL_GROW();
+   (*arr)[*last].type = WIRE;
+   (*arr)[*last].n = i;
+   (*arr)[(*last)++].col = WIRELAYER;
   }
  for(c=0;c<cadlayers; ++c)
  {
   for(i=0;i<xctx->arcs[c]; ++i)
    if(xctx->arc[c][i].sel)
    {
-    check_selected_storage();
-    xctx->sel_array[xctx->lastsel].type = ARC;
-    xctx->sel_array[xctx->lastsel].n = i;
-    xctx->sel_array[xctx->lastsel++].col = c;
+    SEL_GROW();
+    (*arr)[*last].type = ARC;
+    (*arr)[*last].n = i;
+    (*arr)[(*last)++].col = c;
    }
   for(i=0;i<xctx->rects[c]; ++i)
    if(xctx->rect[c][i].sel)
    {
-    check_selected_storage();
-    xctx->sel_array[xctx->lastsel].type = xRECT;
-    xctx->sel_array[xctx->lastsel].n = i;
-    xctx->sel_array[xctx->lastsel++].col = c;
+    SEL_GROW();
+    (*arr)[*last].type = xRECT;
+    (*arr)[*last].n = i;
+    (*arr)[(*last)++].col = c;
    }
   for(i=0;i<xctx->lines[c]; ++i)
    if(xctx->line[c][i].sel)
    {
-    check_selected_storage();
-    xctx->sel_array[xctx->lastsel].type = LINE;
-    xctx->sel_array[xctx->lastsel].n = i;
-    xctx->sel_array[xctx->lastsel++].col = c;
+    SEL_GROW();
+    (*arr)[*last].type = LINE;
+    (*arr)[*last].n = i;
+    (*arr)[(*last)++].col = c;
    }
   for(i=0;i<xctx->polygons[c]; ++i)
    if(xctx->poly[c][i].sel)
    {
-    check_selected_storage();
-    xctx->sel_array[xctx->lastsel].type = POLYGON;
-    xctx->sel_array[xctx->lastsel].n = i;
-    xctx->sel_array[xctx->lastsel++].col = c;
+    SEL_GROW();
+    (*arr)[*last].type = POLYGON;
+    (*arr)[*last].n = i;
+    (*arr)[(*last)++].col = c;
    }
  }
+}
+#undef SEL_GROW
+
+void rebuild_selected_array() /* can be used only if new selected set is lower */
+                              /* that is, xctx->sel_array[] size can not increase */
+{
+ dbg(2, "rebuild selected array\n");
+ if(!xctx->need_reb_sel_arr) return;
+ xctx->lastsel=0;
+ sel_collect(&xctx->sel_array, &xctx->lastsel, &xctx->maxsel);
  if(xctx->lastsel==0) {
    xctx->ui_state &= ~SELECTION;
    set_first_sel(0, -1, 0);
@@ -262,28 +275,133 @@ void draw_selection(GC g, int interruptable)
   }
 }
 
-static void draw_selection_impl(GC g, int interruptable)
+/* Own-colour pass helpers (selection_style halo): the colour a symbol is drawn in when its net
+ * is highlighted. Mirrors the skip test at the top of draw_symbol(), which hands a highlighted
+ * instance to draw_hilight_net(): -1 = draw in the layer colours. */
+static int sel_own_hilight_color(int n)
 {
-  int i, c, k, n;
+  const char *type;
+  Hilight_hashentry *entry;
+  if(!xctx->hilight_nets || INST_UNBOUND(n)) return -1;
+  if(xctx->inst[n].color != -10000) return get_color(xctx->inst[n].color);
+  type = xctx->sym[xctx->inst[n].ptr].type;
+  if(type && IS_LABEL_SH_OR_PIN(type) && xctx->inst[n].node && xctx->inst[n].node[0] &&
+     (entry = bus_hilight_hash_lookup(xctx->inst[n].node[0], 0, XLOOKUP))) {
+    return get_color(entry->value);
+  }
+  return -1;
+}
+
+/* A wire re-stroked in its own colour: the highlight style when its net is highlighted (exact,
+ * through draw_hilight_wire), else the wire layer (grid layer, dashed, for an LVS-skipped
+ * wire, as draw() does). Junction dots only at the wire's own, undisplaced position. */
+static void sel_own_wire(int n, double x1, double y1, double x2, double y2, int displaced)
+{
+  Hilight_hashentry *entry = NULL;
+  xWire *w = &xctx->wire[n];
+  if(xctx->hilight_nets && w->node) entry = bus_hilight_hash_lookup(w->node, 0, XLOOKUP);
+  if(entry) {
+    NetHilightStyle *st = (entry->value >= 0) ? get_hilight_style(entry->value) : NULL;
+    unsigned int fg = get_hilight_pixel(entry->value);
+    draw_hilight_wire(fg, st, 0.0, x1, y1, x2, y2, w->bus);
+    if(!displaced && xctx->cadhalfdotsize * xctx->mooz >= 0.7) {
+      if(w->end1 > 1) draw_hilight_dot(fg, w->x1, w->y1, xctx->cadhalfdotsize);
+      if(w->end2 > 1) draw_hilight_dot(fg, w->x2, w->y2, xctx->cadhalfdotsize);
+    }
+    return;
+  }
+  if(skip_wire(n)) {
+    drawline(GRIDLAYER, w->bus == -1.0 ? THICK : NOW, x1, y1, x2, y2, w->bus, 2, NULL);
+  } else {
+    drawtemp_manhattanline(xctx->gc[WIRELAYER], w->bus == -1.0 ? THICK : NOW, x1, y1, x2, y2, 1);
+    if(!displaced && xctx->draw_dots && xctx->cadhalfdotsize * xctx->mooz >= 0.7) {
+      if(w->end1 > 1) filledarc(WIRELAYER, NOW, w->x1, w->y1, xctx->cadhalfdotsize, 0, 360);
+      if(w->end2 > 1) filledarc(WIRELAYER, NOW, w->x2, w->y2, xctx->cadhalfdotsize, 0, 360);
+    }
+  }
+}
+
+/* one rectangle of the overlay: the pass GC outline and/or the own-colour rectangle (+ fill).
+ * A graph or image rectangle has no own-colour stroke: draw() never strokes one either. */
+static void sel_rect_out(GC g, int parts, int c, int n, double x1, double y1, double x2, double y2)
+{
+  xRect *r = &xctx->rect[c][n];
+  if(parts & (SELP_STROKE | SELP_BOX)) drawtemprect(g, ADD, x1, y1, x2, y2);
+  if((parts & SELP_OWN) && !(c == GRIDLAYER && (r->flags & (1 | 1024)))) {
+    drawrect(c, ADD, x1, y1, x2, y2, r->bus, r->dash, r->ellipse_a, r->ellipse_b);
+    if(r->fill) filledrect(c, ADD, x1, y1, x2, y2, r->fill, r->ellipse_a, r->ellipse_b);
+  }
+}
+
+static void sel_line_out(GC g, int parts, int c, int n, double x1, double y1, double x2, double y2)
+{
+  xLine *l = &xctx->line[c][n];
+  if(parts & SELP_STROKE) drawtempline(g, l->bus == -1.0 ? THICK : ADD, x1, y1, x2, y2);
+  if(parts & SELP_BOX) drawtempline(g, ADD, x1, y1, x2, y2); /* as draw_hover_shape(): never THICK */
+  if(parts & SELP_OWN) drawline(c, l->bus == -1.0 ? THICK : ADD, x1, y1, x2, y2, l->bus, l->dash, NULL);
+}
+
+/* flush the batched own-colour primitives of colour c (draw()'s per-layer END sequence) */
+static void sel_own_flush(int c)
+{
+  filledrect(c, END, 0.0, 0.0, 0.0, 0.0, 2, -1, -1); /* fill parameter must be 2! */
+  drawarc(c, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0, 0);
+  drawrect(c, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+  drawline(c, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+}
+
+/* The layer a floating text is painted in by draw() (its text loop), or -1 if draw() does not
+ * paint it: the own text style repaints the glyphs exactly so. */
+static int sel_text_own_layer(int i)
+{
+  int tl = xctx->text[i].layer, alay;
+  if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) return -1;
+  if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) tl = alay;
+  if(xctx->only_probes) tl = GRIDLAYER;
+  else if(tl < 0 ||  tl >= cadlayers) tl = TEXTLAYER;
+  #if HAS_CAIRO==1
+  if(!xctx->enable_layer[tl]) return -1;
+  if(xctx->draw_single_layer != -1 && xctx->draw_single_layer != tl) return -1;
+  #endif
+  return tl;
+}
+
+/* One selected object of the overlay, at its (possibly displaced, rotated, stretched) rubber-band
+ * position, drawn with GC g in the parts asked for (SELP_* in xschem.h). With SELP_CLASSIC this
+ * is the historical draw_selection() body, call for call. SELP_FULL draws the whole object
+ * whatever its partial (stretch) state, for a caller whose .sel has already been cleared.
+ * SELP_BOX (selection_style brightbox) is the hover outline's shape for each type, exactly as
+ * draw_hover_shape() (draw.c) strokes it, at the overlay's position: an instance's
+ * hover_inst_rect(), a text's bbox, a wire or line as a line along it (never THICK), a
+ * rectangle, polygon or arc as itself; a selected pin has none, as the hover has none. A wire's
+ * box takes its stroke's path, the L of drawtemp_manhattanline() included: a wire stretched by a
+ * move is stroked as an L, and a straight box would cut across it. */
+static void draw_sel_entry(GC g, int type, int n, int c, int parts)
+{
+  int k;
   double  angle; /* arc */
+  unsigned short sel;
   #if HAS_CAIRO==1
   int customfont;
   #endif
-  dbg(1,"draw_selection, %s, lastsel=%d\n", g == xctx->gctiled ? "gctiled" : "gcselect", xctx->lastsel);
-  if(g != xctx->gctiled) xctx->movelastsel = xctx->lastsel;
-
-  if((fix_broken_tiled_fill || !_unix) && g == xctx->gctiled && xctx->movelastsel > 800) {
-    MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], xctx->xrect[0].x, xctx->xrect[0].y,
-          xctx->xrect[0].width, xctx->xrect[0].height, xctx->xrect[0].x, xctx->xrect[0].y);
-    return;
-  }
-  for(i=0;i<xctx->movelastsel; ++i)
-  {
    short int tmp_rot;
-   c = xctx->sel_array[i].col;n = xctx->sel_array[i].n;
-   switch(xctx->sel_array[i].type)
+   switch(type)
    {
     case xTEXT:
+     /* A text draw() does not paint (text_hidden(): hide=true without show_hidden_texts, an
+      * annotation class its annot_show bit is off for) gets no letters and no band in a styled
+      * look: its mark is classic's, the box, drawn in this pass's colour by the glyph pass, and in
+      * brightbox by the box pass alone, whose box it already is (receipts/C2-fix.md in
+      * doc/claude/selection_look_batch/). Shown again, it is selected as any text is. */
+     if((parts & (SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN)) &&
+        text_hidden(xctx->text[n].flags, TEXT_CTX_SCHEMATIC)) {
+       int box = (parts & SELP_GLYPH) && xctx->sel_style != SEL_STYLE_BRIGHTBOX;
+       parts &= ~(SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN);
+       if(box) parts |= SELP_TEXTBOX;
+     }
+     /* this text's own-or-colour choice (sel_text_parts(), draw.c) */
+     parts = (parts & ~SELP_TEXTS) | sel_text_parts(parts & SELP_TEXTS, xctx->text[n].xscale);
+     if(!(parts & (SELP_TEXTS | SELP_BOX))) break;
      if(xctx->rotatelocal) {
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->text[n].x0, xctx->text[n].y0,
          xctx->text[n].x0, xctx->text[n].y0, xctx->rx1,xctx->ry1);
@@ -294,12 +412,43 @@ static void draw_selection_impl(GC g, int interruptable)
      #if HAS_CAIRO==1
      customfont =  set_text_custom_font(&xctx->text[n]);
      #endif
-     draw_temp_string(g,ADD, get_text_floater(n),
-      (xctx->text[n].rot +
-      ( (xctx->move_flip && (xctx->text[n].rot & 1) ) ? xctx->move_rot+2 : xctx->move_rot) ) & 0x3,
-       xctx->text[n].flip^xctx->move_flip, xctx->text[n].hcenter, xctx->text[n].vcenter,
-       xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
-       xctx->text[n].xscale, xctx->text[n].yscale);
+     {
+       short trot = (xctx->text[n].rot +
+         ( (xctx->move_flip && (xctx->text[n].rot & 1) ) ? xctx->move_rot+2 : xctx->move_rot) ) & 0x3;
+       short tflip = xctx->text[n].flip^xctx->move_flip;
+       if(parts & (SELP_TEXTS & ~SELP_GLYPHOWN))
+         draw_temp_string_parts(g,ADD, parts & SELP_TEXTS, get_text_floater(n), trot, tflip,
+           xctx->text[n].hcenter, xctx->text[n].vcenter,
+           xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
+           xctx->text[n].xscale, xctx->text[n].yscale);
+       if(parts & SELP_GLYPHOWN) {
+         /* the text in its own colour, as draw() paints it (the caller made this window-only) */
+         int tl = sel_text_own_layer(n);
+         if(tl >= 0) {
+           draw_string(tl, ADD, get_text_floater(n), trot, tflip,
+             xctx->text[n].hcenter, xctx->text[n].vcenter,
+             xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
+             xctx->text[n].xscale, xctx->text[n].yscale);
+           #if HAS_CAIRO!=1
+           drawrect(tl, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, -1, -1);
+           drawline(tl, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
+           #endif
+         }
+       }
+       if(parts & SELP_BOX) { /* the text's bbox, measured as draw_hover_shape() measures it */
+         double bx1, by1, bx2, by2, longest;
+         int nlines;
+         char *estr = my_expand(get_text_floater(n), tclgetintvar("tabstop"));
+         if(text_bbox(estr, xctx->text[n].xscale, xctx->text[n].yscale, trot, tflip,
+                      xctx->text[n].hcenter, xctx->text[n].vcenter,
+                      xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
+                      &bx1, &by1, &bx2, &by2, &nlines, &longest)) {
+           RECTORDER(bx1, by1, bx2, by2);
+           drawtemprect(g, ADD, bx1, by1, bx2, by2);
+         }
+         my_free(_ALLOC_ID_, &estr);
+       }
+     }
      #if HAS_CAIRO==1
      if(customfont) {
        cairo_restore(xctx->cairo_ctx);
@@ -308,6 +457,8 @@ static void draw_selection_impl(GC g, int interruptable)
 
      break;
     case xRECT:
+     if(!(parts & (SELP_STROKE | SELP_OWN | SELP_BOX))) break;
+     sel = (parts & SELP_FULL) ? SELECTED : xctx->rect[c][n].sel;
      if(xctx->rotatelocal) {
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->rect[c][n].x1, xctx->rect[c][n].y1,
          xctx->rect[c][n].x1, xctx->rect[c][n].y1, xctx->rx1,xctx->ry1);
@@ -319,74 +470,77 @@ static void draw_selection_impl(GC g, int interruptable)
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->x1, xctx->y1,
                 xctx->rect[c][n].x2, xctx->rect[c][n].y2, xctx->rx2,xctx->ry2);
      }
-     if(xctx->rect[c][n].sel==SELECTED)
+     if(sel==SELECTED)
      {
        RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-       drawtemprect(g, ADD, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
+       sel_rect_out(g, parts, c, n, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
                 xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
      }
-     else if(xctx->rect[c][n].sel==SELECTED1)
+     else if(sel==SELECTED1)
      {
       xctx->rx1+=xctx->deltax;
       xctx->ry1+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==SELECTED2)
+     else if(sel==SELECTED2)
      {
       xctx->rx2+=xctx->deltax;
       xctx->ry1+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==SELECTED3)
+     else if(sel==SELECTED3)
      {
       xctx->rx1+=xctx->deltax;
       xctx->ry2+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==SELECTED4)
+     else if(sel==SELECTED4)
      {
       xctx->rx2+=xctx->deltax;
       xctx->ry2+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==(SELECTED1|SELECTED2))
+     else if(sel==(SELECTED1|SELECTED2))
      {
       xctx->ry1+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==(SELECTED3|SELECTED4))
+     else if(sel==(SELECTED3|SELECTED4))
      {
       xctx->ry2+=xctx->deltay;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==(SELECTED1|SELECTED3))
+     else if(sel==(SELECTED1|SELECTED3))
      {
       xctx->rx1+=xctx->deltax;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->rect[c][n].sel==(SELECTED2|SELECTED4))
+     else if(sel==(SELECTED2|SELECTED4))
      {
       xctx->rx2+=xctx->deltax;
       RECTORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-      drawtemprect(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
+      sel_rect_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2, xctx->ry2);
      }
      break;
     case POLYGON:
+     if(!(parts & (SELP_STROKE | SELP_OWN | SELP_BOX))) break;
      {
       int bezier;
+      xPoly *p = &xctx->poly[c][n];
       double *x = my_malloc(_ALLOC_ID_, sizeof(double) *xctx->poly[c][n].points);
       double *y = my_malloc(_ALLOC_ID_, sizeof(double) *xctx->poly[c][n].points);
+      sel = (parts & SELP_FULL) ? SELECTED : xctx->poly[c][n].sel;
       bezier = 2 + !strboolcmp(get_tok_value(xctx->poly[c][n].prop_ptr, "bezier", 0), "true");
-      if(xctx->poly[c][n].sel==SELECTED || xctx->poly[c][n].sel==SELECTED1) {
+      if(sel==SELECTED || sel==SELECTED1) {
         for(k=0;k<xctx->poly[c][n].points; ++k) {
-          if( xctx->poly[c][n].sel==SELECTED || xctx->poly[c][n].selected_point[k]) {
+          if( sel==SELECTED || xctx->poly[c][n].selected_point[k]) {
             if(xctx->rotatelocal) {
               ROTATION(xctx->move_rot, xctx->move_flip, xctx->poly[c][n].x[0], xctx->poly[c][n].y[0],
                        xctx->poly[c][n].x[k], xctx->poly[c][n].y[k], xctx->rx1,xctx->ry1);
@@ -401,7 +555,8 @@ static void draw_selection_impl(GC g, int interruptable)
             y[k] = xctx->poly[c][n].y[k];
           }
         }
-        drawtemppolygon(g, NOW, x, y, xctx->poly[c][n].points, bezier);
+        if(parts & (SELP_STROKE | SELP_BOX)) drawtemppolygon(g, NOW, x, y, xctx->poly[c][n].points, bezier);
+        if(parts & SELP_OWN) drawpolygon(c, NOW, x, y, p->points, p->fill, p->dash, p->bus, bezier);
       }
       my_free(_ALLOC_ID_, &x);
       my_free(_ALLOC_ID_, &y);
@@ -409,6 +564,8 @@ static void draw_selection_impl(GC g, int interruptable)
      break;
 
     case WIRE:
+     if(!(parts & (SELP_STROKE | SELP_OWN | SELP_BOX))) break;
+     sel = (parts & SELP_FULL) ? SELECTED : (unsigned short)xctx->wire[n].sel;
      if(xctx->rotatelocal) {
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->wire[n].x1, xctx->wire[n].y1,
          xctx->wire[n].x1, xctx->wire[n].y1, xctx->rx1,xctx->ry1);
@@ -422,47 +579,62 @@ static void draw_selection_impl(GC g, int interruptable)
      }
 
      ORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-     if(xctx->wire[n].sel==SELECTED)
+     if(sel==SELECTED)
      {
       double x1 = xctx->rx1 + xctx->deltax;
       double y1 = xctx->ry1 + xctx->deltay;
       double x2 = xctx->rx2 + xctx->deltax;
       double y2 = xctx->ry2 + xctx->deltay;
       dbg(1, "draw_selection() wire: %g %g - %g %g  manhattan=%d\n", x1, y1, x2, y2, xctx->manhattan_lines);
-      if(xctx->wire[n].bus == -1.0) {
-        drawtemp_manhattanline(g, THICK, x1, y1, x2, y2, 1);
-      } else {
-        drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
+      if(parts & SELP_STROKE) {
+        if(xctx->wire[n].bus == -1.0) {
+          drawtemp_manhattanline(g, THICK, x1, y1, x2, y2, 1);
+        } else {
+          drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
+        }
       }
+      if(parts & SELP_OWN) sel_own_wire(n, x1, y1, x2, y2,
+          xctx->deltax != 0.0 || xctx->deltay != 0.0 || xctx->move_rot || xctx->move_flip);
+      if(parts & SELP_BOX) drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
      }
-     else if(xctx->wire[n].sel==SELECTED1)
+     else if(sel==SELECTED1)
      {
       double x1 = xctx->rx1 + xctx->deltax;
       double y1 = xctx->ry1 + xctx->deltay;
       double x2 = xctx->rx2;
       double y2 = xctx->ry2;
       dbg(1, "draw_selection() wire: %g %g - %g %g  manhattan=%d\n", x1, y1, x2, y2, xctx->manhattan_lines);
-      if(xctx->wire[n].bus == -1.0) {
-        drawtemp_manhattanline(g, THICK, x2, y2, x1, y1, 1);
-      } else {
-        drawtemp_manhattanline(g, ADD, x2, y2, x1, y1, 1);
+      if(parts & SELP_STROKE) {
+        if(xctx->wire[n].bus == -1.0) {
+          drawtemp_manhattanline(g, THICK, x2, y2, x1, y1, 1);
+        } else {
+          drawtemp_manhattanline(g, ADD, x2, y2, x1, y1, 1);
+        }
       }
+      if(parts & SELP_OWN) sel_own_wire(n, x2, y2, x1, y1, 1);
+      if(parts & SELP_BOX) drawtemp_manhattanline(g, ADD, x2, y2, x1, y1, 1);
      }
-     else if(xctx->wire[n].sel==SELECTED2)
+     else if(sel==SELECTED2)
      {
       double x1 = xctx->rx1;
       double y1 = xctx->ry1;
       double x2 = xctx->rx2 + xctx->deltax;
       double y2 = xctx->ry2 + xctx->deltay;
       dbg(1, "draw_selection() wire: %g %g - %g %g  manhattan=%d\n", x1, y1, x2, y2, xctx->manhattan_lines);
-      if(xctx->wire[n].bus == -1.0) {
-        drawtemp_manhattanline(g, THICK, x1, y1, x2, y2, 1);
-      } else {
-        drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
+      if(parts & SELP_STROKE) {
+        if(xctx->wire[n].bus == -1.0) {
+          drawtemp_manhattanline(g, THICK, x1, y1, x2, y2, 1);
+        } else {
+          drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
+        }
       }
+      if(parts & SELP_OWN) sel_own_wire(n, x1, y1, x2, y2, 1);
+      if(parts & SELP_BOX) drawtemp_manhattanline(g, ADD, x1, y1, x2, y2, 1);
      }
      break;
     case LINE:
+     if(!(parts & (SELP_STROKE | SELP_OWN | SELP_BOX))) break;
+     sel = (parts & SELP_FULL) ? SELECTED : xctx->line[c][n].sel;
      if(xctx->rotatelocal) {
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->line[c][n].x1, xctx->line[c][n].y1,
          xctx->line[c][n].x1, xctx->line[c][n].y1, xctx->rx1,xctx->ry1);
@@ -475,31 +647,23 @@ static void draw_selection_impl(GC g, int interruptable)
                 xctx->line[c][n].x2, xctx->line[c][n].y2, xctx->rx2,xctx->ry2);
      }
      ORDER(xctx->rx1,xctx->ry1,xctx->rx2,xctx->ry2);
-     if(xctx->line[c][n].sel==SELECTED)
+     if(sel==SELECTED)
      {
-       if(xctx->line[c][n].bus == -1.0)
-         drawtempline(g, THICK, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
-                xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
-       else
-         drawtempline(g, ADD, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
+       sel_line_out(g, parts, c, n, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
                 xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
      }
-     else if(xctx->line[c][n].sel==SELECTED1)
+     else if(sel==SELECTED1)
      {
-       if(xctx->line[c][n].bus == -1.0)
-         drawtempline(g, THICK, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay, xctx->rx2, xctx->ry2);
-       else
-         drawtempline(g, ADD, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay, xctx->rx2, xctx->ry2);
+       sel_line_out(g, parts, c, n, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay, xctx->rx2, xctx->ry2);
      }
-     else if(xctx->line[c][n].sel==SELECTED2)
+     else if(sel==SELECTED2)
      {
-       if(xctx->line[c][n].bus == -1.0)
-         drawtempline(g, THICK, xctx->rx1, xctx->ry1, xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
-       else
-         drawtempline(g, ADD, xctx->rx1, xctx->ry1, xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
+       sel_line_out(g, parts, c, n, xctx->rx1, xctx->ry1, xctx->rx2+xctx->deltax, xctx->ry2+xctx->deltay);
      }
      break;
     case ARC:
+     if(!(parts & (SELP_STROKE | SELP_OWN | SELP_BOX))) break;
+     sel = (parts & SELP_FULL) ? SELECTED : xctx->arc[c][n].sel;
      if(xctx->rotatelocal) {
        /* rotate center wrt itself: do nothing */
        xctx->rx1 = xctx->arc[c][n].x;
@@ -516,24 +680,31 @@ static void draw_selection_impl(GC g, int interruptable)
      }
      angle = fmod(angle, 360.);
      if(angle<0.) angle+=360.;
-     if(xctx->arc[c][n].sel==SELECTED) {
-       drawtemparc(g, ADD, xctx->rx1+xctx->deltax, xctx->ry1+xctx->deltay,
-                xctx->arc[c][n].r, angle, xctx->arc[c][n].b);
-     } else if(xctx->arc[c][n].sel==SELECTED1) {
-       drawtemparc(g, ADD, xctx->rx1, xctx->ry1,
-                fabs(xctx->arc[c][n].r+xctx->deltax), angle, xctx->arc[c][n].b);
-     } else if(xctx->arc[c][n].sel==SELECTED3) {
-       angle = my_round(fmod(atan2(-xctx->deltay, xctx->deltax)*180./XSCH_PI+xctx->arc[c][n].b, 360.));
-       if(angle<0.) angle +=360.;
-       if(angle==0) angle=360.;
-       drawtemparc(g, ADD, xctx->rx1, xctx->ry1, xctx->arc[c][n].r, xctx->arc[c][n].a, angle);
-     } else if(xctx->arc[c][n].sel==SELECTED2) {
-       angle = my_round(fmod(atan2(-xctx->deltay, xctx->deltax)*180./XSCH_PI+angle, 360.));
-       if(angle<0.) angle +=360.;
-       drawtemparc(g, ADD, xctx->rx1, xctx->ry1, xctx->arc[c][n].r, angle, xctx->arc[c][n].b);
+     {
+       double ax = xctx->rx1, ay = xctx->ry1, ar = xctx->arc[c][n].r;
+       double aa = angle, ab = xctx->arc[c][n].b;
+       int ok = 1;
+       if(sel==SELECTED) {
+         ax = xctx->rx1+xctx->deltax; ay = xctx->ry1+xctx->deltay;
+       } else if(sel==SELECTED1) {
+         ar = fabs(xctx->arc[c][n].r+xctx->deltax);
+       } else if(sel==SELECTED3) {
+         angle = my_round(fmod(atan2(-xctx->deltay, xctx->deltax)*180./XSCH_PI+xctx->arc[c][n].b, 360.));
+         if(angle<0.) angle +=360.;
+         if(angle==0) angle=360.;
+         aa = xctx->arc[c][n].a; ab = angle;
+       } else if(sel==SELECTED2) {
+         angle = my_round(fmod(atan2(-xctx->deltay, xctx->deltax)*180./XSCH_PI+angle, 360.));
+         if(angle<0.) angle +=360.;
+         aa = angle;
+       } else ok = 0;
+       if(ok && (parts & (SELP_STROKE | SELP_BOX))) drawtemparc(g, ADD, ax, ay, ar, aa, ab);
+       if(ok && (parts & SELP_OWN)) drawarc(c, ADD, ax, ay, ar, aa, ab,
+                                     xctx->arc[c][n].fill, xctx->arc[c][n].bus, xctx->arc[c][n].dash);
      }
      break;
     case ELEMENT:
+     if(!(parts & (SELP_STROKE | SELP_TEXTS | SELP_OWN | SELP_BOX))) break;
      if(xctx->rotatelocal) {
        ROTATION(xctx->move_rot, xctx->move_flip, xctx->inst[n].x0, xctx->inst[n].y0,
          xctx->inst[n].x0, xctx->inst[n].y0, xctx->rx1,xctx->ry1);
@@ -543,10 +714,51 @@ static void draw_selection_impl(GC g, int interruptable)
      }
      tmp_rot = (xctx->move_flip & xctx->inst[n].rot & 1) ?
                 0x3 & (xctx->move_rot + 2) : xctx->move_rot;
-     for(k=0;k<cadlayers; ++k) {
-       draw_temp_symbol(ADD, g, n, k, xctx->move_flip,
+     if(parts & SELP_BOX) {
+       /* the hover outline's rect, displaced as the strokes are; during a rotated or flipped
+        * move its texts are re-oriented as update_symbol_bboxes() re-oriented xx1..yy2, so the
+        * box lies inside the footprint sel_entry_fp() erases */
+       double bx1, by1, bx2, by2;
+       if(hover_inst_rect(n, xctx->move_rot, xctx->move_flip, &bx1, &by1, &bx2, &by2)) {
+         double ox = xctx->rx1 - xctx->inst[n].x0 + xctx->deltax;
+         double oy = xctx->ry1 - xctx->inst[n].y0 + xctx->deltay;
+         drawtemprect(g, ADD, bx1 + ox, by1 + oy, bx2 + ox, by2 + oy);
+       }
+     }
+     if(parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN))) for(k=0;k<cadlayers; ++k) {
+       draw_temp_symbol_parts(ADD, g, n, k, xctx->move_flip,
          tmp_rot,
-         xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay);
+         xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay,
+         parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN)));
+     }
+     if((parts & SELP_GLYPHOWN) && !INST_UNBOUND(n)) {
+       /* the symbol's texts in their own colours: draw()'s text layer of draw_symbol() (the
+        * caller made this window-only) */
+       int hc = sel_own_hilight_color(n);
+       sel_glyph_own_filter(1); /* only the texts that get the band (sel_text_parts(), draw.c) */
+       draw_symbol(ADD, (hc >= 0 && hc < cadlayers) ? hc : cadlayers, n, cadlayers, xctx->move_flip, tmp_rot,
+         xctx->rx1-xctx->inst[n].x0+xctx->deltax, xctx->ry1-xctx->inst[n].y0+xctx->deltay);
+       sel_glyph_own_filter(0);
+       #if HAS_CAIRO!=1
+       for(k=0;k<cadlayers; ++k) sel_own_flush(k);
+       #endif
+     }
+     if((parts & SELP_OWN) && !INST_UNBOUND(n)) {
+       /* the symbol's own geometry exactly as draw() paints it (dash, fills, pins, images),
+        * one layer at a time, flushed per layer so batched primitives keep their colour.
+        * Past layer 0 (which also sets the instance's skip flag for the later layers)
+        * draw_symbol() paints only the symbol's lines, polygons, arcs and rects of the layer
+        * asked for, so a layer holding none of them is not called: every call reads Tcl
+        * variables first, and select all over a large sheet paid for that on every layer. */
+       int hc = sel_own_hilight_color(n);
+       xSymbol *sp = xctx->sym + xctx->inst[n].ptr;
+       for(k=0;k<cadlayers; ++k) {
+         int col = (hc >= 0 && hc < cadlayers) ? hc : k;
+         if(k > 0 && !sp->lines[k] && !sp->polygons[k] && !sp->arcs[k] && !sp->rects[k]) continue;
+         draw_symbol(ADD, col, n, k, xctx->move_flip, tmp_rot,
+           xctx->rx1-xctx->inst[n].x0+xctx->deltax, xctx->ry1-xctx->inst[n].y0+xctx->deltay);
+         sel_own_flush(col);
+       }
      }
      break;
     case INST_PIN: {
@@ -557,9 +769,12 @@ static void draw_selection_impl(GC g, int interruptable)
        * it from the whole-instance outline. Pins are inert, so it ignores any
        * in-progress move offset and sits on the true pin. NOW mode -> uses its own GC,
        * independent of the ADD/END batch flushed with g. Erase pass (g==gctiled)
-       * restores the box region, which also covers the cross. */
+       * restores the box region, which also covers the cross. A styled overlay strokes it
+       * with the selection GC (g == gc_sel). */
       double px, py, h = PIN_SEL_HANDLE_H;
-      GC mg = (g == xctx->gctiled) ? xctx->gctiled : xctx->gc[SELLAYER];
+      GC mg = (g == xctx->gctiled) ? xctx->gctiled :
+              (g == xctx->gc_sel) ? xctx->gc_sel : xctx->gc[SELLAYER];
+      if(!(parts & SELP_PINMARK)) break;
       get_inst_pin_coord(n, (int)c, &px, &py);
       drawtemprect(mg, NOW, px - h, py - h, px + h, py + h);
       if(g != xctx->gctiled) {
@@ -569,6 +784,937 @@ static void draw_selection_impl(GC g, int interruptable)
       break;
     }
    }
+}
+
+static void sel_flush(GC g)
+{
+  drawtemparc(g, END, 0.0, 0.0, 0.0, 0.0, 0.0);
+  drawtemprect(g, END, 0.0, 0.0, 0.0, 0.0);
+  drawtempline(g, END, 0.0, 0.0, 0.0, 0.0);
+}
+
+/* The selection_style in force for the overlay: classic without X or before the dedicated GCs
+ * exist (a context build_colors() has not reached), else the cached xctx->sel_style. */
+int sel_style_eff(void)
+{
+  if(!has_x || !xctx || !xctx->gc_sel || !xctx->gc_selhalo) return SEL_STYLE_CLASSIC;
+  return xctx->sel_style;
+}
+
+/* A move/copy RUBBER BAND falls back to the cheap overlay (classic shapes + text boxes, in the
+ * selection colour, no halo, no glyphs) when the styled one proves too slow to follow the pointer:
+ * its first SEL_DRAG_PROBE frames are timed, X server work included (sel_styled_show()), and a
+ * second one over SEL_DRAG_FRAME_MS (a 60 Hz frame) switches the rest of that drag. No count of
+ * the dragged objects stands in for that time: measured on Xvfb, the frame cost of one dragged
+ * instance moved with the zoom alone far more than with the size of the selection, and the
+ * user's X server is not Xvfb (doc/claude/selection_look_batch/receipts/A2-fixes.md). The look
+ * is decided once per drag and the static overlay never falls back. sel_drag_start() opens a
+ * drag's probe. */
+#define SEL_DRAG_PROBE 4
+#define SEL_DRAG_FRAME_MS 16.7
+
+void sel_drag_start(void)
+{
+  xctx->sel_drag_cheap = 0;
+  xctx->sel_drag_probed = 0;
+  xctx->sel_drag_slow = 0;
+}
+
+/* the cheap look is a property of the whole dragged selection, so a repair of a few of its
+ * objects (a crosshair strip) paints them the way the rest of the frame was painted */
+static int sel_drag_fallback(void)
+{
+  if(!(xctx->ui_state & (STARTMOVE | STARTCOPY))) return 0;
+  return xctx->sel_drag_cheap;
+}
+
+/* selection_style brightbox's box of a[0..cnt-1]: a pass of its own with its own GC, flushed
+ * before the next pass, because the temp primitives batch their ADDs in one buffer whatever the
+ * GC (sel_flush()) */
+static void sel_box_pass(Selected *a, int cnt, int f)
+{
+  int i;
+  if(xctx->sel_style != SEL_STYLE_BRIGHTBOX) return;
+  for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_selbox, a[i].type, a[i].n, a[i].col, SELP_BOX | f);
+  sel_flush(xctx->gc_selbox);
+}
+
+/* Paint the styled overlay for a[0..cnt-1] over whatever the window holds. Pass order matters:
+ * (1) every text bbox is restored from the pixmap first, so the glyphs of the last pass are
+ * painted on a clean background and painting over a live overlay does not thicken them; (2) the
+ * own text style's band around the letters; (3) halo: every band before (4) any own-colour
+ * stroke, so a band never covers a neighbour's re-stroke; brightbox: the box after the strokes,
+ * so no text background restore cuts it; (5) pin marks and glyphs, last: the
+ * selection-colour glyphs of the texts without a band, then the own-colour glyphs of the texts
+ * with one. Which of the two a text is, is decided per text by its rendered size
+ * (sel_text_parts(), draw.c), the same way in every pass. Every pass paints the same thing
+ * however often it runs, so painting the whole selection over its own overlay changes nothing;
+ * painting PART of it over a live overlay is only canonical inside an area just restored from
+ * the pixmap, which is what sel_overlay_flush() does. */
+static void sel_styled_draw(Selected *a, int cnt, int full)
+{
+  int i, f = full ? SELP_FULL : 0;
+  int sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
+  int own = sel_text_band_px() > 0;
+  if(sel_drag_fallback()) { /* the cheap drag look keeps brightbox's box, which costs a rect */
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_CLASSIC | f);
+    sel_flush(xctx->gc_sel);
+    sel_box_pass(a, cnt, f);
+    return;
+  }
+  for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_TEXTBG | f);
+  if(own) {
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_TXTBAND | f);
+  }
+  if(xctx->sel_style == SEL_STYLE_HALO) {
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_selhalo, a[i].type, a[i].n, a[i].col, SELP_STROKE | f);
+    sel_flush(xctx->gc_selhalo);
+    xctx->draw_window = 1; xctx->draw_pixmap = 0;  /* own colours: window only, never the pixmap */
+    xctx->sel_own_fillmax = XLINEWIDTH(xctx->lw) + 2 * xctx->sel_halo_px;
+    if(xctx->sel_own_fillmax < 1) xctx->sel_own_fillmax = 1;
+    for(i = 0; i < cnt; ++i) {
+      draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_OWN | f);
+      if(a[i].type != ELEMENT && a[i].type != INST_PIN && a[i].type != xTEXT) {
+        sel_own_flush(a[i].type == WIRE ? WIRELAYER : (int)a[i].col);
+      }
+    }
+    xctx->sel_own_fillmax = 0;
+    xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_PINMARK | f);
+  } else {
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col,
+                                            SELP_STROKE | SELP_PINMARK | f);
+  }
+  sel_flush(xctx->gc_sel);
+  sel_box_pass(a, cnt, f);
+  for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_GLYPH | f);
+  sel_flush(xctx->gc_sel); /* a hidden text's box (draw_sel_entry()) is batched */
+  if(own) {
+    xctx->draw_window = 1; xctx->draw_pixmap = 0;
+    for(i = 0; i < cnt; ++i) draw_sel_entry(xctx->gc_sel, a[i].type, a[i].n, a[i].col, SELP_GLYPHOWN | f);
+    xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+  }
+  #if HAS_CAIRO==1
+  if(xctx->cairo_sfc) cairo_surface_flush(xctx->cairo_sfc);
+  #endif
+}
+
+/* Screen footprint of one overlay entry at the current move transform (full: whatever its
+ * partial-select state): a rect that contains every pixel sel_styled_draw() may paint for it,
+ * halo band, own-colour fills (sel_own_fill_skip() in draw.c keeps those inside the band), pin
+ * marks and glyphs included. An instance is its full bbox (texts included), displaced as
+ * draw_sel_entry() displaces it, in O(1); anything else is measured by running its erase
+ * through sel_measure(), which records what the erase would restore without restoring it.
+ * Returns 0 if the entry paints nothing. A text's own pad is its background restore's
+ * (draw_temp_string_parts(): 2 px, plus 1 for a text with the band), which a floating text
+ * measures through that restore. An instance's pad holds those of its texts whatever their
+ * style: pad >= 2 + 0 + 0 + 4 > 2 + 1, so the pad carries no band term and an instance whose
+ * texts are drawn in the colour style has the same footprint as one whose texts have the band.
+ * brightbox's box is measured with the strokes, so its footprint holds whatever path the box
+ * takes; an instance's lies inside its bbox. Either way the box adds the half of its line width
+ * that it reaches past the measured geometry, plus one. */
+static int sel_entry_fp(const Selected *e, int full, double *r)
+{
+  int got, pad = 2 * INT_LINE_W(xctx->lw) + INT_BUS_WIDTH(xctx->lw) + xctx->sel_halo_px + 4;
+  int bp = xctx->sel_style == SEL_STYLE_BRIGHTBOX ? xctx->sel_box_px / 2 + 1 : 0;
+  if(e->type == ELEMENT) {
+    int n = e->n;
+    double rx, ry, ox, oy;
+    if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) return 0;
+    if(xctx->rotatelocal) {
+      rx = xctx->inst[n].x0; ry = xctx->inst[n].y0;
+    } else {
+      ROTATION(xctx->move_rot, xctx->move_flip, xctx->x1, xctx->y1,
+               xctx->inst[n].x0, xctx->inst[n].y0, rx, ry);
+    }
+    ox = rx - xctx->inst[n].x0 + xctx->deltax;
+    oy = ry - xctx->inst[n].y0 + xctx->deltay;
+    r[0] = X_TO_SCREEN(xctx->inst[n].x1 + ox); r[1] = Y_TO_SCREEN(xctx->inst[n].y1 + oy);
+    r[2] = X_TO_SCREEN(xctx->inst[n].x2 + ox); r[3] = Y_TO_SCREEN(xctx->inst[n].y2 + oy);
+    RECTORDER(r[0], r[1], r[2], r[3]);
+    r[0] -= pad + bp; r[1] -= pad + bp; r[2] += pad + bp + 1; r[3] += pad + bp + 1;
+    return 1;
+  }
+  xctx->sel_erase_pad = pad;
+  sel_measure(START, NULL);
+  draw_sel_entry(xctx->gctiled, e->type, e->n, e->col,
+                 SELP_STROKE | SELP_PINMARK | SELP_TEXTBG | (bp ? SELP_BOX : 0) | (full ? SELP_FULL : 0));
+  sel_flush(xctx->gctiled);
+  got = sel_measure(END, r);
+  xctx->sel_erase_pad = 0;
+  if(got) { r[0] -= 1 + bp; r[1] -= 1 + bp; r[2] += 1 + bp; r[3] += 1 + bp; }
+  return got;
+}
+
+static int sel_rect_hits(const double *r, const XRectangle *xr, int n)
+{
+  int i;
+  for(i = 0; i < n; ++i) {
+    if(r[2] > xr[i].x && r[0] < xr[i].x + xr[i].width &&
+       r[3] > xr[i].y && r[1] < xr[i].y + xr[i].height) return 1;
+  }
+  return 0;
+}
+
+/* does one of xr[0..n-1] hold all of r? */
+static int sel_rect_holds(const double *r, const XRectangle *xr, int n)
+{
+  int i;
+  for(i = 0; i < n; ++i) {
+    if(r[0] >= xr[i].x && r[2] <= xr[i].x + xr[i].width &&
+       r[1] >= xr[i].y && r[3] <= xr[i].y + xr[i].height) return 1;
+  }
+  return 0;
+}
+
+/* Erase the styled overlay of a[0..cnt-1] NOW: copy each entry's footprint (sel_entry_fp())
+ * back from the pixmap. A superset of anything sel_styled_draw() may have painted for them,
+ * whichever branch it took, fills, glyphs and the hide_symbols box included. */
+static void sel_styled_erase(Selected *a, int cnt)
+{
+  int i;
+  double r[4];
+  for(i = 0; i < cnt; ++i) {
+    if(!sel_entry_fp(&a[i], 0, r)) continue;
+    if(!rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2, &r[0], &r[1], &r[2], &r[3]))
+      continue;
+    MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], (int)r[0], (int)r[1],
+                (unsigned int)(r[2] - r[0]), (unsigned int)(r[3] - r[1]), (int)r[0], (int)r[1]);
+  }
+}
+
+/* ---- the styled overlay's damage list ----------------------------------------------------
+ * With a selection_style other than classic, every window-only overlay (selection, apply-scope
+ * outline, hover outline, fly-lines, crosshair, snap cursor, trace highlights) is a function of
+ * xctx state, and the window is made to show it by REPAIR: copy a damaged rect back from the
+ * pixmap, then repaint every overlay inside it, clipped to it, in draw()'s order
+ * (sel_overlay_flush()). A select or deselect only records the object's footprint
+ * (sel_mark_object()), so a script selecting N objects pays N O(1) marks and one repair when Tcl
+ * next goes idle, and a click looks exactly like a full redraw whatever the click order. Hover,
+ * crosshair, snap cursor and Expose repair their own rects at once, taking anything waiting with
+ * them. A full draw() repaints everything and drops the list. */
+static int sel_idle_armed = 0;
+
+/* The tab whose drawing the shared .drw canvas holds: the last tab a full draw() put there
+ * (sel_note_canvas()), or whose own pastes have covered what it can paint (sel_note_paste()). It
+ * is NOT the current tab, nor get_drw_front_win(): a switch that does not draw (switch_tab() with
+ * dr 0, the `xschem load -window` save prompt's two switches, the tab menu's Edit netlist / Save /
+ * Close; create_new_tab() with dr 0) makes another tab current and front while the canvas still
+ * shows the old one, and the save prompt runs the event loop, so the idle repair runs in between.
+ * An Expose then repaints from the CURRENT tab's pixmap (handle_expose(), callback.c), classic
+ * included, and so does any other repair the current tab makes. */
+static char sel_canvas_win[WINDOW_PATH_SIZE] = ".drw";
+
+/* What the canvas holds is followed paste by paste: every copy of a context's pixmap into its
+ * window (MyXCopyArea(), MyXCopyAreaDouble(), draw.c) reports its rect (sel_note_paste()). One tab
+ * that is not sel_canvas_win at a time keeps, as the complement of what it pasted, the part of
+ * what it can paint (sel_paintable()) that does NOT show its drawing: rects that may overlap, x1,
+ * y1, x2, y2 exclusive, window px. Its own pastes cut them away (sel_exp_cut()); a paste by the
+ * canvas tab adds its rect back (sel_exp_put()). When none is left the canvas holds its drawing.
+ * A rect that does not fit is merged with one on the list (sel_exp_put()), which can only
+ * overstate what is left: the tab may become the canvas tab later than its drawing gets there,
+ * never earlier. */
+#define SEL_EXP_MAX 64
+static Xschem_ctx *sel_exp_ctx = NULL; /* the collecting tab, NULL if none */
+static int sel_exp_num = 0;  /* its window_number: never reused, unlike a freed context's address */
+static int sel_exp_w[4];     /* what it could paint at its last paste */
+static int sel_exp_n = 0;
+static int sel_exp_r[SEL_EXP_MAX][4];
+
+/* draw()'s call, once a full redraw has reached the window: this context's drawing is now what
+ * its window shows. Only a tab (empty top_path) shares the .drw canvas; a real window keeps its
+ * own and is always on screen. */
+void sel_note_canvas(void)
+{
+  if(!xctx || (xctx->top_path && xctx->top_path[0])) return;
+  if(!xctx->current_win_path || !xctx->current_win_path[0]) return;
+  my_strncpy(sel_canvas_win, xctx->current_win_path, S(sel_canvas_win));
+  sel_exp_ctx = NULL;
+  sel_exp_n = 0;
+}
+
+/* What xctx can paint into its window, in w[]: its pixmap's rect (sized at its last resetwin(),
+ * which a switch with dr 0 does not run) within the window as it is now, and the part of that on
+ * the screen: the server exposes nothing beyond the screen's edge. 0 if that is empty. */
+static int sel_paintable(int *w)
+{
+  XRectangle p = xctx->bbox_set ? xctx->savexrect : xctx->xrect[0];
+  Tk_Window tw = Tk_IdToWindow(display, xctx->window);
+  w[0] = p.x; w[1] = p.y; w[2] = p.x + p.width; w[3] = p.y + p.height;
+  if(tw) {
+    int rx, ry;
+    Tk_GetRootCoords(tw, &rx, &ry);
+    w[0] = MAJOR(w[0], -rx); w[1] = MAJOR(w[1], -ry);
+    w[2] = MINOR(w[2], Tk_Width(tw)); w[3] = MINOR(w[3], Tk_Height(tw));
+    w[2] = MINOR(w[2], WidthOfScreen(Tk_Screen(tw)) - rx);
+    w[3] = MINOR(w[3], HeightOfScreen(Tk_Screen(tw)) - ry);
+  }
+  return w[2] > w[0] && w[3] > w[1];
+}
+
+/* r[] = a[] within b[]; 0 if nothing is left */
+static int sel_exp_clip(const int *a, const int *b, int *r)
+{
+  r[0] = MAJOR(a[0], b[0]); r[1] = MAJOR(a[1], b[1]);
+  r[2] = MINOR(a[2], b[2]); r[3] = MINOR(a[3], b[3]);
+  return r[2] > r[0] && r[3] > r[1];
+}
+
+/* drop rect i of the list, moving the last one into its place */
+static void sel_exp_drop(int i)
+{
+  --sel_exp_n;
+  sel_exp_r[i][0] = sel_exp_r[sel_exp_n][0]; sel_exp_r[i][1] = sel_exp_r[sel_exp_n][1];
+  sel_exp_r[i][2] = sel_exp_r[sel_exp_n][2]; sel_exp_r[i][3] = sel_exp_r[sel_exp_n][3];
+}
+
+/* Add rect r to the list of what does not show the collecting tab's drawing: nothing if a rect on
+ * it holds r, and the rects r holds go. On a full list r merges into the rect whose bounding box
+ * with r takes in the least area that neither holds, and the merged rect is added again the same
+ * way, so the rects it now holds go too. */
+static void sel_exp_put(const int *r)
+{
+  int i, best = 0, u[4], *p;
+  double g, bestg = -1.0;
+  for(i = 0; i < sel_exp_n; ++i) {
+    p = sel_exp_r[i];
+    if(r[0] >= p[0] && r[1] >= p[1] && r[2] <= p[2] && r[3] <= p[3]) return;
+  }
+  for(i = sel_exp_n - 1; i >= 0; --i) {
+    p = sel_exp_r[i];
+    if(p[0] >= r[0] && p[1] >= r[1] && p[2] <= r[2] && p[3] <= r[3]) sel_exp_drop(i);
+  }
+  if(sel_exp_n < SEL_EXP_MAX) {
+    p = sel_exp_r[sel_exp_n++];
+    p[0] = r[0]; p[1] = r[1]; p[2] = r[2]; p[3] = r[3];
+    return;
+  }
+  for(i = 0; i < sel_exp_n; ++i) {
+    int x1, y1, x2, y2;
+    p = sel_exp_r[i];
+    x1 = MAJOR(p[0], r[0]); y1 = MAJOR(p[1], r[1]); x2 = MINOR(p[2], r[2]); y2 = MINOR(p[3], r[3]);
+    g = (double)(MAJOR(p[2], r[2]) - MINOR(p[0], r[0])) * (double)(MAJOR(p[3], r[3]) - MINOR(p[1], r[1])) -
+        (double)(p[2] - p[0]) * (double)(p[3] - p[1]) - (double)(r[2] - r[0]) * (double)(r[3] - r[1]);
+    if(x2 > x1 && y2 > y1) g += (double)(x2 - x1) * (double)(y2 - y1);
+    if(bestg < 0.0 || g < bestg) { bestg = g; best = i; }
+  }
+  p = sel_exp_r[best];
+  u[0] = MINOR(p[0], r[0]); u[1] = MINOR(p[1], r[1]);
+  u[2] = MAJOR(p[2], r[2]); u[3] = MAJOR(p[3], r[3]);
+  sel_exp_drop(best);
+  sel_exp_put(u);
+}
+
+/* Append to t[] (at *k) the parts of rect u outside rect c, at most 4: the bands above and below
+ * c across u's width, then the parts left and right of c between them. */
+static void sel_exp_minus(const int *u, const int *c, int (*t)[4], int *k)
+{
+  int y1, y2;
+  if(c[2] <= u[0] || c[0] >= u[2] || c[3] <= u[1] || c[1] >= u[3]) {
+    t[*k][0] = u[0]; t[*k][1] = u[1]; t[*k][2] = u[2]; t[*k][3] = u[3]; ++*k;
+    return;
+  }
+  y1 = MAJOR(u[1], c[1]); y2 = MINOR(u[3], c[3]);
+  if(u[1] < c[1]) { t[*k][0] = u[0]; t[*k][1] = u[1]; t[*k][2] = u[2]; t[*k][3] = c[1]; ++*k; }
+  if(c[3] < u[3]) { t[*k][0] = u[0]; t[*k][1] = c[3]; t[*k][2] = u[2]; t[*k][3] = u[3]; ++*k; }
+  if(u[0] < c[0]) { t[*k][0] = u[0]; t[*k][1] = y1; t[*k][2] = c[0]; t[*k][3] = y2; ++*k; }
+  if(c[2] < u[2]) { t[*k][0] = c[2]; t[*k][1] = y1; t[*k][2] = u[2]; t[*k][3] = y2; ++*k; }
+}
+
+/* The collecting tab pasted its drawing into rect c: cut c out of every rect on the list. */
+static void sel_exp_cut(const int *c)
+{
+  int t[4 * SEL_EXP_MAX][4], k = 0, i;
+  for(i = 0; i < sel_exp_n; ++i) sel_exp_minus(sel_exp_r[i], c, t, &k);
+  sel_exp_n = 0;
+  for(i = 0; i < k; ++i) sel_exp_put(t[i]);
+}
+
+/* What the collecting tab can paint changed from sel_exp_w to w (a move, a resize, the screen's
+ * edge): keep what is left inside w, and add the part of w outside the old area, which it has
+ * not painted. */
+static void sel_exp_rebase(const int *w)
+{
+  int t[SEL_EXP_MAX + 4][4], k = 0, i;
+  for(i = 0; i < sel_exp_n; ++i) if(sel_exp_clip(sel_exp_r[i], w, t[k])) ++k;
+  sel_exp_minus(w, sel_exp_w, t, &k);
+  sel_exp_n = 0;
+  for(i = 0; i < k; ++i) sel_exp_put(t[i]);
+  sel_exp_w[0] = w[0]; sel_exp_w[1] = w[1]; sel_exp_w[2] = w[2]; sel_exp_w[3] = w[3];
+}
+
+/* MyXCopyArea() / MyXCopyAreaDouble()'s call (draw.c): xctx pasted window px [x1,x2) x [y1,y2)
+ * of its pixmap into its window, so that rect of the window now shows xctx's drawing. A paste by
+ * the canvas tab gives the rect back to the canvas tab. A paste by another tab makes it the
+ * collecting tab, if it was not, and cuts the rect out of what does not show its drawing; once
+ * nothing is left the canvas holds its drawing (sel_note_canvas()). Its overlay is then repaired
+ * over the whole window, unless this paste alone covered it: the rects it pasted earlier were
+ * painted with the overlay it had then, and the idle repair dropped its damage meanwhile
+ * (sel_idle_cb()). Real windows and scratch contexts (window_number 0) do not share the canvas. */
+void sel_note_paste(int x1, int y1, int x2, int y2)
+{
+  int a[4], r[4], w[4];
+  if(!xctx || !xctx->window_number || (xctx->top_path && xctx->top_path[0])) return;
+  if(!xctx->current_win_path || !xctx->current_win_path[0]) return;
+  a[0] = x1; a[1] = y1; a[2] = x2; a[3] = y2;
+  if(!strcmp(xctx->current_win_path, sel_canvas_win)) {
+    if(sel_exp_ctx && sel_exp_clip(a, sel_exp_w, r)) sel_exp_put(r);
+    return;
+  }
+  if(get_window_count() == 0 || !tclgetboolvar("tabbed_interface")) { /* it is the only canvas */
+    sel_note_canvas();
+    return;
+  }
+  if(!sel_paintable(w)) return;
+  if(xctx != sel_exp_ctx || xctx->window_number != sel_exp_num) {
+    sel_exp_ctx = xctx;
+    sel_exp_num = xctx->window_number;
+    sel_exp_w[0] = w[0]; sel_exp_w[1] = w[1]; sel_exp_w[2] = w[2]; sel_exp_w[3] = w[3];
+    sel_exp_n = 1;
+    sel_exp_r[0][0] = w[0]; sel_exp_r[0][1] = w[1]; sel_exp_r[0][2] = w[2]; sel_exp_r[0][3] = w[3];
+  } else if(w[0] != sel_exp_w[0] || w[1] != sel_exp_w[1] || w[2] != sel_exp_w[2] || w[3] != sel_exp_w[3]) {
+    sel_exp_rebase(w);
+  }
+  if(!sel_exp_clip(a, w, r)) return;
+  sel_exp_cut(r);
+  if(sel_exp_n) return;
+  sel_note_canvas();
+  if(r[0] > w[0] || r[1] > w[1] || r[2] < w[2] || r[3] < w[3]) sel_pend_add(-1.0e9, -1.0e9, 1.0e9, 1.0e9);
+}
+
+/* Is xctx a tab whose drawing the canvas does not hold (the negation of sel_ctx_on_screen() below
+ * for the current context)? Its repairs paint into another tab's drawing outside what it pasted. */
+static int sel_off_canvas(void)
+{
+  if(!xctx || (xctx->top_path && xctx->top_path[0])) return 0;
+  if(!xctx->current_win_path || !strcmp(xctx->current_win_path, sel_canvas_win)) return 0;
+  return get_window_count() > 0 && tclgetboolvar("tabbed_interface");
+}
+
+/* Is open-window slot i's canvas on screen now, so that its pending repair must be painted? Any
+ * context with its own X window is: every window of the windowed interface, and in the tabbed
+ * interface a real top-level window (a detached tab, or one `xschem new_schematic create_window`
+ * made). The one context of a single-tab session is. A tab shares the .drw canvas and is on screen
+ * only while the canvas holds its drawing (sel_canvas_win); a switch to a real window does not
+ * change that, and neither does a switch that does not draw. */
+static int sel_ctx_on_screen(Xschem_ctx *c, const char *wp, int tabbed)
+{
+  if(!c->save_pixmap || !c->window) return 0;
+  if(!tabbed || get_window_count() == 0 || (c->top_path && c->top_path[0])) return 1;
+  return wp && !strcmp(wp, sel_canvas_win);
+}
+
+/* The idle repair. A context's damage is repaired with xctx switched to it, into its own window,
+ * whichever context is current by then: a script may select in one window and switch to another
+ * before Tcl goes idle. A tab that is not on screen, the current one included, drops its damage:
+ * it shares the canvas, which shows another tab's drawing, and it is fully redrawn when shown. */
+static void sel_idle_cb(ClientData cd)
+{
+  Xschem_ctx *cur = xctx;
+  int i, tabbed;
+  (void)cd;
+  sel_idle_armed = 0;
+  if(!has_x || !cur) return;
+  tabbed = tclgetboolvar("tabbed_interface");
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    const char *wp = NULL;
+    Xschem_ctx *c = get_window_ctx(i, &wp);
+    if(!c || c == cur || !c->sel_pend_n) continue;
+    if(!sel_ctx_on_screen(c, wp, tabbed)) { c->sel_pend_n = 0; continue; }
+    xctx = c;
+    sel_overlay_flush();
+    sel_rubbers_restamp();
+    xctx = cur;
+  }
+  if(!xctx->sel_pend_n) return;
+  if(sel_ctx_on_screen(xctx, xctx->current_win_path, tabbed)) {
+    sel_overlay_flush();
+    sel_rubbers_restamp();
+  } else xctx->sel_pend_n = 0;
+}
+
+/* a damaged rect in screen px (x2, y2 exclusive), clipped to the window and rounded out to whole
+ * pixels in r[]; 0 if nothing is left */
+static int sel_pend_norm(double x1, double y1, double x2, double y2, int *r)
+{
+  XRectangle w = xctx->bbox_set ? xctx->savexrect : xctx->xrect[0];
+  RECTORDER(x1, y1, x2, y2);
+  if(x1 < w.x) x1 = w.x;
+  if(y1 < w.y) y1 = w.y;
+  if(x2 > w.x + w.width) x2 = w.x + w.width;
+  if(y2 > w.y + w.height) y2 = w.y + w.height;
+  if(x2 <= x1 || y2 <= y1) return 0;
+  r[0] = (int)floor(x1); r[1] = (int)floor(y1); r[2] = (int)ceil(x2); r[3] = (int)ceil(y2);
+  return 1;
+}
+
+static int sel_pend_contains(const int *r)
+{
+  int i;
+  for(i = 0; i < xctx->sel_pend_n; ++i) {
+    int *p = xctx->sel_pend[i];
+    if(r[0] >= p[0] && r[1] >= p[1] && r[2] <= p[2] && r[3] <= p[3]) return 1;
+  }
+  return 0;
+}
+
+static int sel_pend_hits(const double *r)
+{
+  int i;
+  for(i = 0; i < xctx->sel_pend_n; ++i) {
+    int *p = xctx->sel_pend[i];
+    if(r[2] > p[0] && r[0] < p[2] && r[3] > p[1] && r[1] < p[3]) return 1;
+  }
+  return 0;
+}
+
+/* Add a damaged rect, screen px (x2, y2 exclusive), clipped to the window. A rect already inside
+ * one on the list adds nothing; on a full list the new rect merges into the one it grows least,
+ * so the list stays a set of local boxes rather than one window-sized union. */
+void sel_pend_add(double x1, double y1, double x2, double y2)
+{
+  int i, n, best = 0, r[4];
+  double grow, bestgrow = -1.0;
+  if(!has_x || !xctx || sel_style_eff() == SEL_STYLE_CLASSIC) return;
+  if(!sel_pend_norm(x1, y1, x2, y2, r) || sel_pend_contains(r)) return;
+  n = xctx->sel_pend_n;
+  if(n < SEL_PEND_MAX) {
+    xctx->sel_pend[n][0] = r[0]; xctx->sel_pend[n][1] = r[1];
+    xctx->sel_pend[n][2] = r[2]; xctx->sel_pend[n][3] = r[3];
+    xctx->sel_pend_n = n + 1;
+  } else {
+    for(i = 0; i < n; ++i) {
+      int *p = xctx->sel_pend[i];
+      double ux1 = MINOR(p[0], r[0]), uy1 = MINOR(p[1], r[1]);
+      double ux2 = MAJOR(p[2], r[2]), uy2 = MAJOR(p[3], r[3]);
+      grow = (ux2 - ux1) * (uy2 - uy1) - (double)(p[2] - p[0]) * (p[3] - p[1]);
+      if(bestgrow < 0.0 || grow < bestgrow) { bestgrow = grow; best = i; }
+    }
+    {
+      int *p = xctx->sel_pend[best];
+      if(r[0] < p[0]) p[0] = r[0];
+      if(r[1] < p[1]) p[1] = r[1];
+      if(r[2] > p[2]) p[2] = r[2];
+      if(r[3] > p[3]) p[3] = r[3];
+      /* the grown rect may now hold others: drop them, so no area is copied twice */
+      for(i = n - 1; i >= 0; --i) {
+        int *q = xctx->sel_pend[i];
+        if(i == best || q[0] < p[0] || q[1] < p[1] || q[2] > p[2] || q[3] > p[3]) continue;
+        if(best == n - 1) best = i;
+        q[0] = xctx->sel_pend[n - 1][0]; q[1] = xctx->sel_pend[n - 1][1];
+        q[2] = xctx->sel_pend[n - 1][2]; q[3] = xctx->sel_pend[n - 1][3];
+        --n;
+        p = xctx->sel_pend[best];
+      }
+      xctx->sel_pend_n = n;
+    }
+  }
+  if(!sel_idle_armed) {
+    sel_idle_armed = 1;
+    Tcl_DoWhenIdle(sel_idle_cb, NULL);
+  }
+}
+
+/* sel_measure(SET) sink, see sel_close_texts() */
+static int sel_close_changed = 0;
+void sel_pend_close(double x1, double y1, double x2, double y2)
+{
+  int r[4];
+  double d[4];
+  if(!sel_pend_norm(x1, y1, x2, y2, r) || sel_pend_contains(r)) return;
+  d[0] = r[0]; d[1] = r[1]; d[2] = r[2]; d[3] = r[3];
+  if(!sel_pend_hits(d)) return;
+  sel_pend_add(x1, y1, x2, y2);
+  sel_close_changed = 1;
+}
+
+/* Grow the damage list until every selected text it meets lies wholly inside one of its rects.
+ * Cairo renders a glyph run that a clip cuts through differently from the same run unclipped:
+ * measured, a repair rect cutting a selected text left a few antialiasing pixels per text
+ * different from a full redraw, and a rect containing the whole text left none. X strokes clip
+ * exactly. a[0..cnt-1] are the entries the repair paints; a text's box is its background
+ * restore box (draw_temp_string_parts()), which holds its glyphs and the own style's band. */
+static void sel_close_texts(Selected *a, int cnt)
+{
+  int i, it, ir[4];
+  double r[4];
+  for(it = 0; it < 8; ++it) {
+    sel_close_changed = 0;
+    for(i = 0; i < cnt; ++i) {
+      int t = a[i].type;
+      if(t == ELEMENT) {
+        int n = a[i].n;
+        if(n < 0 || n >= xctx->instances || xctx->inst[n].ptr < 0) continue;
+        if(!(xctx->sym + xctx->inst[n].ptr)->texts) continue;
+      } else if(t != xTEXT) continue;
+      if(!sel_entry_fp(&a[i], 0, r) || !sel_pend_hits(r)) continue;
+      /* an entry wholly inside one rect has its texts inside it too */
+      if(sel_pend_norm(r[0], r[1], r[2], r[3], ir) && sel_pend_contains(ir)) continue;
+      sel_measure(SET, NULL);
+      draw_sel_entry(xctx->gctiled, t, a[i].n, a[i].col, SELP_TEXTBG);
+      sel_measure(END, NULL);
+    }
+    if(!sel_close_changed) return;
+  }
+  /* did not settle: repair the whole window */
+  xctx->sel_pend_n = 0;
+  sel_pend_add(-1.0e9, -1.0e9, 1.0e9, 1.0e9);
+}
+
+void sel_pend_clear(void)
+{
+  if(xctx) xctx->sel_pend_n = 0;
+}
+
+/* The selection entries the overlay currently shows: the move set during a move/copy rubber
+ * band, sel_array when it is current, else a private collection (never a rebuild of sel_array,
+ * which a caller of this repair may be iterating). *own = 1 when the caller must free it. */
+static Selected *sel_current(int *cnt, int *own)
+{
+  Selected *arr = NULL;
+  int max = 0;
+  *own = 0;
+  if(xctx->ui_state & (STARTMOVE | STARTCOPY)) { *cnt = xctx->movelastsel; return xctx->sel_array; }
+  if(!xctx->need_reb_sel_arr) { *cnt = xctx->lastsel; return xctx->sel_array; }
+  *cnt = 0;
+  sel_collect(&arr, cnt, &max);
+  *own = 1;
+  return arr;
+}
+
+/* paint the selection entries a[0..cnt-1] whose footprint meets one of xr[0..n-1] (all of them
+ * with n == 0), or with inside set lies wholly inside one of them, at the committed coordinates
+ * while a fluid stretch has live-committed them (see draw_selection() below) */
+static void sel_paint_entries(Selected *a, int cnt, XRectangle *xr, int n, int inside)
+{
+  Selected *sub = a;
+  int i, k = cnt;
+  double r[4];
+  double sv_dx = xctx->deltax, sv_dy = xctx->deltay;
+  short sv_rot = xctx->move_rot, sv_flip = xctx->move_flip, sv_rotlocal = xctx->rotatelocal;
+  if(cnt <= 0) return;
+  if(xctx->fluid_reroute_dirty) {
+    xctx->deltax = 0.0; xctx->deltay = 0.0;
+    xctx->move_rot = 0; xctx->move_flip = 0; xctx->rotatelocal = 0;
+  }
+  if(n > 0) {
+    sub = my_malloc(_ALLOC_ID_, sizeof(Selected) * cnt);
+    for(k = i = 0; i < cnt; ++i) {
+      if(!sel_entry_fp(&a[i], 0, r)) continue;
+      if(inside ? sel_rect_holds(r, xr, n) : sel_rect_hits(r, xr, n)) sub[k++] = a[i];
+    }
+  }
+  if(k > 0) sel_styled_draw(sub, k, 0);
+  if(sub != a) my_free(_ALLOC_ID_, &sub);
+  xctx->deltax = sv_dx; xctx->deltay = sv_dy;
+  xctx->move_rot = sv_rot; xctx->move_flip = sv_flip; xctx->rotatelocal = sv_rotlocal;
+}
+
+/* ---- the area-select rubber band (select_rect() in actions.c) under the styled overlay -----
+ * Classic erases the old band by stroking it with gctiled, which also cuts the selection
+ * wherever the band crossed it, and so repaints the WHOLE selection on every motion. Styled:
+ * the old band's four edges are damage (sel_band_damage()), so one repair restores them and
+ * repaints only the selection entries they meet, and the band is an overlay the repair knows
+ * (xctx->band_shown): every repair stamps it again (sel_band_paint()) after the selection,
+ * scope, hover and fly-lines and before the crosshair, the order a motion paints them in, so
+ * nothing the repair restores leaves a gap in it. A full draw() wipes it; the next motion
+ * paints it again, as in classic. */
+void sel_band_damage(double x1, double y1, double x2, double y2)
+{
+  double sx1, sy1, sx2, sy2;
+  int m;
+  if(!has_x || sel_style_eff() == SEL_STYLE_CLASSIC) return;
+  xctx->band_shown = 0;
+  /* the rect drawtemprect() strokes, edges padded past the stroke width */
+  sx1 = X_TO_SCREEN(x1); sy1 = Y_TO_SCREEN(y1);
+  sx2 = X_TO_SCREEN(x2); sy2 = Y_TO_SCREEN(y2);
+  RECTORDER(sx1, sy1, sx2, sy2);
+  if(!rectclip(xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2, &sx1, &sy1, &sx2, &sy2)) return;
+  sx1 = floor(sx1); sy1 = floor(sy1); sx2 = floor(sx2); sy2 = floor(sy2);
+  m = INT_LINE_W(xctx->lw) + 2;
+  sel_pend_add(sx1 - m, sy1 - m, sx2 + m + 1, sy1 + m + 1);
+  sel_pend_add(sx1 - m, sy2 - m, sx2 + m + 1, sy2 + m + 1);
+  sel_pend_add(sx1 - m, sy1 - m, sx1 + m + 1, sy2 + m + 1);
+  sel_pend_add(sx2 - m, sy1 - m, sx2 + m + 1, sy2 + m + 1);
+}
+
+void sel_band_paint(void)
+{
+  double x1, y1, x2, y2;
+  if(!has_x || !xctx->band_shown || !(xctx->ui_state & STARTSELECT)) return;
+  x1 = xctx->nl_xr; y1 = xctx->nl_yr; x2 = xctx->nl_xr2; y2 = xctx->nl_yr2;
+  RECTORDER(x1, y1, x2, y2);
+  drawtemprect(xctx->gc[SELLAYER], NOW, x1, y1, x2, y2);
+}
+
+/* A wire, line, rectangle, polygon, arc or zoom box being placed is a window-only drawing too,
+ * stroked by its owner on every motion (redraw_w_a_l_r_p_z_rubbers(), callback.c). A repair
+ * copies it away wherever it meets the damage, and everywhere when the repair is of the whole
+ * window (sel_pend_full()); classic paints a selection over it and leaves it. A motion strokes it
+ * again, so only a repair that no motion follows (the idle repair, an Expose) calls this: it
+ * stamps the shape the owner last stroked, from the owner's own state and with the owner's own
+ * stroke, then the crosshair and snap cursor on top, a motion's order. It never asks the owner
+ * to stroke again: that would erase and redraw at the pointer, and callback() moves the pointer
+ * to an Expose's or a Configure's corner. Not from sel_overlay_flush() itself: an owner repairs
+ * from inside its own stroke, between erasing the old shape and painting the new one
+ * (restore_selection() in actions.c), where this would paint the old shape back.
+ * Only a shape its owner has stroked (xctx->rubber_shown, kept by the owners in actions.c): from
+ * the start of a shape to its first motion the owner shows nothing, and a stamp of the shape it
+ * holds then, both ends on the start point, would paint a dot the owner never drew. */
+void sel_rubbers_restamp(void)
+{
+  unsigned int s;
+  double x1, y1, x2, y2;
+  if(!has_x || !xctx || sel_style_eff() == SEL_STYLE_CLASSIC) return;
+  s = xctx->ui_state & xctx->rubber_shown;
+  if(!(s & (STARTWIRE | STARTLINE | STARTRECT | STARTPOLYGON | STARTARC | STARTZOOM))) return;
+  x1 = xctx->nl_x1; y1 = xctx->nl_y1; x2 = xctx->nl_x2; y2 = xctx->nl_y2;
+  RECTORDER(x1, y1, x2, y2);
+  if(s & STARTZOOM) drawtemprect(xctx->gc[SELLAYER], NOW, x1, y1, x2, y2);
+  if(s & STARTWIRE)
+    drawtemp_manhattanline(xctx->gc[WIRELAYER], NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+  if(s & STARTARC) {
+    if(xctx->nl_state == 0)
+      drawtempline(xctx->gc[SELLAYER], NOW, xctx->nl_xx1, xctx->nl_yy1, xctx->nl_xx2, xctx->nl_yy2);
+    else if(xctx->nl_r > 0.)
+      drawtemparc(xctx->gc[xctx->rectcolor], NOW, xctx->nl_x, xctx->nl_y, xctx->nl_r, xctx->nl_a, xctx->nl_b);
+  }
+  if(s & STARTLINE)
+    drawtemp_manhattanline(xctx->gc[xctx->rectcolor], NOW, xctx->nl_x1, xctx->nl_y1, xctx->nl_x2, xctx->nl_y2, 0);
+  if(s & STARTRECT) drawtemprect(xctx->gc[xctx->rectcolor], NOW, x1, y1, x2, y2);
+  if((s & STARTPOLYGON) && xctx->nl_points > 0 && xctx->nl_polyx && xctx->nl_polyy)
+    drawtemppolygon(xctx->gc[xctx->rectcolor], NOW, xctx->nl_polyx, xctx->nl_polyy, xctx->nl_points + 1, 0);
+  overlay_paint_xhair();
+  overlay_paint_snapc();
+}
+
+/* every window-only overlay after the selection, in draw()'s order (the area-select band, which
+ * draw() never paints, under the crosshair as a motion paints it) */
+static void sel_paint_others(void)
+{
+  int sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
+  draw_scope_highlight();
+  xctx->draw_window = 1; xctx->draw_pixmap = 0;
+  if(xctx->hover_type) draw_hover_shape(xctx->gc_hover, xctx->hover_type, xctx->hover_n, xctx->hover_col);
+  xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+  flyline_restamp();
+  sel_band_paint();
+  overlay_paint_xhair();
+  overlay_paint_snapc();
+  draw_wave_hilight(0);
+}
+
+/* Does the damage list cover at least half the window (its rects' areas summed)? Then the repair
+ * is of the whole window: one copy, and every selected entry painted with no culling and no text
+ * closure, which is what a select all or a large area select leaves. Culling and closing cost a
+ * footprint per entry, the most of the repair when most entries are repainted anyway. */
+static int sel_pend_full(void)
+{
+  int i;
+  double a = 0.0;
+  for(i = 0; i < xctx->sel_pend_n; ++i) {
+    int *p = xctx->sel_pend[i];
+    a += (double)(p[2] - p[0]) * (double)(p[3] - p[1]);
+  }
+  return a * 2.0 >= (double)xctx->xrect[0].width * (double)xctx->xrect[0].height;
+}
+
+/* Repair every damaged rect now: copy it back from the pixmap, then repaint every overlay
+ * clipped to the rects. The culling area is the whole window, also inside a bbox-limited
+ * draw(), so every primitive is rasterized exactly as a full redraw rasterizes it and the
+ * repair is pixel-identical to one inside the rects. Without a real X clip (SEL_REAL_XCLIP 0,
+ * Windows) nothing can be confined to the rects, so after the copies every selected object is
+ * repainted unclipped: painting the whole selection over its own overlay is idempotent, and
+ * the rects themselves were just restored. A list covering half the window or more is repaired
+ * as the whole window (sel_pend_full()). A tab the canvas does not hold (sel_off_canvas())
+ * paints nothing outside its rects, which show another tab's drawing: its texts do not grow the
+ * rects (sel_close_texts()), and without a real clip only the entries wholly inside one rect are
+ * painted, and none of the other overlays. A repair of the whole window puts its drawing on the
+ * canvas (sel_note_paste()) and paints everything. */
+void sel_overlay_flush(void)
+{
+  XRectangle xr[SEL_PEND_MAX];
+  Selected *a;
+  int i, n, cnt, own, full, off;
+  int sx1, sy1, sx2, sy2, sw, sh;
+  XRectangle sxr;
+  double sv_dx, sv_dy;
+  short sv_rot, sv_flip, sv_rotlocal;
+  if(!has_x || !xctx || !xctx->sel_pend_n) return;
+  if(sel_style_eff() == SEL_STYLE_CLASSIC) { xctx->sel_pend_n = 0; return; }
+  sx1 = xctx->areax1; sy1 = xctx->areay1; sx2 = xctx->areax2; sy2 = xctx->areay2;
+  sw = xctx->areaw; sh = xctx->areah; sxr = xctx->xrect[0];
+  if(xctx->bbox_set) {
+    xctx->areax1 = xctx->savex1; xctx->areay1 = xctx->savey1;
+    xctx->areax2 = xctx->savex2; xctx->areay2 = xctx->savey2;
+    xctx->areaw = xctx->savew; xctx->areah = xctx->saveh; xctx->xrect[0] = xctx->savexrect;
+  }
+  sv_dx = xctx->deltax; sv_dy = xctx->deltay;
+  sv_rot = xctx->move_rot; sv_flip = xctx->move_flip; sv_rotlocal = xctx->rotatelocal;
+  if(xctx->fluid_reroute_dirty) { /* the committed coordinates, as draw_selection() below */
+    xctx->deltax = 0.0; xctx->deltay = 0.0;
+    xctx->move_rot = 0; xctx->move_flip = 0; xctx->rotatelocal = 0;
+  }
+  a = sel_current(&cnt, &own);
+  full = sel_pend_full();
+  off = !full && sel_off_canvas();
+  if(full) { /* one copy of the window, every entry painted, no culling (see sel_pend_full()) */
+    xctx->sel_pend_n = 1;
+    xctx->sel_pend[0][0] = xctx->xrect[0].x;
+    xctx->sel_pend[0][1] = xctx->xrect[0].y;
+    xctx->sel_pend[0][2] = xctx->xrect[0].x + xctx->xrect[0].width;
+    xctx->sel_pend[0][3] = xctx->xrect[0].y + xctx->xrect[0].height;
+  } else if(SEL_REAL_XCLIP && cnt > 0 && !off) sel_close_texts(a, cnt);
+  n = xctx->sel_pend_n;
+  for(i = 0; i < n; ++i) {
+    xr[i].x = (short)xctx->sel_pend[i][0];
+    xr[i].y = (short)xctx->sel_pend[i][1];
+    xr[i].width = (unsigned short)(xctx->sel_pend[i][2] - xctx->sel_pend[i][0]);
+    xr[i].height = (unsigned short)(xctx->sel_pend[i][3] - xctx->sel_pend[i][1]);
+  }
+  xctx->sel_pend_n = 0;
+  if(xctx->bbox_set) sel_cairo_bbox_clip(0);
+  #if SEL_REAL_XCLIP
+  sel_set_clip_rects(xr, n);
+  #endif
+  for(i = 0; i < n; ++i) {
+    MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], xr[i].x, xr[i].y,
+                xr[i].width, xr[i].height, xr[i].x, xr[i].y);
+  }
+  sel_paint_entries(a, cnt, xr, ((SEL_REAL_XCLIP || off) && !full) ? n : 0, !SEL_REAL_XCLIP && off);
+  if(own) my_free(_ALLOC_ID_, &a);
+  xctx->deltax = sv_dx; xctx->deltay = sv_dy;
+  xctx->move_rot = sv_rot; xctx->move_flip = sv_flip; xctx->rotatelocal = sv_rotlocal;
+  if(SEL_REAL_XCLIP || !off) sel_paint_others();
+  xctx->areax1 = sx1; xctx->areay1 = sy1; xctx->areax2 = sx2; xctx->areay2 = sy2;
+  xctx->areaw = sw; xctx->areah = sh; xctx->xrect[0] = sxr;
+  #if SEL_REAL_XCLIP
+  sel_reset_clip_rects();
+  #endif
+  if(xctx->bbox_set) sel_cairo_bbox_clip(1);
+}
+
+/* handle_expose()'s styled repair (callback.c): window px x, y, w, h show nothing until they
+ * are repainted from xctx's pixmap with every overlay on top. A tab the canvas does not hold
+ * repairs the exposed rect only: its other damage is what the idle repair drops for it
+ * (sel_idle_cb()), and repairing it would paint the tab's drawing into the other tab's. What
+ * the repair pastes is what the bookkeeping counts (sel_note_paste()): a rect of half the window
+ * or more is repaired as the whole window (sel_pend_full()), which puts the tab's drawing on the
+ * canvas, as a draw() does; draw() counts a part another window covers too, which the server
+ * exposes again when it is uncovered. A shape being placed is stamped again inside the exposed
+ * rect only while the tab is still not on the canvas, and not at all without a real clip. */
+void sel_expose_repair(int x, int y, int w, int h)
+{
+  if(!has_x || !xctx) return;
+  if(sel_off_canvas()) xctx->sel_pend_n = 0;
+  sel_pend_add(x, y, x + w, y + h);
+  sel_overlay_flush();
+  if(!sel_off_canvas()) {
+    sel_rubbers_restamp();
+    return;
+  }
+  #if SEL_REAL_XCLIP
+  {
+    XRectangle xr;
+    xr.x = (short)x; xr.y = (short)y; xr.width = (unsigned short)w; xr.height = (unsigned short)h;
+    sel_set_clip_rects(&xr, 1);
+    sel_rubbers_restamp();
+    sel_reset_clip_rects();
+  }
+  #endif
+}
+
+/* A styled select or deselect of ONE object, for the select_*() / unselect_all() sites in
+ * select.c: record the object's whole footprint, at its own position, as damage. Nothing is
+ * painted here; the repair (sel_overlay_flush(), at the latest when Tcl goes idle) paints the
+ * selection as it then is. The move transform is neutralized for the measurement, as
+ * draw_selection()'s fluid wrapper does. */
+void sel_mark_object(int type, int n, int c)
+{
+  Selected s;
+  double r[4];
+  double sv_dx = xctx->deltax, sv_dy = xctx->deltay;
+  short sv_rot = xctx->move_rot, sv_flip = xctx->move_flip, sv_rotlocal = xctx->rotatelocal;
+  if(!has_x) return;
+  xctx->deltax = 0.0; xctx->deltay = 0.0;
+  xctx->move_rot = 0; xctx->move_flip = 0; xctx->rotatelocal = 0;
+  s.type = (unsigned short)type; s.n = n; s.col = (unsigned int)c;
+  if(sel_entry_fp(&s, 1, r)) sel_pend_add(r[0], r[1], r[2], r[3]);
+  xctx->deltax = sv_dx; xctx->deltay = sv_dy;
+  xctx->move_rot = sv_rot; xctx->move_flip = sv_flip; xctx->rotatelocal = sv_rotlocal;
+}
+
+/* draw()'s own call: the area was just restored and draw() paints the other overlays itself */
+static int sel_restamp = 1;
+void draw_selection_base(GC g)
+{
+  sel_restamp = 0;
+  draw_selection(g, 0);
+  sel_restamp = 1;
+}
+
+/* The styled draw_selection(gc[SELLAYER]): make the selection show over whatever the window
+ * holds now. Damage waiting for repair is repaired first; then the whole selection is painted
+ * over the window (culled to a bbox-limited redraw's area, which also clips it), which is
+ * idempotent over its own overlay; then the overlays draw() paints after the selection, and the
+ * area-select band (sel_band_paint()), are stamped again on top, since a halo band or a text's
+ * background restore may have covered them. A window-only drawing this file does not know (a
+ * zoom box, a wire or shape being placed) is not stamped again: the paint covers it where a
+ * band or stroke crosses it, and ERASES it inside every selected text's box, whose background
+ * the first pass of sel_styled_draw() restores from the pixmap. Its owner paints it again on
+ * the next motion. */
+static void sel_styled_show(void)
+{
+  int n = 0, probe;
+  double t0 = 0.0;
+  XRectangle area = xctx->xrect[0];
+  /* a drag frame still being timed (sel_drag_fallback()): start from an idle server */
+  probe = (xctx->ui_state & (STARTMOVE | STARTCOPY)) && !xctx->sel_drag_cheap &&
+          xctx->sel_drag_probed < SEL_DRAG_PROBE;
+  if(probe) t0 = sel_frame_clock();
+  if(sel_restamp) sel_overlay_flush();
+  if(SEL_REAL_XCLIP && xctx->bbox_set) { area = xctx->xrect[0]; n = 1; }
+  sel_paint_entries(xctx->sel_array, xctx->movelastsel, &area, n, 0);
+  if(sel_restamp) {
+    int sdw = xctx->draw_window, sdp = xctx->draw_pixmap;
+    draw_scope_highlight();
+    xctx->draw_window = 1; xctx->draw_pixmap = 0;
+    if(xctx->hover_type) draw_hover_shape(xctx->gc_hover, xctx->hover_type, xctx->hover_n, xctx->hover_col);
+    xctx->draw_window = sdw; xctx->draw_pixmap = sdp;
+    flyline_restamp();
+    sel_band_paint();
+    overlay_paint_xhair();
+    overlay_paint_snapc();
+  }
+  if(probe) {
+    ++xctx->sel_drag_probed;
+    if(sel_frame_clock() - t0 > SEL_DRAG_FRAME_MS && ++xctx->sel_drag_slow >= 2) xctx->sel_drag_cheap = 1;
+  }
+}
+
+static void draw_selection_impl(GC g, int interruptable)
+{
+  int i, c, n, styled;
+  dbg(1,"draw_selection, %s, lastsel=%d\n", g == xctx->gctiled ? "gctiled" : "gcselect", xctx->lastsel);
+  if(g != xctx->gctiled) xctx->movelastsel = xctx->lastsel;
+  /* the styled overlay owns the selection GC and its erase; any other GC (compare_schematics
+   * paints its mismatches with gc[PINLAYER]) keeps the classic shapes */
+  styled = sel_style_eff() != SEL_STYLE_CLASSIC && (g == xctx->gctiled || g == xctx->gc[SELLAYER]);
+
+  if((fix_broken_tiled_fill || !_unix || styled) && g == xctx->gctiled && xctx->movelastsel > 800) {
+    MyXCopyArea(display, xctx->save_pixmap, xctx->window, xctx->gc[0], xctx->xrect[0].x, xctx->xrect[0].y,
+          xctx->xrect[0].width, xctx->xrect[0].height, xctx->xrect[0].x, xctx->xrect[0].y);
+    return;
+  }
+  if(styled) {
+    if(g == xctx->gctiled) sel_styled_erase(xctx->sel_array, xctx->movelastsel);
+    else sel_styled_show();
+    return;
+  }
+  for(i=0;i<xctx->movelastsel; ++i)
+  {
+   c = xctx->sel_array[i].col;n = xctx->sel_array[i].n;
+   draw_sel_entry(g, xctx->sel_array[i].type, n, c, SELP_CLASSIC);
 #ifdef __unix__
    if(interruptable && pending_events())
    {
@@ -702,6 +1848,7 @@ void copy_objects(int what)
    xctx->movelastsel = xctx->lastsel;
    xctx->x1=xctx->mousex_snap;xctx->y1=xctx->mousey_snap;
    xctx->move_flip = 0;xctx->move_rot = 0;
+   sel_drag_start();
    xctx->ui_state|=STARTCOPY;
   }
   if(what & ABORT)                               /* abort operation */
@@ -8940,6 +10087,7 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->y1 = xctx->arc[c][n].y;
    } else {xctx->x1=xctx->mousex_snap;xctx->y1=xctx->mousey_snap;}
    xctx->move_flip = 0;xctx->move_rot = 0;
+   sel_drag_start();
    xctx->ui_state|=STARTMOVE;
    /* wire_label_ride.md S1: capture the net-label rider set HERE -- after connect_by_kissing()
     * above (so the degenerate stubs it mints are already present and get skipped) and after

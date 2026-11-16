@@ -332,6 +332,63 @@ typedef int Tcl_Size;
  * erase always agree. Needs xctx + tk_scaling in scope. */
 #define PIN_SEL_HANDLE_H (0.6 * CADWIREMINDIST * xctx->zoom * tk_scaling)
 
+/* selection_style (doc/claude/selection_look_batch/PLAN.md): how draw_selection() paints the
+ * selection overlay. CLASSIC is upstream's look (grey layer-2 strokes, a box per text) and must
+ * stay pixel-identical; BRIGHT strokes the same shapes in a dedicated selection colour and draws
+ * texts as glyphs; BRIGHTBOX, this branch's default (user ruling 2026-11-15), is BRIGHT plus a
+ * solid box in the selection colour around each selected object, with the hover outline's
+ * geometry and width (draw_hover_shape(), draw.c); HALO keeps the object's own colours over a band
+ * of the selection colour. The Tcl var is resolved into xctx->sel_style by sel_style_sync()
+ * (xinit.c). */
+#define SEL_STYLE_CLASSIC 0
+#define SEL_STYLE_BRIGHT 1
+#define SEL_STYLE_HALO 2
+#define SEL_STYLE_BRIGHTBOX 3
+/* `parts` bits for one selection-overlay pass (draw_temp_symbol_parts, draw_temp_string_parts,
+ * and the per-entry dispatcher in move.c). SELP_CLASSIC is exactly what the classic look draws. */
+#define SELP_STROKE  1   /* geometry outlines with the pass GC (temp primitives) */
+#define SELP_TEXTBOX 2   /* a text as its bbox outline (classic) */
+#define SELP_GLYPH   4   /* a text as glyphs in the selection colour (cairo) */
+#define SELP_TEXTBG  8   /* restore a text's bbox from the backing pixmap */
+#define SELP_OWN     16  /* re-stroke in the object's OWN colours (real primitives, window only) */
+#define SELP_FULL    32  /* ignore partial (stretch) select state: the whole object */
+#define SELP_PINMARK 64  /* the selected-pin box+cross marker */
+#define SELP_TXTBAND 128 /* selection_text_style own: the glyph outlines stroked wide in the
+                          * selection colour, window only (cairo) */
+#define SELP_GLYPHOWN 256 /* selection_text_style own: a text's glyphs in its OWN colour, window only */
+#define SELP_BOX     512 /* selection_style brightbox: the hover outline's shape, solid (gc_selbox) */
+#define SELP_TEXTS   (SELP_TEXTBOX | SELP_GLYPH | SELP_TEXTBG | SELP_TXTBAND | SELP_GLYPHOWN)
+#define SELP_CLASSIC (SELP_STROKE | SELP_TEXTBOX | SELP_PINMARK)
+/* selection_text_style: how a selected text reads in bright, brightbox and halo. COLOUR paints
+ * the glyphs in the selection colour; OWN keeps them in the text's own colour over a thin band of
+ * the selection colour that follows the letter outlines. Resolved by sel_style_sync() (xinit.c),
+ * where the default `auto` becomes OWN in halo and COLOUR in bright and brightbox. OWN is then
+ * decided again for each text by its rendered size (sel_text_band_for() in draw.c): a text
+ * rendered smaller than selection_text_own_px is drawn as COLOUR, since its band would close the
+ * letters. */
+#define SEL_TEXT_COLOUR 0
+#define SEL_TEXT_OWN 1
+/* selection_text_own_px default, MIRRORED IN TCL (xschem.tcl): the rendered font size, screen px,
+ * from which a text of the own style gets its band. Measured over a ladder of rendered sizes in
+ * doc/claude/selection_look_batch/receipts/A6-labels.md: below it the band fills the letters'
+ * counters (o, e, a, 0) in the default sans face and the text reads as a smudge. The ladder put
+ * the first open counters at 12 px. The driver judged 12-14 px band text heavy in the composites
+ * (worst on the light scheme) and recommended 16; the user approved that (2026-11-15,
+ * doc/claude/selection_look_batch/PLAN.md, "Rulings during the batch"). */
+#define SEL_TEXT_OWN_PX 16.0
+/* capacity of the per-context list of damaged screen rectangles the styled overlay repairs
+ * (sel_pend_add() in move.c); one more rectangle merges the list into its bounding box */
+#define SEL_PEND_MAX 16
+/* 1 where XSetClipRectangles() really clips. The styled overlay repair (sel_overlay_flush() in
+ * move.c) then repaints only what a damaged rectangle touches; with 0 it repaints every selected
+ * object unclipped, which is correct without a clip. Windows has only a stub (draw.c). Set it to 0
+ * (together with the two `#if 1` in set_clip_mask(), xinit.c) to emulate Windows on Linux. */
+#ifdef __unix__
+#define SEL_REAL_XCLIP 1
+#else
+#define SEL_REAL_XCLIP 0
+#endif
+
 /*  for netlist.c */
 #define BOXSIZE 400
 #define NBOXES 50
@@ -2043,6 +2100,29 @@ typedef struct {
   int scope_hi_n;       /* number of objects in the overlay (0 = inactive) */
   int scope_hi_alloc;   /* allocated capacity of the two arrays above */
   GC gc_hover;          /* hover (awareness) highlight: dashed thin colored GC */
+  GC gc_sel;            /* selection overlay (selection_style not classic): strokes, pin marks */
+  GC gc_selhalo;        /* selection_style halo: the wide band under the selected strokes */
+  GC gc_selbox;         /* selection_style brightbox: the solid box, hover_highlight_width wide */
+  int sel_box_px;       /* gc_selbox's line width, set with it in build_colors() (xinit.c) */
+  int sel_style;        /* resolved selection_style, SEL_STYLE_*; sel_style_sync() in xinit.c */
+  int sel_halo_px;      /* resolved selection_halo_width: band screen px on each side */
+  int sel_erase_pad;    /* nonzero ONLY inside a styled erase: extra px MyXCopyAreaDouble() pads
+                         * by, and the switch that routes gctiled erases through pixmap copies */
+  unsigned short sel_rgb[3]; /* selection colour as 16-bit r,g,b, for cairo glyphs */
+  int sel_text_style;   /* resolved selection_text_style, SEL_TEXT_*; sel_style_sync() */
+  double sel_text_own_px; /* resolved selection_text_own_px; sel_style_sync() */
+  int sel_drag_cheap, sel_drag_probed, sel_drag_slow; /* a drag's measured look, move.c */
+  int sel_own_fillmax;  /* > 0 ONLY inside the halo own-colour pass: a fill wider than this many
+                         * screen px in both directions is skipped (filledrect, drawarc,
+                         * drawpolygon), so a re-painted fill never leaves the halo band */
+  int sel_pend_n;       /* damaged screen rects waiting for sel_overlay_flush() (move.c) */
+  int sel_pend[SEL_PEND_MAX][4]; /* x1, y1, x2, y2 (exclusive), window px */
+  int xhair_shown;      /* styled overlay: a crosshair is on screen at prev_crossx/prev_crossy */
+  int snapc_shown;      /* styled overlay: a snap cursor is on screen at prev_snapx/prev_snapy */
+  int band_shown;       /* styled overlay: the area-select band is on screen at nl_xr..nl_yr2 */
+  unsigned int rubber_shown; /* the shape-placing START* bits of ui_state whose owner has stroked
+                              * the shape it now holds (actions.c), so sel_rubbers_restamp() may
+                              * stamp it again: 0 from the start of a shape to its first stroke */
   /* viewer plan item 9: the diamond SNAP CURSOR that sticks to the nearest
    * sample of the nearest trace while the pointer hovers a graph. Every field
    * is 0-at-rest on purpose -- xctx is one my_calloc, so a 0 default is free
@@ -3048,10 +3128,34 @@ extern const char *get_sym_template(char *s, char *extra);
 extern void zoom_full(int draw, int sel, int flags, double shrink);
 extern void updatebbox(int count,xRect *boundbox,xRect *tmp);
 extern void draw_selection(GC g, int interruptable);
+extern int sel_style_eff(void);             /* selection_style in force for the overlay */
+extern void sel_mark_object(int type, int n, int c); /* styled select/deselect of one object */
+extern void sel_style_sync(void);           /* resolve selection_style/_halo_width (xinit.c) */
+extern void draw_selection_base(GC g);      /* draw()'s overlay paint: no overlay re-stamp */
+extern void sel_pend_add(double x1, double y1, double x2, double y2); /* damaged screen rect */
+extern void sel_pend_clear(void);
+extern void sel_pend_close(double x1, double y1, double x2, double y2); /* see sel_overlay_flush() */
+extern void sel_overlay_flush(void);        /* repair every damaged rect now */
+extern void sel_note_canvas(void);          /* draw(): this tab's drawing is on the .drw canvas */
+extern void sel_expose_repair(int x, int y, int w, int h); /* handle_expose(), styled */
+extern void sel_note_paste(int x1, int y1, int x2, int y2); /* MyXCopyArea*(): a rect was pasted */
+extern void sel_set_clip_rects(XRectangle *xr, int n); /* clip every overlay GC (xinit.c) */
+extern void sel_reset_clip_rects(void);
+extern void sel_cairo_clip(const XRectangle *xr, int n);
+extern void sel_cairo_bbox_clip(int on); /* lift (0) / put back (1) a bbox redraw's cairo clip */
+extern void sel_drag_start(void);
+extern void sel_band_damage(double x1, double y1, double x2, double y2); /* select_rect() band */
+extern void sel_band_paint(void);
+extern void sel_rubbers_restamp(void);     /* re-stroke a shape being placed after a repair */
+extern double sel_frame_clock(void);
+extern void overlay_paint_xhair(void);      /* re-stamp the shown crosshair (callback.c) */
+extern void overlay_paint_snapc(void);      /* re-stamp the shown snap cursor (callback.c) */
 extern void draw_scope_highlight(void);     /* apply-scope white-outline overlay */
 extern void clear_scope_highlight(void);
 extern void add_scope_highlight(int type, unsigned int id);
 extern void draw_hover_shape(GC g, int type, int n, int c); /* hover outline for one object */
+extern int hover_inst_rect(int n, short rot_add, short flip_xor,
+                           double *x1, double *y1, double *x2, double *y2); /* its instance box */
 extern void draw_hover(int force);          /* hover (awareness) highlight, motion-driven */
 extern void draw_flylines(int force);       /* hover fly-line overlay (hover_flylines.md, Track B) */
 extern void flyline_restamp(void);          /* re-stroke the tracked fly-line star after a full redraw */
@@ -3369,6 +3473,16 @@ extern void draw_temp_symbol(int what, GC gc, int n,int layer,
             short tmp_flip, short tmp_rot, double xoffset, double yoffset);
 extern void draw_temp_string(GC gc,int what, const char *str, short rot, short flip, int hcenter, int vcenter,
        double x1, double y1, double xscale, double yscale);
+extern void draw_temp_symbol_parts(int what, GC gc, int n,int layer,
+            short tmp_flip, short tmp_rot, double xoffset, double yoffset, int parts);
+extern void draw_temp_string_parts(GC gc, int what, int parts, const char *str, short rot, short flip,
+       int hcenter, int vcenter, double x1, double y1, double xscale, double yscale);
+extern void sel_restore_box(double x1, double y1, double x2, double y2, int pad);
+extern int sel_measure(int what, double *r); /* START/ADD/SET/END: footprint of gctiled erases */
+extern int sel_text_band_px(void);          /* own text style band, screen px (draw.c) */
+extern int sel_text_band_for(double xscale); /* the band ONE text of size xscale gets (draw.c) */
+extern int sel_text_parts(int parts, double xscale); /* its own-or-colour text parts (draw.c) */
+extern void sel_glyph_own_filter(int on);   /* draw_symbol(): own-style texts only (draw.c) */
 
 extern void MyXCopyAreaDouble(Display* display, Drawable src, Drawable dest, GC gc,
      double sx1, double sy1, double sx2, double sy2, double dx1, double dy1, double lw);
