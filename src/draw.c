@@ -989,6 +989,128 @@ const char *sym_text_vstack(int inst, const char *txt_ptr, const char *s)
   return result;
 }
 
+/* draw_symbol()'s disabled state for instance n, and the colour c it then draws the instance
+ * in: 2 shorted (PINLAYER), 1 skipped by LVS (GRIDLAYER, the IGNORE_INST flag draw_symbol()'s
+ * layer-0 call sets), else 0 and c unchanged. */
+static int inst_draw_disabled(int n, int lvs_ignore, int *c)
+{
+  if(shorted_instance(n, lvs_ignore)) {
+    *c = PINLAYER;
+    return 2;
+  }
+  if(xctx->inst[n].flags & IGNORE_INST) {
+    *c = GRIDLAYER;
+    return 1;
+  }
+  return 0;
+}
+
+/* The colour instance n's texts default to when draw_symbol() draws them in colour c
+ * (c == cadlayers: in their own layers; else a highlight or disabled colour). */
+static int sym_text_color(int n, int c)
+{
+  if(c != cadlayers) return c;
+  if(xctx->inst[n].flags & PIN_OR_LABEL) return TEXTWIRELAYER;
+  return TEXTLAYER;
+}
+
+/* The layer draw_symbol() paints text j of instance n in, or -1 if it leaves that text out:
+ * hidden by its flags or the annotation switches, a hidden symbol's text other than its name,
+ * or on a layer draw_single_layer or the layer switches (enable_layer) leave out. c_for_text is
+ * sym_text_color()'s answer, disabled inst_draw_disabled()'s, hide the hidden-symbol test.
+ * ONE predicate for draw_symbol() and the selection overlay (draw_temp_symbol_parts()), so a
+ * selected instance never shows a text draw() does not paint. The empty-text test and the zoom
+ * cull stay with the callers, which make them first. */
+static int sym_text_draw_layer(int n, int j, int c_for_text, int disabled, int hide)
+{
+  const xText *text = &xctx->sym[xctx->inst[n].ptr].text[j];
+  int textlayer;
+  if(text_hidden_inst(text->flags, n)) return -1;
+  /* 1249: ONE keep-name predicate for all three back ends (invariant I1). The
+   * three byte-identical strcmp pairs this replaces missed `@spiceprefix@name`,
+   * so at hide_symbols=2 gf180's whole FET family lost its names. */
+  if( hide && text->txt_ptr && !annot_name_token(text->txt_ptr) ) return -1;
+  textlayer = c_for_text;
+  /* do not allow custom text color on hilighted instances */
+  if(disabled == 1) textlayer = GRIDLAYER;
+  else if(disabled == 2) textlayer = PINLAYER;
+  else if( xctx->inst[n].color == -10000) {
+    int lay, alay;
+    if(xctx->only_probes) textlayer = GRIDLAYER;
+    else {
+      get_sym_text_layer(n, j, &lay);
+      /* 0615: a CONTENT-classified node voltage paints in annot_voltage_layer
+       * instead of the symbol text's own layer=, so it stops wearing the OP
+       * block's colour. AFTER get_sym_text_layer() so a per-instance
+       * `text_layer_<n>=` still wins. */
+      if(lay != -1) textlayer = lay;
+      else if((alay = annot_text_layer(text->flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
+      else textlayer = text->layer;
+    }
+  }
+  if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
+  if(xctx->draw_single_layer != -1 && textlayer != xctx->draw_single_layer) return -1;
+  /* display PINLAYER colored instance texts even if PINLAYER disabled */
+  if(xctx->inst[n].color != -PINLAYER && !xctx->enable_layer[textlayer]) return -1;
+  return textlayer;
+}
+
+/* The layer draw() paints floating text i in, or -1 if it does not paint it: hidden by its flags
+ * or the annotation switches, or (cairo) on a layer the layer switches (enable_layer) or
+ * draw_single_layer leave out. ONE predicate for draw()'s text loop and the selection overlay
+ * (move.c), so a selected text draw() does not paint is never revealed by the overlay. */
+int text_draw_layer(int i)
+{
+  int tl = xctx->text[i].layer, alay;
+  if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) return -1;
+  /* 0615: the schematic-own-text mirror of the instance-text site (sym_text_draw_layer()). */
+  if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) tl = alay;
+  if(xctx->only_probes) tl = GRIDLAYER;
+  else if(tl < 0 ||  tl >= cadlayers) tl = TEXTLAYER;
+  #if HAS_CAIRO==1
+  if(!xctx->enable_layer[tl]) return -1;
+  if(xctx->draw_single_layer != -1 && xctx->draw_single_layer != tl) return -1;
+  #endif
+  return tl;
+}
+
+/* Does draw() paint the sheet's own lines, rects, arcs and polygons of layer c? Not on a layer
+ * draw_single_layer or the layer switches (enable_layer) leave out. Shared with halo's
+ * own-colour pass (move.c), which repaints an object in its own colours only where draw() paints
+ * it, as sym_layer_draws() and wires_draw() are. */
+int layer_draws(int c)
+{
+  return (xctx->draw_single_layer == -1 || c == xctx->draw_single_layer) && xctx->enable_layer[c];
+}
+
+/* Does draw() call draw_symbol() for layer c? Layer 0 (the visibility bookkeeping) and
+ * cadlayers - 1 (the call the texts follow) always, any other unless draw_single_layer names
+ * another; draw_symbol() then tests the layer switches itself. */
+int sym_layer_draws(int c)
+{
+  return c == 0 || c == cadlayers - 1 || xctx->draw_single_layer == -1 ||
+         c == xctx->draw_single_layer;
+}
+
+/* Does draw() paint the wires? Not while draw_single_layer names another layer; the layer
+ * switches do not hide them. */
+int wires_draw(void)
+{
+  return xctx->draw_single_layer == -1 || xctx->draw_single_layer == WIRELAYER;
+}
+
+/* The overlay parts (SELP_* in xschem.h) for a selected text draw() does not paint
+ * (text_draw_layer(), sym_text_draw_layer()): no letters and no band in any look. Its mark is
+ * classic's, the box, drawn by the glyph pass in its colour, except in brightbox, whose box pass
+ * already draws a box around it (a floating text's own bbox, an instance's hover box). */
+int sel_undrawn_text_parts(int parts)
+{
+  int box = (parts & SELP_GLYPH) && xctx->sel_style != SEL_STYLE_BRIGHTBOX;
+  parts &= ~(SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN);
+  if(box) parts |= SELP_TEXTBOX;
+  return parts;
+}
+
 /*
  * layer: the set of symbol objects on xschem layer 'layer' to draw
  * c    : the layer 'c' to draw those objects on (if != layer it is the hilight color)
@@ -1032,16 +1154,7 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
       }
     }
   }
-  if(shorted_instance(n, lvs_ignore)) {
-    c = PINLAYER;
-    what = NOW;
-    disabled = 2;
-  }
-  else if(xctx->inst[n].flags & IGNORE_INST) {
-    c = GRIDLAYER;
-    what = NOW;
-    disabled = 1;
-  }
+  if((disabled = inst_draw_disabled(n, lvs_ignore, &c))) what = NOW;
   /* issue 1603: this is the CORRECT twin of the same expression in draw_temp_symbol().
    * The two must agree; the copy there guarded prop_ptr instead of type and segfaulted. */
   if( (xctx->inst[n].flags & HIDE_INST) || ((xctx->inst[n].ptr + xctx->sym)->flags & HIDE_INST) ||
@@ -1205,44 +1318,18 @@ void draw_symbol(int what,int c, int n,int layer,short tmp_flip, short rot,
   draw_texts:
 
   if(xctx->sym_txt && !(xctx->inst[n].flags & HIDE_SYMBOL_TEXTS) && (layer == cadlayers)) {
-    if(c != layer) c_for_text = c;
-    else if(xctx->inst[n].flags & PIN_OR_LABEL) c_for_text = TEXTWIRELAYER;
-    else c_for_text = TEXTLAYER;
+    c_for_text = sym_text_color(n, c);
     for(j=0;j< symptr->texts; ++j)
     {
       double xscale, yscale;
       get_sym_text_size(n, j, &xscale, &yscale);
       text = symptr->text[j];
       if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
-      if(text_hidden_inst(text.flags, n)) continue;
       if(sel_own_glyph_only && !sel_text_band_for(xscale)) continue; /* see sel_glyph_own_filter() */
-      /* 1249: ONE keep-name predicate for all three back ends (invariant I1). The
-       * three byte-identical strcmp pairs this replaces missed `@spiceprefix@name`,
-       * so at hide_symbols=2 gf180's whole FET family lost its names. */
-      if( hide && text.txt_ptr && !annot_name_token(text.txt_ptr) ) continue;
+      /* hidden, a hidden symbol's text other than its name, the layer gates */
+      if((textlayer = sym_text_draw_layer(n, j, c_for_text, disabled, hide)) < 0) continue;
       ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
-      textlayer = c_for_text;
-      /* do not allow custom text color on hilighted instances */
-      if(disabled == 1) textlayer = GRIDLAYER;
-      else if(disabled == 2) textlayer = PINLAYER;
-      else if( xctx->inst[n].color == -10000) {
-        int lay, alay;
-        if(xctx->only_probes) textlayer = GRIDLAYER;
-        else {
-          get_sym_text_layer(n, j, &lay);
-          /* 0615: a CONTENT-classified node voltage paints in annot_voltage_layer
-           * instead of the symbol text's own layer=, so it stops wearing the OP
-           * block's colour. AFTER get_sym_text_layer() so a per-instance
-           * `text_layer_<n>=` still wins. */
-          if(lay != -1) textlayer = lay;
-          else if((alay = annot_text_layer(text.flags, TEXT_CTX_INSTANCE)) != -1) textlayer = alay;
-          else textlayer = symptr->text[j].layer;
-        }
-      }
-      if(textlayer < 0 || textlayer >= cadlayers) textlayer = c_for_text;
-      if(xctx->draw_single_layer != -1 && textlayer != xctx->draw_single_layer) continue;
-      /* display PINLAYER colored instance texts even if PINLAYER disabled */
-      if(xctx->inst[n].color == -PINLAYER || xctx->enable_layer[textlayer]) {
+      {
         char *txtptr = NULL;
         #if HAS_CAIRO==1
         textfont = symptr->text[j].font;
@@ -1374,17 +1461,20 @@ void draw_temp_symbol(int what, GC gc, int n,int layer,short tmp_flip, short rot
                             /* draws current layer only, should be called within */
 {                           /* a "for(i=0;i<cadlayers; ++i)" loop */
   draw_temp_symbol_parts(what, gc, n, layer, tmp_flip, rot, xoffset, yoffset,
-                         SELP_STROKE | SELP_TEXTBOX);
+                         SELP_STROKE | SELP_TEXTBOX, cadlayers);
 }
 
 /* draw_temp_symbol() with the overlay split into parts (SELP_* in xschem.h): SELP_STROKE the
  * symbol's geometry with gc, the text bits forwarded to draw_temp_string_parts(). The layer-0
  * visibility bookkeeping (inst flags bit 0) runs whatever the parts, so a texts-only pass still
- * skips an off-screen instance on its later layers. */
+ * skips an off-screen instance on its later layers. text_c is the colour draw() draws the
+ * instance's texts in (draw_symbol()'s c: a highlight colour, or cadlayers for their own): a
+ * text it does not paint (sym_text_draw_layer()) gets no letters and no band
+ * (sel_undrawn_text_parts()). The classic parts (box only) ask nothing of it. */
 void draw_temp_symbol_parts(int what, GC gc, int n,int layer,short tmp_flip, short rot,
-        double xoffset, double yoffset, int parts)
+        double xoffset, double yoffset, int parts, int text_c)
 {
- int j, hide = 0;
+ int j, hide = 0, tdisabled = -1, tc = text_c, c_for_text = 0;
  double x0,y0,x1,y1,x2,y2;
  short flip;
  xLine *line;
@@ -1532,13 +1622,23 @@ void draw_temp_symbol_parts(int what, GC gc, int n,int layer,short tmp_flip, sho
     for(j=0;j< symptr->texts; ++j)
     {
      double xscale, yscale;
+     int tparts;
 
      get_sym_text_size(n, j, &xscale, &yscale);
      text = symptr->text[j];
      if(!text.txt_ptr || !text.txt_ptr[0] || xscale*FONTWIDTH*xctx->mooz<1) continue;
      if(text_hidden_inst(text.flags, n)) continue;
+     tparts = parts & SELP_TEXTS;
+     if(tparts & (SELP_GLYPH | SELP_TXTBAND)) { /* letters or band: does draw() paint it? */
+       if(tdisabled < 0) {
+         tdisabled = inst_draw_disabled(n, tclgetboolvar("lvs_ignore"), &tc);
+         c_for_text = sym_text_color(n, tc);
+       }
+       if(sym_text_draw_layer(n, j, c_for_text, tdisabled, hide) < 0)
+         tparts = sel_undrawn_text_parts(tparts);
+     }
      /* nothing asked for applies to this text (sel_text_parts()): skip it before translating */
-     if(!sel_text_parts(parts & SELP_TEXTS, xscale)) continue;
+     if(!sel_text_parts(tparts, xscale)) continue;
      ROTATION(rot, flip, 0.0, 0.0,text.x0,text.y0,x1,y1);
      #if HAS_CAIRO==1
      customfont = set_text_custom_font(&text);
@@ -1553,7 +1653,7 @@ void draw_temp_symbol_parts(int what, GC gc, int n,int layer,short tmp_flip, sho
        const char *vstacked = sym_text_vstack(n, text.txt_ptr, txtptr);
        if(vstacked != txtptr) my_strdup2(_ALLOC_ID_, &txtptr, vstacked);
      }
-     if(txtptr[0]) draw_temp_string_parts(gc, what, parts & SELP_TEXTS, txtptr,
+     if(txtptr[0]) draw_temp_string_parts(gc, what, tparts, txtptr,
        (text.rot + ( (flip && (text.rot & 1) ) ? rot+2 : rot) ) & 0x3,
        flip^text.flip, text.hcenter, text.vcenter, x0+x1, y0+y1, xscale, yscale);
      my_free(_ALLOC_ID_, &txtptr);
@@ -12181,14 +12281,14 @@ void draw(void)
     }
     dbg(3, "draw(): check4\n");
     for(c=0;c<cadlayers; ++c) {
-      int draw_layer = (xctx->draw_single_layer == -1 || c == xctx->draw_single_layer);
+      int draw_layer = layer_draws(c); /* the overlay asks the same (move.c) */
       cc = c; if(xctx->only_probes) cc = GRIDLAYER;
-      if(draw_layer && xctx->enable_layer[c]) for(i=0;i<xctx->lines[c]; ++i) {
+      if(draw_layer) for(i=0;i<xctx->lines[c]; ++i) {
         xLine *l = &xctx->line[c][i];
         if(l->bus == -1.0) drawline(cc, THICK, l->x1, l->y1, l->x2, l->y2, l->bus, l->dash, NULL);
         else       drawline(cc, ADD, l->x1, l->y1, l->x2, l->y2, l->bus, l->dash, NULL);
       }
-      if(draw_layer && xctx->enable_layer[c]) for(i=0;i<xctx->rects[c]; ++i) {
+      if(draw_layer) for(i=0;i<xctx->rects[c]; ++i) {
         xRect *r = &xctx->rect[c][i];
         #if HAS_CAIRO==1
         if(c != GRIDLAYER || !(r->flags & (1 + 1024)))
@@ -12200,12 +12300,12 @@ void draw(void)
           if(r->fill) filledrect(cc, ADD, r->x1, r->y1, r->x2, r->y2, r->fill, r->ellipse_a, r->ellipse_b);
         }
       }
-      if(draw_layer && xctx->enable_layer[c]) for(i=0;i<xctx->arcs[c]; ++i) {
+      if(draw_layer) for(i=0;i<xctx->arcs[c]; ++i) {
         xArc **arc = xctx->arc;
         drawarc(cc, ADD, arc[c][i].x, arc[c][i].y, arc[c][i].r, arc[c][i].a, arc[c][i].b,
                 arc[c][i].fill, arc[c][i].bus, arc[c][i].dash);
       }
-      if(draw_layer && xctx->enable_layer[c]) for(i=0;i<xctx->polygons[c]; ++i) {
+      if(draw_layer) for(i=0;i<xctx->polygons[c]; ++i) {
         int bezier;
         xPoly *p = &xctx->poly[c][i];
         bezier = 2 + !strboolcmp(get_tok_value(p->prop_ptr, "bezier", 0), "true");
@@ -12235,7 +12335,7 @@ void draw(void)
             symptr->polygons[c] ||
             ((c==cadlayers - 1) && symptr->texts) )
         {
-          if(c == 0 || c == cadlayers - 1 || draw_layer) {
+          if(sym_layer_draws(c)) {
             draw_symbol(ADD, cc, i, c, 0, 0, 0.0, 0.0); /* ... then draw current layer */
             if(c == cadlayers - 1) {
               if(cc == c)  draw_symbol(ADD, c + 1, i, c + 1, 0, 0, 0.0, 0.0); /* ... draw texts */
@@ -12250,7 +12350,7 @@ void draw(void)
       drawline(cc, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
     }
     cc = WIRELAYER; if(xctx->only_probes) cc = GRIDLAYER;
-    if(xctx->draw_single_layer==-1 || xctx->draw_single_layer==WIRELAYER) {
+    if(wires_draw()) {
       if(use_hash) init_wire_iterator(&ctx, x1, y1, x2, y2);
       else i = -1;
       while(1) {
@@ -12288,16 +12388,9 @@ void draw(void)
     for(i=0;i<xctx->texts; ++i)
     {
       const char *txt_ptr;
-      int alay;
-      textlayer = xctx->text[i].layer;
-      if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) continue;
-      /* 0615: the schematic-own-text mirror of the instance-text site above. */
-      if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) textlayer = alay;
-      if(xctx->only_probes) textlayer = GRIDLAYER;
-      else if(textlayer < 0 ||  textlayer >= cadlayers) textlayer = TEXTLAYER;
+      /* hidden, the annotation layer (0615), the layer gates: text_draw_layer() */
+      if((textlayer = text_draw_layer(i)) < 0) continue;
       #if HAS_CAIRO==1
-      if(!xctx->enable_layer[textlayer]) continue;
-      if(xctx->draw_single_layer != -1 && xctx->draw_single_layer != textlayer) continue;
       textfont = xctx->text[i].font;
       if( (textfont && textfont[0]) ||
           (xctx->text[i].flags & (TEXT_BOLD | TEXT_OBLIQUE | TEXT_ITALIC))) {

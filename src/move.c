@@ -350,22 +350,6 @@ static void sel_own_flush(int c)
   drawline(c, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
 }
 
-/* The layer a floating text is painted in by draw() (its text loop), or -1 if draw() does not
- * paint it: the own text style repaints the glyphs exactly so. */
-static int sel_text_own_layer(int i)
-{
-  int tl = xctx->text[i].layer, alay;
-  if(text_hidden(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) return -1;
-  if((alay = annot_text_layer(xctx->text[i].flags, TEXT_CTX_SCHEMATIC)) != -1) tl = alay;
-  if(xctx->only_probes) tl = GRIDLAYER;
-  else if(tl < 0 ||  tl >= cadlayers) tl = TEXTLAYER;
-  #if HAS_CAIRO==1
-  if(!xctx->enable_layer[tl]) return -1;
-  if(xctx->draw_single_layer != -1 && xctx->draw_single_layer != tl) return -1;
-  #endif
-  return tl;
-}
-
 /* One selected object of the overlay, at its (possibly displaced, rotated, stretched) rubber-band
  * position, drawn with GC g in the parts asked for (SELP_* in xschem.h). With SELP_CLASSIC this
  * is the historical draw_selection() body, call for call. SELP_FULL draws the whole object
@@ -385,20 +369,25 @@ static void draw_sel_entry(GC g, int type, int n, int c, int parts)
   int customfont;
   #endif
    short int tmp_rot;
+   /* halo's own colours repaint only what draw() paints (layer_draws(), wires_draw(), draw.c):
+    * an object on a layer the layer switches or draw_single_layer leave out keeps its band alone,
+    * as an instance keeps it for such a layer of its symbol (case ELEMENT) */
+   if((parts & SELP_OWN) &&
+      (type == WIRE ? !wires_draw() :
+       (type == xRECT || type == LINE || type == POLYGON || type == ARC) && !layer_draws(c)))
+     parts &= ~SELP_OWN;
    switch(type)
    {
     case xTEXT:
-     /* A text draw() does not paint (text_hidden(): hide=true without show_hidden_texts, an
-      * annotation class its annot_show bit is off for) gets no letters and no band in a styled
-      * look: its mark is classic's, the box, drawn in this pass's colour by the glyph pass, and in
-      * brightbox by the box pass alone, whose box it already is (receipts/C2-fix.md in
-      * doc/claude/selection_look_batch/). Shown again, it is selected as any text is. */
-     if((parts & (SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN)) &&
-        text_hidden(xctx->text[n].flags, TEXT_CTX_SCHEMATIC)) {
-       int box = (parts & SELP_GLYPH) && xctx->sel_style != SEL_STYLE_BRIGHTBOX;
-       parts &= ~(SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN);
-       if(box) parts |= SELP_TEXTBOX;
-     }
+     /* A text draw() does not paint (text_draw_layer(), draw.c: hide=true without
+      * show_hidden_texts, an annotation class its annot_show bit is off for, a layer the layer
+      * switches or draw_single_layer leave out) gets no letters and no band in a styled look:
+      * its mark is classic's, the box, drawn in this pass's colour by the glyph pass, and in
+      * brightbox by the box pass alone, whose box it already is (sel_undrawn_text_parts();
+      * receipts/C2-fix.md and C4-fix.md in doc/claude/selection_look_batch/). Drawn again, it
+      * is selected as any text is. */
+     if((parts & (SELP_GLYPH | SELP_TXTBAND | SELP_GLYPHOWN)) && text_draw_layer(n) < 0)
+       parts = sel_undrawn_text_parts(parts);
      /* this text's own-or-colour choice (sel_text_parts(), draw.c) */
      parts = (parts & ~SELP_TEXTS) | sel_text_parts(parts & SELP_TEXTS, xctx->text[n].xscale);
      if(!(parts & (SELP_TEXTS | SELP_BOX))) break;
@@ -423,7 +412,7 @@ static void draw_sel_entry(GC g, int type, int n, int c, int parts)
            xctx->text[n].xscale, xctx->text[n].yscale);
        if(parts & SELP_GLYPHOWN) {
          /* the text in its own colour, as draw() paints it (the caller made this window-only) */
-         int tl = sel_text_own_layer(n);
+         int tl = text_draw_layer(n);
          if(tl >= 0) {
            draw_string(tl, ADD, get_text_floater(n), trot, tflip,
              xctx->text[n].hcenter, xctx->text[n].vcenter,
@@ -725,11 +714,16 @@ static void draw_sel_entry(GC g, int type, int n, int c, int parts)
          drawtemprect(g, ADD, bx1 + ox, by1 + oy, bx2 + ox, by2 + oy);
        }
      }
-     if(parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN))) for(k=0;k<cadlayers; ++k) {
-       draw_temp_symbol_parts(ADD, g, n, k, xctx->move_flip,
-         tmp_rot,
-         xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay,
-         parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN)));
+     if(parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN))) {
+       /* the colour draw() gives its texts, so a text draw() does not paint shows no letters */
+       int hc = (parts & (SELP_GLYPH | SELP_TXTBAND)) ? sel_own_hilight_color(n) : -1;
+       for(k=0;k<cadlayers; ++k) {
+         draw_temp_symbol_parts(ADD, g, n, k, xctx->move_flip,
+           tmp_rot,
+           xctx->rx1-xctx->inst[n].x0+xctx->deltax,xctx->ry1-xctx->inst[n].y0+xctx->deltay,
+           parts & (SELP_STROKE | (SELP_TEXTS & ~SELP_GLYPHOWN)),
+           (hc >= 0 && hc < cadlayers) ? hc : cadlayers);
+       }
      }
      if((parts & SELP_GLYPHOWN) && !INST_UNBOUND(n)) {
        /* the symbol's texts in their own colours: draw()'s text layer of draw_symbol() (the
@@ -755,6 +749,7 @@ static void draw_sel_entry(GC g, int type, int n, int c, int parts)
        for(k=0;k<cadlayers; ++k) {
          int col = (hc >= 0 && hc < cadlayers) ? hc : k;
          if(k > 0 && !sp->lines[k] && !sp->polygons[k] && !sp->arcs[k] && !sp->rects[k]) continue;
+         if(!sym_layer_draws(k)) continue; /* draw() does not draw this layer (draw.c) */
          draw_symbol(ADD, col, n, k, xctx->move_flip, tmp_rot,
            xctx->rx1-xctx->inst[n].x0+xctx->deltax, xctx->ry1-xctx->inst[n].y0+xctx->deltay);
          sel_own_flush(col);

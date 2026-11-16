@@ -22,10 +22,14 @@
 #   H  a hide=op text stays hidden when its instance is selected, in every styled look; a hidden
 #      floating text, selected, gets no letters and no band, only classic's mark (its box, in
 #      brightbox the selection box), and is selected as any text is once shown
+#   D  a text on a layer unticked in View > Show > Visible layers, or left out by
+#      draw_single_layer (the > key), is selected as a hidden one is (H), a floating note and
+#      M1's texts alike; halo repaints in its own colours nothing draw() leaves out
 #   O  a selection_text_own_px that is not a number draws as the default 16 does
 #   L  the look against what it is meant to be, not against a redraw (which paints the same look,
 #      right or wrong): the documented colours and selection_color, a text's letters in bright
-#      and brightbox, halo's band, and a typed selection_style taking effect on the next redraw
+#      and brightbox with no box on classic's outline in bright, halo's band and its height, and a
+#      typed selection_style taking effect on the next redraw
 #   S  the snapshot hook's region arguments: a region past the int range is an error
 #
 # Needs X (the subject is window pixels); under --nogui it says so and stops. Registered in
@@ -566,7 +570,7 @@ foreach st {brightbox bright halo} {
     [list $hidden [expr {$shown > 0}]] {0 1}
 }
 ## halo's own text style repaints a selected text's glyphs in the text's own colour; a hidden
-## floating text must not get them (sel_text_own_layer() in src/move.c asks text_hidden()).
+## floating text must not get them (text_draw_layer() in src/draw.c, which draw() asks too).
 ## The selection-colour glyphs and halo's band are rows H3-H5.
 set_look halo
 xschem unselect_all ; annot 0 ; snap 0
@@ -637,6 +641,115 @@ check "H5 the same texts shown (annot_show's voltage bit, show_hidden_texts) are
  text is: inside the box changes, in every styled look" $h5 [lrepeat 6 1]
 
 ## ---------------------------------------------------------------------------------------------
+## D -- texts and objects draw() leaves out for another reason than hide=: a layer unticked in
+## View > Show > Visible layers, and draw_single_layer (the `>` key: only the current layer, until
+## `<`). A selected text draw() does not paint gets no letters
+## and no band in any styled look, as a hidden one (H3); halo's own colours repaint nothing draw()
+## does not paint (receipts/C3-verify.md, MEDIUM-1; receipts/C4-fix.md). A hidden symbol needs no
+## row: the overlay draws none of its texts. The regions: the floating
+## note's from classic's box, as H3's; M1's letters are the pixels its texts paint on the sheet,
+## read by unticking the text layer, and a look reveals them if a tenth of them change when M1 is
+## selected (drawn letters change all of them; a box or stroke crossing them, a few in a hundred).
+set ::LOOK D
+load_fixture
+set TL [xschem get textlayer]
+## the Visible layers checkbutton's -command, after it wrote enable_layer(<l>)
+proc layer_on {l on} { set ::enable_layer($l) $on ; xschem enable_layers ; xschem redraw ; settle }
+## the `>` key (Shift+.) draws only the current layer, `<` all of them again
+proc single {l} {
+  motion 300 -250
+  if {$l < 0} { key less } else { xschem set rectcolor $l ; key greater 1 }
+  settle
+}
+set_look classic
+xschem unselect_all ; xschem redraw ; snap 0 ; xschem select text $::tn ; snap 1
+set dbox [changed_rect 0 1 0]
+xschem unselect_all
+lassign [w2s 430 -200] dx1 dy1 ; lassign [w2s 550 -80] dx2 dy2
+set mreg [list $dx1 $dy1 [expr {$dx2 - $dx1}] [expr {$dy2 - $dy1}]]
+## the positions (in mreg) where two captures differ
+proc dpos {a b r} {
+  set p {} ; set k 0
+  foreach x [region $a $r] y [region $b $r] { if {$x ne $y} { lappend p $k } ; incr k }
+  return $p
+}
+## of the positions in p, how many differ between captures a and b over region r
+proc nat {a b r p} {
+  set pa [region $a $r] ; set pb [region $b $r] ; set n 0
+  foreach k $p { if {[lindex $pa $k] ne [lindex $pb $k]} { incr n } }
+  return $n
+}
+xschem unselect_all ; snap 2 ; layer_on $TL 0 ; snap 3 ; layer_on $TL 1
+set P [dpos 2 3 $mreg]
+## one styled look under the current mode: the note's {inner, inside outer, colours} and whether
+## M1's letters (positions p) stay unrevealed
+proc d_look {st p} {
+  set_look $st
+  xschem unselect_all ; xschem redraw ; snap 0 ; xschem select text $::tn ; snap 1
+  set d [xschem window_snapshot diff 0 1]
+  set note [list [ndiff [region 0 [shrink $::dbox 6]] [region 1 [shrink $::dbox 6]]] \
+                 [inside $d [shrink $::dbox -6]] [dict keys [xschem window_snapshot colors 0 1]]]
+  xschem unselect_all ; xschem redraw ; snap 0 ; xschem select instance M1 ; snap 1
+  set n [nat 0 1 $::mreg $p]
+  xschem unselect_all
+  return [list $note [expr {[llength $p] > 0 && 10 * $n < [llength $p]}]]
+}
+set selcol [string tolower $::selcol]
+set dwant [lrepeat 3 [list [list 0 1 [list $selcol]] 1]]
+## D1: the text layer unticked
+layer_on $TL 0
+set d1 {} ; foreach st {bright brightbox halo} { lappend d1 [d_look $st $P] }
+layer_on $TL 1
+check "D1 text layer unticked (Visible layers): bright, brightbox, halo draw a selected floating\
+ note as its box ($selcol, nothing inside) and leave M1's letters unrevealed" $d1 $dwant
+## D2: draw_single_layer on the layer the rect, line, polygon and arc are on; leg: the note's
+## letters are gone from the unselected sheet then (the key took effect)
+set_look classic ; xschem unselect_all ; xschem redraw ; snap 4
+single $::rc ; snap 5
+set d2leg [expr {[ndiff [region 4 [shrink $dbox 6]] [region 5 [shrink $dbox 6]]] > 0}]
+set d2 {} ; foreach st {bright brightbox halo} { lappend d2 [d_look $st $P] }
+single -1
+check "D2 draw_single_layer (the > key, layer $::rc): the note's letters leave the sheet, and\
+ bright, brightbox, halo draw it as its box and leave M1's letters unrevealed" \
+  [list $d2leg {*}$d2] [list 1 {*}$dwant]
+## D4, D5: halo's own colours. A selected object draw() does not paint keeps the selection band
+## and gets none of its own colours: layer $::rc unticked for the rect, line, polygon and arc, and
+## draw_single_layer on an empty layer (7) for the wire, M1 (body and pins) and the rect. The leg
+## per object: hidden, it was not on the unselected sheet (so its own colour would show).
+set_look halo
+set d4 {}
+foreach {o sel} [list rect "xschem select rect $::rc 0" line "xschem select line $::rc 0" \
+                      poly "xschem select poly $::rc 0" arc "xschem select arc $::rc 0"] {
+  xschem unselect_all ; xschem redraw ; snap 2
+  eval $sel ; snap 3 ; set r [changed_rect 2 3]
+  xschem unselect_all ; layer_on $::rc 0 ; snap 0
+  set gone [ndiff [region 2 $r] [region 0 $r]]
+  eval $sel ; snap 1
+  lappend d4 [list $o [expr {$gone > 0}] [dict keys [xschem window_snapshot colors 0 1]]]
+  xschem unselect_all ; layer_on $::rc 1
+}
+check "D4 halo, layer $::rc unticked: a selected rect, line, polygon and arc (each gone from the\
+ sheet) change only to $selcol" $d4 \
+  [list [list rect 1 [list $selcol]] [list line 1 [list $selcol]] [list poly 1 [list $selcol]] \
+        [list arc 1 [list $selcol]]]
+set d5 {}
+foreach {o sel} [list wire "xschem select wire $::wn" M1 "xschem select instance M1" \
+                      rect "xschem select rect $::rc 0"] {
+  xschem unselect_all ; xschem redraw ; snap 2
+  eval $sel ; snap 3 ; set r [changed_rect 2 3]
+  xschem unselect_all ; single 7 ; snap 0
+  set gone [ndiff [region 2 $r] [region 0 $r]]
+  eval $sel ; snap 1
+  lappend d5 [list $o [expr {$gone > 0}] [dict keys [xschem window_snapshot colors 0 1]]]
+  xschem unselect_all ; single -1
+}
+check "D5 halo, draw_single_layer on empty layer 7: a selected wire, M1 and rect (each gone from\
+ the sheet) change only to $selcol" $d5 \
+  [list [list wire 1 [list $selcol]] [list M1 1 [list $selcol]] [list rect 1 [list $selcol]]]
+## the sheet as it was: every layer, all layers drawn, symbols shown
+xschem unselect_all ; xschem redraw ; settle
+
+## ---------------------------------------------------------------------------------------------
 ## O -- selection_text_own_px not a number. The small note renders below 16 px, so at the
 ## default it is plain colour in halo and at 0 it gets the band.
 set ::LOOK O
@@ -680,18 +793,26 @@ check "L1 bright, a selected FET's colour: the dark default, selection_color #00
 ## L2: bright and brightbox paint a selected text's LETTERS. The box is classic's mark for the text.
 ## 2 px inside it, no pixel the selection changes was background on the unselected sheet (a box or
 ## a band would be painted there); 4 px inside it the letters change, some of them to exactly the
-## selection colour (the rest are antialiased edges).
+## selection colour (the rest are antialiased edges). On the box's own outline (the ring: the
+## pixels classic paints) bright draws no box as well as the letters: a letter's edge may touch the
+## ring, a box covers it (receipts/C3-verify.md, LOW-1, its V7c). brightbox's box, one px on a ring
+## as wide as the line, is the control that the ring can see a box.
 set_look classic
-set boxes {}
+set boxes {} ; set rings {}
 foreach t [list $::tn $::ts] {
   xschem unselect_all ; xschem redraw ; snap 0 ; xschem select text $t ; snap 1
-  lappend boxes [changed_rect 0 1 0]
+  set r [changed_rect 0 1 0]
+  lappend boxes $r
+  ## the ring: the pixels classic's box outline paints, as positions in r
+  set ring {} ; set k 0
+  foreach a [region 0 $r] b [region 1 $r] { if {$a ne $b} { lappend ring $k } ; incr k }
+  lappend rings $ring
 }
 set bgc [string tolower [lindex $tctx::colors 0]]
 set l2r {}
 foreach st {bright brightbox} {
   set_look $st
-  foreach t [list $::tn $::ts] r $boxes {
+  foreach t [list $::tn $::ts] r $boxes ring $rings {
     xschem unselect_all ; xschem redraw ; snap 0 ; xschem select text $t ; snap 1
     set onbg 0
     foreach a [region 0 [shrink $r 2]] b [region 1 [shrink $r 2]] {
@@ -700,25 +821,42 @@ foreach st {bright brightbox} {
     set in [shrink $r 4]
     set nsel 0
     foreach a [region 0 $in] b [region 1 $in] { if {$a ne $b && $b eq {#ff8000}} { incr nsel } }
-    lappend l2r [list $onbg [expr {$nsel > 0}]]
+    ## on the ring: how many pixels turn exactly #ff8000
+    set pa [region 0 $r] ; set pb [region 1 $r] ; set nring 0
+    foreach k $ring {
+      if {[lindex $pa $k] ne [lindex $pb $k] && [lindex $pb $k] eq {#ff8000}} { incr nring }
+    }
+    lappend l2r [list $onbg [expr {$nsel > 0}] \
+      [expr {$st eq {bright} ? 10 * $nring < [llength $ring] : 3 * $nring > [llength $ring]}]]
   }
 }
 xschem unselect_all
 check "L2 bright, brightbox: a selected floating note and small note are their letters, not a box:\
- inside the text's box no changed pixel was background ($bgc), and some letter pixels turn\
- #ff8000" $l2r [lrepeat 4 {0 1}]
+ inside the text's box no changed pixel was background ($bgc), some letter pixels turn #ff8000,\
+ and of classic's box outline fewer than a tenth turn #ff8000 in bright, more than a third (its\
+ box) in brightbox" $l2r [lrepeat 4 {0 1 1}]
 ## L3: halo keeps an object's own colours and puts a band of the selection colour around them. A
 ## selected wire (horizontal) changes only to the selection colour, the change is taller than the
 ## band on both sides (2 x the default halo width of 3, plus the stroke), and the wire's own pixels
-## at its middle do not change. A floating note gets the band around its letters: changed pixels
-## on the background, every one of them the selection colour.
+## at its middle do not change. The band is no taller than the stroke (classic's, read back) plus
+## 2 x halo_px plus 2 px of slack for rounding, so a band twice as wide (2 x halo_px more) is over
+## it (receipts/C3-verify.md, LOW-1, its V8b; receipts/C4-fix.md has the measured margin). A floating note
+## gets the band around its letters: changed pixels on the background, every one of them the
+## selection colour.
+set_look classic
+xschem unselect_all ; xschem redraw ; snap 0 ; xschem select wire $::wn ; snap 1
+lassign [xschem window_snapshot diff 0 1] n x1 y1 x2 y2
+set stroke [expr {$y2 - $y1 + 1}]
 set_look halo
+set hpx [dict get [xschem get selection_look] halo_px]
 xschem unselect_all ; xschem redraw ; snap 0 ; xschem select wire $::wn ; snap 1
 lassign [xschem window_snapshot diff 0 1] n x1 y1 x2 y2
 lassign [w2s 375 -140] mx my
 set mid [list [expr {$mx - 10}] $my 20 1]
 set l3 [list [expr {$n > 0}] [dict keys [xschem window_snapshot colors 0 1]] \
-          [expr {$n > 0 && $y2 - $y1 + 1 >= 7}] [ndiff [region 0 $mid] [region 1 $mid]]]
+          [expr {$n > 0 && $y2 - $y1 + 1 >= 7}] \
+          [expr {$n > 0 && $y2 - $y1 + 1 <= $stroke + 2 * $hpx + 2}] \
+          [ndiff [region 0 $mid] [region 1 $mid]]]
 lassign $boxes r
 xschem unselect_all ; xschem redraw ; snap 0 ; xschem select text $::tn ; snap 1
 set onbg 0 ; set onbgsel 0
@@ -727,9 +865,9 @@ foreach a [region 0 $r] b [region 1 $r] {
 }
 lappend l3 [expr {$onbg > 0 && $onbgsel == $onbg}]
 xschem unselect_all
-check "L3 halo: a selected wire changes only to #ff8000, a band at least 7 px tall with the\
- wire's own middle unchanged; a selected floating note gets a #ff8000 band on the background" \
-  $l3 {1 {{#ff8000}} 1 0 1}
+check "L3 halo: a selected wire changes only to #ff8000, a band at least 7 px tall and no taller\
+ than classic's stroke ($stroke) + 2 x halo_px ($hpx) + 2, with the wire's own middle unchanged; a\
+ selected floating note gets a #ff8000 band on the background" $l3 {1 {{#ff8000}} 1 1 0 1}
 ## L4: a typed `set selection_style X` takes effect on the next redraw with no build_colors (FAQ
 ## Q94; draw() resolves it through sel_style_sync()). From brightbox with the FET selected: the look
 ## in force reads X, the window equals X chosen through build_colors, and that differs from

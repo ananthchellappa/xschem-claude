@@ -3474,7 +3474,7 @@ extern void draw_temp_symbol(int what, GC gc, int n,int layer,
 extern void draw_temp_string(GC gc,int what, const char *str, short rot, short flip, int hcenter, int vcenter,
        double x1, double y1, double xscale, double yscale);
 extern void draw_temp_symbol_parts(int what, GC gc, int n,int layer,
-            short tmp_flip, short tmp_rot, double xoffset, double yoffset, int parts);
+            short tmp_flip, short tmp_rot, double xoffset, double yoffset, int parts, int text_c);
 extern void draw_temp_string_parts(GC gc, int what, int parts, const char *str, short rot, short flip,
        int hcenter, int vcenter, double x1, double y1, double xscale, double yscale);
 extern void sel_restore_box(double x1, double y1, double x2, double y2, int pad);
@@ -3483,6 +3483,11 @@ extern int sel_text_band_px(void);          /* own text style band, screen px (d
 extern int sel_text_band_for(double xscale); /* the band ONE text of size xscale gets (draw.c) */
 extern int sel_text_parts(int parts, double xscale); /* its own-or-colour text parts (draw.c) */
 extern void sel_glyph_own_filter(int on);   /* draw_symbol(): own-style texts only (draw.c) */
+extern int text_draw_layer(int i);          /* draw()'s layer for floating text i, -1 = not drawn */
+extern int sel_undrawn_text_parts(int parts); /* overlay parts for a text draw() does not paint */
+extern int layer_draws(int c);              /* draw() paints layer c's own geometry (draw.c) */
+extern int sym_layer_draws(int c);          /* draw() calls draw_symbol() for layer c (draw.c) */
+extern int wires_draw(void);                /* draw() paints the wires (draw.c) */
 
 extern void MyXCopyAreaDouble(Display* display, Drawable src, Drawable dest, GC gc,
      double sx1, double sy1, double sx2, double sy2, double dx1, double dy1, double lw);
