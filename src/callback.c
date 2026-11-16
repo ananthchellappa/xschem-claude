@@ -5764,7 +5764,7 @@ static int act_make_sch_sym_from_sel(const ActionEvent *e) { (void)e; make_schem
 void view_snap_change(int dbl)
 {
   char msg[128];
-  double old = tclgetdoublevar("cadsnap");
+  double old = tclgetcadsnap();
   set_snap(old * (dbl ? 2.0 : 0.5));
   change_linewidth(-1.);
   draw();
@@ -5779,11 +5779,11 @@ void view_snap_change(int dbl)
    * to exactly ONE line. Snap is edit geometry, not saved content -> no read-only
    * guard, so this logs on a read-only view too (descend browse mode).
    * See doc/claude/specs/snap_spacing_bindkeys.md. */
-  log_action("xschem set cadsnap %.10g", tclgetdoublevar("cadsnap"));
+  log_action("xschem set cadsnap %.10g", tclgetcadsnap());
   /* ...plus the outcome a user reads in the CIW: which way it moved and from
    * what. Silent-action complaint class -- a snap change that only shows up as a
    * statusbar colour is invisible while the eye is on the schematic. */
-  my_snprintf(msg, S(msg), "snap %.10g -> %.10g (%s)", old, tclgetdoublevar("cadsnap"),
+  my_snprintf(msg, S(msg), "snap %.10g -> %.10g (%s)", old, tclgetcadsnap(),
               dbl ? "x2" : "x0.5");
   log_action_result(msg);
 }
@@ -6035,7 +6035,7 @@ static int act_select_same_net_add(const ActionEvent *e)
  * (the same trap the scheduler's rotate_in_place/flip_in_place branches warn about).
  *
  * The snap is read here exactly the way handle_key_press's c_snap parameter is derived
- * (tclgetdoublevar("cadsnap"), callback entry), so the group pivot is identical. */
+ * (tclgetcadsnap(), callback entry), so the group pivot is identical. */
 static int connected_drag_group_transform(void);
 static void standalone_group_transform(int what, double c_snap);
 
@@ -6060,7 +6060,7 @@ static int act_rotate_in_place(const ActionEvent *e)
     } else {
       /* issue 0116 bug 2: multi-object selection rotates as one rigid body (group, about the
        * grid-snapped bbox centre); a single object keeps its own-origin in-place rotate. */
-      standalone_group_transform(ROTATE, tclgetdoublevar("cadsnap"));
+      standalone_group_transform(ROTATE, tclgetcadsnap());
     }
   }
   return 1;
@@ -6090,7 +6090,7 @@ static int act_flip_in_place(const ActionEvent *e)
        * grid-snapped bbox centre); a single object keeps its own-origin in-place flip.
        * Self-logs at the helper (issue 0068): standalone reaches only here, never the
        * scheduler branch, so no double-log; replay sources the verb into the scheduler. */
-      standalone_group_transform(FLIP, tclgetdoublevar("cadsnap"));
+      standalone_group_transform(FLIP, tclgetcadsnap());
     }
   }
   return 1;
@@ -8534,7 +8534,7 @@ static void handle_key_press(int event, KeySym key, int state, int rstate, int m
          * key's old readonly_block() modal), the push_undo + round_schematic_to_grid +
          * maintain + draw effect, and the ONE `xschem align` log site. No inline readonly/
          * undo/log here. The boundary reads cadsnap the same way the c_snap local was
-         * derived (tclgetdoublevar("cadsnap"), callback entry), so the snap is identical. */
+         * derived (tclgetcadsnap(), callback entry), so the snap is identical. */
         perform_action("align", 0, NULL);
       }
       else if(rstate==ControlMask) { /* Unselect floater texts */
@@ -10286,7 +10286,7 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
      set_modify(1);
   }
 
-  c_snap = tclgetdoublevar("cadsnap");
+  c_snap = tclgetcadsnap();
   #ifdef __unix__
   state &= (1 <<13) -1; /* filter out anything above bit 12 (4096) */
   #endif

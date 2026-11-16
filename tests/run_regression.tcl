@@ -162,7 +162,16 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_window" \
                  "headless/test_rdw_help" \
                  "headless/test_ase_dc_param_sweep" \
-                  "headless/test_wave_subwindows"]
+                  "headless/test_wave_subwindows" \
+                  "headless/test_drag_tclvar_reads"]
+## `headless/test_drag_tclvar_reads` IS IN `hcases` ALONE, registered in the commit
+## that creates it (doc/claude/drag_perf_batch/, the drag frame-time fix): a live-commit
+## drag step must not re-read a Tcl variable per pin or per wire, and the C-side cache
+## of ::cadsnap (tclgetcadsnap(), src/scheduler.c) must never hand back a stale value.
+## Every row runs under --nogui (it drives the `xschem move_objects` seam and reads
+## `xschem globals`), so a `dcases` entry would measure nothing more. Its epilogue was
+## captured in exactly this loop's shape and scored with `banner_complete` SOURCED from
+## tests/banner_rule.tcl before this entry went in.
 ## `headless/test_ase_dc_param_sweep` IS IN BOTH LISTS, registered in the commit
 ## that creates it: ASE-L's DC analysis sweeping a DESIGN VARIABLE (a row with
 ## `swkind variable`), which the ngspice adapter writes as a loop of reloads and

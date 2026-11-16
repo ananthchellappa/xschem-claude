@@ -3692,6 +3692,8 @@ extern const char *tclgetvar(const char *s);
 extern int tclgetboolvar(const char *s);
 extern int tclgetintvar(const char *s);
 extern double tclgetdoublevar(const char *s);
+extern double tclgetcadsnap(void); /* tclgetdoublevar("cadsnap"), cached; scheduler.c */
+extern void tclsetcadsnap(double value); /* the only C writer of ::cadsnap; scheduler.c */
 extern void tclsetvar(const char *s, const char *value);
 extern void tclsetdoublevar(const char *s, const double value);
 extern void tclsetboolvar(const char *s, const int value);

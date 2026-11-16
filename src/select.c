@@ -2010,7 +2010,7 @@ void select_attached_nets(void)
       xctx->fluid_startsel_nid = kk;
     }
   }
-  tol = tclgetdoublevar("cadsnap") / 2.0;
+  tol = tclgetcadsnap() / 2.0;
   if(tol < 1e-6) tol = 1e-6;
 
   for(j=0;j<xctx->lastsel; ++j) {

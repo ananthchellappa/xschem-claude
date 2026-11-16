@@ -1374,7 +1374,7 @@ static void place_moved_wire(int n, int orthogonal_wiring)
  * and adjacent pins are cadsnap apart > cadsnap/2, so no false neighbour match). */
 static int point_near_pin(double px, double py, double x, double y)
 {
-  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  double tol = tclgetcadsnap() / 2.0;
   if(tol < 1e-6) tol = 1e-6;
   return fabs(px - x) <= tol && fabs(py - y) <= tol;
 }
@@ -2040,7 +2040,7 @@ static int fluid_seg_touches_foreign_lab(double ax, double ay, double bx, double
 static void insert_exit_stubs(void)
 {
   int inst, r, rects, n, m;
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int nwires0 = xctx->wires;   /* snapshot: stubs stored below (index >= nwires0) must NOT re-enter
                                 * the pin/corner scans of later pins/instances (issue 0047) */
   if(grid <= 0.0) grid = 1.0;
@@ -3736,7 +3736,7 @@ static int fluid_jog_is_moved_pin_escape_overshoot(int kd)
   xWire *d = &xctx->wire[kd];
   int vert, m, kA = -1, kC = -1;
   double dx1 = d->x1, dy1 = d->y1, dx2 = d->x2, dy2 = d->y2;
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   if(!tclgetboolvar("fluid_editing")) return 0;
   /* mirror straighten's 0111 pin-landing gate (:3672): only when rot==flip==0 does straighten reschedule
    * a pin-landing near target to pin + grid*normal (the 1-grid escape). Under a rotated/flipped stretch it
@@ -3935,7 +3935,7 @@ static void fluid_straighten_reversals(void)
              point_on_any_pin(npx, npy) && fluid_moving_pin_normal(npx, npy, &nnx, &nny)) {
             double along = vert ? nnx : nny;     /* normal component along the slide axis */
             if(along != 0.0) {
-              double grid = tclgetdoublevar("cadsnap");
+              double grid = tclgetcadsnap();
               double dpos = vert ? dx1 : dy1;
               double outward;
               if(grid <= 0.0) grid = 1.0;
@@ -4509,7 +4509,7 @@ static int fluid_jog_is_doomed(int n, void *arg) { (void)arg; return n >= fluid_
 
 static int fluid_jog_pin_off_backbone(double qx, double qy, int vertaxis)
 {
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   double qL, qR;                          /* gap [qL,qR] centred on Q along the backbone axis */
   int W, m, ci, nbb = 0, left_ok = 0, right_ok = 0, covers_q = 0, guard;
   int bb[64];                             /* backbone wire indices overlapping the gap, extending beyond */
@@ -5109,7 +5109,7 @@ static void fluid_manh_pushpath(double *ax, double *ay, int *an, int *aleg, doub
 static int fluid_manh_route(int w, double px, double py, double ax, double ay, const char *prp)
 {
   enum { MANH_CAP = 64 };
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   double bx1 = 0.0, by1 = 0.0, bx2 = 0.0, by2 = 0.0, cx = 0.0, cy = 0.0;
   double sk_lo, sk_hi, sk_l, sk_r, yc[8], xc[8];
   double AX[MANH_CAP * 5], AY[MANH_CAP * 5], ALEN[MANH_CAP];
@@ -5925,7 +5925,7 @@ int fluid_harness_run_pass(const char *name)
  * varying axis. A degenerate (point) or diagonal leg carries no two-pin bridge. */
 static int fluid_pin_on_seg(double px, double py, double x1, double y1, double x2, double y2)
 {
-  double tol = tclgetdoublevar("cadsnap") / 2.0, lo, hi;
+  double tol = tclgetcadsnap() / 2.0, lo, hi;
   if(tol < 1e-6) tol = 1e-6;
   if(y1 == y2 && x1 != x2) {                       /* horizontal leg */
     if(fabs(py - y1) > tol) return 0;
@@ -5954,7 +5954,7 @@ static int fluid_pin_on_seg(double px, double py, double x1, double y1, double x
 static int fluid_seg_pair_touch(double ax1, double ay1, double ax2, double ay2,
                                 double bx1, double by1, double bx2, double by2)
 {
-  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  double tol = tclgetcadsnap() / 2.0;
   int ah, av, bh, bv;
   if(tol < 1e-6) tol = 1e-6;
   if(ax1 == ax2 && ay1 == ay2) return fluid_pin_on_seg(ax1, ay1, bx1, by1, bx2, by2);  /* A is a point */
@@ -5997,7 +5997,7 @@ static int fluid_seg_pair_touch_except(double ax1, double ay1, double ax2, doubl
                                        double bx1, double by1, double bx2, double by2,
                                        double ex, double ey)
 {
-  double tol = tclgetdoublevar("cadsnap") / 2.0;
+  double tol = tclgetcadsnap() / 2.0;
   double pe = 1e-6;                                  /* pin-identity epsilon */
   int ah, av, bh, bv;
   if(tol < 1e-6) tol = 1e-6;
@@ -6718,7 +6718,7 @@ static int fluid_wire_covers_on_line(double u1, double u2, double perp, int hori
  * hardened these guards; each is conservative (over-reject => decline => baseline, never a short). */
 static void fluid_reroute_around_obstacles(int orthogonal_wiring)
 {
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int iter;
   if(!orthogonal_wiring) return;
   if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) return;
@@ -7037,7 +7037,7 @@ static int fluid_removed_span_unsafe(double Px, double Cx, double Py, const char
  * bus, or a diagonal drag DECLINE to baseline (documented limitations, all P1/P2-safe). */
 static void fluid_offset_foreign_pin_landing(int orthogonal_wiring)
 {
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int D, p, k = 0, npins, base;
   if(!orthogonal_wiring) { fltrace("FLTRACE offset: skip (not orthogonal)\n"); return; }
   if(fluid_failsafe(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0)) { fltrace("FLTRACE offset: skip (no snapshot)\n"); return; }
@@ -7335,7 +7335,7 @@ static int fluid_seg_hits_foreign_wire(double x1, double y1, double x2, double y
  * never rename it. Returns 1 if a shove committed. */
 static int fluid_shove_body_crossing_backbone(void)
 {
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int xmove, dirpos, i, changed = 0;
   if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   if(fluid_count_pins() != fluid_g.snap_npins) return 0;  /* instance set changed: not comparable */
@@ -7661,7 +7661,7 @@ static int fluid_shove_body_crossing_backbone(void)
 static int fluid_shove_jog_separated_trunk(void)
 {
   enum { TRUNK_MAXCORN = 64 };
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int xmove, changed = 0, restart = 1, guard = 0;
   if(!fluid_g.snap_pinnet || fluid_g.snap_npins <= 0) return 0;
   if(fluid_count_pins() != fluid_g.snap_npins) return 0;   /* instance set changed: not comparable */
@@ -7945,7 +7945,7 @@ static int fluid_shove_jog_separated_trunk(void)
 
 static void fluid_shove_connected_wire(int orthogonal_wiring)
 {
-  double grid = tclgetdoublevar("cadsnap");
+  double grid = tclgetcadsnap();
   int dxnz, dynz, s, iter;
 
   if(!orthogonal_wiring) return;
@@ -9419,7 +9419,7 @@ void move_objects(int what, int merge, double dx, double dy)
                }
              }
              if(covered) {
-               double gr = tclgetdoublevar("cadsnap");
+               double gr = tclgetcadsnap();
                double mxp, myp;
                if(gr <= 0.0) gr = 10.0;
                if(wx1 == wx2) {

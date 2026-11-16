@@ -506,7 +506,7 @@ static int closest_point_calculation(double x1, double y1, double x2, double y2,
                                      double *x0, double *y0, int align)
 {
   double projection, sq_distance, x3, y3;
-  double cs = tclgetdoublevar("cadsnap"), sq_cs;
+  double cs = tclgetcadsnap(), sq_cs;
   int ret = 0;
 
   sq_cs = cs * cs; /* get squared value to compare with squared distance */

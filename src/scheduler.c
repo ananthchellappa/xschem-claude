@@ -467,7 +467,7 @@ static int run_core(const char *verb, int argc, const char *argv[])
   }
   else if(!strcmp(verb, "align")) {
     xctx->push_undo();
-    round_schematic_to_grid(tclgetdoublevar("cadsnap"));
+    round_schematic_to_grid(tclgetcadsnap());
     /* W3: align-to-grid can snap a pin onto/off a wire -> re-split/rejoin (maintain).
      * Gated on autotrim_wires; undo pushed above. See wire_segment_splitting.md (W3). */
     if(tclgetboolvar("autotrim_wires")) maintain_wire_segments();
@@ -13092,7 +13092,7 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
             /* self-log the RESOLVED snap (0066): see cadgrid above. The bindable
              * view.set_snap_value dialog action is nolog'd (callback.c) so the async
              * input_line prompt does not also log -- the value logs here at the core. */
-            log_action("xschem set cadsnap %.10g", tclgetdoublevar("cadsnap"));
+            log_action("xschem set cadsnap %.10g", tclgetcadsnap());
           }
           else if(!strcmp(argv[2], "change_lw")) { /* allow change line width when zooming */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
@@ -15551,11 +15551,115 @@ static int xschem_cmds_z(Tcl_Interp *interp, int argc, const char *argv[], int *
   return TCL_OK;
 }
 
+/* ---------------------------------------------------------------------------
+ * tclgetcadsnap(): exactly what tclgetdoublevar("cadsnap") returns, without paying a
+ * Tcl_GetVar hash lookup plus an atof_spice() sscanf on every call.
+ *
+ * WHY: the fluid-wiring predicates (point_near_pin, fluid_pin_on_seg, ... in move.c) read
+ * the snap inside instance-pin x wire-segment loops, so every drag frame re-read and
+ * re-parsed one constant a number of times that grows with pins times wire segments. That
+ * was most of a drag frame's cost on ordinary pages; the measurement is
+ * doc/claude/drag_perf_batch/receipts/A-fix.md, and the fence that would catch a
+ * per-iteration Tcl read coming back, at the sites its live drag steps reach, is
+ * tests/headless/test_drag_tclvar_reads.tcl.
+ *
+ * HOW IT IS KEPT FRESH -- four invalidations, each covering what the others cannot (the two
+ * shapes none of them covers are listed at the end):
+ *  1. A Tcl trace on ::cadsnap for WRITES and UNSETS drops the cache the moment the
+ *     variable changes, whoever changes it: `set cadsnap`, `xschem set cadsnap`, the snap
+ *     dialog and statusbar entry, an rc file, restore_ctx's per-tab/per-window `set`, an
+ *     upvar alias, a Tcl script run by a tcleval() in the middle of a drag. Tcl itself
+ *     enumerates the writers, so there is no list here to fall out of date. An unset takes
+ *     every trace on the variable with it (TCL_TRACE_DESTROYED); the next read that finds
+ *     the variable re-installs ours before it caches anything.
+ *  2. Every entry into the `xschem` command (the one Tcl -> C door, xinit.c) drops it too.
+ *     Tcl runs a variable's write traces most-recent-first, so a write trace somebody
+ *     added AFTER ours would run before ours has dropped the cache; if that trace body
+ *     called back into C it could only do so through `xschem`, which re-reads. The cost
+ *     is one real read per xschem command at most, never one per loop iteration. Between
+ *     commands, 4 below has already emptied the cache, so this one matters for an `xschem`
+ *     command run from Tcl in the middle of another C command (row S2b of the fence).
+ *  3. C writes ::cadsnap through tclsetcadsnap(), below, which drops it after the write
+ *     returns (the one other C-initiated write, Tcl_AppInit's startup `set_ne`, runs before
+ *     any trace can exist). Tcl runs a trace with every trace on that variable disabled, so
+ *     a write made INSIDE some other write trace on ::cadsnap fires none, ours included;
+ *     when the outer writer was C, that writer re-reads because of this one.
+ *  4. Every EXIT from the `xschem` command drops it as well (after the dispatch switch in
+ *     xschem(); the one earlier return, for a missing subcommand, reads nothing). This is
+ *     for the case 3 leaves open: an OLDER write trace runs after ours has dropped the
+ *     cache, so if its body runs an `xschem` command that reads the snap (refilling the
+ *     cache) and THEN rewrites ::cadsnap, that rewrite fires nothing. When the outer writer
+ *     was Tcl running inside a C command (a read trace on another variable, mid-drag), no
+ *     `xschem` entry and no C writer come next; dropping the cache on the nested command's
+ *     way out is what makes the outer command's next read fresh. Row S7 of the fence.
+ * THE ORDER INSIDE tclgetcadsnap(), and why: read the variable FIRST; if there is none,
+ * take the uncached path and arm nothing; only then arm the trace if it is not armed; then
+ * cache. (a) Arming after the read re-arms a trace the read itself destroyed: a READ trace
+ * on ::cadsnap that unsets and recreates it runs inside our Tcl_GetVar, and armed before
+ * the read we would cache the new value with no trace left on it (row S8). (b) Never
+ * arming on a missing variable leaves no undefined-but-traced ::cadsnap behind; Tcl
+ * refuses to make a traced name an upvar alias, so `upvar #0 other cadsnap` after an
+ * `unset ::cadsnap` would fail where it succeeds without the cache (row S9). The value is
+ * parsed before the trace call, so nothing runs between Tcl_GetVar and atof_spice().
+ * A read that finds no variable is never cached: it goes through tclgetdoublevar() so
+ * the dbg() message, the interp error result and the 0.0 are exactly as before.
+ * What this does NOT see, both needing Tcl run from inside a C command (a trace, or a
+ * tcleval) that does something nothing in the tree does; in each the rest of THAT C command
+ * keeps the old value and the next `xschem` command reads the new one (2 and 4):
+ *  - a write made by the body of a READ trace on ::cadsnap runs with our trace disabled.
+ *    Fired by our own Tcl_GetVar it is simply the value we read; fired by a Tcl read of
+ *    ::cadsnap in the middle of a C command, nothing drops the cache;
+ *  - re-pointing an upvar alias: if ::cadsnap has been made an alias (`upvar #0 x cadsnap`),
+ *    our trace sits on the variable it named when we armed it, so `upvar #0 y cadsnap`
+ *    fires nothing, and a later write through the alias in the middle of a C command lands
+ *    on y, where we have no trace.
+ * Nothing in the tree puts a trace on ::cadsnap, unsets it or aliases it. The measurement
+ * of both is doc/claude/drag_perf_batch/receipts/A2-fix.md. */
+static double cadsnap_cache = 0.0;  /* atof_spice() of ::cadsnap at the last real read */
+static int cadsnap_cache_ok = 0;    /* 1: cadsnap_cache is current; 0: next read goes to Tcl */
+static int cadsnap_traced = 0;      /* 1: cadsnap_trace() is installed on ::cadsnap */
+
+static char *cadsnap_trace(ClientData cd, Tcl_Interp *ip, const char *n1, const char *n2, int flags)
+{
+  (void)cd; (void)ip; (void)n1; (void)n2;
+  cadsnap_cache_ok = 0;
+  if(flags & (TCL_TRACE_DESTROYED | TCL_INTERP_DESTROYED)) cadsnap_traced = 0;
+  return NULL;
+}
+
+double tclgetcadsnap(void)
+{
+  const char *p;
+  double v;
+  if(cadsnap_cache_ok) return cadsnap_cache;
+  p = Tcl_GetVar(interp, "cadsnap", TCL_GLOBAL_ONLY); /* read FIRST: see THE ORDER, above */
+  if(!p) return tclgetdoublevar("cadsnap"); /* no variable: the uncached path, no trace (b) */
+  v = atof_spice(p);                        /* tclgetdoublevar()'s own conversion */
+  if(!cadsnap_traced) {                     /* after the read: re-arms one the read destroyed (a) */
+    if(Tcl_TraceVar2(interp, "cadsnap", NULL, TCL_GLOBAL_ONLY | TCL_TRACE_WRITES | TCL_TRACE_UNSETS,
+                     cadsnap_trace, NULL) != TCL_OK) {
+      return v;                             /* untraceable (not reachable for a global scalar): never cache */
+    }
+    cadsnap_traced = 1;
+  }
+  cadsnap_cache = v;
+  cadsnap_cache_ok = 1;
+  return cadsnap_cache;
+}
+
+/* the only way C writes ::cadsnap: tclsetdoublevar() then invalidation 3 of tclgetcadsnap() */
+void tclsetcadsnap(double value)
+{
+  tclsetdoublevar("cadsnap", value);
+  cadsnap_cache_ok = 0;
+}
+
 int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * argv[])
 {
  int cmd_found = 1;
  int retcode = TCL_OK;
 
+ cadsnap_cache_ok = 0; /* invalidation 2 of tclgetcadsnap(), above */
  Tcl_ResetResult(interp);
  if(argc < 2) {
    Tcl_SetResult(interp, "Missing arguments.", TCL_STATIC);
@@ -15647,6 +15751,7 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
     cmd_found = 0;
     break;
   } /* switch */
+  cadsnap_cache_ok = 0; /* invalidation 4 of tclgetcadsnap(), above: on the way out as well */
   if(retcode != TCL_OK) return retcode;
   if(!cmd_found) {
     Tcl_AppendResult(interp, "xschem ", argv[1], ": invalid command.", NULL);

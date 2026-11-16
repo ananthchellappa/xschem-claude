@@ -399,7 +399,7 @@ static double default_snap = -1.0;
  * See doc/claude/specs/snap_spacing_bindkeys.md section 5. */
 double linewidth_ref_snap(void)
 {
-  double cs = tclgetdoublevar("cadsnap");
+  double cs = tclgetcadsnap();
   if(tclgetboolvar("linewidth_follows_snap")) return cs;
   /* before the first set_snap() (very early startup) there is no recorded default
    * yet -- fall back to the live value, which IS the startup value at that point. */
@@ -420,7 +420,7 @@ void set_snap(double newsnap) /*  20161212 set new snap factor and just notify n
 {
     double cs;
 
-    cs = tclgetdoublevar("cadsnap");
+    cs = tclgetcadsnap();
     if(default_snap == -1.0) {
       default_snap = cs;
       if(default_snap==0.0) default_snap = CADSNAP;
@@ -433,7 +433,7 @@ void set_snap(double newsnap) /*  20161212 set new snap factor and just notify n
         tclvareval(xctx->top_path, ".statusbar.3 configure -background OrangeRed", NULL);
       }
     }
-    tclsetdoublevar("cadsnap", cs);   /* set BEFORE the dot size: it reads cadsnap back */
+    tclsetcadsnap(cs);   /* set BEFORE the dot size: it reads cadsnap back */
     set_dotsize_from_snap();
 }
 
@@ -7834,7 +7834,7 @@ double my_round(double a)
  * (doc/claude/specs/select_at.md). cadsnap <= 0 returns the value unchanged. */
 double snap_to_grid(double c)
 {
-  double s = tclgetdoublevar("cadsnap");
+  double s = tclgetcadsnap();
   double r;
   if(s <= 0.0) return c;
   r = my_round(c / s) * s;
