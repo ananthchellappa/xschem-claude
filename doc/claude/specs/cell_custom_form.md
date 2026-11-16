@@ -27,6 +27,36 @@ shown, unchanged. A symbol may declare, in its global `K {}` props,
 - `<ns>::field_build {tok frame value}` -> pack the custom widget for `<tok>` into
   the full-width `<frame>`, seeded from the current `value` string.
 - `<ns>::field_get {tok}` -> read the custom widget back as a value string.
+- `<ns>::field_tips`    -> dict `{token -> hover text}`, shown by `balloon` on the
+  field's label (text rows and bool rows).
+- `<ns>::field_bools`   -> list of `{tok <token> label <text> on <value>}` rows:
+  checkboxes for per-instance flags the template does not declare. They join
+  `slickprop::inst_schema`, so they behave as the label's "Stack V" row does: an
+  untouched box writes nothing, a ticked one writes `<token>=<on>`, an unticked one
+  removes the token.
+- `<ns>::field_readouts` -> list of `{label <text> cmd <command prefix> ?tip <text>?}`
+  rows: read-only values the cell computes from the form. `cmd` is called with one
+  argument, a dict token -> the field's current value (the template default for a
+  field left on its placeholder), on every edit; what it returns is shown. They are
+  not tokens and never reach `collect_changes`.
+- `<ns>::field_fixed`   -> list of `{tok <token> label <text> value <text> ?tip <text>?}`
+  rows: something the cell fixes and the designer cannot set. Each is the form's first
+  rows, a disabled (greyed) entry showing `<value>`: information only. `<token>` is not
+  a field of the form: nothing is written for it, and one left on the instance by an
+  older sheet is neither listed under "Extra (undeclared)" nor touched.
+
+The cell's readout rows and its `field_bools` rows sit with the declared fields, above
+any "Extra (undeclared)" section (the core's own bool rows, a label's "Stack V", stay
+after it).
+
+The namespace may also be defined by a file the workarea sources instead of a
+per-symbol companion `.tcl` (the sky130 resistors: `sky130_res` in
+`sky130A/xschem_libs/sky130_fd_pr/sky130_res.tcl`, sourced by `sky130A/sky130_procs.tcl`
+and shared by all 22 `sky130_fd_pr/res_*` symbols, which use these hooks for the `ns`
+hover text, "Import split", the total-R row and the fixed-width cells' "W (fixed)"
+row; fence `tests/headless/test_sky130_res_series.tcl`). The same file registers a
+`devlim` provider whose rule for `ns` is of kind `count` (`devlim::corrections`,
+`src/property_form.tcl`): a whole number, 1 or more, enforced where W/L limits are.
 
 `slickprop::cellform_ns {symbol}` resolves the namespace: read the `edit_form`
 attr (**load-on-throw**: `getprop symbol` throws when the symbol is not loaded in

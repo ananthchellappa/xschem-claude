@@ -350,11 +350,32 @@ proc slickprop::symbol_type {symbol} {
 # template-derived fields. Keyed on the symbol's TYPE, not its file name, so a
 # user's own label symbol (lab_wire, a copied cell, a lib/cell/view ref) gets the
 # control too -- `type=label` is what the netlister itself dispatches on.
+#
+# A cell may add its own (user request 2026-11-16, the sky130 resistors' "Import
+# split"): `<ns>::field_bools` of its edit_form= namespace answers a list of
+# {tok <token> label <text> on <value written when ticked>} rows, appended here so
+# they get the same widget, the same dirty cue and the same bool_value semantics.
+# doc/claude/specs/cell_custom_form.md.
 proc slickprop::inst_schema {symbol} {
+  set rows {}
   if {[slickprop::symbol_type $symbol] eq "label"} {
-    return [list [dict create tok vjust label {Stack V} widget bool on 1]]
+    lappend rows [dict create tok vjust label {Stack V} widget bool on 1]
   }
-  return {}
+  set cf {}
+  catch {set cf [slickprop::cellform_ns $symbol]}
+  if {$cf ne {} && [info commands ${cf}::field_bools] ne {}} {
+    set more {}
+    catch {set more [${cf}::field_bools]}
+    foreach row $more {
+      if {[catch {dict get $row tok} t] || $t eq {}} continue
+      if {![dict exists $row label]} { dict set row label $t }
+      if {![dict exists $row on]}    { dict set row on true }
+      dict set row widget bool
+      dict set row cell 1   ;# the cell's own row: placed with its declared fields (build_fields)
+      lappend rows $row
+    }
+  }
+  return $rows
 }
 
 # The token names inst_schema owns, DERIVED from it rather than hand-kept (a
@@ -509,12 +530,17 @@ proc slickprop::build_fields {parent prop template} {
   set fields [slickprop::to_fields $prop $template]
   # cell field customization from the symbol's `edit_form=<ns>` companion: friendly
   # labels (cflabels: token->label) + tokens rendered by a cell widget (cfcustom).
-  set cf {}; set cflabels {}; set cfcustom {}
+  # cftips: token->hover text for the field's label; cfreadouts: computed read-only rows;
+  # cffixed: things the cell fixes, shown greyed as information only.
+  set cf {}; set cflabels {}; set cfcustom {}; set cftips {}; set cfreadouts {}; set cffixed {}
   if {[info exists ::symbol] && $::symbol ne {}} {
     set cf [slickprop::cellform_ns $::symbol]
     if {$cf ne {}} {
       if {[info commands ${cf}::field_labels] ne {}} { catch {set cflabels [${cf}::field_labels]} }
       if {[info commands ${cf}::field_custom] ne {}} { catch {set cfcustom [${cf}::field_custom]} }
+      if {[info commands ${cf}::field_tips] ne {}}   { catch {set cftips [${cf}::field_tips]} }
+      if {[info commands ${cf}::field_readouts] ne {}} { catch {set cfreadouts [${cf}::field_readouts]} }
+      if {[info commands ${cf}::field_fixed] ne {}}    { catch {set cffixed [${cf}::field_fixed]} }
     }
   }
   # instance-form BOOL rows for this master (issue 1625, e.g. a net label's `vjust`):
@@ -527,7 +553,38 @@ proc slickprop::build_fields {parent prop template} {
   }
   set r 0
   set extras_started 0
+  set cell_rows_done 0
+  set cur(readouts) {}
   set has_name_field 0
+  # --- cell FIXED rows (user request 2026-11-16) ----------------------------
+  # `<ns>::field_fixed` answers {tok <token> label <text> value <text> ?tip <text>?}
+  # rows: something the cell fixes and the designer cannot set (a fixed-width
+  # resistor's W). Shown first, as a greyed, disabled entry: information only. The
+  # token is not a field of the form -- it is not in cur(tokens), so nothing is ever
+  # written for it -- and one left on the instance by an older sheet is neither
+  # offered for editing (it would sit under "Extra (undeclared)" looking adjustable)
+  # nor touched.
+  set cur(fixed) {}
+  set fixedtoks {}
+  foreach frow $cffixed {
+    if {[catch {dict get $frow tok} ftok] || $ftok eq {}} continue
+    set flbl $ftok
+    catch {set flbl [dict get $frow label]}
+    set fval {}
+    catch {set fval [dict get $frow value]}
+    label $parent.i$r -text " " -width 2 -anchor center -font slickPropLabel
+    label $parent.l$r -text $flbl -anchor e -font slickPropLabel
+    entry $parent.e$r -font slickPropValue -relief sunken -borderwidth 1 -width $ew -takefocus 0
+    $parent.e$r insert 0 $fval
+    $parent.e$r configure -state disabled
+    grid $parent.i$r -row $r -column 0 -padx {2 0} -pady 4
+    grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
+    grid $parent.e$r -row $r -column 2 -sticky w -padx {0 8} -pady 4 -ipady 3 -ipadx 2
+    if {[dict exists $frow tip]} { catch {balloon $parent.l$r [dict get $frow tip]} }
+    lappend cur(fixed) [list $ftok $parent.l$r $parent.e$r]
+    lappend fixedtoks $ftok
+    incr r
+  }
   foreach f $fields {
     set tok      [dict get $f name]
     set val      [dict get $f value]
@@ -538,6 +595,8 @@ proc slickprop::build_fields {parent prop template} {
     # divider too: a label whose only undeclared token is `vjust` would otherwise
     # grow an empty "Extra (undeclared)" heading with nothing under it.
     if {[lsearch -exact $iowned $tok] >= 0} continue
+    # a token the cell FIXES is shown above as information and is not a field
+    if {[lsearch -exact $fixedtoks $tok] >= 0} continue
     # The instance name lives in the dedicated row below the identity block (issue
     # 0058) when the real dialog is up; wire it into cur there and skip the grid row.
     # Without the dialog (the .pf.f core tests) fall through to a normal grid row.
@@ -565,6 +624,13 @@ proc slickprop::build_fields {parent prop template} {
     # widgets are created before the row counter is advanced)
     if {!$declared && !$extras_started} {
       set extras_started 1
+      # the cell's own readout and bool rows belong with its declared fields, ABOVE this
+      # heading: under it they read as "undeclared" (the user, 2026-11-16, on a resistor
+      # whose stray W sat right above the R row)
+      if {!$cell_rows_done} {
+        set r [slickprop::add_cell_rows $parent $r $prop $cfreadouts $ischema $cftips]
+        set cell_rows_done 1
+      }
       ttk::separator $parent.xsep -orient horizontal
       label $parent.xlbl -text "Extra (undeclared)" -anchor w -font slickPropLabel
       grid $parent.xsep -row $r -column 0 -columnspan 3 -sticky we -pady {10 0} -padx 3
@@ -600,9 +666,11 @@ proc slickprop::build_fields {parent prop template} {
     set cur(ind,$tok)         $parent.i$r
     set cur(entry,$tok)       $parent.e$r
     set cur(loaded,$tok)      $val
+    set cur(default,$tok)     $default
     set cur(placeholder,$tok) 0
     set cur(normalfg,$tok)    [$parent.e$r cget -foreground] ;# theme default, for placeholder restore
     lappend cur(tokens) $tok
+    if {[dict exists $cftips $tok]} { catch {balloon $parent.l$r [dict get $cftips $tok]} }
     if {$val ne {}} {
       $parent.e$r insert 0 $val
     } elseif {$default ne {}} {
@@ -617,41 +685,124 @@ proc slickprop::build_fields {parent prop template} {
     bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
     # device limits when the field loses focus (slickprop::limits_check)
     slickprop::watch_limits $parent.e$r
+    # the cell's computed rows follow every edit; appended LAST, after the plain
+    # (non-appending) binds above, which would otherwise replace these
+    if {$cfreadouts ne {}} {
+      bind $parent.e$r <KeyRelease> +[list slickprop::refresh_readouts]
+      bind $parent.e$r <<Paste>>    +[list after idle slickprop::refresh_readouts]
+      bind $parent.e$r <<Cut>>      +[list after idle slickprop::refresh_readouts]
+      bind $parent.e$r <FocusOut>   +[list after idle slickprop::refresh_readouts]
+    }
     incr r
   }
-  # --- instance-form BOOL rows (issue 1625) ---------------------------------
+  # --- the cell's own rows, if no Extra section put them out already ---------
+  if {!$cell_rows_done} {
+    set r [slickprop::add_cell_rows $parent $r $prop $cfreadouts $ischema $cftips]
+    set cell_rows_done 1
+  }
+  # --- instance-form BOOL rows the CORE owns (issue 1625) --------------------
   # Appended AFTER the template-derived fields (and after any Extra section) so the
   # generic field order is untouched: these are display flags, not attributes the
-  # symbol declares. Same three columns as a text row -- modified-cue dot | label |
-  # widget -- so they line up with everything above. The tick state lives in
-  # slickprop::chk(<tok>) (an array, wiped with cur on every rebuild) and is read
-  # back by field_value through bool_value, so an untouched box contributes nothing
-  # to collect_changes and the form's cardinal invariant still holds.
+  # symbol declares. See slickprop::add_bool_row.
   foreach irow $ischema {
-    set tok [dict get $irow tok]
-    set val [xschem get_tok $prop $tok 2]
-    set chk($tok) [slickprop::bool_checked $tok $val]
-    label $parent.i$r -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
-    label $parent.l$r -text [dict get $irow label] -anchor e -font slickPropLabel
-    checkbutton $parent.e$r -variable ::slickprop::chk($tok) \
-      -command [list slickprop::update_dirty $tok]
-    grid $parent.i$r -row $r -column 0 -padx {2 0} -pady 4
-    grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
-    grid $parent.e$r -row $r -column 2 -sticky w -padx {0 8} -pady 4
-    set cur(ind,$tok)         $parent.i$r
-    set cur(entry,$tok)       $parent.e$r
-    set cur(bool,$tok)        1
-    set cur(on,$tok)          [dict get $irow on]
-    set cur(chk0,$tok)        $chk($tok)
-    set cur(loaded,$tok)      $val
-    set cur(placeholder,$tok) 0
-    lappend cur(tokens) $tok
-    bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
-    incr r
+    if {[dict exists $irow cell] && [dict get $irow cell]} continue
+    set r [slickprop::add_bool_row $parent $r $irow $prop $cftips]
   }
+  slickprop::refresh_readouts
   grid columnconfigure $parent 1 -minsize 90   ;# fixed label column so labels align
   slickprop::update_name_row   ;# show/hide the dedicated Name row per has_name_field (0058)
   return $cur(tokens)
+}
+
+# One instance-form BOOL row (issue 1625) at grid row <r> of <parent>: the same three
+# columns as a text row -- modified-cue dot | label | widget -- so it lines up with
+# everything above. The tick state lives in slickprop::chk(<tok>) (an array, wiped with
+# cur on every rebuild) and is read back by field_value through bool_value, so an
+# untouched box contributes nothing to collect_changes and the form's cardinal invariant
+# still holds. Answers the next free grid row.
+proc slickprop::add_bool_row {parent r irow prop cftips} {
+  variable cur
+  variable chk
+  set tok [dict get $irow tok]
+  set val [xschem get_tok $prop $tok 2]
+  set chk($tok) [slickprop::bool_checked $tok $val]
+  label $parent.i$r -text " " -width 2 -anchor center -font slickPropLabel -fg [slickprop::accent]
+  label $parent.l$r -text [dict get $irow label] -anchor e -font slickPropLabel
+  checkbutton $parent.e$r -variable ::slickprop::chk($tok) \
+    -command [list slickprop::update_dirty $tok]
+  grid $parent.i$r -row $r -column 0 -padx {2 0} -pady 4
+  grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
+  grid $parent.e$r -row $r -column 2 -sticky w -padx {0 8} -pady 4
+  set cur(ind,$tok)         $parent.i$r
+  set cur(entry,$tok)       $parent.e$r
+  set cur(bool,$tok)        1
+  set cur(on,$tok)          [dict get $irow on]
+  set cur(chk0,$tok)        $chk($tok)
+  set cur(loaded,$tok)      $val
+  set cur(placeholder,$tok) 0
+  lappend cur(tokens) $tok
+  bind $parent.e$r <FocusIn> +[list slickprop::on_focus $tok]
+  if {[dict exists $cftips $tok]} { catch {balloon $parent.l$r [dict get $cftips $tok]} }
+  return [expr {$r + 1}]
+}
+
+# The rows a CELL adds to its form (user request 2026-11-16), from grid row <r> on:
+# first its READOUT rows -- `<ns>::field_readouts` answers
+# {label <text> cmd <command prefix> ?tip <text>?} rows, values the cell computes from
+# the form's fields and the form only shows (a resistor's total R from L, ns and mult);
+# they are not tokens, are not in cur(tokens), and collect_changes never sees them --
+# then its own BOOL rows (`<ns>::field_bools`, the inst_schema rows marked `cell`).
+# build_fields puts them under the declared text fields and above any Extra section.
+# Answers the next free grid row.
+proc slickprop::add_cell_rows {parent r prop cfreadouts ischema cftips} {
+  variable cur
+  foreach rrow $cfreadouts {
+    if {[catch {dict get $rrow cmd} rcmd] || $rcmd eq {}} continue
+    set rlbl {}
+    catch {set rlbl [dict get $rrow label]}
+    label $parent.l$r -text $rlbl -anchor e -font slickPropLabel
+    label $parent.e$r -text {} -anchor w -font slickPropValue
+    grid $parent.l$r -row $r -column 1 -sticky e -padx {2 8} -pady 4
+    grid $parent.e$r -row $r -column 2 -sticky w -padx {0 8} -pady 4
+    if {[dict exists $rrow tip]} { catch {balloon $parent.l$r [dict get $rrow tip]} }
+    lappend cur(readouts) [list $parent.e$r $rcmd]
+    incr r
+  }
+  foreach irow $ischema {
+    if {![dict exists $irow cell] || ![dict get $irow cell]} continue
+    set r [slickprop::add_bool_row $parent $r $irow $prop $cftips]
+  }
+  return $r
+}
+
+# The form's fields as the cell's readout commands see them: a dict token -> value,
+# where a field left on its greyed placeholder answers the template default (what the
+# netlist will use), and a bool row answers the value it would write.
+proc slickprop::readout_values {} {
+  variable cur
+  set d {}
+  if {![info exists cur(tokens)]} { return $d }
+  foreach tok $cur(tokens) {
+    set v {}
+    catch {set v [slickprop::field_value $tok]}
+    if {$v eq {} && [info exists cur(default,$tok)]} { set v $cur(default,$tok) }
+    dict set d $tok $v
+  }
+  return $d
+}
+
+# Recompute every readout row (see build_fields). A command that raises shows nothing.
+proc slickprop::refresh_readouts {} {
+  variable cur
+  if {![info exists cur(readouts)] || $cur(readouts) eq {}} return
+  set vals [slickprop::readout_values]
+  foreach row $cur(readouts) {
+    lassign $row w cmd
+    if {![winfo exists $w]} continue
+    set t {}
+    catch {set t [{*}$cmd $vals]}
+    $w configure -text $t
+  }
 }
 
 # Show <default> as a greyed placeholder in <tok>'s entry; clears on focus-in,
@@ -1818,6 +1969,15 @@ proc devlim::fmt {um unit} {
 # edit <old> -> <new> changed (a rule's finger token counts for the rule) and answers
 # {out fixes}: <out> is <prop> with every correction made, <fixes> one
 # {token value message} per correction, in rule order.
+#
+# A rule is {token min max ?finger-token? ?kind?}. With kind `count` the token is a
+# COUNT (a resistor's series segments, user request 2026-11-16): a whole number in
+# plain decimal, not below <min> (1 when not given) nor above <max>. Unlike a geometry
+# value, anything else written there is corrected too -- 2.5 to the nearest whole
+# number, a parameter name or an expression back to what the token held before the
+# edit (else <min>) -- because the netlister writes that many devices and can only do
+# it from a number. A token the edit removed is left alone: the template's default
+# applies.
 proc devlim::corrections {inst cell model old new prop} {
   set fixes {}
   set d [devlim::spec $cell $model]
@@ -1825,11 +1985,30 @@ proc devlim::corrections {inst cell model old new prop} {
   set unit {} ; catch {set unit [dict get $d unit]}
   set out $prop
   foreach rule [dict get $d rules] {
-    lassign $rule tok min max ftok
+    lassign $rule tok min max ftok kind
     set touched [expr {[xschem get_tok $old $tok] ne [xschem get_tok $new $tok]}]
     if {$ftok ne {} && [xschem get_tok $old $ftok] ne [xschem get_tok $new $ftok]} { set touched 1 }
     if {!$touched} continue
     set raw [xschem get_tok $out $tok]
+    if {$kind eq {count}} {
+      set t [string trim $raw]
+      if {$t eq {}} continue
+      set lo [expr {$min ne {} ? $min : 1}]
+      if {[regexp {^\+?0*([0-9]+)$} $t -> v]} {
+        # whole, possibly written +7 or 007: the plain decimal is what gets stored
+      } elseif {[string is double -strict $t] && ![catch {expr {round($t)}} v]} {
+        # 2.5, 1e1
+      } else {
+        set v [string trim [xschem get_tok $old $tok]]
+        if {![regexp {^[1-9][0-9]*$} $v]} { set v $lo }
+      }
+      if {$v < $lo} { set v $lo }
+      if {$max ne {} && $v > $max} { set v $max }
+      if {$v eq $t} continue
+      set out [xschem subst_tok $out $tok $v]
+      lappend fixes [list $tok $v "$inst ($model): $tok=$t must be a whole number >= $lo; $tok set to $v"]
+      continue
+    }
     set um [devlim::to_um $raw $unit]
     if {$um eq {}} continue
     set nf 1

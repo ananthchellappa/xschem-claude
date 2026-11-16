@@ -16,12 +16,26 @@ v {xschem version=3.4.5 file_version=1.2
 }
 G {}
 K {type=high_precision_poly_resistor
-format="@spiceprefix@name @pinlist sky130_fd_pr__@model L=@L mult=@mult m=@mult"
+format="tcleval([
+  if \{[info commands sky130_res_series] eq \{\}\} \{
+    catch \{source [file join [file dirname [file dirname [file dirname [abs_sym_path [string trim \{ @symref \}]]]]] sky130_res.tcl]\}
+  \}
+  if \{[info commands sky130_res_series] ne \{\}\} \{
+    sky130_res_series \{ @ns \} \{ @spiceprefix@name \} \{ @pinlist \} \{ sky130_fd_pr__@model L=@L mult=@mult m=@mult \}
+  \} elseif \{\{ @ns \} eq \{ 1 \}\} \{
+    return \{@spiceprefix@name @pinlist sky130_fd_pr__@model L=@L mult=@mult m=@mult \}
+  \} else \{
+    return \{* @name : ns=@ns needs sky130_res_series from sky130_fd_pr/sky130_res.tcl, which could not be loaded
+@spiceprefix@name @pinlist ns_not_expanded__sky130_fd_pr__@model L=@L mult=@mult m=@mult \}
+  \}
+])"
 template="name=R1
 L=1.41
 model=res_high_po_1p41
 spiceprefix=X
-mult=1"
+mult=1
+ns=1"
+edit_form=sky130_res
 }
 V {}
 S {}
@@ -44,4 +58,5 @@ T {B} -15 -12.5 0 1 0.15 0.15 {layer=7}
 T {@name} 15 -27.5 0 0 0.2 0.2 {}
 T {@mult * 1.41 / @L} 15 13.75 0 0 0.2 0.2 {layer=13}
 T {@model} 15 -13.75 0 0 0.2 0.2 {}
-T {tcleval(R=[to_eng [ev \{ (255.8 + 324.4 * @L / 1.41) / @mult \}]])} 15 0 0 0 0.2 0.2 {layer=13}
+T {tcleval(R=[to_eng [ev \{ (255.8 + 324.4 * @L / 1.41) * @ns / @mult \}]])} 15 0 0 0 0.2 0.2 {layer=13}
+T {tcleval([string trim [expr \{\{ @ns \} eq \{ 1 \} ? \{\} : \{ns=@ns \}\}]])} 15 27.5 0 0 0.2 0.2 {layer=13}

@@ -487,3 +487,14 @@ proc sky130_fet_limits {cell model} {
   return [dict create unit {} rules [list [list W {*}$w $ftok] [list L {*}$l]]]
 }
 if {[info procs ::devlim::register] ne {}} { devlim::register sky130_fet_limits }
+
+
+# The sky130 resistors' Tcl half (series segments `ns`, their property-form extras)
+# lives with the symbols: xschem_libs/sky130_fd_pr/sky130_res.tcl, which the res_*
+# symbols also load by themselves at netlist time. Sourced here so the workarea's form
+# has the extras from the first edit. Guarded like the registrations above: a raise in
+# this file would abandon the rest of cadence_style_rc.
+if {[catch {source [file join [file dirname [file normalize [info script]]] xschem_libs sky130_fd_pr sky130_res.tcl]} _sky130_res_err]} {
+  puts stderr "sky130_procs.tcl: sky130_res.tcl not loaded: $_sky130_res_err"
+}
+unset -nocomplain _sky130_res_err

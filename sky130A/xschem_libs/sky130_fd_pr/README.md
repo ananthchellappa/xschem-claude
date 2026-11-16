@@ -68,6 +68,47 @@ as this is a work in progress and the whole PDK is evolving.
 | `cap_var_hvt.sym` |Variable capacitance (Varactor), HVT version|
 | `vpp_cap.sym`     |Vertical Parallel Plate (VPP) capacitors|
 
+## RESISTORS: SERIES SEGMENTS (`ns`)
+
+Every `res_*` symbol has an `ns` attribute (default 1), the number of series
+segments; `mult` is the number of parallel copies. `L` and `W` are those of one segment.
+
+- `ns=10` on `R1` netlists ten instances `R1_1` .. `R1_10` in a chain through the
+  internal nets `R1_s1` .. `R1_s9`, each with the instance's own `L`/`W`/`mult` and
+  body net. `ns=1`, or no `ns` at all, netlists the single line these symbols always
+  produced.
+- A bussed instance works the same way, per bit: `R1[3:0]` at `ns=3` netlists
+  `R1_1[3]` .. `R1_3[0]`, twelve devices, each bit's chain running through its own
+  internal nets `R1_s1[3]`, `R1_s2[3]`, ... between that bit's two nets.
+- The symbol's `R=` text is the total: one segment x `ns` / `mult`. An `ns=` text is
+  shown only when `ns` is not 1.
+- `ns` is kept a whole number, 1 or more: the property form (on leaving the field and
+  on OK/Apply) and `xschem setprop` correct anything else, with a warning in the CIW.
+  2.5 becomes 3, 0 becomes 1, and a parameter name or an expression goes back to the
+  value the field held before. A count of devices has to be a number when the netlist
+  is written; it cannot be a design variable.
+- The expansion is done by `sky130_res_series` in `sky130_res.tcl`, in this library
+  directory. Each resistor symbol loads that file by itself the first time it is
+  netlisted, so `ns` works in any session that can find the symbol, whichever rc or
+  PDK procs file it sourced (the sky130 workarea's `sky130_procs.tcl` sources it too,
+  for the property-form extras). Keep `sky130_res.tcl` with the library if you copy it.
+- An `ns` that still cannot be expanded is never netlisted as one plausible segment:
+  the device is written with the model name prefixed `ns_not_expanded__`, under a
+  comment line giving the reason, so the simulator stops on it. That is a value that
+  got past the form (a sheet edited by hand) or `ns` > 1 with `sky130_res.tcl` missing.
+- Names the expansion takes: instances `<name>_<k>` and nets `<name>_s<k>`. Another
+  instance already named `R1_1` makes the simulator stop (duplicate device); a net
+  the designer labels `R1_s1` would be shorted to that internal node, so do not use
+  such a label on a sheet where `R1` has `ns` > 1.
+- The fixed-width cells (`res_high_po_0p69`, `res_xhigh_po_1p41`, ...) take no `W`:
+  their model wires the width itself. The property form shows it as a greyed
+  "W (fixed)" row. A `W=` token left on such an instance by an older sheet is not
+  used, not offered for editing and not removed. For another width use the custom-size
+  cell (`res_high_po`, `res_xhigh_po`).
+- The property form also has an "Import split" checkbox (`import_split=true` on the
+  instance). It is a placeholder for layout import: nothing reads it yet, and it is
+  neither drawn on the schematic nor netlisted.
+
 ## SYMBOL IMAGES
 
 |   symbol image |   symbol image |   symbol image |   symbol image |

@@ -90,9 +90,9 @@ set repo [file normalize [file join $here .. ..]]
 foreach f {ihp-sg13g2/sg13g2_procs.tcl sky130A/sky130_procs.tcl gf180mcuD/gf180_procs.tcl} {
   if {[catch {uplevel #0 [list source [file join $repo $f]]} e]} { puts "note: sourcing $f: $e" }
 }
-check {DL0 all three workareas register a limits provider} \
+check {DL0 all three workareas register a limits provider (sky130 also the rule that keeps a resistor's ns a whole number)} \
   [lsort $::devlim::providers] \
-  [lsort {sg13g2_fet_limits sg13g2_rescap_limits sky130_fet_limits gf180_fet_limits}]
+  [lsort {sg13g2_fet_limits sg13g2_rescap_limits sky130_fet_limits sky130_res_limits gf180_fet_limits}]
 
 proc symf {pdk lib cell} {
   global repo
