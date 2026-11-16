@@ -25,7 +25,7 @@
 # edits were in a ~ this session wrote (xctx->sch_backup_mine[], set by descend_schematic() and
 # descend_symbol()); go_back() adopts only that, and hierarchy_modified() counts only that.
 #
-# BANDS (every band but E and Z2/Z3 runs on both arms; those need real Tk and self-skip under --nogui)
+# BANDS (every band but E, K and Z2/Z3 runs on both arms; those need real Tk and self-skip under --nogui)
 #   F  the fixture really is the scratch copy, with every symbol resolved, before anything writes.
 #   A  1716 through the scripted drag seam (`xschem move_objects start|step|abort|end`, the same
 #      move_objects(START/RUBBER/ABORT/END) calls the Tk handlers make) on a copy of the issue's own
@@ -48,6 +48,8 @@
 #        R3/R4  one-shot / stepwise refusal of a DIRTY sheet: backup byte-identical, still modified;
 #        R5     (control) the same stepwise gesture with enforcement off is accepted and does flag
 #               the sheet and write the backup;
+#        R7     `xschem end_live_drag` on a refused gesture reverts it as a release would and
+#               declares nothing;
 #        R6     (control) after a refusal a real edit still flags the sheet and writes a backup.
 #      Every R row also asserts the refusal really fired (dev_merges > 0, R18 back where it was).
 #   G  1715 on a copy of the issue's own hierarchy, tb_bandgap -> bandgap (x1) -> bandgap_opamp
@@ -81,6 +83,25 @@
 #            written for a document the verb replaced, and nothing is declared on the new one;
 #        O12/O13  `descend 1 0` and `go_back 2` (no-title forms, which load WITHOUT an undo reset):
 #            neither the child nor the parent is declared for the other level's gesture.
+#      O11 is go_back mid-drag answered "no": since G1 it ASKS, because the drag is ended first.
+#   L  G1's door, `xschem end_live_drag` (the call hierarchy_close makes): L1 ends a live drag as a
+#        release would; L2 no gesture, L3 a plain (non-fluid) move, L4 an orphaned gesture: it
+#        answers 0 and changes nothing.
+#   V  G1 on the scripted verbs (finding G1 of doc/claude/drag_perf_batch/receipts/D2-verify.md):
+#        a verb that leaves or discards the document mid-drag asks about the moved shapes.
+#        V1/V2  go_back answered Cancel / Yes;  V3/V4  `clear schematic` answered Cancel / No;
+#        V5/V6  descend and descend_symbol: the go_back brings the parent back as the screen had it;
+#        V7  descend_symbol on an EMBEDDED symbol asks first, Cancel keeps the shapes.
+#   K  G1 through REAL Tk events (display arm only), sky130A/cadence_style_rc sourced as for E:
+#        K1-K9  Ctrl-Q and Ctrl-W at the top and Ctrl-E in the child, Button-1 held, each answered
+#            Cancel, No and Yes (K*n: the drag was live and undeclared before the key);
+#        K10  Ctrl-Q in the child; K11/K12  File > Close and File > Clear Schematic during an 'm'
+#            move; K13  Ctrl-O held; K14  Quit with another tab's drag left live; K15/K15b  a separate
+#            window's window-manager close, tabbed interface on / off (`xschem exit closewindow` /
+#            `new_schematic destroy`); K16  `new_schematic destroy` of the current tab;
+#        K17  Quit with the tabbed interface off and another window's drag live;
+#        K18  Edit > Pop: the action log keeps the move line AND the menu's own line (needs the
+#            action log, so it prints SKIP under --nolog, which is run_suites.sh's default).
 #   E  the display arm, through REAL Tk events, with sky130A/cadence_style_rc sourced as in the
 #      issue's reproduction (its library registry replaced by the scratch one before anything loads):
 #        E1  press on l1, twelve motions, Escape, release, on a CLEAN sheet: never modified, no
@@ -428,12 +449,15 @@ check "O10 'xschem clear force' mid-drag BELOW the top (at $o10_lvl): no backup 
        level -- not tb_bandgap~.sch (clear resets currsch before it unselects), not bandgap~.sch" \
     [list [file exists $TBB] [file exists $BGB]] {0 0}
 
+## (go_back is a verb that LEAVES the level, so since the G1 follow-up it ends the live drag first and
+## asks about it, as base did -- band V holds the Cancel and Yes answers; ask_save answers "no" here)
 down1
 lassign [odrag3] s p0
 set ::asks 0
 xschem go_back
-check "O11 go_back mid-drag: no prompt, the parent is clean, and no bandgap~.sch is left behind" \
-    [list $::asks [xschem get currsch] [xschem get modified] [file exists $BGB] [file exists $TBB]] {0 0 0 0 0}
+check "O11 go_back mid-drag ASKS about the drag (G1), and answered No: the parent is clean, and no\
+       bandgap~.sch nor tb_bandgap~.sch is left behind (asks/level/modified/~/tb~)" \
+    [list $::asks [xschem get currsch] [xschem get modified] [file exists $BGB] [file exists $TBB]] {1 0 0 0 0}
 
 ## descend mid-drag at the top, in a no-title form ('descend 1 0': bit 0 of the last argument clear,
 ## as src/op_annot.tcl's own descend has it): the child is then loaded WITHOUT an undo reset, so no
@@ -474,6 +498,155 @@ check "O13 'xschem go_back 2' mid-drag: no prompt, the parent is clean, no tb_ba
 
 }
 # ================================================================================================
+# L -- the door: `xschem end_live_drag` (end_live_fluid_drag() in src/callback.c), scripted seam
+# ================================================================================================
+band L {
+## the door, answering ERR where it does not exist (a build without it), so each row reds on its own
+proc door {} { if {[catch {xschem end_live_drag} r]} { return ERR }; return $r }
+## band O's gesture (odrag3: l1 p2 p4 stretched in three live steps), ended through the door
+fresh $BG
+lassign [odrag3] s p0
+set plive [ixy p2]
+set r1 [door]
+set l1 [list $r1 [expr {[xschem get ui_state] & 32}] [xschem get modified] \
+    [expr {[filed $BGB] eq [onscreen]}] [expr {[ixy p2] eq $plive}] [expr {$plive ne $p0}]]
+set r2 [door]
+check "L1 'xschem end_live_drag' mid-drag ends the gesture as a release would: it answers 1, STARTMOVE is\
+       gone, the sheet is modified, the ~ holds the sheet on screen, p2 stays where the live steps put it\
+       ($plive, from $p0); a second call answers 0 (answer/STARTMOVE/modified/~/p2-kept/p2-moved/again)" \
+    [list {*}$l1 $r2] {1 0 1 1 1 1 0}
+fresh $BG
+check "L2 with no gesture live it answers 0 and declares nothing (answer/modified/~)" \
+    [list [door] [xschem get modified] [file exists $BGB]] {0 0 0}
+## a PLAIN move commits nothing before its END, so there is nothing to declare and the door leaves it
+fresh $BG
+set ::fluid_editing 0
+lassign [odrag3] s p0
+set l3 [list [door] [expr {[xschem get ui_state] & 32}] [xschem get modified]]
+xschem move_objects abort
+set ::fluid_editing 1
+check "L3 a plain (non-fluid) move is not a fluid drag: the door answers 0 and the gesture stays live,\
+       undeclared; its ABORT then leaves the sheet clean (answer/STARTMOVE/modified, then modified/~)" \
+    [list {*}$l3 [xschem get modified] [file exists $BGB]] {0 32 0 0 0}
+## a gesture ORPHANED by unselect_all (band O's O1) is no longer live: the door must not END it again,
+## which would restore the START snapshot and recommit a stale delta over the declared sheet
+fresh $BG
+lassign [odrag3] s p0
+xschem unselect_all
+set l4_pre [list [ixy p2] [md5f $BGB] [xschem get modified]]
+check "L4 after the gesture was orphaned (and declared) the door answers 0 and changes nothing: p2, the ~\
+       and the flag are as the orphan check left them ($l4_pre)" \
+    [list [door] [ixy p2] [md5f $BGB] [xschem get modified]] [list 0 {*}$l4_pre]
+}
+# ================================================================================================
+# V -- G1 of the 1716 follow-up (doc/claude/drag_perf_batch/receipts/D2-verify.md): a verb that
+#      leaves the level or discards the buffer while a fluid drag is LIVE ends the drag the way its
+#      release would, so the verb's "save changes?" asks about it -- scripted seam, both arms
+# ================================================================================================
+band V {
+set BG0 [md5f [file join $SRCL bandgap schematic bandgap.sch]]
+## the pristine cell back after a row that answered Yes and so saved the dragged geometry into it
+proc pristine_bg {} { file copy -force [file join $::SRCL bandgap schematic bandgap.sch] $::BG }
+## onscreen, answering "-" for p2 when the verb took the sheet away (a build that clears without asking),
+## so a wrong answer is a red row and not an aborted band
+proc vscreen {} {
+    if {[catch {ixy p2} p]} { set p - }
+    list $p [xschem get instances] [xschem get wires]
+}
+## after the verb: {asks level STARTMOVE modified ~-is-the-screen cell-file-untouched}
+proc vstate {} {
+    list $::asks [xschem get currsch] [expr {[xschem get ui_state] & 32}] [xschem get modified] \
+        [expr {[filed $::BGB] eq [vscreen]}] [expr {[md5f $::BG] eq $::BG0}]
+}
+check "V0 the comparand is real: the scratch bandgap.sch is the pristine copy" [md5f $BG] $BG0
+
+down1
+lassign [odrag3] s p0
+set ::ANSWER {}; set ::asks 0
+xschem go_back
+check "V1 'xschem go_back' (Edit > Pop, Ctrl-E) mid-drag in the child, answered CANCEL: it asked, the\
+       child stays, the gesture is over, the sheet is modified with a ~ holding the screen, the cell\
+       file is untouched (asks/level/STARTMOVE/modified/~/file)" [vstate] {1 1 0 1 1 1}
+set ::ANSWER no
+
+down1
+lassign [odrag3] s p0
+set plive [ixy p2]
+set ::ANSWER yes; set ::asks 0
+xschem go_back
+set ::ANSWER no
+check "V2 the same answered YES: the cell file holds p2 where the screen had it ($plive), no ~, back at\
+       the top and clean (asks/level/modified/file-p2/~)" \
+    [list $::asks [xschem get currsch] [xschem get modified] [lindex [filed $BG] 0] [file exists $BGB]] \
+    [list 1 0 0 $plive 0]
+pristine_bg
+
+fresh $BG
+lassign [odrag3] s p0
+set ::ANSWER {}; set ::asks 0
+xschem clear schematic
+check "V3 'xschem clear schematic' (File > Clear Schematic, Ctrl-N) mid-drag, answered CANCEL: it asked\
+       and the sheet is kept, modified, the gesture over (asks/level/STARTMOVE/modified/~/file, sheet)" \
+    [list {*}[vstate] [file tail [xschem get schname]]] {1 0 0 1 1 1 bandgap.sch}
+set ::ANSWER no
+
+fresh $BG
+lassign [odrag3] s p0
+set ::asks 0
+xschem clear schematic
+check "V4 the same answered NO: the sheet is cleared, and this session's bandgap~.sch goes with it\
+       (asks/sheet/~/file)" \
+    [list $::asks [file tail [xschem get schname]] [file exists $BGB] [expr {[md5f $BG] eq $BG0}]] \
+    {1 untitled.sch 0 1}
+
+## descend LEAVES the level downwards: the parent's moved shapes must be in a ~ the go_back adopts.
+## x1 of tb_bandgap stretched by (+20, 0) in two live steps, a gesture whose END is accepted
+proc vlive_x1 {} {
+    fresh $::TB
+    xschem unselect_all; xschem select instance x1
+    lassign [ixy x1] ax ay
+    xschem move_objects start $ax $ay stretch
+    foreach k {1 2} { xschem move_objects step [expr {$ax + 10 * $k}] $ay }
+    return [list $ax $ay]
+}
+foreach {row verb name} {V5 {xschem descend} {Edit > Push schematic, e} V6 {xschem descend_symbol} {Edit > Push symbol, i}} {
+    set x0 [vlive_x1]
+    set xl [ixy x1]
+    eval $verb
+    set lvl [xschem get currsch]
+    set ::asks 0
+    xschem go_back
+    check "$row '$verb' ($name) mid-drag at the top, then go_back: the parent comes back with x1 where the\
+           screen had it ($xl, from $x0), modified, its ~ written (level-below/asks/x1/modified/tb~)" \
+        [list $lvl $::asks [ixy x1] [xschem get modified] [file exists $TBB]] [list 1 0 $xl 1 1]
+}
+## an EMBEDDED symbol: descend_symbol asks to save the parent first, so the drag must be declared
+## before that prompt. The fixture is a scratch copy of tb_bandgap saved with x1 embedded.
+set TE [file join [file dirname $TB] tb_bandgap_emb.sch]
+set TEB [file join [file dirname $TB] tb_bandgap_emb~.sch]
+fresh $TB
+xschem setprop instance x1 embed true
+xschem saveas $TE
+fresh $TE
+set v7_pre [list [xschem getprop instance x1 embed] [xschem get modified]]
+xschem unselect_all; xschem select instance x1
+lassign [ixy x1] ax ay
+xschem move_objects start $ax $ay stretch
+foreach k {1 2} { xschem move_objects step [expr {$ax + 10 * $k}] $ay }
+set xl [ixy x1]
+set ::ANSWER {}; set ::asks 0
+xschem descend_symbol
+check "V7 'xschem descend_symbol' mid-drag on an EMBEDDED x1 (fixture: embed=$v7_pre, clean), answered\
+       CANCEL: it asked, stayed at the top, the gesture is over, x1 stays where the screen had it\
+       ($xl), modified, its ~ written (asks/level/STARTMOVE/x1/modified/~)" \
+    [list $::asks [xschem get currsch] [expr {[xschem get ui_state] & 32}] \
+         [expr {[catch {ixy x1} v7x] ? "-" : $v7x}] [xschem get modified] [file exists $TEB]] \
+    [list 1 0 0 $xl 1 1]
+set ::ANSWER no
+xschem clear force
+file delete -force $TE $TEB
+}
+# ================================================================================================
 # R -- the B3 refusal, issue 0105's named-rail fixture
 # ================================================================================================
 band R {
@@ -502,7 +675,7 @@ check "R0 the refusal fixture is a scratch file, saved, and re-loads clean with 
 
 proc rstate {} { list [xschem get modified] [md5f $::RB] [ixy R18] }
 ## R18 dragged by (-90,-40), one-shot or in five live steps. Returns {samples merges}.
-proc rdrag {how {plant 0} {enforce 1}} {
+proc rdrag {how {plant 0} {enforce 1} {ender {xschem move_objects end}}} {
     fresh $::RS
     set ::fluid_enforce_invariants $enforce
     if {$plant} { xschem wire -900 -900 -800 -900 }
@@ -517,7 +690,7 @@ proc rdrag {how {plant 0} {enforce 1}} {
             xschem move_objects step $x $y
             lappend s [rstate]
         }
-        xschem move_objects end
+        if {[catch {eval $ender} ::r_ended]} { set ::r_ended "ERR: $::r_ended" }
     }
     lappend s [rstate]
     set ::fluid_enforce_invariants 1
@@ -560,6 +733,13 @@ set fin [lindex $r 0 end]
 check "R5 (control) the same gesture with enforcement OFF is accepted: modified, backup written,\
        R18 moved (R18 at [lindex $fin 2])" \
     [list [lindex $fin 0] [expr {[lindex $fin 1] ne {-}}] [expr {[lindex $fin 2] ne {-40 0}}]] {1 1 1}
+
+## the G1 door ends a refusable gesture through the same END: refused, it declares nothing either
+set r [rdrag steps 0 1 {xschem end_live_drag}]
+check "R7 a stepwise gesture ended by 'xschem end_live_drag' (what a quit, close, go-up or clear does\
+       with a drag live) is refused exactly as its release would be: the door answered 1, the sheet\
+       is clean with no backup at any step or after, the refusal fired and R18 is back" \
+    [list $::r_ended [deviations [lindex $r 0] 0 -] {*}[refused $r]] {1 {} 1 1}
 
 }
 # ================================================================================================
@@ -866,6 +1046,288 @@ if {[info commands winfo] eq {} || ![winfo exists .drw]} {
         {0 1 0 {150 -130} 1}
 }
 
+}
+# ================================================================================================
+# K -- G1 through REAL keys and menus: a verb that quits, closes, goes up, clears or opens, reached
+#      while a fluid drag is live (Button-1 still held, or a keyboard 'm' move), asks about the drag
+# ================================================================================================
+band K {
+if {[info commands winfo] eq {} || ![winfo exists .drw]} {
+    puts "SKIP: band K (K1-K18) drives real keys and menus on a .drw canvas; it runs on the display arm"
+} else {
+    set ::K_BG0 [md5f [file join $SRCL bandgap schematic bandgap.sch]]
+    ## quit and close must not happen here: the REAL hierarchy_close runs (its end_live_drag, its
+    ## prompts, its save or its discard) and its answer is recorded, then the teardown is refused
+    rename ::hierarchy_close ::k_real_hc
+    proc ::hierarchy_close {action} { set r [::k_real_hc $action]; lappend ::k_hc [list $action $r]; return 0 }
+    ## every other dialog a verb could open is counted and declined, so none can block
+    rename ::tk_messageBox ::k_real_mb
+    proc ::tk_messageBox {args} { lappend ::k_mb [dict get $args -message]; return cancel }
+    rename ::load_file_dialog ::k_real_lfd
+    proc ::load_file_dialog {args} { incr ::k_lfd; return {} }
+    proc kpristine {} { file copy -force [file join $::SRCL bandgap schematic bandgap.sch] $::BG }
+    ## the canvas the events go to: .drw, or a separate window's own (K15, K17)
+    set ::KW .drw
+    proc kev_motion {px py {st 0}} { event generate $::KW <Motion> -x $px -y $py -state $st -when now }
+    proc kev_press {px py} { event generate $::KW <ButtonPress-1> -x $px -y $py -state 0 -time [evt] -when now }
+    proc kev_release {px py} { event generate $::KW <ButtonRelease-1> -x $px -y $py -state 256 -time [evt] -when now }
+    proc kev_key {k px py} {
+        event generate $::KW <KeyPress-$k> -x $px -y $py -when now
+        event generate $::KW <KeyRelease-$k> -x $px -y $py -when now
+    }
+    ## l1 p2 p4 of the bandgap sheet on screen, live in four motions: pressed and held (hold) or moved
+    ## by the keyboard 'm' (m). Returns {mx my p0} (pointer, p2 before) or {} with no click point on l1.
+    proc klive {mode} {
+        xschem zoom_full; update; xschem redraw; update
+        event generate $::KW <Enter> -x 700 -y 500 -when now; focus -force $::KW; update
+        lassign [ibb l1] x1 y1 x2 y2
+        set hit {}
+        foreach {fx fy} {0.5 0.5 0.5 0.9 0.5 0.95 0.2 0.9 0.8 0.9 0.5 0.1 0.1 0.5 0.9 0.5} {
+            lassign [w2s [expr {$x1 + ($x2 - $x1) * $fx}] [expr {$y1 + ($y2 - $y1) * $fy}]] px py
+            xschem unselect_all; update
+            kev_motion $px $py; kev_press $px $py; kev_release $px $py; update
+            if {[xschem get lastsel] == 1 && [lindex [xschem selected_set] 0] eq {l1}} {
+                set hit [list $px $py]; break
+            }
+        }
+        xschem unselect_all; update
+        if {$hit eq {}} { return {} }
+        lassign $hit px py
+        foreach n {l1 p2 p4} { xschem select instance $n fast }
+        update
+        set p0 [ixy p2]
+        kev_motion $px $py; update
+        if {$mode eq "hold"} { kev_press $px $py; set st 256 } else { kev_key m $px $py; set st 0 }
+        update
+        for {set k 1} {$k <= 4} {incr k} {
+            set mx [expr {$px + 6 * $k}]; set my [expr {$py + 4 * $k}]
+            kev_motion $mx $my $st; update
+        }
+        return [list $mx $my $p0]
+    }
+    proc kp2 {} { if {[catch {ixy p2} p]} { return - }; return $p }
+    ## one drive: the drag live at $lvl (top: bandgap.sch; child: tb_bandgap -> x1, editable), then
+    ## the key with modifier state $mods (Button1Mask added when held) or a menu entry
+    ## (menu:<label>), the user answering $ans. Then, when held, two more motions and the release.
+    proc kdrive {lvl mode key mods ans} {
+        set ::ANSWER $ans; set ::asks 0; set ::k_hc {}; set ::k_mb {}; set ::k_lfd 0
+        if {$lvl eq "top"} { fresh $::BG } else {
+            fresh $::TB; xschem unselect_all; xschem select instance x1; xschem descend
+        }
+        set g [klive $mode]
+        if {$g eq {}} { return [dict create hit 0] }
+        lassign $g mx my p0
+        set plive [kp2]
+        set d [dict create hit 1 p0 $p0 pre [list [expr {[xschem get ui_state] & 32}] [xschem get modified] \
+            [file exists $::BGB] [expr {$plive ne $p0}]]]
+        set bst [expr {$mode eq "hold" ? 256 : 0}]
+        if {$::K_LF ne {}} { set ::k_logpos [file size $::K_LF] }
+        if {[string match emenu:* $key]} {
+            if {[catch {.menubar.edit invoke [string range $key 6 end]} e]} { dict set d menuerr $e }
+        } elseif {[string match menu:* $key]} {
+            if {[catch {.menubar.file invoke [string range $key 5 end]} e]} { dict set d menuerr $e }
+        } else {
+            event generate .drw <KeyPress-$key> -x $mx -y $my -state [expr {$mods | $bst}] -when now
+            event generate .drw <KeyRelease-$key> -x $mx -y $my -state [expr {$mods | $bst}] -when now
+        }
+        update
+        set ::ANSWER no
+        dict set d post [list $::asks $::k_hc [llength $::k_mb] $::k_lfd [xschem get currsch] \
+            [expr {[xschem get ui_state] & 32}] [xschem get modified]]
+        dict set d bak [expr {[filed $::BGB] eq [list [kp2] [xschem get instances] [xschem get wires]]}]
+        dict set d file [list [expr {[md5f $::BG] eq $::K_BG0}] [lindex [filed $::BG] 0]]
+        dict set d plive $plive
+        dict set d sheet [file tail [xschem get schname]]
+        dict set d kept [expr {[kp2] eq $plive}]
+        if {$mode eq "hold"} {
+            foreach k {5 6} { ev_motion [expr {$mx + 6 * ($k - 4)}] [expr {$my + 4 * ($k - 4)}] 256; update }
+            set m0 [xschem get modified]
+            ev_release [expr {$mx + 12}] [expr {$my + 8}]; update
+            dict set d release [list [expr {[xschem get ui_state] & 48}] [xschem get modified] \
+                [expr {[kp2] eq $plive || [xschem get currsch] != ($lvl eq "child")}]]
+        }
+        return $d
+    }
+    ## the open action log, or {} under --nolog (run_suites.sh's default; T1's display arm passes --logdir)
+    set ::K_LF [xschem get actionlog_filename]
+    proc klogtail {} {
+        set fd [open $::K_LF r]; seek $fd $::k_logpos; set t [read $fd]; close $fd
+        return [split [string trimright $t \n] \n]
+    }
+    ## the three answers to each of the three keys; Ctrl-E goes up, so it is driven one level down
+    set ::descend_readonly 0
+    foreach {key lvl verb rows} {q top quit {K1 K2 K3} w top close {K4 K5 K6} e child up {K7 K8 K9}} {
+        foreach ans {{} no yes} row $rows {
+            set d [kdrive $lvl hold $key 4 $ans]
+            if {![dict get $d hit]} { check "$row a click point on l1 was found" 0 1; continue }
+            set aname [expr {$ans eq {} ? {CANCEL} : [string toupper $ans]}]
+            lassign [dict get $d post] asks hc nmb nlfd lvlafter live mod
+            set hc1 [lindex $hc 0 1]
+            set pre [dict get $d pre]
+            if {$ans eq {}} {
+                set want [list 1 [expr {$key eq "e" ? 1 : 0}] 0 1 1 [list 1 [dict get $d p0]] 1 {0 1 1}]
+                set got [list $asks $lvlafter $live $mod [dict get $d bak] [dict get $d file] \
+                    [dict get $d kept] [dict get $d release]]
+                set what "it asked; the gesture is over, the sheet stays modified with a ~ holding the\
+                          screen, the cell file is untouched, p2 stays where the drag put it; the release\
+                          after it changes nothing (asks/level/STARTMOVE/modified/~/file/p2-kept/release)"
+            } elseif {$ans eq "no"} {
+                ## (at the top a No leaves the buffer to the teardown this test refuses, so only the child's
+                ## go-up has a "modified" to read: the parent it lands on)
+                set want [list 1 0 [expr {$key eq "e" ? 0 : $mod}] 0 [list 1 [dict get $d p0]]]
+                set got [list $asks $lvlafter $mod [file exists $::BGB] [dict get $d file]]
+                set what "it asked, the drag is dropped with the level's other edits: no ~ is left, the\
+                          cell file is untouched (asks/level/modified-parent/~/file)"
+            } else {
+                set want [list 1 0 0 [list 0 [dict get $d plive]]]
+                set got [list $asks $mod [file exists $::BGB] [dict get $d file]]
+                set what "it asked, and the cell file now holds p2 where the screen had it, clean, no ~\
+                          (asks/modified/~/file-untouched+p2)"
+                kpristine
+            }
+            if {$key ne "e"} { lappend want [list [list $verb [expr {$ans eq {} ? 0 : 1}]]]; lappend got $hc }
+            check "$row Ctrl-[string toupper $key] with Button-1 still held mid-drag ([expr {$lvl eq {top} ? {at the top} : {in the child}}]),\
+                   answered $aname: $what[expr {$key ne {e} ? {, and hierarchy_close answered} : {}}]" $got $want
+            check "${row}n non-vacuity: before the key the drag was live, unflagged, with no ~, and p2 had\
+                   moved (STARTMOVE/modified/~/p2-moved)" $pre {32 0 0 1}
+        }
+    }
+    ## Ctrl-Q one level down: the walk up asks at the child first, and Cancel stops it there
+    set d [kdrive child hold q 4 {}]
+    if {[dict get $d hit]} {
+        lassign [dict get $d post] asks hc nmb nlfd lvlafter live mod
+        check "K10 Ctrl-Q held mid-drag in the CHILD, answered CANCEL at the child's prompt: the walk stops\
+               there, the child modified with its ~, the gesture over (asks/hierarchy_close/level/STARTMOVE/modified/~)" \
+            [list $asks $hc $lvlafter $live $mod [dict get $d bak]] {1 {{quit 0}} 1 0 1 1}
+    } else { check "K10 a click point on l1 was found" 0 1 }
+    ## File > Close schematic is `xschem exit`: in the main window it asks through tk_messageBox
+    set d [kdrive top m {menu:Close schematic} 0 {}]
+    if {[dict get $d hit]} {
+        lassign [dict get $d post] asks hc nmb nlfd lvlafter live mod
+        check "K11 File > Close schematic during a keyboard 'm' move: the UNSAVED prompt appears and,\
+               declined, the sheet stays, modified, the gesture over (prompts/sheet/STARTMOVE/modified/~)" \
+            [list $nmb [dict get $d sheet] $live $mod [dict get $d bak]] {1 bandgap.sch 0 1 1}
+    } else { check "K11 a click point on l1 was found" 0 1 }
+    ## (under the rc Ctrl-N opens a new WINDOW, which discards nothing: File > Clear Schematic is the
+    ## clear here; band V drives it scripted, and without the rc Ctrl-N reaches the same clear_schematic)
+    foreach {row key mods mode name} {K12 {menu:Clear Schematic} 0 m {File > Clear Schematic during an 'm' move} K13 o 4 hold {Ctrl-O (open in place) held}} {
+        set d [kdrive top $mode $key $mods {}]
+        if {![dict get $d hit]} { check "$row a click point on l1 was found" 0 1; continue }
+        lassign [dict get $d post] asks hc nmb nlfd lvlafter live mod
+        check "$row $name mid-drag, answered CANCEL: it asked before anything else, no file dialog opened,\
+               the sheet stays, modified, the gesture over (asks/dialogs/sheet/STARTMOVE/modified/~)" \
+            [list $asks $nlfd [dict get $d sheet] $live $mod [dict get $d bak]] {1 0 bandgap.sch 0 1 1}
+    }
+    ## a TAB left with its drag live: an 'm' move in a second tab, a click on the main tab, then the
+    ## part of Quit that closes the other tabs (xschem new_schematic destroy_all, as quit_xschem calls it)
+    xschem new_schematic destroy_all force; update
+    fresh $TB
+    set ::k_mb {}
+    xschem load_new_window $BG; update
+    set ktab [xschem get current_win_path]
+    set g [klive m]
+    if {$g eq {}} { check "K14 a click point on l1 was found in the tab" 0 1 } else {
+        set kpre [list [expr {[xschem get ui_state] & 32}] [xschem get modified]]
+        xschem new_schematic switch .drw; update
+        set kon [file tail [xschem get schname]]
+        xschem new_schematic destroy_all; update
+        set kmb $::k_mb
+        set ktabs [xschem new_schematic ntabs]
+        xschem new_schematic switch $ktab; update
+        check "K14 Quit with another tab's drag left live: that tab's UNSAVED prompt appears and, declined,\
+               the tab stays, modified, its gesture over (from/prompts/other-tabs/STARTMOVE/modified/~; live\
+               before the switch: $kpre)" \
+            [list $kon [llength $kmb] [string match {bandgap*UNSAVED*} [lindex $kmb 0]] $ktabs \
+                 [expr {[xschem get ui_state] & 32}] [xschem get modified] \
+                 [expr {[filed $BGB] eq [list [kp2] [xschem get instances] [xschem get wires]]}]] \
+            {tb_bandgap.sch 1 1 1 0 1 1}
+    }
+    xschem new_schematic destroy_all force; update
+    ## the action log of a verb that ended the drag: the move is recorded as the release would record
+    ## it, and the verb keeps its own line (menu_action_logged drops a pick's line when anything inside
+    ## it logged, so the drag's end must not count as the verb having logged itself)
+    if {$::K_LF eq {}} {
+        puts "SKIP: K18 needs the action log, which --nolog disables (T1's display arm passes --logdir)"
+    } else {
+        set d [kdrive child m emenu:Pop 0 {}]
+        if {![dict get $d hit]} { check "K18 a click point on l1 was found" 0 1 } else {
+            set tl [klogtail]
+            set im [lsearch -regexp $tl {^xschem move_objects }]
+            set ig [lsearch -all -exact $tl {xschem go_back}]
+            check "K18 Edit > Pop in the child during an 'm' move, answered Cancel: it asked, and the action\
+                   log gains the move line and then the menu's own 'xschem go_back' line, once\
+                   (asked/move found/go_back count/in order; the lines: $tl)" \
+                [list [lindex [dict get $d post] 0] [expr {$im >= 0}] [llength $ig] \
+                     [expr {$im >= 0 && [llength $ig] == 1 && $im < [lindex $ig 0]}]] \
+                {1 1 1 1}
+        }
+    }
+    xschem new_schematic destroy_all force; update
+    ## a TAB closed directly (`xschem new_schematic destroy <tab>`) while its drag is live
+    fresh $TB
+    set ::k_mb {}
+    xschem load_new_window $BG; update
+    set ktab [xschem get current_win_path]
+    set g [klive m]
+    if {$g eq {}} { check "K16 a click point on l1 was found in the tab" 0 1 } else {
+        xschem new_schematic destroy $ktab; update
+        check "K16 'xschem new_schematic destroy' of the current tab during its 'm' move: the UNSAVED prompt\
+               appears and, declined, the tab stays, modified, the gesture over (prompts/tab/STARTMOVE/modified/~)" \
+            [list [llength $::k_mb] [xschem get current_win_path] [expr {[xschem get ui_state] & 32}] \
+                 [xschem get modified] [expr {[filed $BGB] eq [list [kp2] [xschem get instances] [xschem get wires]]}]] \
+            [list 1 $ktab 0 1 1]
+    }
+    xschem new_schematic destroy_all force; update
+    ## a separate WINDOW: its window manager close button while its drag is live (K15), and, with the
+    ## tabbed interface off, Quit's closing of the other windows (K17)
+    foreach {row tabbed} {K15 1 K15b 0 K17 0} {
+        set ::tabbed_interface $tabbed
+        fresh $TB
+        set ::k_mb {}
+        xschem new_schematic create_window {} $BG; update
+        set kwin [xschem get current_win_path]
+        set ::KW $kwin
+        if {![winfo exists $kwin]} {
+            check "$row the separate window's canvas exists ($kwin)" 0 1
+        } else {
+            wm geometry [winfo toplevel $kwin] 1400x1000+0+0; update
+            set g [klive m]
+            if {$g eq {}} { check "$row a click point on l1 was found in the window" 0 1 } else {
+                ## K15b drives the script build_widgets installs on a window made with the tabbed interface
+                ## off; the toplevel can be reused with its earlier protocol, so it is not read back
+                set kproto [string trim [wm protocol [winfo toplevel $kwin] WM_DELETE_WINDOW]]
+                if {$row eq "K15b"} { set kproto "xschem new_schematic destroy $kwin {}" }
+                if {$row ne "K17"} {
+                    uplevel #0 $kproto; update
+                } else {
+                    xschem new_schematic switch .drw; update
+                    xschem new_schematic destroy_all; update
+                    xschem new_schematic switch $kwin; update
+                }
+                ## the close button runs `xschem exit closewindow` with the tabbed interface on and
+                ## `xschem new_schematic destroy <window>` with it off (set when the window is made)
+                set what [expr {$row eq "K15" ? "its window manager close button (tabbed interface on)" : \
+                    $row eq "K15b" ? "the close script of a window made with the tabbed interface off" : \
+                    "Quit closing the other windows (tabbed interface off), with the main window current"}]
+                check "$row a separate window's 'm' move, then $what: the UNSAVED prompt appears and,\
+                       declined, the window stays, modified, the gesture over\
+                       (prompts/window/STARTMOVE/modified/~; the close script: [regsub -all {\s+} $kproto { }])" \
+                    [list [llength $::k_mb] [winfo exists $kwin] [expr {[xschem get ui_state] & 32}] \
+                         [xschem get modified] [expr {[filed $BGB] eq [list [kp2] [xschem get instances] [xschem get wires]]}]] \
+                    {1 1 0 1 1}
+            }
+        }
+        set ::KW .drw
+        xschem new_schematic switch .drw; update
+        xschem new_schematic destroy_all force; update
+        set ::tabbed_interface 1
+    }
+    set ::descend_readonly 1
+    rename ::hierarchy_close {}; rename ::k_real_hc ::hierarchy_close
+    rename ::tk_messageBox {}; rename ::k_real_mb ::tk_messageBox
+    rename ::load_file_dialog {}; rename ::k_real_lfd ::load_file_dialog
+    fresh $TB
+}
 }
 band Z {
 fresh $TB

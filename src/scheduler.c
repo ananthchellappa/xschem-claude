@@ -3808,6 +3808,17 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* end_live_drag
+     *   If a fluid stretch drag is live (STARTMOVE, armed and with committed live steps), end it as
+     *   its release would, a committed edit, and return 1; otherwise do nothing and return 0.
+     *   For a verb about to leave or discard the document (hierarchy_close: quit and close), so its
+     *   "save changes?" sees the drag (issue 1716, D2-verify G1; end_live_fluid_drag(), callback.c). */
+    else if(!strcmp(argv[1], "end_live_drag"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      Tcl_SetResult(interp, end_live_fluid_drag() ? "1" : "0", TCL_STATIC);
+    }
+
     /* escape
      *   Run the C Escape terminal: exactly what pressing Escape on the canvas does
      *   (callback.c, escape_terminal()). Takes NO argument: the idle-case deselect is
@@ -3865,6 +3876,10 @@ static int xschem_cmds_e(Tcl_Interp *interp, int argc, const char *argv[], int *
         if(!strcmp(argv[i], "force")) force = 1;
         if(strpbrk(argv[i], "0123456789-")) exit_status = argv[i];
       }
+      /* issue 1716 G1: File > Close and, with the tabbed interface on, a window's close button
+       * (`xschem exit closewindow`) end a live fluid drag first, so the UNSAVED prompt below sees
+       * it -- see end_live_fluid_drag() (callback.c). A forced exit has answered already. */
+      if(!force) end_live_fluid_drag();
       if(!strcmp(xctx->current_win_path, ".drw")) {
         /* non tabbed interface */
         if(!tclgetboolvar("tabbed_interface")) {

@@ -8609,6 +8609,12 @@ int descend_symbol(void)
      * the parent's unsaved edits would be silently lost. Embedded-symbol editing is
      * deferred (see doc/claude/specs/descend_hierarchy_in_memory.md); until it is handled,
      * keep the guard rather than trade a prompt for data loss. */
+    /* issue 1716 G1: a fluid drag still LIVE here (`i` with Button-1 held, or during an 'm' move)
+     * is ended as its release would end it (end_live_fluid_drag(), callback.c) so its shapes are
+     * declared: for an embedded symbol the save prompt below must see them, otherwise the ~ the
+     * go_back adopts must hold them. The embedded case ends it before its prompt; every other one
+     * after the missing-symbol refusal, which leaves the drag live, as before. */
+    if((xctx->inst[n].ptr+ xctx->sym)->flags & EMBEDDED || xctx->inst[n].embed) end_live_fluid_drag();
     if(((xctx->inst[n].ptr+ xctx->sym)->flags & EMBEDDED || xctx->inst[n].embed) &&
        xctx->modified) {
       int ret = save(1, 1);
@@ -8627,6 +8633,7 @@ int descend_symbol(void)
      * name is right here and used to be told to nobody -- descend_missing_sym()
      * records `missing-symbol:<name>` and puts it on the held status line. */
     if(descend_missing_sym(n, name)) return 0;
+    end_live_fluid_drag(); /* issue 1716 G1, see above (a no-op if the embedded arm ended it) */
     /* capture BEFORE load_schematic replaces the inst array (log emitted at the tail) */
     my_strncpy(instname_log, xctx->inst[n].instname ? xctx->inst[n].instname : "",
                S(instname_log));

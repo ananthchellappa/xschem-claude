@@ -234,3 +234,48 @@ step's own `set_modify(1)` had declared them, by accident.
   live drag now discards the drag's geometry, as `go_back` then loads the parent from disk, clean.
   On the base build the live steps had declared it, so it came back modified. Stage D's tree
   already behaved this way; row O12b holds the parent to "declared or pristine".
+
+## Follow-up: the save prompt during a live drag (G1, stage D3 of `doc/claude/drag_perf_batch/`)
+
+- **The regression.** The fix above stops a live step from declaring the sheet, so the sheet reads
+  clean while the drag is live. On the base build every live step had declared it, so a verb that
+  leaves or discards the document asked about the moved shapes. With the fix they went ahead
+  without asking and the shapes were lost: Ctrl-Q, Ctrl-W and Ctrl-E pressed with Button-1 still
+  held, and anything during a keyboard `m` move (File > Close and Clear Schematic, Edit > Pop,
+  Ctrl-N, Ctrl-O in place, the window manager's close button, Quit with another tab's drag left
+  live, and descend followed by go_back). Finding G1 of `receipts/D2-verify.md`, measured on a
+  key sweep of the three builds.
+- **Shape taken.** `end_live_fluid_drag()` (`src/callback.c`) ends a live fluid drag the way its
+  release would, through the release's own funnel (`end_move_copy_logged()`), so a refused END
+  still declares nothing. It is called at the START of each such verb, before anything is torn
+  down: `go_back()` when confirming, `clear_schematic()` when asking, `ask_new_file()` opening in
+  place, `descend_schematic()` with a title, `descend_symbol()`, `xschem exit` without force,
+  `destroy_window()`/`destroy_tab()` of the current window, `destroy_all_windows()`/
+  `destroy_all_tabs()` for each other window, and `hierarchy_close` (quit and close, in Tcl)
+  through the new `xschem end_live_drag`. Not in `unselect_all()`, for the reasons in the section
+  above.
+- **The answers.** Yes saves the shapes where the screen has them; No drops them with the level's
+  other edits; Cancel leaves the gesture over, the shapes where they are, the sheet modified with
+  its `~`, and the cell file untouched. ⚠ That differs from the base build, which kept the gesture
+  live after Cancel; the release then ended it further along.
+- **Fence:** bands L, V and K and row R7 of `tests/headless/test_drag_abort_backup_1716.tcl`. Band K
+  drives the real keys and menu entries on the display arm; row K18 holds the action log (the
+  move line and the verb's own line), and needs the log, so it prints `SKIP:` under `--nolog`.
+  Each call site has a copy broken on purpose that turns at least one row red
+  (`receipts/D3-fix.md`).
+- **Left as stage D had them:** the scripted no-title forms (`descend 1 0`, `go_back 0|2`), which
+  load without an undo reset, and the verbs that open into another window or tab and leave the
+  current buffer alone (a routed `load -gui`, `load_new_window`, Alt-E). Issue **1718** records
+  what the no-title forms still do with a live snapshot.
+
+## Follow-up: Ctrl-S during a drag on a sheet that already has unsaved changes (2026-11-16)
+
+Finding G2 of `doc/claude/drag_perf_batch/receipts/D3-verify.md`, present at the base and unchanged
+by D and D3. Stage D stops a mid-drag save from writing half-dragged geometry only when the sheet
+was clean before the drag: then the save is a no-op and the drag continues. If the sheet already
+had an unsaved edit, Ctrl-S with Button-1 held (or a scripted `xschem save`) runs
+`save_schematic()`, whose `unselect_all(1)` ends the gesture, and then writes what is on screen:
+the half-dragged positions reach the cell file and Escape can no longer undo them. A fix would end
+or refuse the live gesture at the start of the save the way `end_live_fluid_drag()` does for the
+verbs above, and needs its own ruling on which (save the shapes where the screen has them, or
+save the sheet as it was before the drag). Open.

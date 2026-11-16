@@ -4831,7 +4831,32 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   reroute step. Same crew, present at its base; this fork's, not upstream's. Filed, not fixed.
   ⚠ Both minted 2026-11-15 after both checks; no other clone held either number.
 
-**The next free number is 1717.**
+~~**The next free number is 1717.**~~
+
+- **1717** — crash recovery is offered only when a cell is opened in place: a routed `load -gui`,
+  `load_new_window` and descend never offer it, and the first edit then overwrites the previous
+  session's `cell~.sch`. Finding G2 of the drag-performance batch's verifier, present at its base.
+  Related to 0362 but not the same defect (the missing offer, not the missing identity). Filed, not
+  fixed.
+- **1718** — a fluid drag's snapshot survives a change of hierarchy level, so a scripted
+  `move_objects abort|end` after `descend 1 0` or `go_back 0|2` writes one level's geometry into
+  the other. Finding G3 of the same verifier, present at its base, scripted only. Filed, not fixed.
+- **1719** — `xschem rect`, `line` and `wire` take a position argument nothing bounds, so a
+  position past the end or below -1 writes outside the object array (rc 134 on
+  `xschem rect 0 0 100 100 100`). Found by the selection-look batch's crew, present at the base.
+  Filed, not fixed.
+  ⚠ All three minted 2026-11-15 by the drag-performance batch's stage D3, after both checks: the
+  candidate from this file's pointer and reserved-band table, then every `NUMBERING.md` and issues
+  directory under `~/dev/*` and `~/private/*`; no other clone held any of the three numbers.
+
+~~**The next free number is 1720.**~~
+- **1720** — closing a window that is not the current one (tabbed off, title-bar close) asks
+  about the CURRENT window's changes, so the closed window's own unsaved edits are lost without a
+  prompt. Finding G1 of the drag-performance batch's D3 verifier, present at its base. Filed,
+  not fixed. Minted 2026-11-16 by the driver after both checks (pointer + bands, then every
+  `NUMBERING.md` and issues directory under `~/dev/*` and `~/private/*`).
+
+**The next free number is 1721.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

@@ -7,7 +7,8 @@ Area: `src/save.c` (`write_backup` / `remove_backup` / `save_schematic`), `src/s
 (`reload`, in-place `load`), `src/xinit.c` (window/tab teardown), `src/xschem.tcl`
 (`xschem_recover_backup`).
 Related: **0264** (attempt 1 written and REVERTED — nothing landed), **0244**, **0356**,
-**0365**.
+**0365**, **1717** (added 2026-11-15: the recovery offer is missing on the routed open,
+`load_new_window` and descend, and the first edit overwrites the backup).
 
 ## The one missing question
 

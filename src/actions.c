@@ -845,6 +845,10 @@ void ask_new_file(int in_new_window, char *filename)
      * an argument about who can press what. Redirect to the new-window arm, which goes
      * through load_new_window and therefore through the (fixed) predicate. */
     if(xctx && xctx->wave_viewer) in_new_window = 1;
+    /* issue 1716 G1: an open IN PLACE (Ctrl-O, File > Open) replaces this buffer, so a live fluid
+     * drag is ended first and the save prompt below asks about it -- see end_live_fluid_drag()
+     * (callback.c). An open into a new window leaves this buffer, and its drag, alone. */
+    if(!(in_new_window || tclgetboolvar("open_in_new_window"))) end_live_fluid_drag();
     if(!(in_new_window || tclgetboolvar("open_in_new_window")) && xctx->modified) {
       if(save(1, 0) == -1 ) return; /*  user cancels save, so do nothing. */
     }
@@ -6307,6 +6311,16 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
     * modified flag. Descending is not a save point and never loses data, so it
     * must not prompt. Prompts remain at go_back and window-close, where edits
     * are actually at risk. doc/claude/specs/descend_hierarchy_in_memory.md (B5) */
+   /* issue 1716 G1: ...which holds only if a fluid drag still LIVE here (`e` with Button-1 held,
+    * Edit > Push during an 'm' move) has declared its shapes: they are committed on screen while
+    * the sheet reads clean, so no ~ would be written and the go_back would reload the parent
+    * without them. End it as its release would (end_live_fluid_drag(), callback.c) once the
+    * refusals above have passed -- a descend refused for a missing symbol, a primitive or a cell
+    * with no schematic leaves the drag live, as before -- and before the portmap is prepared,
+    * since the END changes the sheet. Only the titled (user) forms, as go_back() asks only when
+    * confirming: the no-title walk (`descend 1 0`, src/op_annot.tcl) loads the child without an undo
+    * reset, so a parent declared here would hand the child its modified flag. */
+   if(set_title & 1) end_live_fluid_drag();
    /*  build up current hierarchy path */
    dbg(1, "descend_schematic(): selected instname=%s\n", xctx->inst[n].instname);
 
@@ -6564,6 +6578,11 @@ void go_back(int what)
  prev_sch_type = xctx->netlist_type; /* if CAD_SYMBOL_ATTRS do not hilight_parent_pins */
  if(xctx->currsch>0)
  {
+  /* issue 1716 G1: a fluid drag still live here (Ctrl-E with Button-1 held, BackSpace or Pop during
+   * an 'm' move) is ended as its release would end it, so the prompt below asks about it -- see
+   * end_live_fluid_drag() (callback.c). Only when asking: go_back(0|2) is the scripted form, which
+   * drops the level's edits unasked. */
+  if(confirm) end_live_fluid_drag();
   /* if current sym/schematic is changed ask save before going up */
   if(xctx->modified)
   {
@@ -6687,7 +6706,10 @@ void go_back(int what)
 
 void clear_schematic(int cancel, int symbol)
 {
-      if(cancel == 1) cancel=save(1, 0);
+      if(cancel == 1) {
+        end_live_fluid_drag(); /* issue 1716 G1: Ctrl-N / Ctrl-Shift-N mid-drag ask -- see end_live_fluid_drag() (callback.c) */
+        cancel=save(1, 0);
+      }
       if(cancel != -1) { /* -1 means user cancel save request */
         char name[PATH_MAX];
         /* The current buffer is being discarded (saved above, or the user declined

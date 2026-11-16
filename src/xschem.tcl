@@ -17042,6 +17042,11 @@ proc get_lastopened {} {
 # should proceed with the actual teardown, 0 if the user cancelled (abort, stay put).
 # doc/claude/specs/descend_hierarchy_in_memory.md
 proc hierarchy_close {action} {
+  # Issue 1716 G1: Ctrl-Q / Ctrl-W pressed with Button-1 still held (or File > Quit during a
+  # keyboard 'm' move) reach here with a fluid drag LIVE, whose shapes are committed on screen
+  # while the sheet still reads clean. End it as its release would, so the prompts below ask about
+  # it (end_live_fluid_drag() in src/callback.c).
+  xschem end_live_drag
   # Walk up: each dirty intermediate level gets go_back's Save/No/Cancel prompt,
   # which saves (removes ~) or discards (removes ~) that cell, then ascends. A clean
   # level just ascends with no prompt. Cancel leaves currsch unchanged -> abort.

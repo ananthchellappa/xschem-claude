@@ -3974,6 +3974,46 @@ static void end_move_copy_logged(int is_copy)
   }
 }
 
+/* ISSUE 1716, finding G1 of doc/claude/drag_perf_batch/receipts/D2-verify.md: end a LIVE fluid drag
+ * as the committed edit its release would make, so that a verb about to leave or discard the
+ * document asks "save changes?" about it. Called at the START of those verbs and nowhere else:
+ * go_back(confirm), clear_schematic(cancel), ask_new_file() loading in place, descend_schematic()
+ * with a title, descend_symbol(), `xschem exit` without force, destroy_window()/destroy_tab() of the
+ * current window, destroy_all_windows()/destroy_all_tabs() without force for each other one, and
+ * hierarchy_close (quit and close, xschem.tcl) through `xschem end_live_drag`.
+ * Why: the live steps of a fluid stretch commit the moved geometry under xctx->modify_hold, so the
+ * sheet reads clean until the gesture ends. Before the hold every live step declared it, so a quit,
+ * close, go-up, clear or open reached while the drag was live (a key pressed with Button-1 still
+ * held, or anything during a keyboard 'm' move) saw a modified sheet and asked; held, they went
+ * ahead silently and the moved shapes were lost. Ended here, the prompt is back: Yes saves the shapes
+ * where the screen has them, No drops them with the level's other edits, Cancel leaves the gesture
+ * over and the sheet modified with its ~, which is the state a release leaves.
+ * Through the release's own funnel (end_move_copy_logged): the same END, the same cadence deselect
+ * restore and the same action-log line, with the dedup flag put back so the move line never stands
+ * in for the verb's own (menu_action_logged would drop the verb). A refused END (B3) declares
+ * nothing, exactly as a release at that spot would.
+ * Only a DIRTY fluid stretch, i.e. one with a live step committed (move.c sets the flag only there,
+ * and clears it with the snapshot): a plain move commits nothing before its END, and an orphaned
+ * gesture (STARTMOVE gone) was already declared by fluid_reroute_orphan_check().
+ * NOT in unselect_all(), where the first shape of the 1716 orphan fix failed
+ * (doc/claude/drag_perf_batch/receipts/D2-fix.md §2): most of its callers unselect after the buffer
+ * is already being torn down, while every call site here runs before anything is.
+ * Returns 1 if it ended a gesture. Bands L, V and K and row R7 of
+ * tests/headless/test_drag_abort_backup_1716.tcl. */
+int end_live_fluid_drag(void)
+{
+  int logged;
+  if(!xctx || !(xctx->ui_state & STARTMOVE)) return 0;
+  if(!xctx->fluid_reroute_dirty) return 0;
+  logged = actionlog_cmd_logged;
+  end_move_copy_logged(0);
+  actionlog_cmd_logged = logged;
+  xctx->drag_elements = 0;
+  xctx->constr_mv = 0;
+  tcleval("set constr_mv 0");
+  return 1;
+}
+
 /* action-log Layer C (Phase 3 slice C): a drag-pan has no single completion
  * function -- pan(RUBBER) shifts the origin continuously and the two un-pan
  * sites only clear STARTPAN. The START wrapper snapshots the origin; the END

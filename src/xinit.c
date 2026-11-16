@@ -2580,6 +2580,11 @@ static void destroy_window(int *window_count, const char *win_path, int dr)
       dbg(0, "destroy_window(): no window path given\n");
       return;
     }
+    /* issue 1716 G1: closing the window whose fluid drag is live (its close button, when the window
+     * was made with the tabbed interface off, runs `xschem new_schematic destroy <window>`) ends the
+     * drag first, so the prompt below sees it -- see end_live_fluid_drag() (callback.c). Only the
+     * current context: another window's drag cannot be ended without switching to it. */
+    if(xctx->current_win_path && !strcmp(win_path, xctx->current_win_path)) end_live_fluid_drag();
     if(hierarchy_modified() && has_x) { /* current level OR a dirty ancestor (deep-close guard) */
       tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
               "[get_cell [xschem get schname] 0]"
@@ -2672,6 +2677,7 @@ static void destroy_tab(int *window_count, const char *win_path)
       dbg(0, "new_schematic(\"destroy_tab\", %s): must be in this tab to destroy\n", win_path);
       return;
     }
+    end_live_fluid_drag(); /* issue 1716 G1: see end_live_fluid_drag() (callback.c) and destroy_window() */
     if(hierarchy_modified() && has_x) { /* current level OR a dirty ancestor (deep-close guard) */
       tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""
               "[get_cell [xschem get schname] 0]"
@@ -2750,6 +2756,11 @@ static void destroy_all_windows(int *window_count, int force)
         else {
           xctx = save_xctx[i];
           close = 0;
+          /* issue 1716 G1: a window whose fluid drag was left LIVE (an 'm' move, then a click into
+           * another window and a Quit there) reads clean while its shapes are moved on screen; end
+           * the drag as its release would, so the prompt below asks about it (end_live_fluid_drag(),
+           * callback.c). Not when forced: the caller has answered already. */
+          if(!force) end_live_fluid_drag();
           xctx->semaphore++; /* to avoid context switches when dialog below is shown */
           /* reset old focused window so callback() will force repaint on expose events */
           dbg(1, "destroy_all_windows(): top_path=%s\n", xctx->top_path);
@@ -2812,6 +2823,9 @@ static void destroy_all_tabs(int *window_count, int force)
       if(window_path[i][0]) {
         xctx = save_xctx[i];
         close = 0;
+        /* issue 1716 G1: a tab left with its fluid drag LIVE (an 'm' move, a click on another tab,
+         * Quit there): see destroy_all_windows() */
+        if(!force) end_live_fluid_drag();
         /* reset old focused window so callback() will force repaint on expose events */
         if(!force && hierarchy_modified() && has_x) { /* current level OR a dirty ancestor */
           tcleval("tk_messageBox -type okcancel  -parent [xschem get topwindow] -message \""

@@ -3746,6 +3746,9 @@ extern void fluid_reroute_discard(void);
  * STARTMOVE without an END/ABORT and its document is still in place. Called by xschem()
  * (scheduler.c) as the OUTERMOST xschem command returns. */
 extern void fluid_reroute_orphan_check(void);
+/* ISSUE 1716 (D2-verify G1): end a LIVE fluid stretch as its release would, at the start of a verb
+ * that is about to leave or discard the document (callback.c). Returns 1 if it ended one. */
+extern int end_live_fluid_drag(void);
 /* D1 (Track D): free the Fluid_gesture START-snapshot context + clear its armed flag. Called by
  * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
  * gesture (else the next move START's arm assert would see a leaked-armed context). */
