@@ -8817,6 +8817,42 @@ void fluid_reroute_discard(void)
   mem_snapshot_free(&xctx->fluid_reroute_snap);
   xctx->fluid_reroute_active = 0;
   xctx->fluid_reroute_dirty = 0;
+  xctx->fluid_reroute_settled = 0;
+}
+
+/* ISSUE 1716, the orphaned gesture (finding F1 of doc/claude/drag_perf_batch/receipts/D-verify.md).
+ * A live fluid stretch can lose STARTMOVE without reaching move_objects(END|ABORT): unselect_all()
+ * (select.c) zeroes ui_state, and the u / Shift-U / n keys, `xschem unselect_all|undo|redo|netlist`
+ * and the area-select branch of the motion handler all reach it mid-drag. The live steps committed
+ * the moved geometry under xctx->modify_hold, so nothing declares it: the shapes stay moved on screen
+ * while the sheet reads clean, with no cellName~ and no quit prompt. (Before the hold, each live
+ * step's own set_modify(1) had declared it, by accident.)
+ * xschem() (scheduler.c) calls this as the OUTERMOST xschem command returns, i.e. once the verb that
+ * orphaned the gesture has finished, and it declares the committed geometry then -- but only when
+ * that verb left the gesture's own document in place: the same hierarchy level and file as at START
+ * (xctx->fluid_reroute_level / fluid_reroute_sch), not reloaded (load_schematic() with reset_undo
+ * settles the latch), not saved (save_schematic() settles it: the geometry is on disk). A verb that
+ * replaced the buffer -- load, clear, go_back, descend, reload -- discarded the geometry with it, and
+ * declaring then would write a ~ for a document that is gone.
+ * WHY NOT AT THE unselect_all() ITSELF, the first shape measured: most of its callers unselect
+ * BEFORE they tear the buffer down. Declaring there wrote a stray ~ of the cancelled drag on
+ * `xschem clear`, `xschem load` and go_back; wrote the CHILD's geometry into the TOP cell's ~ when
+ * the drag was below the top (clear_schematic() and ask_new_file() reset currsch to 0 before they
+ * unselect); and wrote an EMPTY ~ when the unselect_all() was the one inside mem_restore_slot() or
+ * the disk pop_undo(), which run after clear_drawing(). It also fired inside every live step
+ * (fluid_reroute_restore() -> mem_restore_slot()) unless that restore was held as well.
+ * Here STARTMOVE is set again by the time a live step returns, so a live step never gets this far.
+ * One declaration per gesture: the latch is set before set_modify(), whose Tcl may re-enter xschem().
+ * Band O and row E4 of tests/headless/test_drag_abort_backup_1716.tcl. */
+void fluid_reroute_orphan_check(void)
+{
+  if(!xctx || !xctx->fluid_reroute_active || !xctx->fluid_reroute_dirty) return;
+  if(xctx->ui_state & STARTMOVE) return;     /* still live: its own END or ABORT decides */
+  if(xctx->fluid_reroute_settled) return;
+  xctx->fluid_reroute_settled = 1;
+  if(xctx->currsch != xctx->fluid_reroute_level) return;
+  if(!xctx->sch[xctx->currsch] || strcmp(xctx->sch[xctx->currsch], xctx->fluid_reroute_sch)) return;
+  set_modify(1);
 }
 
 /* incremental_wire_reroute.md §10.10 / issue 0081: between the X and Y legs of a diagonal fluid
@@ -8932,6 +8968,11 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->fluid_reroute_tid = xctx->text_id_counter;
      xctx->fluid_reroute_active = 1;
      xctx->fluid_reroute_dirty = 0;
+     /* issue 1716: whose geometry the live steps will commit -- see fluid_reroute_orphan_check() */
+     xctx->fluid_reroute_level = xctx->currsch;
+     my_strncpy(xctx->fluid_reroute_sch, xctx->sch[xctx->currsch] ? xctx->sch[xctx->currsch] : "",
+                S(xctx->fluid_reroute_sch));
+     xctx->fluid_reroute_settled = 0;
    }
   }
   if(what & ABORT)  /* abort operation */
@@ -8979,7 +9020,11 @@ void move_objects(int what, int merge, double dx, double dy)
    update_symbol_bboxes(0, 0);
    /* the rolled-back pristine geometry replaces the committed intermediate route on screen. No
     * set_modify(): the RUBBER steps never set it (see the live-step branch), so an aborted fluid
-    * drag leaves the buffer's modified flag exactly as it was pre-drag. */
+    * drag leaves the buffer's modified flag exactly as it was pre-drag -- and its cellName~ backup
+    * too. Issue 1716: that holds because the commit block HOLDS (xctx->modify_hold) the passes'
+    * own set_modify(1) calls on a live step; before the hold, insert_exit_stubs() alone dirtied the
+    * sheet and rewrote the backup with the mid-drag geometry on every step, and nothing here undid
+    * it. Rows A1-A3 and E1-E2 of tests/headless/test_drag_abort_backup_1716.tcl (R1-R4: refusal). */
    if(fluid_was_dirty) draw();
   }
   if(what & RUBBER)  /* draw objects while moving */
@@ -9062,6 +9107,7 @@ void move_objects(int what, int merge, double dx, double dy)
    int enf_cur = 0, enf_head = 0, enf_tail = 0;   /* pre-push undo counters, to exactly invert the push on refuse */
    int enf_short_base = 0;   /* issue 0123: absolute label-short count at gesture START (pristine) */
    unsigned int enf_wid = 0, enf_iid = 0, enf_gid = 0, enf_tid = 0;
+   int mod_held = 0;         /* issue 1716: this block holds xctx->modify_hold (see below) */
 
    /* --- END-only pre-commit finalizers; a live fluid RUBBER step (commit_now) skips them and
     * jumps straight to the shared geometry commit below. --- */
@@ -9147,6 +9193,25 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->deltay = dy;
    }
    } /* end if(!commit_now): END-only pre-commit finalizers */
+
+   /* issue 1716: HOLD every set_modify() the commit pipeline below makes, on the two paths where
+    * the gesture can still come to nothing. The passes call set_modify(1) as they mutate --
+    * insert_exit_stubs() unconditionally, trim_wires(), remove_move_orphan_wires() and the fluid
+    * shove/reroute/offset passes whenever they change something -- and set_modify(1) writes the
+    * whole live buffer to cellName~.sch. Unheld, every live step therefore marked the sheet
+    * modified and wrote the MID-DRAG geometry to the backup, and ABORT (which rolls the geometry
+    * back) left both behind: an Escape-cancelled drag of a clean sheet stayed dirty with the
+    * cancelled geometry on disk, and on a sheet that already had unsaved edits the backup of those
+    * edits was overwritten by the cancelled drag.
+    *   - commit_now (a live RUBBER step, or a live ROTATE/FLIP re-commit): held for the whole block;
+    *     the step declares nothing, exactly as the live branch at the foot already intends.
+    *   - a refusable END (enf_snapped): held until the accept/refuse verdict, so a REFUSED move
+    *     leaves the flag and the backup file as they were before the gesture, and enf_mod_before
+    *     (read above, after the live steps) is the true pre-gesture flag because those steps were
+    *     held. An accepted END then declares the edit with its own unheld set_modify(1), so a
+    *     completed drag ends in the same flag and the same backup content as before this fix.
+    * Every other END (no fluid stretch, enforcement off, xctx->kissing, a merge or a place) is unheld. */
+   if(commit_now || enf_snapped) { xctx->modify_hold++; mod_held = 1; }
 
    /* incremental_wire_reroute.md §10.10 / issue 0081: DIAGONAL fluid stretch decomposition.
     * A diagonal drag (both Dx,Dy != 0) gets NO aesthetic slide/shove -- compute_wire_slide() and
@@ -10150,6 +10215,9 @@ void move_objects(int what, int merge, double dx, double dy)
        int p2bad = fluid_check_move_invariants(enf_short_base);  /* sets fluid_last_move_* AND returns delta-shorts+dev_merges */
        fltrace("FLTRACE move: fluid_enforce_invariants=%d p2_merges=%d short_base=%d enf_snapped=%d\n",
                enforce, p2bad, enf_short_base, enf_snapped);
+       /* issue 1716: the verdict is in -- stop holding, so the accept arm's set_modify(1) declares
+        * the edit (flag, modify_seq, backup of the FINAL geometry, title) exactly as before. */
+       if(mod_held) { xctx->modify_hold--; mod_held = 0; }
        if(enforce && enf_snapped && p2bad) {
          /* REFUSE. Restore ritual mirrors the leg_snap rollback (:7171): preserve ui_state across
           * mem_restore_slot (which zeroes it via unselect_all), put the START id counters back
@@ -10170,7 +10238,15 @@ void move_objects(int what, int merge, double dx, double dy)
           * discarded and a saturated-ring tail / a no_undo no-op push are both handled exactly --
           * the refused move never happened as far as undo is concerned. */
          xctx->cur_undo_ptr = enf_cur; xctx->head_undo_ptr = enf_head; xctx->tail_undo_ptr = enf_tail;
-         set_modify(enf_mod_before ? 1 : 0);  /* restore pre-gesture modified flag: refuse changed nothing */
+         /* issue 1716: refuse changed nothing, and that now includes the flag and the backup file.
+          * The pipeline above was HELD, so neither moved during this gesture: a sheet dirty before
+          * the drag is still dirty and its cellName~ is byte-for-byte what it was (set_modify(-1)
+          * only flushes the caches and refreshes the title for the restored geometry -- it writes
+          * nothing), and a clean one is still clean with no backup written. This used to be
+          * set_modify(enf_mod_before ? 1 : 0), with enf_mod_before read AFTER the live steps had
+          * already dirtied the sheet and the passes had written the refused geometry to the ~. */
+         if(enf_mod_before) set_modify(-1);
+         else set_modify(0);
          if(has_x)
            tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {"
                       "move refused: would short/merge nets -- schematic left unchanged "
@@ -10197,13 +10273,18 @@ void move_objects(int what, int merge, double dx, double dy)
       * is set only at the REAL END, so a fluid drag that is aborted or returns to the origin stays
       * clean (no spurious modified/save-prompt). Floater caches still refresh live -- each step's
       * fluid_reroute_restore() -> mem_restore_slot() invalidates floater_inst_table, so the draw()
-      * below recomputes them from the current geometry. */
+      * below recomputes them from the current geometry. Issue 1716: the passes this step ran DO
+      * call set_modify(1) (insert_exit_stubs() on every step); this block held them (mod_held),
+      * which is what makes this paragraph true -- before that hold, every live step dirtied the
+      * sheet and wrote the mid-drag geometry to cellName~.sch. */
      xctx->deltax = xctx->deltay = 0.0;
      draw();
      draw_selection(xctx->gc[SELLAYER], 0);
      if(tclgetboolvar("draw_crosshair")) draw_crosshair(3, 0);
      xctx->deltax = sdx; xctx->deltay = sdy;
    }
+   /* issue 1716: the single release for a live step (an END released at its verdict above). */
+   if(mod_held) { xctx->modify_hold--; mod_held = 0; }
   } /* what & end (or a live fluid commit_now step) */
   if(!commit_now) {
     draw_selection(xctx->gc[SELLAYER], 0);

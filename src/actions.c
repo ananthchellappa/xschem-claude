@@ -174,8 +174,17 @@ int set_modify(int mod)
 {
   int i, floaters = 0;
   int ro_suppress;
+  int held;
 
   dbg(1, "set_modify(): %d, prev_set_modify=%d\n", mod, xctx->prev_set_modify);
+  /* ISSUE 1716: a declaration of dirtiness made while xctx->modify_hold is set (a live fluid drag
+   * step, or a refusable move END before its verdict -- see move_objects(), move.c) is NOT a user
+   * edit yet: the gesture may still be cancelled or refused, and then the buffer must be exactly as
+   * it was, flag and cellName~ file included. So a held mod 1/3 leaves the flag, modify_seq, the
+   * autosave, the button colours and the title alone, and keeps only the floater/annotation cache
+   * flush below (invalidating a cache is never wrong, and the live redraw relies on it). The gesture's
+   * own END declares the edit, unheld, once it is accepted. */
+  held = (xctx->modify_hold > 0 && (mod == 1 || mod == 3));
 
   /* A read-only buffer cannot hold unsaved edits, so never flag it modified: the '*'
    * title marker and the save-on-close prompt would be bogus (issue 0035 -- e.g. a
@@ -189,7 +198,7 @@ int set_modify(int mod)
   ro_suppress = ((mod == 1 || mod == 3) && xctx->readonly);
 
   /* set modify state */
-  if(mod == 0 || mod == 1 || mod == 2 || mod == 3) {
+  if(!held && (mod == 0 || mod == 1 || mod == 2 || mod == 3)) {
     xctx->modified = ro_suppress ? 0 : (mod & 1);
   }
   /* ISSUE 0267 -- see xctx->modify_seq (xschem.h). Bumped on every DECLARATION of dirtiness, not
@@ -197,7 +206,7 @@ int set_modify(int mod)
    * unrelated edit, and after a paste the flag is already 1, so a transition counter would see
    * nothing. Suppressed reads follow xctx->modified: a read-only buffer never becomes dirty, so
    * nothing claimed a modification here either. */
-  if((mod == 1 || mod == 3) && !ro_suppress) ++xctx->modify_seq;
+  if((mod == 1 || mod == 3) && !ro_suppress && !held) ++xctx->modify_seq;
   /* Autosave: a genuine edit (mod 1/3 -> modified) immediately persists the buffer
    * to its cellName~.sch backup, so descend never has to save and edits survive a
    * crash. write_backup() no-ops during load (xctx->no_autosave), when autosave_backup is off,
@@ -205,8 +214,8 @@ int set_modify(int mod)
    * Highlight/select/pan/zoom and net-resolution never call set_modify(1), so they do not write.
    * Removal of the ~ is handled by save_schematic on a real save, not here (clearing
    * modified on load must not delete a recovery backup). */
-  if((mod == 1 || mod == 3) && !ro_suppress) write_backup();
-  if(mod == 1 || (mod == 0  && xctx->prev_set_modify) || mod == -2) {
+  if((mod == 1 || mod == 3) && !ro_suppress && !held) write_backup();
+  if(!held && (mod == 1 || (mod == 0  && xctx->prev_set_modify) || mod == -2)) {
     /*                Do not configure buttons if displaying in preview window */
     if(has_x && (xctx->top_path[0] == '\0' || strstr(xctx->top_path, ".x") == xctx->top_path)) {
       char s[256];
@@ -256,7 +265,7 @@ int set_modify(int mod)
   }
 
   /* force title   no mod      mod */
-  if(mod == -1 || mod == 0 || mod == 1) {
+  if(!held && (mod == -1 || mod == 0 || mod == 1)) {
     if(has_x &&
        strcmp(get_cell(xctx->sch[xctx->currsch],1), "systemlib/font") &&
        (xctx->prev_set_modify != xctx->modified || mod == -1)
@@ -297,7 +306,7 @@ int set_modify(int mod)
       else tcleval("set_tab_names");
     }
   }
-  xctx->prev_set_modify = xctx->modified;
+  if(!held) xctx->prev_set_modify = xctx->modified;
   return floaters;
 }
 
@@ -4229,6 +4238,9 @@ int copy_hierarchy_data(const char *from_win_path, const char *to_win_path)
     to->sch_path_hash[i] = sch_path_hash[i];
     to->sch_inst_number[i] = sch_inst_number[i];
     to->previous_instance[i] = previous_instance[i];
+    /* issue 1715: the per-level record of which ancestors left their unsaved edits in a ~ this
+     * session wrote travels with the hierarchy, so the new window's go_back restores them too */
+    to->sch_backup_mine[i] = from->sch_backup_mine[i];
     to->zoom_array[i].x = zoom_array[i].x;
     to->zoom_array[i].y = zoom_array[i].y;
     to->zoom_array[i].zoom = zoom_array[i].zoom;
@@ -6421,6 +6433,9 @@ int descend_schematic(int instnumber, int fallback, int alert, int set_title)
    xctx->zoom_array[xctx->currsch].x=xctx->xorigin;
    xctx->zoom_array[xctx->currsch].y=xctx->yorigin;
    xctx->zoom_array[xctx->currsch].zoom=xctx->zoom;
+   /* issue 1715: record, for the level being left, whether its unsaved edits are in a ~ THIS
+    * session wrote -- go_back() adopts that file on the way up and nothing else. */
+   xctx->sch_backup_mine[xctx->currsch] = level_backup_is_mine();
    xctx->currsch++;
    hilight_child_pins();
    unselect_all(1);
@@ -6609,9 +6624,22 @@ void go_back(int what)
    * stays cellName and it returns flagged modified, so descending neither lost
    * edits nor required a save (load_backup_as does the content/identity split). A
    * clean parent (no ~) loads normally. Embedded-symbol returns keep the plain disk
-   * path (deferred). doc/claude/specs/descend_hierarchy_in_memory.md */
-  if(from_embedded_sym || !load_backup_as(filename, set_title)) {
-    load_schematic(1, filename, set_title, 1);
+   * path (deferred). doc/claude/specs/descend_hierarchy_in_memory.md
+   *
+   * ISSUE 1715: ONLY A ~ THIS SESSION WROTE FOR THIS LEVEL. load_backup_as() adopts any ~ that
+   * exists, and then set_modify(1) rewrites it and records it as ours -- so a file some other
+   * session left beside an UNTOUCHED parent (a crash, a kill, a scripted exit, the cancelled drag
+   * of issue 1716) turned the parent dirty on the way up, showed the user that file's geometry
+   * instead of the cell's, made "Yes" save it into the cell and made "No" delete a crash recovery
+   * that was never ours (issue 1486). descend recorded in sch_backup_mine[] whether the level it
+   * left held unsaved edits in a ~ it had written itself; anything else loads the cell from disk
+   * and leaves the ~ exactly where it is, neither adopted nor deleted (test_drag_abort_backup_1716 G). */
+  {
+    int mine = xctx->sch_backup_mine[xctx->currsch];
+    xctx->sch_backup_mine[xctx->currsch] = 0;  /* consumed: this level is current again */
+    if(from_embedded_sym || !mine || !load_backup_as(filename, set_title)) {
+      load_schematic(1, filename, set_title, 1);
+    }
   }
   /* if we are returning from a symbol created from a generator don't set modified flag on parent
    * as these symbols can not be edited / saved as embedded

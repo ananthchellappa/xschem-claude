@@ -1,6 +1,6 @@
 # 1715 — `go_back` adopts a `cell~.sch` this session never wrote, so an untouched parent prompts "has unsaved changes" and Yes saves the backup's geometry into the cell
 
-**STAMP:** `v1 claim=open tree=31dd76b6c stamped=2026-11-15 fix=untried open=2 by=selection_look-docs`
+**STAMP:** `v1 claim=fixed tree=3b36f24a1 stamped=2026-11-15 fix=taken open=0 by=drag_perf-D`
 
 Found by the selection-look batch's realistic-timing crew
 (`doc/claude/selection_look_batch/receipts/realistic-timing.md`, the paragraph "A base defect
@@ -145,3 +145,53 @@ sees today except that the spurious prompt disappears.
    **byte-identical** afterwards (not deleted, not rewritten). A control leg should show that
    a backup this session did write, from an edit on `bandgap` before descending, is still
    restored and still prompts.
+
+## Fix (taken, by stage D of `doc/claude/drag_perf_batch/`)
+
+Built on `3b36f24a1` plus stage A's patch (`doc/claude/drag_perf_batch/receipts/D-fix.md`).
+It is the proposal's "record ownership per hierarchy level at descend time", with the
+conservative default for a foreign `~`: load the disk version and leave the file alone.
+
+- **Recorded per level.** `xctx->sch_backup_mine[]` (`src/xschem.h`).
+  `descend_schematic()` (`src/actions.c`) and both descend sites in `descend_symbol()`
+  (`src/save.c`) set it, for the level being left, from `level_backup_is_mine()`
+  (`src/save.c`). That function says yes only when the level is modified and
+  `xctx->backup_owned` is exactly that cell's `~` path.
+- **`go_back()` adopts only that.** It consumes the record and calls `load_backup_as()` only
+  when it is set. Otherwise it loads the cell from disk, and a `~` it did not write is neither
+  adopted, rewritten nor deleted. So no spurious prompt, Yes cannot save foreign geometry, and
+  No cannot delete a crash recovery that is not ours. `load_backup_as()` itself is unchanged
+  (`xschem load_backup` from the recovery prompt still uses it).
+- **Sibling site.** `hierarchy_modified()` (`src/save.c`, the deep-close guard) treated any
+  ancestor `~` as unsaved edits. It now reads the same per-level record.
+- **The record travels with the stack.** `copy_hierarchy_data()` (`src/actions.c`), which
+  builds a new window's hierarchy when the user descends into a new window, copies the record
+  with the rest of the stack. Without that copy, the new window's `go_back()` would load the
+  parent from disk and drop the edits made before descending.
+- **What a user sees change.** Only that the spurious prompt and the foreign geometry are gone.
+  Edits this session made before descending are still restored, still flagged modified, and
+  still prompted for on the way up.
+- **A row that asserted the old behaviour.** Row `RT5` of `tests/headless/test_ase_core.tcl`
+  had an unparked control that expected the ascent to come back modified beside a planted
+  foreign `~`. It now expects it clean, with the file unchanged.
+- **Fence:** band G of `tests/headless/test_drag_abort_backup_1716.tcl` (and row E3 under
+  `cadence_style_rc`). G1 to G3 and G6 are item 2's foreign-backup legs. G4, G5 and G7 are its
+  controls: edits made before descending are restored and still prompt. G8 and G9 cover the two
+  ownership tests on their own. G10 is the same control through a descend into a new window.
+- **Open items 1 and 2 are closed.**
+
+### Follow-up, stage D2 (`doc/claude/drag_perf_batch/receipts/D2-fix.md`)
+
+- **The comment above `level_backup_is_mine()` (`src/save.c`) was corrected** (finding F3 of
+  `receipts/D-verify.md`). It said the record's answer with autosave off is a file "which go_back
+  adopted before this change too". That holds only if `autosave_backup` is on again by the ascent:
+  `load_backup_as()` declines with autosave off, and the level is then loaded from disk. The code
+  did not change.
+- **The row that kept a foreign `~` in place now shows what keeping it is for** (finding F2).
+  Row Z of the suite asserted that no load offered crash recovery, but every load in the suite is
+  scripted and only an interactive `xschem load -gui` makes the offer, so the row could not fail.
+  It is now Z1, named for what it measures, and rows Z2 and Z3 (display arm) drive the real offer:
+  an interactive open into a pristine untitled window of a cell with a planted foreign `~`, the
+  dialog answered Yes and then No. A copy with the offer removed from the `xschem load` branch
+  turns both red. A `-gui` open from an OCCUPIED window is routed to a new window and makes no
+  offer at all (measured); the rows use the door that does.

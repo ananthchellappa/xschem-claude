@@ -1820,6 +1820,15 @@ typedef struct {
   int sch_path_hash[CADMAXHIER]; /* cached hash of hierarchic schematic path for speed */
   int sch_inst_number[CADMAXHIER]; /* inst number descended into in case of vector instances X1[5:0] */
   int previous_instance[CADMAXHIER]; /* to remember the instance we came from when going up the hier. */
+  int sch_backup_mine[CADMAXHIER]; /* ISSUE 1715: 1 when level i, at the moment it was descended FROM,
+                                    * held unsaved edits that THIS session had written to its
+                                    * cellName~ backup (save.c level_backup_is_mine()). Set by
+                                    * descend_schematic() / descend_symbol() for the level being left,
+                                    * consumed and cleared by go_back(), read by hierarchy_modified(),
+                                    * copied with the stack by copy_hierarchy_data() (descend into a
+                                    * new window). A ~ beside an ancestor that this flag does not vouch for is a
+                                    * previous session's file: go_back loads the cell from disk and
+                                    * leaves that file alone (issue 1486). */
   Zoom zoom_array[CADMAXHIER];
   double xorigin,yorigin;
   double zoom;
@@ -1990,6 +1999,16 @@ typedef struct {
                              * "the flag before X" can tell whether anything else has claimed a
                              * modification since X was latched. Wraps harmlessly: only equality
                              * against a value latched in the same session is ever tested. */
+  int modify_hold;          /* ISSUE 1716: while > 0, set_modify(1|3) (actions.c) DECLARES NOTHING --
+                             * the modified flag, modify_seq, the cellName~ autosave, the menu-button
+                             * refresh and the title are all left alone; only the floater/annotation
+                             * caches are still flushed (pure cache invalidation, needed by the
+                             * redraw). Held by move_objects() (move.c) around a live fluid RUBBER
+                             * commit (commit_now) and around a refusable END until its accept/refuse
+                             * decision, because the reroute passes it runs call set_modify(1) as they
+                             * mutate, and a gesture that may still be cancelled or refused must leave
+                             * the flag and the backup file exactly as they were. A counter, acquired
+                             * and released inside one block of move_objects(), never across a return. */
   unsigned int merge_modify_seq; /* ISSUE 0267: modify_seq as it stood immediately after the
                              * pending STARTMERGE armed (latched at the bottom of merge_file(),
                              * paste.c, after its own set_modify(1)). The merge teardown
@@ -2191,6 +2210,13 @@ typedef struct {
   Undo_slot fluid_reroute_snap;   /* pristine geometry+selection snapshot for the active gesture */
   int fluid_reroute_active;       /* 1 while a fluid stretch gesture owns fluid_reroute_snap */
   int fluid_reroute_dirty;        /* 1 once a RUBBER step has committed geometry (END must restore) */
+  /* ISSUE 1716 (finding F1 of doc/claude/drag_perf_batch/receipts/D-verify.md): the gesture's own
+   * document, recorded at START, and a once-per-gesture latch, read by fluid_reroute_orphan_check()
+   * (move.c) when a live gesture loses STARTMOVE without an END or an ABORT. */
+  int fluid_reroute_level;        /* currsch at START */
+  char fluid_reroute_sch[PATH_MAX]; /* sch[currsch] at START */
+  int fluid_reroute_settled;      /* 1: an orphaned gesture's committed geometry is accounted for --
+                                   * declared, saved, or gone with a document a load replaced */
   int select_attached_nodraw;     /* 1 => select_attached_nets() re-derives the follow SET only, no
                                      highlight draw (between-legs regrab: the intermediate leg-A
                                      geometry must NOT be stroked into the pixmap -- issue 0117 ghost) */
@@ -3471,6 +3497,7 @@ extern void write_backup(void);
 extern void remove_backup(void);
 extern void remove_backup_if_owned(void);
 extern void drop_owned_backup(void);
+extern int level_backup_is_mine(void);
 extern int load_backup_as(const char *cellfile, int set_title);
 extern int hierarchy_modified(void);
 extern void copy_symbol(xSymbol *dest_sym, xSymbol *src_sym);
@@ -3601,6 +3628,10 @@ extern void move_objects(int what,int merge, double dx, double dy);
 /* incremental_wire_reroute Phase II: free any armed fluid-reroute snapshot + clear its flags.
  * Called by clear_schematic() so a buffer teardown/reload mid-gesture can't resurrect/leak it. */
 extern void fluid_reroute_discard(void);
+/* ISSUE 1716 (D-verify F1): declare a live fluid stretch's committed geometry when the gesture lost
+ * STARTMOVE without an END/ABORT and its document is still in place. Called by xschem()
+ * (scheduler.c) as the OUTERMOST xschem command returns. */
+extern void fluid_reroute_orphan_check(void);
 /* D1 (Track D): free the Fluid_gesture START-snapshot context + clear its armed flag. Called by
  * clear_schematic() alongside fluid_reroute_discard() so a buffer teardown mid-gesture closes the
  * gesture (else the next move START's arm assert would see a leaked-armed context). */

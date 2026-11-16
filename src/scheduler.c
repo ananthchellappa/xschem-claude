@@ -15654,6 +15654,10 @@ void tclsetcadsnap(double value)
   cadsnap_cache_ok = 0;
 }
 
+/* nesting depth of xschem() (a C verb can run Tcl that calls xschem again): 0 while the OUTERMOST
+ * command is returning, which is where fluid_reroute_orphan_check() (move.c, issue 1716) runs */
+static int xschem_depth = 0;
+
 int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * argv[])
 {
  int cmd_found = 1;
@@ -15665,6 +15669,7 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
    Tcl_SetResult(interp, "Missing arguments.", TCL_STATIC);
    return TCL_ERROR;
  }
+ ++xschem_depth;
  if(debug_var>=2) {
    int i;
    fprintf(errfp, "xschem():");
@@ -15751,6 +15756,9 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
     cmd_found = 0;
     break;
   } /* switch */
+  /* issue 1716: the verb is done -- did it orphan a live fluid drag and leave its document in place?
+   * Before the cache drop below, so any read the declaration makes cannot outlive this command. */
+  if(--xschem_depth == 0) fluid_reroute_orphan_check();
   cadsnap_cache_ok = 0; /* invalidation 4 of tclgetcadsnap(), above: on the way out as well */
   if(retcode != TCL_OK) return retcode;
   if(!cmd_found) {

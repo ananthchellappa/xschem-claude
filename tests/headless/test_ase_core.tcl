@@ -4362,8 +4362,8 @@ if {[catch {
 #   RT4  THE ROUND TRIP: the script runs AT the design, and the user comes back
 #        to the same level, the same sheet, the same view
 #   RT5  A3 row 1 (clean): autosave_backup is parked at 0 FOR THE TRIP and given
-#        back afterwards -- and the park is what keeps the design's own buffer
-#        from coming back flagged modified
+#        back afterwards -- and, since issue 1715, the UNPARKED ascent comes back
+#        clean too, leaving a <cell>~.sch this session never wrote untouched
 #   RT6  A3 row 3 (modified + autosave off): REFUSED, nothing moved
 #   RT7  A3 row 2 (modified + autosave on): CARRIED -- back at the same level,
 #        still modified, with the edit still in the buffer
@@ -4508,14 +4508,19 @@ check "RT4 the script runs AT the design with the design current, and the user\
         [expr {[xschem get drawcount] - $rt4dc}]] \
   [list {0 rt_top.sch} 1 rt_child.sch .x1. x1 1 1]
 
-# --- RT5: A3 row 1 -- the park, and that it is not decoration ----------------
-# go_back is NOT read-only: it calls load_backup_as() whenever a <cell>~.sch
-# sits beside the cell (actions.c:6505) and that ends in set_modify(1)
-# (save.c:6197). The park makes the ascent a plain reload (save.c:6186 early
-# return). The control is the SAME ascent with the flag left alone: without it
-# the design's own buffer comes back flagged modified, which is issue 0626's
-# defect wearing the design's hat.
+# --- RT5: A3 row 1 -- the park, and the unparked control ---------------------
+# The park makes the ascent a plain reload: load_backup_as() returns early with
+# autosave_backup off. The control is the SAME ascent with the flag left alone.
+# Before issue 1715 that control came back flagged modified -- go_back() adopted
+# any <cell>~.sch beside the cell through load_backup_as(), which ends in
+# set_modify(1) -- and that is what made the park load-bearing. Since 1715,
+# go_back() adopts only a ~ this session wrote for that level (recorded at
+# descend in xctx->sch_backup_mine[]), so the unparked control is clean too and
+# the planted rt_top~.sch, which this session never wrote, is left
+# byte-identical. The park stays the A3 row 1 contract; 1715's own fence is band
+# G of tests/headless/test_drag_abort_backup_1716.tcl.
 file copy -force -- $rttop [rt_bak $rttop]
+set rt5fp [open [rt_bak $rttop] r] ; set rt5bak [read $rt5fp] ; close $rt5fp
 rt_descend
 set ::autosave_backup 1
 set rt5in [ase::with_design_current $rttop {rt_where_ab}]
@@ -4523,13 +4528,17 @@ set rt5parked [list $rt5in [xschem get currsch] [xschem get modified] $::autosav
 rt_descend
 set ::autosave_backup 1
 xschem go_back 2
-set rt5control [list [xschem get currsch] [xschem get modified]]
+set rt5same 0
+if {![catch {open [rt_bak $rttop] r} rt5fp]} {
+  set rt5same [expr {[read $rt5fp] eq $rt5bak}] ; close $rt5fp
+}
+set rt5control [list [xschem get currsch] [xschem get modified] $rt5same]
 file delete -force -- [rt_bak $rttop]
 check "RT5 A3 row 1: a CLEAN entry buffer parks autosave_backup at 0 for the\
  trip and gets it back afterwards, so the ascent is a plain reload -- and the\
- unparked control proves the park is load-bearing, not decoration" \
+ unparked control (issue 1715) comes back clean too, the foreign ~ unchanged" \
   [list $rt5parked $rt5control] \
-  [list {{0 rt_top.sch 0} 1 0 1} {0 1}]
+  [list {{0 rt_top.sch 0} 1 0 1} {0 0 1}]
 
 # --- RT6: A3 row 3 -- modified + autosave OFF: REFUSE ------------------------
 # With the flag off there is no `~` to come back to (write_backup() is a no-op,

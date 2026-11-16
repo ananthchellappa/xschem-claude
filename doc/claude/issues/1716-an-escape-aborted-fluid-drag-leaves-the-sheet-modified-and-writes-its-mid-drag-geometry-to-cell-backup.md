@@ -1,6 +1,6 @@
 # 1716 — an Escape-aborted fluid drag leaves the sheet modified and writes its mid-drag geometry to `cell~.sch`, because `insert_exit_stubs()` calls `set_modify(1)` on every live reroute step
 
-**STAMP:** `v1 claim=open tree=31dd76b6c stamped=2026-11-15 fix=untried open=3 by=selection_look-docs`
+**STAMP:** `v1 claim=fixed tree=3b36f24a1 stamped=2026-11-15 fix=superseded open=0 super=self by=drag_perf-D`
 
 Found by the selection-look batch's realistic-timing crew
 (`doc/claude/selection_look_batch/receipts/realistic-timing.md`, the paragraph "A base defect
@@ -164,3 +164,73 @@ It is the fork's, not upstream's. At `f276d0cf2` (upstream xschem, the fork base
      start a move at all.
 3. Check, by building it, the enforcement refusal arm above: a refused fluid drag of a clean
    sheet should leave it clean with no `~`.
+
+## Fix (taken, by stage D of `doc/claude/drag_perf_batch/`; not the shape proposed above)
+
+Built on `3b36f24a1` plus stage A's patch (`doc/claude/drag_perf_batch/receipts/D-fix.md`).
+**Do not paste the proposal above**: neither of its items was taken.
+
+- **A hold, not a per-pass edit.** `set_modify()` (`src/actions.c`) declares nothing for
+  `mod` 1 or 3 while `xctx->modify_hold > 0`: no flag, no `modify_seq` bump, no
+  `write_backup()`, no title or button change. The floater and annotation caches are still
+  flushed. `move_objects()` (`src/move.c`) takes the hold for a live step (`commit_now`) and
+  for a refusable END (`enf_snapped`), inside its commit block, and drops it at the
+  accept/refuse verdict or at the block's end. So every pass is covered, not only
+  `insert_exit_stubs()`: `trim_wires()`, `remove_move_orphan_wires()` and the fluid
+  shove/reroute/offset passes also call `set_modify(1)` when they change something.
+  `insert_exit_stubs()` keeps its unconditional call; under the hold it is harmless.
+- **The refusal arm.** It now calls `set_modify(-1)` when the sheet was dirty before the
+  gesture (it writes nothing, so the `~` keeps the user's edits byte for byte) and
+  `set_modify(0)` when it was clean. `enf_mod_before` is read at END as before; it is the true
+  pre-gesture flag now, because the live steps were held.
+- **A completed drag is unchanged.** Its END runs the accept arm's own unheld
+  `set_modify(1)`, so the final flag and the backup's content are those of stage A.
+  Measured: the stage A identity sweeps (390 seam files, 80 GUI files) are byte-identical, and so
+  are the 418 backups the two trees both wrote. The only listing difference is three `~` files
+  stage A leaves and this fix does not, each beside a page whose drag changed nothing (a
+  refused drag).
+- **Fence:** `tests/headless/test_drag_abort_backup_1716.tcl`, registered in both T1 lists.
+  Bands A (scripted seam: abort, `abort_operation`, dirty-before, plus controls), R (the
+  refusal, one-shot and stepwise, clean and dirty) and E (the real Tk gesture with Escape,
+  under `sky130A/cadence_style_rc`). Every fence row is red on stage A's tree, and each part of
+  the fix has a broken-on-purpose build that turns rows red (the receipt has the table).
+- **Open items 1 to 3 are closed.** Item 2's legs are rows A1 to A3 and E1 to E2 (with the
+  `STARTMOVE` and movement non-vacuity legs). Item 3 is band R.
+
+### Follow-up, stage D2: the orphaned gesture (`doc/claude/drag_perf_batch/receipts/D2-fix.md`)
+
+Finding F1 of `receipts/D-verify.md`: the hold above made a live drag that ends with **neither an
+END nor an ABORT** leave its moved shapes undeclared. `unselect_all()` (`src/select.c`) zeroes
+`ui_state`, and the `u`, Shift-U and `n` keys, `xschem unselect_all|undo|redo|netlist` and the
+area-select branch of the motion handler all reach it mid-drag. The shapes then stayed moved on
+screen while the sheet read clean, with no `~` and no quit prompt. Before the hold, each live
+step's own `set_modify(1)` had declared them, by accident.
+
+- **Shape taken.** `fluid_reroute_orphan_check()` (`src/move.c`) runs as the OUTERMOST `xschem`
+  command returns (`xschem()`, `src/scheduler.c`, by a nesting depth). If the gesture is still
+  armed and dirty but `STARTMOVE` is gone, and the document is still the one the gesture started
+  on (`xctx->fluid_reroute_level` and `fluid_reroute_sch`, recorded at START), it calls
+  `set_modify(1)` once. A per-gesture latch, `fluid_reroute_settled`, is set before that call, by
+  `load_schematic()` when it resets undo (a new document: a reload is the same level and file, so
+  only this tells it apart), and by `save_schematic()` (the geometry is on disk).
+- **Why not the shape D-verify proposed** (declare inside `unselect_all()`, hold the live step's
+  restore). It was built and measured. Most callers unselect BEFORE they tear the buffer down, so
+  it wrote a stray `bandgap~.sch` of the cancelled drag on `xschem clear` and `clear force`, `xschem
+  load` and `load -gui` of another cell, `xschem reload` and `go_back`. It wrote the CHILD's geometry into `tb_bandgap~.sch` when the
+  drag was below the top, because `clear_schematic()` and `ask_new_file()` reset `currsch` first.
+  It wrote an EMPTY `~` inside `xschem undo 0 0` with history, where the `unselect_all()` runs
+  after `clear_drawing()`. And with a display it crashed: SIGSEGV in `set_modify()` called from
+  `unselect_all()` inside `descend_schematic()`, on any `xschem descend` mid-drag. On the four
+  cases F1 named, the two shapes give the same flag, the same `~` and the same quit prompt, and a
+  sweep of 58 keys pressed mid-drag on the display gives identical results for both.
+- **Fence:** band O and row E4 of `tests/headless/test_drag_abort_backup_1716.tcl`. O0 is the
+  per-step leg (nothing is declared while the gesture is live), O1 to O4 and E4 (the real `u` key)
+  are the four orphaning verbs, O5 is the once-per-gesture latch, O6 the undo-with-history restore,
+  O7 a save mid-drag, and O8 to O13 the verbs that replace the document (load, reload, clear,
+  go_back, and the no-title forms `descend 1 0` and `go_back 2`, which load without an undo reset).
+  Each guard of the shape has a copy broken on purpose that turns at least one of those rows red;
+  the receipt has the table.
+- **Changed from the base build, and not restored:** a scripted `xschem descend` in the middle of a
+  live drag now discards the drag's geometry, as `go_back` then loads the parent from disk, clean.
+  On the base build the live steps had declared it, so it came back modified. Stage D's tree
+  already behaved this way; row O12b holds the parent to "declared or pristine".

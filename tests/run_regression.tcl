@@ -163,7 +163,18 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_rdw_help" \
                  "headless/test_ase_dc_param_sweep" \
                   "headless/test_wave_subwindows" \
-                  "headless/test_drag_tclvar_reads"]
+                  "headless/test_drag_tclvar_reads" \
+                  "headless/test_drag_abort_backup_1716"]
+## `headless/test_drag_abort_backup_1716` IS IN BOTH LISTS, registered in the commit
+## that creates it (doc/claude/drag_perf_batch/, stage D): issue 1716 (an aborted or
+## refused fluid drag must leave the modified flag and the cellName~ backup exactly as
+## before the gesture) and issue 1715 (go_back adopts only a ~ this session wrote).
+## Bands F/A/R/G run here, through the `xschem move_objects start|step|abort|end` seam
+## and `xschem descend`/`go_back`; band E needs real Tk events and self-skips with an
+## UPPERCASE `SKIP:`, which summarize_all does not count. Both arms' epilogues were
+## captured in exactly these loops' shapes and scored with `summarize_all` lifted from
+## this file and `banner_complete` SOURCED from tests/banner_rule.tcl before the entries
+## went in.
 ## `headless/test_drag_tclvar_reads` IS IN `hcases` ALONE, registered in the commit
 ## that creates it (doc/claude/drag_perf_batch/, the drag frame-time fix): a live-commit
 ## drag step must not re-read a Tcl variable per pin or per wire, and the C-side cache
@@ -983,7 +994,13 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_rdw_help" \
                  "headless/test_cadence_q_scope" \
                  "headless/test_ase_dc_param_sweep" \
-                  "headless/test_wave_subwindows"]
+                  "headless/test_wave_subwindows" \
+                  "headless/test_drag_abort_backup_1716"]
+## `headless/test_drag_abort_backup_1716` IS ALSO IN `hcases` (see the note there):
+## this entry is its display arm, where band E drives issue 1716's own gesture with real
+## Tk events (press, twelve motions, Escape, release) and issue 1715's walk, both with
+## sky130A/cadence_style_rc sourced and its library registry replaced by the suite's
+## scratch copy.
 ## `headless/test_ase_dc_param_sweep` IS ALSO IN `hcases` (see the note there):
 ## this entry is its display arm, where band G builds the real DC form -- the
 ## Sweep variable radios, the relabelled and re-listed name picker, the hidden

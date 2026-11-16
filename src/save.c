@@ -6484,6 +6484,27 @@ void drop_owned_backup(void)
   xctx->backup_owned[0] = '\0';
 }
 
+/* Issue 1715: does the CURRENT level hold unsaved edits that this session wrote to its own
+ * cellName~ backup? Asked by descend_schematic() / descend_symbol() for the level being left, and
+ * recorded in xctx->sch_backup_mine[] so go_back() can tell the backup that step B3 of
+ * doc/claude/specs/descend_hierarchy_in_memory.md exists for (this session's edits, persisted
+ * across a descend) from a "~" some other session left beside the cell. xctx->backup_owned is ONE slot and the child's first edit overwrites it, which is why the
+ * answer is recorded per level at descend time and not asked again on the way up. Requires the
+ * flag and the owned path being exactly this cell's backup path. autosave_backup is not consulted:
+ * with it off nothing is written, so the path is ours only if an earlier write of this session made
+ * it, and that file then holds this session's own edits up to that write. go_back() adopts it, as it
+ * did before this record existed, only if autosave_backup is on again by the ascent: load_backup_as()
+ * declines with autosave off, and the level is then loaded from disk. */
+int level_backup_is_mine(void)
+{
+  char bak[PATH_MAX];
+  const char *name = xctx->sch[xctx->currsch];
+  if(!xctx->modified) return 0;
+  if(!name || !name[0]) return 0;
+  if(!backup_file_name(bak, S(bak), name)) return 0;
+  return !strcmp(bak, xctx->backup_owned);
+}
+
 /* Load cellfile's "~" backup as the current buffer's CONTENT while keeping the
  * buffer's logical identity = cellfile (name, title, dir, mtime), flagged modified.
  * Reuses the full load_schematic() (symbol linking, prep flags, viewport) and then
@@ -6518,7 +6539,11 @@ int load_backup_as(const char *cellfile, int set_title)
  * unsaved parent (edits live in cellName~.sch), so a deep close/quit must look up
  * the WHOLE stack. (With autosave_backup off the ~ trail is gone, so we can only
  * report the current level -- consistent with there being no crash protection then.)
- * doc/claude/specs/descend_hierarchy_in_memory.md */
+ * doc/claude/specs/descend_hierarchy_in_memory.md
+ * Issue 1715: an ancestor counts only when THIS session left it with unsaved edits in its ~
+ * (xctx->sch_backup_mine[i], recorded at descend). A ~ some other session left beside an ancestor
+ * the user never touched is not this hierarchy's unsaved work: go_back() no longer adopts it, so
+ * the deep close/quit guard must not report it either. */
 int hierarchy_modified(void)
 {
   int i;
@@ -6527,7 +6552,8 @@ int hierarchy_modified(void)
   if(xctx->modified) return 1;
   if(!tclgetboolvar("autosave_backup")) return 0;
   for(i = 0; i < xctx->currsch; i++) {
-    if(xctx->sch[i] && backup_file_name(bak, S(bak), xctx->sch[i]) && !stat(bak, &sb))
+    if(xctx->sch_backup_mine[i] &&
+       xctx->sch[i] && backup_file_name(bak, S(bak), xctx->sch[i]) && !stat(bak, &sb))
       return 1;
   }
   return 0;
@@ -6599,6 +6625,9 @@ int save_schematic(const char *schname, int fast) /* 20171020 added return value
     if(fast) set_modify(2); /* only clear modified flag, no title/tab/sim buttons update */
     else     set_modify(0);
     remove_backup(); /* a real save committed the edits: drop the cellName~.sch */
+    /* issue 1716: the unselect_all() above orphans a live fluid drag, and its committed geometry is
+     * now in the file: nothing is left for fluid_reroute_orphan_check() (move.c) to declare */
+    if(xctx->fluid_reroute_active && !(xctx->ui_state & STARTMOVE)) xctx->fluid_reroute_settled = 1;
   }
   tclvareval("catch {", xctx->top_path, ".menubar entryconfigure Simulate -background $simulate_bg}", NULL);
   tclvareval("set tctx::", xctx->current_win_path, "_simulate $simulate_bg", NULL);
@@ -6676,6 +6705,10 @@ int load_schematic(int load_symbols, const char *fname, int reset_undo, int aler
   my_strdup2(_ALLOC_ID_, &ffname, trim_chars(fname, " \t\n"));
   if(reset_undo) {
     xctx->clear_undo();
+    /* issue 1716: a new document instance -- an orphaned drag's geometry went with the old one, so
+     * fluid_reroute_orphan_check() (move.c) must not declare this one for it (a reload is the same
+     * level and file, so only this tells them apart) */
+    xctx->fluid_reroute_settled = 1;
     xctx->prev_set_modify = -1; /* will force set_modify(0) to set window title */
     xctx->readonly = 0; /* default editable; raised below if the loaded file is not writable */
   }
@@ -8646,6 +8679,7 @@ int descend_symbol(void)
     unselect_all(1);
     remove_symbols(); /* must follow save (if) embedded */
     /* load_symbol(name_embedded); */
+    xctx->sch_backup_mine[xctx->currsch] = level_backup_is_mine(); /* issue 1715, see go_back() */
     ++xctx->currsch; /* increment level counter */
     load_schematic(1, name_embedded, 1, 1);
   } else {
@@ -8672,6 +8706,7 @@ int descend_symbol(void)
       }
     }
     dbg(1, "descend_symbol(): name=%s, sympath=%s, dirname=%s\n", name, sympath, xctx->current_dirname);
+    xctx->sch_backup_mine[xctx->currsch] = level_backup_is_mine(); /* issue 1715, see go_back() */
     ++xctx->currsch; /* increment level counter */
     load_schematic(1, sympath, 1, 1);
     if(web_url) {
