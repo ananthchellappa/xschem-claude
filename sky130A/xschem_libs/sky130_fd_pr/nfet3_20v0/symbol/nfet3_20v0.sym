@@ -68,3 +68,6 @@ hide=true}
 T {vgs=expr(@#1:spice_get_voltage - @#2:spice_get_voltage )
 vds=expr(@#0:spice_get_voltage - @#2:spice_get_voltage )} 5 17.5 0 1 0.07 0.07 {layer=15
 hide=true}
+T {@#D:spice_get_voltage} 17.5 -42.5 0 1 0.15 0.15 {layer=15}
+T {@#G:spice_get_voltage} -22.5 -12.5 0 1 0.15 0.15 {layer=15}
+T {@#S:spice_get_voltage} 17.5 36.5 0 1 0.15 0.15 {layer=15}

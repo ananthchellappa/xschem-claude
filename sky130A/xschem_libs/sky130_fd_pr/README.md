@@ -109,6 +109,23 @@ segments; `mult` is the number of parallel copies. `L` and `W` are those of one 
   instance). It is a placeholder for layout import: nothing reads it yet, and it is
   neither drawn on the schematic nor netlisted.
 
+## FETS: NODE VOLTAGES AT D, G AND S
+
+Every `nfet*` / `pfet*` symbol shows the DC node voltage at its drain, gate and
+source in the node-voltage annotation mode (Alt-6 in the Cadence-style bindings,
+`annot_show` bit 1), next to the values the pins and wire labels already show.
+
+- Each symbol carries three texts, `@#D:spice_get_voltage`, `@#G:spice_get_voltage`
+  and `@#S:spice_get_voltage`, placed just outside the pin: above a top pin and the
+  gate lead, below a bottom pin. They address the pin by name, so a pfet, whose D
+  and S swap places, needs nothing special.
+- Nothing is shown at the bulk, nor at `sub` on `nfet_20v0_iso`.
+- They are painted only while that mode is on and an operating point is loaded; with
+  the mode off the symbols look as they always did.
+- The texts must not carry a `hide=` token: with one they would follow View > Show
+  hidden texts instead of the annotation mode.
+- Fenced by `tests/headless/test_sky130_fet_pin_voltage.tcl`.
+
 ## SYMBOL IMAGES
 
 |   symbol image |   symbol image |   symbol image |   symbol image |
