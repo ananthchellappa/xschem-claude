@@ -4901,6 +4901,14 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   of `src/op_annot.tcl`, not an issue. `~/private/xschem-private`'s own pointer still
   read 1725 that day, so it advertises 1725 and 1726 as free there: it must skip both.
 
+- **1723** (ported, not minted here) — renaming an instance (`x1` to `xdut`) leaves ASE-L's
+  saved output, measurement and include text naming the old path; the pre-flight refuses but
+  offers no correction, and its repair is a console command. Minted 2026-11-19 by
+  `~/private/xschem-private`, the clone this file left 1723 to (above), and built there (items
+  1-3 and 5-7). Its issue file and code were ported to this branch at the user's request of
+  2026-11-21 with the number kept, so it names the same defect in both clones. The pointer
+  does not move. **1728** is also `~/private/xschem-private`'s (auto-named nets renumber,
+  minted 2026-11-20): skip it when 1727 is taken.
 - **1728–1732** — skipped here: another clone of this repository on this machine has used them
   for its own issues (the minting check's grep of every clone's `doc/claude/issues/` finds them),
   and left 1727 to this clone. None of them names anything here. Do not "reclaim" them.
