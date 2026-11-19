@@ -3686,17 +3686,22 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
     set queue [ase::ui::repair_currents $key $queue]
     lassign [ase::ui::dedupe_plot_queue $queue $qcolors] queue qcolors
   }
-  # WHERE the batch lands is THIS SESSION's destination (the status-bar
-  # drop-down, R-OUT15; user ruling 2026-10-16: the source owns the choice,
-  # the viewer has none), passed per call. Within the target subwindow the
-  # viewer's plot mode (issue 0151) still decides: single-plot appends them
-  # all into the target strip, multi-plot gives each one its own new strip.
-  # The policy lives in wviewer::plot_signals; this side only reports the
-  # per-signal failures it returns.
+  # WHERE the batch lands: ALWAYS APPENDED to the viewer's target subwindow.
+  # The session's destination drop-down (R-OUT15) is NOT read here -- user
+  # ruling 2026-11-16, reversing issue 1663's of 2026-10-16: "The Direct Plot,
+  # which is same as Ctrl-4 should always Append to the destination. The
+  # destination drop down is only for the ~ plot button and automatic plot of
+  # results when simulation finishes." Under the drop-down's default, Replace,
+  # a pick on the schematic emptied the plot the user was adding to.
+  # Within the target subwindow the viewer's plot mode (issue 0151) still
+  # decides: single-plot appends them all into the target strip, multi-plot
+  # gives each one its own new strip. The policy lives in
+  # wviewer::plot_signals; this side only reports the per-signal failures it
+  # returns.
   # issue 0153: `qcolors` are the colors the picker already painted onto the
   # schematic nets, passed through verbatim so each trace lands in ITS wire's
   # color. Empty (a scripted/replayed call) -> plot_signals derives them itself.
-  foreach pair [wviewer::plot_signals $key $queue $qcolors [ase::ui::plot_dest $key]] {
+  foreach pair [wviewer::plot_signals $key $queue $qcolors append] {
     lassign $pair ex err
     catch {::ase::echo "ase: cannot plot '$ex': $err" error}
   }
@@ -12024,7 +12029,7 @@ proc ase::ui::menu_path_export_optimizer {} {
 # The `~` strip button (ase_l.md R-OUT12, R-OUT16): its tip, and what it says
 # when there is nothing to measure or plot.
 proc ase::ui::lbl_plot_outputs      {} { return {Plot outputs and update values (Ctrl-click: values only)} }
-proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~, the run-end plot and Direct Plot go} }
+proc ase::ui::lbl_plot_dest_tip     {} { return {Where ~ and the run-end plot go} }
 proc ase::ui::lbl_plot_outputs_none {} { return {ase: no results; run a simulation first} }
 proc ase::ui::lbl_plot_outputs_nowave {} { return {ase: no waveform output has Plot ticked} }
 # A failed run (ase_l.md R-OUT13; `f` is ase::run_failed's answer): the notice,
@@ -13928,7 +13933,8 @@ proc ase::ui::do_netlist_recreate {key} {
   catch {::ase::echo "ase: netlist written: $nl"}
 }
 
-# --- R-OUT15: the plot destination of `~`, the run-end auto-plot and Direct Plot
+# --- R-OUT15: the plot destination of `~` and the run-end auto-plot
+# (Direct Plot does not read it: ase::ui::dp_finish always appends.)
 # doc/claude/specs/waveform_viewer_subwindows.md SW18 and §8. The four choices
 # are the user's (ADE-L's plotting mode): one code per label, the codes the
 # viewer's own wviewer::dest_norm speaks, so `New Win` is the viewer's `newtab`.

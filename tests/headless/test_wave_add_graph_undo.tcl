@@ -358,7 +358,7 @@ proc ag_rig_on {} {
     lappend ::ag_trace [list capture $skip_markers $skip_ranges]
     return 1
   }
-  proc wviewer::regenerate {token} { lappend ::ag_trace regenerate; return 1 }
+  proc wviewer::regenerate {token args} { lappend ::ag_trace regenerate; return 1 }
   # push_undo and log_action are SPIED, not stubbed: the real push_undo runs, so
   # the undo stack this suite later pops is the product's own.
   proc wviewer::push_undo {token} {

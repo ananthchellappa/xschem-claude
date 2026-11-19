@@ -770,6 +770,10 @@ namespace eval wviewer {
   # re-fills ONLY when the size actually changed). Cleaned on forget.
   variable cfgafter; array set cfgafter {}
   variable fillwh;   array set fillwh {}
+  # drawn = wviewer::drawn_records of the strips the last regenerate drew: what
+  # the MODEL said about each strip then, and what each axis was fitted or set
+  # to. wviewer::view_take reads the live rects against it. Cleaned on forget.
+  variable drawn; array set drawn {}
   # issue 0173: how many times wviewer::leave_ctx could NOT put the xschem
   # context back where enter_ctx found it (a `new_schematic switch` refused
   # under a raised semaphore — landmine 17). Diagnostic only: a refused restore
@@ -982,6 +986,7 @@ proc wviewer::forget {token} {
   variable mmb
   variable axl; variable delmap
   variable cfgafter; variable fillwh
+  variable drawn
   variable b3x0; variable b3y0; variable b3mk
   # RESULTS BATCH item 6: the recorded selection, same rule as every array
   # above -- an undeclared `variable` would make the `unset` below address a
@@ -1082,6 +1087,7 @@ proc wviewer::forget {token} {
   if {[info exists cfgafter($token)]} { catch {after cancel $cfgafter($token)} }
   catch {unset cfgafter($token)}
   catch {unset fillwh($token)}
+  catch {unset drawn($token)}
   foreach id [array names fszafter ${token},*] {
     catch {after cancel $fszafter($id)}
     catch {unset fszafter($id)}
@@ -4460,11 +4466,13 @@ proc wviewer::configure_apply {token} {
   if {[info exists fillwh($token)] && $fillwh($token) eq $cur} { return }
   # issue 0194: a plain RESIZE regenerates, so it destroys the live selection
   # unless it is folded back first — the exposure capture_live_graph_state's
-  # header and spec §15.5 both name by this path. skip_ranges keeps the refit
-  # semantics a resize is FOR: the axes are not touched at all, so an auto strip
-  # still re-autozooms into its new band and a pinned one keeps its own window.
+  # header and spec §15.5 both name by this path. skip_ranges keeps the model's
+  # axes out of it.
+  # A resize keeps the view (user ruling 2026-11-16): every strip is rebuilt
+  # into its new band showing the axis windows it showed, wviewer::live_axes.
   wviewer::capture_live_view_state $token
-  wviewer::regenerate $token
+  set keep [wviewer::live_axes $token]
+  wviewer::regenerate $token $keep
 }
 
 # --- trace colors (D10 + issue 0153) ----------------------------------------
@@ -4988,30 +4996,31 @@ proc wviewer::auto_expr_name {token} {
 # feed off it — forgetting this breaks the cursor keys), zoom_full + one
 # redraw. sharedx: non-master graphs inherit graph-0's x range at
 # generation time.
-proc wviewer::regenerate {token} {
+#
+# `keep` is wviewer::view_keep's answer (or wviewer::live_axes'): one
+# `{tok val ...}` list per strip AS THE MODEL NOW HAS THEM. An entry's
+# live_axis_tokens are written onto that strip's fresh rect; its `left` is for
+# the record below and any other key is ignored. An axis the entry names (`x1`
+# for X, `y1` for Y) is not fitted; an axis it does not name comes from the
+# model or the fit as always, so `{}` is the plain rebuild for that strip.
+# Ignored unless it has exactly one well-formed entry per strip.
+#
+# `drawn($token)` is recorded here for wviewer::view_take:
+# wviewer::drawn_records of the strips as this rebuild drew them.
+proc wviewer::regenerate {token {keep {}}} {
   variable windows
   variable graphbb
   variable fillwh
+  variable drawn
   if {![dict exists $windows $token]} { return 0 }
   set wp [dict get $windows $token win_path]
   set lay [wviewer::layout_for $token]
   set gs [dict get $lay graphs]
-  # Shared X applies WITHIN each subwindow (spec SW13/SW14): every strip takes
-  # the X range of the FIRST strip of its own subwindow, never another's. With
-  # one subwindow that is strip 0 for all, exactly the old rule.
+  if {[llength $keep] != [llength $gs]} { set keep {} }
+  foreach k_ $keep { if {[llength $k_] % 2} { set keep {} ; break } }
+  # Shared X applies WITHIN each subwindow (spec SW13/SW14): wviewer::shared_graphs
   set runs [wviewer::sw_runs $gs]
-  if {[wviewer::dget $lay sharedx 0] && [llength $gs] > 1} {
-    foreach r $runs {
-      lassign $r f l
-      set g0 [lindex $gs $f]
-      set sx1 [wviewer::dget $g0 x1 {}]
-      set sx2 [wviewer::dget $g0 x2 {}]
-      for {set i [expr {$f + 1}]} {$i <= $l} {incr i} {
-        set gg [dict replace [lindex $gs $i] x1 $sx1 x2 $sx2]
-        set gs [lreplace $gs $i $i $gg]
-      }
-    }
-  }
+  set gs [wviewer::shared_graphs $lay]
   # item 18: every graph FILLS an equal vertical band of the CURRENT viewport
   # (no fixed slot). viewport_rect switches to the viewer ctx and reads its live
   # zoom/origin + canvas size; band_geometry tiles that viewport.
@@ -5043,6 +5052,8 @@ proc wviewer::regenerate {token} {
   # schematic and ABORTS the replay -- and, through the wrappers' self-log dedup,
   # kept a typed command's own line out of the log (rows TGR1/TGR2 of
   # test_wave_tabs).
+  set ktoks_ [wviewer::live_axis_tokens]
+  set lefts_ {}
   wviewer::unlogged {wviewer::with_edit $token {
     xschem clear_drawing
     set gi_ 0
@@ -5056,24 +5067,41 @@ proc wviewer::regenerate {token} {
             [lindex $fonts_ $gi_] $sc_]"
       incr gi_
     }
+    # the carried view (`keep`): the tokens the engine had written onto the old
+    # rects go back onto the new ones
+    set gi_ 0
+    foreach k_ $keep {
+      foreach {t_ v_} $k_ {
+        if {$t_ in $ktoks_} { xschem setprop -fast rect 2 $gi_ $t_ $v_ }
+      }
+      incr gi_
+    }
     # blank (auto) ranges: let the ENGINE compute them into the rect attrs
     # (log/expr aware) — the model keeps {} = auto, so every regenerate
     # re-autozooms; readonly-gated, hence inside with_edit
     if {[xschem raw loaded] >= 0} {
       set gi_ 0
       foreach G_ $gs {
+        set k_ [lindex $keep $gi_]
         if {[llength [dict get $G_ traces]]} {
-          if {[wviewer::dget $G_ x1 {}] eq {} || [wviewer::dget $G_ x2 {}] eq {}} {
+          if {![dict exists $k_ x1] &&
+              ([wviewer::dget $G_ x1 {}] eq {} || [wviewer::dget $G_ x2 {}] eq {})} {
             xschem setprop -fast rect 2 $gi_ fullxzoom
           }
-          if {[wviewer::dget $G_ y1 {}] eq {} || [wviewer::dget $G_ y2 {}] eq {}} {
+          if {![dict exists $k_ y1] &&
+              ([wviewer::dget $G_ y1 {}] eq {} || [wviewer::dget $G_ y2 {}] eq {})} {
             xschem setprop -fast rect 2 $gi_ fullyzoom
           }
         }
         incr gi_
       }
     }
+    # what each axis was fitted or set to, read back while the context is still
+    # the viewer's (wviewer::drawn_records)
+    set lefts_ [wviewer::rect_axes [llength $gs]]
   }}
+  # the strips just drawn, for wviewer::view_take
+  set drawn($token) [wviewer::drawn_records [wviewer::axis_sigs $gs] $lefts_ $keep]
   # graphbb feeds over_graph / the a/b/s key gate — build it from the SAME
   # band rects so it matches the placed graphs exactly (D5)
   dict set graphbb $wp $rects_
@@ -5716,6 +5744,11 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}} {sweep {}}} {
   # already grown, so this capture's 1:1 guard refuses and returns 0 — which is
   # exactly why plot_signals captures on its own instead of relying on this one.
   wviewer::capture_live_view_state $token
+  # the view on screen, for the regenerate at the end: the other strips keep
+  # theirs, and the strip that takes the trace keeps a zoom or a pan
+  # (wviewer::view_entries). Unlike the fold above this does not need the model
+  # and the rects to count the same strips, so it also serves plot_signals' loop.
+  set view [wviewer::view_take $token]
   set gs [dict get [wviewer::layout_for $token] graphs]
   if {![llength $gs]} { set gs [list [wviewer::empty_graph]] }
   if {![string is integer -strict $gi] || $gi < 0 || $gi >= [llength $gs]} {
@@ -5832,7 +5865,7 @@ cannot be carried in a graph node= token (it contains whitespace or one of % \" 
     set G [wviewer::axis_apply $G $fresh [wviewer::trace_simtype $trdb]]
   }
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   return {}
 }
 
@@ -5875,6 +5908,7 @@ proc wviewer::add_graph {token} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   wviewer::capture_live_view_state $token   ;# issue 0194: before the append
+  set view [wviewer::view_take $token]      ;# the existing strips keep their view
   wviewer::push_undo $token           ;# AFTER the capture: `u` restores the view
   set gs [dict get [wviewer::layout_for $token] graphs]
   # SUBWINDOWS: the new strip goes to the bottom of the TARGET subwindow (it
@@ -5891,7 +5925,7 @@ proc wviewer::add_graph {token} {
   set gs [linsert $gs $at [wviewer::empty_graph]]
   wviewer::set_graphs $token $gs
   if {$at < [llength $gs] - 1} { wviewer::wavehl_remap_apply $token $hl }
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   wviewer::log_action [list wviewer::add_graph $token]
   return 1
 }
@@ -5912,6 +5946,7 @@ proc wviewer::new_subwin {{token {}}} {
     return {}
   }
   wviewer::capture_live_view_state $token   ;# issue 0194: before the change
+  set view [wviewer::view_take $token]      ;# the existing strips keep their view
   wviewer::push_undo $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   # SW24: the new subwindow takes the TARGET's plot mode and grid
@@ -5926,7 +5961,7 @@ proc wviewer::new_subwin {{token {}}} {
   wviewer::set_graphs $token $gs
   # appended at the end, so no stored index moved; the new strip is the target
   set target($token) $gi
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   wviewer::log_action [list wviewer::new_subwin $token]
   return $gi
 }
@@ -5952,6 +5987,7 @@ proc wviewer::close_subwin {{token {}} {gi {}}} {
     return 0
   }
   wviewer::capture_live_view_state $token
+  set view [wviewer::view_take $token]      ;# the surviving strips keep their view
   wviewer::push_undo $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   set gone {}
@@ -5967,7 +6003,10 @@ proc wviewer::close_subwin {{token {}} {gi {}}} {
     [wviewer::markers_sweep_numbers [wviewer::remove_graphs $gs $kill] $gone]
   set target($token) [wviewer::target_clamp $tgt \
                         [llength [dict get [wviewer::layout_for $token] graphs]]]
-  wviewer::regenerate $token
+  # `$kill`: a closed strip hands its view to nobody, whatever traces it shared
+  # (the indices are the view's only while the rects were the model's strips)
+  wviewer::regenerate $token [wviewer::view_keep $token $view {} \
+    [expr {[llength $view] == [llength $gs] ? $kill : {}}]]
   if {[llength $gone]} { catch {xschem graph_marker select -none} }
   wviewer::log_action [list wviewer::close_subwin $token $gi]
   return [llength $kill]
@@ -6001,10 +6040,13 @@ proc wviewer::clear_subwin {{token {}} {gi {}}} {
     return $f
   }
   wviewer::capture_live_view_state $token
+  set view [wviewer::view_take $token]      ;# the other strips keep their view
   wviewer::push_undo $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   set gone {}
+  set cleared {}
   for {set k $f} {$k <= $l} {incr k} {
+    lappend cleared $k
     foreach m [wviewer::markers_numbers [wviewer::dget [lindex $gs $k] markers {}]] {
       lappend gone $m
     }
@@ -6020,7 +6062,10 @@ proc wviewer::clear_subwin {{token {}} {gi {}}} {
   wviewer::set_graphs $token [wviewer::markers_sweep_numbers $ngs $gone]
   wviewer::wavehl_remap_apply $token $hl
   set target($token) $f
-  wviewer::regenerate $token
+  # `$cleared`: the emptied strips hand their view to nobody (the indices are
+  # the view's only while the rects were the model's strips)
+  wviewer::regenerate $token [wviewer::view_keep $token $view {} \
+    [expr {[llength $view] == [llength $gs] ? $cleared : {}}]]
   if {[llength $gone]} { catch {xschem graph_marker select -none} }
   return $f
 }
@@ -6579,6 +6624,10 @@ proc wviewer::empty_strips_to_delete {gs {auto -1}} {
 #     with its own documented lifetime (spec §17.4): a C-written pan/zoom the
 #     model never saw is discarded by the next regenerate, exactly as before
 #     this issue. 0194 changes what happens to the SELECTION and nothing else.
+#     (A caller that must not lose that pan/zoom carries it RECT TO RECT with
+#     wviewer::view_take / view_keep and regenerate's `keep`, leaving the model
+#     out of it. Which callers do, and why the rest do not, is row GZP20 of
+#     tests/headless/test_wave_grid.tcl.)
 proc wviewer::capture_live_graph_state {token {skip_markers 0} {skip_ranges 0}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
@@ -6679,6 +6728,508 @@ proc wviewer::capture_live_view_state {token} {
   return [wviewer::capture_live_graph_state $token 0 1]
 }
 
+# THE VIEW A REBUILD MAY CARRY ACROSS ITSELF (user report 2026-11-16: "Ctrl-G
+# ... also causes the window to zoom-fit"; rulings the same day: a resize, the aA
+# text size and the Shared X toggle keep the view too, and so do Graph > Axes...,
+# adding a trace and adding a strip).
+#
+# The engine writes a box zoom, an axis drag, a pan and the dataset the `t` key
+# tracks straight into the rect, and the model never hears of them; the fold
+# above deliberately leaves the axes alone (its header gives the two reasons the
+# MODEL must not take them). So a regenerate re-fitted every auto axis and put
+# every pinned one back to the model's older window, on every strip, whichever
+# strip the command was about.
+#
+# A command that means to keep the strips on screen as they are reads the view
+# BEFORE it changes the model (wviewer::view_take) and hands regenerate the part
+# of it that still applies AFTER (wviewer::view_keep), rect to rect. The model
+# is not written, so nothing about an axis's lifetime changes: an auto axis is
+# still auto, and a regenerate that is handed nothing fits it as before.
+#
+#   set view [wviewer::view_take $token]     ;# the rects are still the old ones
+#   ... change the model ...
+#   wviewer::regenerate $token [wviewer::view_keep $token $view]
+#
+# WHICH STRIP TAKES WHICH VIEW is decided by the strips' traces, never by their
+# index (wviewer::view_map), so a command may add or remove strips in between.
+# WHAT A STRIP TAKES (wviewer::view_entries). "Moved" is an axis the ENGINE
+# moved since it was last fitted or set, i.e. a zoom or a pan (view_zoomed):
+#   * a strip with NEITHER axis moved takes no axis: it is rebuilt from the model
+#     and the fit exactly as it always was, so this whole mechanism can only
+#     change what happens to a strip somebody zoomed or panned;
+#   * an axis whose range or scale the MODEL changed since the rect was drawn is
+#     left to the model: the rect shows something the model has since replaced
+#     (a range written with set_graphs and brought to the screen by the next
+#     rebuild is the case, row SWG10 of tests/headless/test_wave_subwindows.tcl);
+#   * a strip whose traces are the ones it was drawn with, and with an axis
+#     moved, keeps BOTH axes as shown: fitting the other one again would fit it
+#     over the zoomed window and change a view the command had no business with;
+#   * a strip whose traces changed (it received one, or lost one) keeps only the
+#     axes that were moved. The other is fitted again, so a trace added to a
+#     strip zoomed in X comes into view over that X window;
+#   * a strip that shares no trace with any strip on screen takes nothing from
+#     them -- except the X WINDOW ITS SUBWINDOW SHOWS (wviewer::view_align), so
+#     a signal plotted into a zoomed window comes up at that zoom;
+#   * the tracked dataset goes with the strip in every case but the last.
+# X and Y are judged separately; the digital Y band goes with Y.
+
+# The view on screen: wviewer::drawn_records' record of each strip the last
+# regenerate drew, with `cur` added -- that rect's live_axis_tokens as
+# `{tok val ...}`, `{}` when the rect does not answer a number for every one.
+# `{}` for the whole answer on an unknown token, a refused context switch, no
+# record of the last rebuild, or a rect count that is not the record's.
+proc wviewer::view_take {token} {
+  variable windows
+  variable drawn
+  if {![dict exists $windows $token]} { return {} }
+  if {![info exists drawn($token)]} { return {} }
+  if {![wviewer::switch_ctx $token]} { return {} }
+  set n -1
+  catch {set n [xschem get graph_rects]}
+  if {![string is integer -strict $n] || $n != [llength $drawn($token)]} { return {} }
+  set out {}
+  set gi 0
+  foreach rec $drawn($token) {
+    set cur {}
+    foreach tok [wviewer::live_axis_tokens] {
+      set v {}
+      catch {set v [xschem getprop rect 2 $gi $tok]}
+      if {![string is double -strict $v]} { set cur {} ; break }
+      lappend cur $tok $v
+    }
+    if {[catch {dict size $rec}]} { set rec {} }
+    lappend out [dict replace $rec cur $cur]
+    incr gi
+  }
+  return $out
+}
+
+# regenerate's `keep` for the model AS IT IS NOW, from a wviewer::view_take
+# answer taken before the model changed. `drop` and `gone` are
+# wviewer::view_entries'. `{}` (the plain rebuild) on an unknown token or an
+# empty view.
+proc wviewer::view_keep {token view {drop {}} {gone {}}} {
+  variable windows
+  if {![dict exists $windows $token] || ![llength $view]} { return {} }
+  set gs [wviewer::shared_graphs [wviewer::layout_for $token]]
+  set sigs [wviewer::axis_sigs $gs]
+  return [wviewer::view_align [wviewer::view_entries $view $sigs $drop $gone] $sigs \
+            [wviewer::sw_runs $gs] [wviewer::view_fresh $view $sigs $gone]]
+}
+
+# PURE: the strips of `sigs` that take their view from NO strip on screen
+# (wviewer::view_map's -1): a new strip, a strip getting its first trace, a
+# strip whose every trace was replaced. Indices, ascending.
+proc wviewer::view_fresh {view sigs {gone {}}} {
+  set olds {}
+  foreach r $view {
+    if {[catch {dict size $r}]} { lappend olds {} } else { lappend olds [wviewer::dget $r tr {}] }
+  }
+  set news {}
+  foreach s $sigs {
+    if {[catch {dict size $s}]} { lappend news {} } else { lappend news [wviewer::dget $s tr {}] }
+  }
+  set out {}
+  set j 0
+  foreach m [wviewer::view_map $olds $news $gone] {
+    if {[lindex $m 0] < 0} { lappend out $j }
+    incr j
+  }
+  return $out
+}
+
+# PURE: A FRESH STRIP JOINS THE X WINDOW ITS SUBWINDOW SHOWS (user report
+# 2026-11-16, a Direct Plot into a zoomed window: "the zoom level when the
+# Ctrl-4 sends a plot does not match the prevailing zoom level").
+#
+# The strips of a subwindow share their X axis in use: every X gesture moves
+# them together. A strip with nothing on screen to take from (`fresh`,
+# wviewer::view_fresh) was fitted to its whole sweep, so it came up at 0..20u
+# under four strips showing 1.2u..3.9u. Here it takes the X window of the
+# nearest strip of its own subwindow (`runs`, wviewer::sw_runs) whose X is KNOWN
+# after this rebuild: one whose entry in `keep` carries X, else one whose model
+# pins X. A strip that will itself be fitted gives nothing -- then the fresh
+# strip is fitted beside it and the two agree anyway.
+#
+# Only between strips whose X is the same thing: the same databases and X
+# columns behind their traces (wviewer::x_source) and the same X scale. A fresh
+# strip whose own model pins X keeps that; one with no trace is not drawn to
+# any window; one in `skip` neither gives nor takes. Y is not touched: the
+# rebuild fits it over the X window the strip ends up with.
+#
+# The entry gets `x1`, `x2` and a `left` for X: the giver's own (what its X
+# was last fitted to, the same sweep), or blank ends when the giver's X came
+# from its model -- blank never equals a number, so the strip's X still counts
+# as moved at the next rebuild and is carried again (wviewer::view_zoomed).
+proc wviewer::view_align {keep sigs runs fresh {skip {}}} {
+  if {[llength $keep] != [llength $sigs]} { return $keep }
+  foreach r $runs {
+    lassign $r f l
+    if {![string is integer -strict $f] || ![string is integer -strict $l]} { continue }
+    # i -> {x1 x2 leftx1 leftx2}: what strip i shows in X after the rebuild
+    set shown {}
+    for {set i $f} {$i <= $l} {incr i} {
+      if {$i in $skip || $i in $fresh} { continue }
+      set s [lindex $sigs $i]
+      if {[catch {dict size $s}] || ![llength [wviewer::dget $s tr {}]]} { continue }
+      set e [lindex $keep $i]
+      if {[catch {dict size $e}]} { set e {} }
+      lassign [wviewer::dget $s x {}] mx1 mx2
+      if {[dict exists $e x1] && [dict exists $e x2]} {
+        set lft {}
+        if {[dict exists $e left] && ![catch {dict size [dict get $e left]}]} { set lft [dict get $e left] }
+        set w [list [dict get $e x1] [dict get $e x2] [wviewer::dget $lft x1 {}] [wviewer::dget $lft x2 {}]]
+      } elseif {$mx1 ne {} && $mx2 ne {}} {
+        set w [list $mx1 $mx2 {} {}]
+      } else {
+        continue
+      }
+      if {![string is double -strict [lindex $w 0]] || ![string is double -strict [lindex $w 1]]} { continue }
+      dict set shown $i $w
+    }
+    if {![dict size $shown]} { continue }
+    foreach j $fresh {
+      if {![string is integer -strict $j] || $j < $f || $j > $l || $j in $skip} { continue }
+      set s [lindex $sigs $j]
+      if {[catch {dict size $s}] || ![llength [wviewer::dget $s tr {}]]} { continue }
+      lassign [wviewer::dget $s x {}] mx1 mx2 mlog
+      if {$mx1 ne {} && $mx2 ne {}} { continue }
+      set e [lindex $keep $j]
+      if {[catch {dict size $e}]} { set e {} }
+      if {[dict exists $e x1]} { continue }
+      set src [wviewer::x_source [wviewer::dget $s tr {}]]
+      set best {}
+      set bestd -1
+      dict for {i w} $shown {
+        set si [lindex $sigs $i]
+        if {[lindex [wviewer::dget $si x {}] 2] ne $mlog} { continue }
+        if {[wviewer::x_source [wviewer::dget $si tr {}]] ne $src} { continue }
+        set d [expr {abs($i - $j)}]
+        if {$bestd < 0 || $d < $bestd} { set best $w ; set bestd $d }
+      }
+      if {$bestd < 0} { continue }
+      lassign $best x1 x2 lx1 lx2
+      dict set e x1 $x1
+      dict set e x2 $x2
+      set lft {}
+      if {[dict exists $e left] && ![catch {dict size [dict get $e left]}]} { set lft [dict get $e left] }
+      dict set lft x1 $lx1
+      dict set lft x2 $lx2
+      dict set e left $lft
+      lset keep $j $e
+    }
+  }
+  return $keep
+}
+
+# PURE: what the X axis of a strip with these traces IS, for wviewer::view_align:
+# the database and the X column behind each trace (wviewer::trace_key's last
+# three fields), each once, sorted. Two strips of traces on the loaded sweep
+# answer the same.
+proc wviewer::x_source {traces} {
+  set out {}
+  foreach tr $traces { lappend out [lrange [wviewer::trace_key $tr] 2 4] }
+  return [lsort -unique $out]
+}
+
+# The view of the strips as they are, for a rebuild that changes none of them:
+# view_take and view_keep in one.
+proc wviewer::live_axes {token} {
+  return [wviewer::view_keep $token [wviewer::view_take $token]]
+}
+
+# PURE: one regenerate `keep` entry per strip of `sigs` (wviewer::axis_sigs of
+# the strips about to be drawn), out of `view` (a wviewer::view_take answer).
+# The rules are in the header above. An entry that carries an axis also carries
+# `left`, the source strip's record of what was last fitted or set, for
+# regenerate to hand on (wviewer::drawn_records).
+#   drop  `{index axes ...}`: strips of `sigs` whose named axes (`x`, `y` or
+#         `xy`) take nothing from the view, whatever the rules say. For the
+#         strip a command sets a range on: the range is then the model's.
+#   gone  indices of `view` no strip may take from (wviewer::view_map).
+proc wviewer::view_entries {view sigs {drop {}} {gone {}}} {
+  set olds {}
+  foreach r $view {
+    if {[catch {dict size $r}]} { lappend olds {} } else { lappend olds [wviewer::dget $r tr {}] }
+  }
+  set news {}
+  foreach s $sigs {
+    if {[catch {dict size $s}]} { lappend news {} } else { lappend news [wviewer::dget $s tr {}] }
+  }
+  if {[catch {dict size $drop}]} { set drop {} }
+  set out {}
+  set j 0
+  foreach m [wviewer::view_map $olds $news $gone] s $sigs {
+    lassign $m i how
+    set e {}
+    if {$i >= 0} {
+      set rec [lindex $view $i]
+      set cur {}
+      set left {}
+      if {![catch {dict size $rec}]} {
+        set cur [wviewer::dget $rec cur {}]
+        set left [wviewer::dget $rec left {}]
+      }
+      set e [wviewer::axes_same $cur $rec $s]
+      set z [wviewer::view_zoomed $cur $left]
+      if {$how eq {same}} {
+        if {![llength $z]} { set e [wviewer::view_drop $e xy] }
+      } else {
+        foreach ax {x y} {
+          if {$ax ni $z} { set e [wviewer::view_drop $e $ax] }
+        }
+      }
+      if {[dict exists $drop $j]} { set e [wviewer::view_drop $e [dict get $drop $j]] }
+      if {[dict exists $e x1] || [dict exists $e y1]} { dict set e left $left }
+    }
+    lappend out $e
+    incr j
+  }
+  return $out
+}
+
+# PURE: which strip on screen each strip of the new model takes its view from.
+# `olds` / `news`: one traces list per strip, as drawn and as about to be drawn.
+# One `{i how}` per strip of `news`: `i` the index in `olds` (-1: none), `how`
+# `same` when the traces are the ones that strip was drawn with, `changed` when
+# they only share some. No strip of `olds` serves two strips, and none listed
+# in `gone` (strips the command removed) serves any.
+#   1. the strip count unchanged: a strip whose traces did not change is itself;
+#   2. else, and for the rest: the first unclaimed strip with the same traces,
+#      in order (an insertion or a removal keeps the order of the others);
+#   3. a strip with traces, still unmatched: the unclaimed strip sharing the
+#      most traces with it (wviewer::trace_key), the first of equals; a strip
+#      sharing none takes nothing.
+proc wviewer::view_map {olds news {gone {}}} {
+  set no [llength $olds]
+  set nn [llength $news]
+  set claimed {}
+  foreach g $gone { if {[string is integer -strict $g]} { dict set claimed $g 1 } }
+  set res [lrepeat $nn {-1 {}}]
+  if {$no == $nn} {
+    for {set j 0} {$j < $nn} {incr j} {
+      if {![dict exists $claimed $j] && [lindex $olds $j] eq [lindex $news $j]} {
+        lset res $j [list $j same]
+        dict set claimed $j 1
+      }
+    }
+  }
+  for {set j 0} {$j < $nn} {incr j} {
+    if {[lindex $res $j 0] >= 0} { continue }
+    for {set i 0} {$i < $no} {incr i} {
+      if {![dict exists $claimed $i] && [lindex $olds $i] eq [lindex $news $j]} {
+        lset res $j [list $i same]
+        dict set claimed $i 1
+        break
+      }
+    }
+  }
+  for {set j 0} {$j < $nn} {incr j} {
+    if {[lindex $res $j 0] >= 0} { continue }
+    set want {}
+    foreach tr [lindex $news $j] { lappend want [wviewer::trace_key $tr] }
+    if {![llength $want]} { continue }
+    set best -1
+    set bestn 0
+    for {set i 0} {$i < $no} {incr i} {
+      if {[dict exists $claimed $i]} { continue }
+      set c 0
+      foreach tr [lindex $olds $i] {
+        if {[wviewer::trace_key $tr] in $want} { incr c }
+      }
+      if {$c > $bestn} { set best $i ; set bestn $c }
+    }
+    if {$best >= 0} {
+      lset res $j [list $best changed]
+      dict set claimed $best 1
+    }
+  }
+  return $res
+}
+
+# PURE: what makes two trace dicts the same trace for wviewer::view_map: the
+# expression, the vector, the database and the X column, not the color or the
+# display name.
+proc wviewer::trace_key {tr} {
+  if {[catch {dict size $tr}]} { return [list $tr] }
+  set k {}
+  foreach f {expr vec rawfile sim_type sweep} { lappend k [wviewer::dget $tr $f {}] }
+  return $k
+}
+
+# PURE: the axes (`x`, `y`) whose live tokens `cur` differ from `left`, what
+# the rect held when that axis was last fitted or set: the axes the engine has
+# moved since. A token either side lacks does not count.
+proc wviewer::view_zoomed {cur left} {
+  if {[catch {dict size $cur}] || [catch {dict size $left}]} { return {} }
+  set z {}
+  foreach {ax toks} {x {x1 x2} y {y1 y2 ypos1 ypos2}} {
+    foreach t $toks {
+      if {![dict exists $cur $t] || ![dict exists $left $t]} { continue }
+      set a [dict get $cur $t]
+      set b [dict get $left $t]
+      if {[string is double -strict $a] && [string is double -strict $b]} {
+        if {$a != $b} { lappend z $ax ; break }
+      } elseif {$a ne $b} { lappend z $ax ; break }
+    }
+  }
+  return $z
+}
+
+# PURE: keep entry `e` less the tokens of `axes` (a string holding `x`, `y` or
+# both): X's two ends, Y's two ends and its digital band.
+proc wviewer::view_drop {e axes} {
+  if {[catch {dict size $e}]} { return {} }
+  if {[string first x $axes] >= 0} { set e [dict remove $e x1 x2] }
+  if {[string first y $axes] >= 0} { set e [dict remove $e y1 y2 ypos1 ypos2] }
+  return $e
+}
+
+# PURE: regenerate's record of the strips it drew, one dict per strip:
+#   x, y, tr  that strip's wviewer::axis_sigs entry;
+#   left      `{tok val ...}` over the six axis tokens: what the rect held when
+#             each axis was last FITTED OR SET. For an axis this rebuild fitted
+#             or took from the model that is what it reads now (`lefts`, read
+#             back off the fresh rects). For an axis it carried (`keep` names
+#             `x1` / `y1`) it is what the entry's own `left` says, so a carried
+#             zoom is still known as one at the next rebuild; an entry with no
+#             `left` leaves the read-back.
+proc wviewer::drawn_records {sigs lefts keep} {
+  set out {}
+  set gi 0
+  foreach s $sigs {
+    if {[catch {dict size $s}]} { set s {} }
+    set l [lindex $lefts $gi]
+    if {[catch {dict size $l}]} { set l {} }
+    set k [lindex $keep $gi]
+    if {![catch {dict size $k}] && [dict exists $k left] &&
+        ![catch {dict size [dict get $k left]}]} {
+      set was [dict get $k left]
+      foreach {probe toks} {x1 {x1 x2} y1 {y1 y2 ypos1 ypos2}} {
+        if {![dict exists $k $probe]} { continue }
+        foreach t $toks {
+          if {[dict exists $was $t]} { dict set l $t [dict get $was $t] }
+        }
+      }
+    }
+    lappend out [dict replace $s left $l]
+    incr gi
+  }
+  return $out
+}
+
+# The six axis tokens of each of the first `n` graph rects of the CURRENT
+# context, one `{tok val ...}` list per rect (`{}` for a token the rect lacks).
+proc wviewer::rect_axes {n} {
+  set out {}
+  for {set gi 0} {$gi < $n} {incr gi} {
+    set l {}
+    foreach t {x1 x2 y1 y2 ypos1 ypos2} {
+      set v {}
+      catch {set v [xschem getprop rect 2 $gi $t]}
+      lappend l $t $v
+    }
+    lappend out $l
+  }
+  return $out
+}
+
+# THE RECORD TAKEN AGAIN, for a command that makes the model say what the rects
+# show WITHOUT a rebuild: wviewer::marker_changed (every marker gesture; its
+# fold freezes every live window into the model) and View > Fit (which fits on
+# the rect and reads the fit back). The other callers of that fold rebuild
+# straight after, and the rebuild writes the record.
+#
+# Without it the record still holds the model's OLDER word about those axes.
+# The next carrying rebuild then takes the fold for a range the screen has not
+# shown yet (view_entries' model-changed rule) and puts the strip back to the
+# folded window, throwing away whatever the user zoomed AFTER the fold: place a
+# marker, zoom in, press Ctrl-G, and the zoom was gone.
+#
+# `only`: the strip indices to take again; {} = every strip. The others keep
+# their record, and with it what THEIR axes were last fitted to.
+# Returns 1 when the record was written; 0 on an unknown token, a refused
+# context switch, or a rect count that is not the model's strip count.
+proc wviewer::drawn_refresh {token {only {}}} {
+  variable windows
+  variable drawn
+  if {![dict exists $windows $token]} { return 0 }
+  if {![wviewer::switch_ctx $token]} { return 0 }
+  set sigs [wviewer::axis_sigs [wviewer::shared_graphs [wviewer::layout_for $token]]]
+  set n -1
+  catch {set n [xschem get graph_rects]}
+  if {![string is integer -strict $n] || $n != [llength $sigs]} { return 0 }
+  set recs [wviewer::drawn_records $sigs [wviewer::rect_axes $n] {}]
+  if {[llength $only] && [info exists drawn($token)] && [llength $drawn($token)] == $n} {
+    set out $drawn($token)
+    foreach i $only {
+      if {[string is integer -strict $i] && $i >= 0 && $i < $n} { lset out $i [lindex $recs $i] }
+    }
+    set recs $out
+  }
+  set drawn($token) $recs
+  return 1
+}
+
+# PURE: `lay`'s strips as regenerate draws them, i.e. with Shared X applied:
+# every strip takes the X range of the FIRST strip of its own subwindow (spec
+# SW13/SW14), never another's. With one subwindow that is strip 0 for all.
+proc wviewer::shared_graphs {lay} {
+  set gs [wviewer::dget $lay graphs {}]
+  if {[wviewer::dget $lay sharedx 0] && [llength $gs] > 1} {
+    foreach r [wviewer::sw_runs $gs] {
+      lassign $r f l
+      set g0 [lindex $gs $f]
+      set sx1 [wviewer::dget $g0 x1 {}]
+      set sx2 [wviewer::dget $g0 x2 {}]
+      for {set i [expr {$f + 1}]} {$i <= $l} {incr i} {
+        set gg [dict replace [lindex $gs $i] x1 $sx1 x2 $sx2]
+        set gs [lreplace $gs $i $i $gg]
+      }
+    }
+  }
+  return $gs
+}
+
+# PURE: per strip of `gs`, `{x <sig> y <sig> tr <traces>}`: what the model says
+# about each axis -- its two range ends and its log flag -- and the strip's
+# traces.
+proc wviewer::axis_sigs {gs} {
+  set out {}
+  foreach G $gs {
+    if {[catch {dict size $G}]} { lappend out {} ; continue }
+    lappend out [dict create \
+      x [list [wviewer::dget $G x1 {}] [wviewer::dget $G x2 {}] [wviewer::dget $G logx 0]] \
+      y [list [wviewer::dget $G y1 {}] [wviewer::dget $G y2 {}] [wviewer::dget $G logy 0]] \
+      tr [wviewer::dget $G traces {}]]
+  }
+  return $out
+}
+
+# PURE: a rect's live tokens `cur` (`{tok val ...}` over live_axis_tokens) less
+# the axes whose range or scale moved from `was` to `now` (two dicts holding
+# axis_sigs' `x` and `y`). `{}` when `cur` is empty or either is missing.
+proc wviewer::axes_same {cur was now} {
+  if {[llength $cur] == 0 || [llength $cur] % 2} { return {} }
+  if {[catch {dict size $was} a] || $a == 0 || [catch {dict size $now} b] || $b == 0} { return {} }
+  set drop {}
+  if {[wviewer::dget $was x {}] ne [wviewer::dget $now x {}]} { lappend drop x1 x2 }
+  if {[wviewer::dget $was y {}] ne [wviewer::dget $now y {}]} { lappend drop y1 y2 ypos1 ypos2 }
+  if {[llength $drop]} { set cur [dict remove $cur {*}$drop] }
+  return $cur
+}
+
+# PURE: the axis groups of live_axis_tokens: X, Y, the Y band a digital strip
+# uses in place of y1/y2, and the tracked dataset.
+proc wviewer::live_axis_groups {} {
+  return {{x1 x2} {y1 y2} {ypos1 ypos2} {dataset}}
+}
+
+# PURE: the rect tokens a rebuild may carry, live_axis_groups flattened.
+proc wviewer::live_axis_tokens {} {
+  return [concat {*}[wviewer::live_axis_groups]]
+}
+
 
 # --- the C -> Tcl marker push hook -------------------------------------------
 
@@ -6739,6 +7290,9 @@ proc wviewer::marker_changed {} {
   # revert an unrelated pan. `skip_markers 1`: the markers are the change being
   # recorded, and capturing them here would put them INSIDE the restore point.
   wviewer::capture_live_graph_state $token 1
+  # that fold froze every live window into the model and no rebuild follows:
+  # say so in the record of what is on screen (wviewer::drawn_refresh)
+  wviewer::drawn_refresh $token
   set gs [dict get [wviewer::layout_for $token] graphs]
   set out {}
   set gi 0
@@ -8399,15 +8953,40 @@ proc wviewer::state_snapshot {token} {
 }
 
 # Put a snapshot back and redraw. One regenerate, like every other model write.
-proc wviewer::state_apply {token snap} {
+#
+# `view` is a wviewer::view_take answer taken before the snapshot went in ({}:
+# none). An axis the snapshot PINS shows the snapshot's window, as it always
+# did. An axis it leaves auto used to be fitted again, which threw away a zoom
+# the snapshot never held; with a view it keeps what the strip shows instead
+# (wviewer::view_entries decides which strip takes which).
+proc wviewer::state_apply {token snap {view {}}} {
   variable target
   lassign $snap gs tgt
   # SW25: the per-subwindow settings are outside undo, like the window's own
   wviewer::set_graphs $token \
     [wviewer::sw_props_carry [dict get [wviewer::layout_for $token] graphs] $gs]
   if {[string is integer -strict $tgt]} { set target($token) $tgt }
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view \
+    [wviewer::pinned_axes [wviewer::shared_graphs [wviewer::layout_for $token]]]]
   return 1
+}
+
+# PURE: `{index axes ...}` (wviewer::view_entries' `drop`) naming, per strip of
+# `gs`, the axes the model pins: both ends of the range given. An axis with
+# either end blank is one regenerate fits.
+proc wviewer::pinned_axes {gs} {
+  set out {}
+  set i 0
+  foreach G $gs {
+    set a {}
+    if {![catch {dict size $G}]} {
+      if {[wviewer::dget $G x1 {}] ne {} && [wviewer::dget $G x2 {}] ne {}} { append a x }
+      if {[wviewer::dget $G y1 {}] ne {} && [wviewer::dget $G y2 {}] ne {}} { append a y }
+    }
+    if {$a ne {}} { lappend out $i $a }
+    incr i
+  }
+  return $out
 }
 
 # Record the CURRENT state as an undo point. Called by a mutating command after
@@ -8472,6 +9051,8 @@ proc wviewer::history_step {dir token} {
     return {}
   }
   if {![wviewer::switch_ctx $token]} { return {} }
+  # the view on screen, for the axes the snapshot leaves auto (state_apply)
+  set view [wviewer::view_take $token]
   # freeze what the mouse wrote into the rects first, so the state pushed on the
   # opposite stack is the one the user is actually looking at
   wviewer::capture_live_graph_state $token
@@ -8486,7 +9067,7 @@ proc wviewer::history_step {dir token} {
   # trace. Losing a highlight across an undo is a cosmetic annoyance; painting
   # the WRONG trace is a lie. Same call `restore` makes, for the same reason.
   wviewer::wave_hilight_clear_set $token
-  wviewer::state_apply $token $snap
+  wviewer::state_apply $token $snap $view
   wviewer::log_action [list wviewer::$dir $token]
   return 1
 }
@@ -9227,8 +9808,8 @@ proc wviewer::plot_sites {token n dest {autook 0}} {
 #
 # `destover` is the CALL's destination, chosen by the SOURCE (user ruling
 # 2026-10-16: the viewer has no destination setting of its own): ASE-L's
-# Direct Plot passes its session's drop-down, the Calculator its W13, the
-# browser's `Plot to` cascade the entry picked. `{}` = a source with no choice
+# Direct Plot passes `append`, always (ase::ui::dp_finish), the Calculator its
+# W13, the browser's `Plot to` cascade the entry picked. `{}` = a source with no choice
 # (the browser's Plot, paste, a typed call), which is `append` -- into the
 # TARGET subwindow, per its plot mode. A typed or replayed line carries the
 # destination with it (row SWR3 of test_wave_subwindows).
@@ -9301,7 +9882,7 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   # matches the model; when the whole batch failed (bad exprs, no raw) the
   # strips created above would otherwise exist only in the model
   if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
-    wviewer::regenerate $token
+    wviewer::regenerate $token [wviewer::live_axes $token]
   }
   return $errs
 }
@@ -9418,7 +9999,18 @@ proc wviewer::grid_shown {token} {
 # lives in the RECT until something folds it back. So it captures -- in the
 # skip_ranges form, which folds the selection and leaves every axis alone -- and
 # still takes no undo point. (set_plot_mode needs neither: it does not
-# regenerate at all.) What it does share with move_strip:
+# regenerate at all.)
+#
+# THE AXES ARE CARRIED TOO (user report 2026-11-16: Ctrl-G zoom-fitted the
+# window). The fold leaves the ranges out of the MODEL, for the two reasons in
+# capture_live_graph_state's header, so the rebuild used to fit every auto axis
+# again and a box zoom, an axis drag or a pan was lost with the grid. The live
+# windows are now read off the rects (wviewer::live_axes) and handed to
+# regenerate, which writes them onto the fresh rects instead of fitting. The
+# model is not written, so nothing is pinned. Band GZ of
+# tests/headless/test_wave_grid.tcl.
+#
+# What it does share with move_strip:
 # refuse-a-no-op-without-logging, verified switch_ctx, ONE regenerate, ONE log
 # line. The line is the RESOLVED state when every subwindow ends up alike, and
 # `{}` (invert each) when they do not.
@@ -9479,6 +10071,9 @@ proc wviewer::grid_apply {scope want token} {
   # issue 0194: BEFORE the `lay` read below — capture writes through set_graphs,
   # so reading the layout first and writing it back after would revert the fold.
   wviewer::capture_live_view_state $token
+  # the grid is the only thing this command changes: every strip keeps the axis
+  # window it is showing, a zoom or pan the engine made included
+  set keep [wviewer::live_axes $token]
   set lay [wviewer::layout_for $token]
   if {[llength $runs] <= 1} {
     dict set lay grid [lindex $plan 1]
@@ -9489,7 +10084,7 @@ proc wviewer::grid_apply {scope want token} {
     wviewer::set_graphs $token $gs
   }
   wviewer::sync_grid_mirror $token
-  wviewer::regenerate $token
+  wviewer::regenerate $token $keep
   set vals [lsort -unique [dict values $plan]]
   set word [expr {[llength $vals] == 1 ? [lindex $vals 0] : {}}]
   set cmd [expr {$scope eq {target} ? {wviewer::grid_toggle_subwin} : {wviewer::grid_toggle}}]
@@ -9723,6 +10318,8 @@ proc wviewer::set_text_size {pt {token {}} {gi {}}} {
   if {[wviewer::sw_font_of $gs $gi $base] == $v} { return $v }
   if {![wviewer::switch_ctx $token]} { return {} }
   wviewer::capture_live_view_state $token
+  # the text size is the only thing this changes: the view is kept, as grid_apply
+  set keep [wviewer::live_axes $token]
   set lay [wviewer::layout_for $token]
   set gs [dict get $lay graphs]
   if {[llength [wviewer::sw_runs $gs]] <= 1} {
@@ -9732,7 +10329,7 @@ proc wviewer::set_text_size {pt {token {}} {gi {}}} {
     wviewer::set_graphs $token [wviewer::sw_prop_put $gs $gi swfont $v $base]
   }
   set textlast($token) $v
-  wviewer::regenerate $token
+  wviewer::regenerate $token $keep
   set f [lindex [wviewer::sw_range $gs $gi] 0]
   wviewer::log_action [list wviewer::set_text_size $v $token $f]
   return $v
@@ -17702,11 +18299,68 @@ proc wviewer::sharedx_toggle {token} {
   # fold, and it owes it BEFORE the `lay` read (capture writes through
   # set_graphs). capture_live_view_state does its own verified switch_ctx.
   wviewer::capture_live_view_state $token
+  set keep [wviewer::live_axes $token]
   set lay [wviewer::layout_for $token]
-  dict set lay sharedx \
-    [expr {[info exists sharedx($token)] && $sharedx($token) ? 1 : 0}]
+  set was [expr {[wviewer::dget $lay sharedx 0] ? 1 : 0}]
+  set now [expr {[info exists sharedx($token)] && $sharedx($token) ? 1 : 0}]
+  dict set lay sharedx $now
   dict set layouts $token $lay
-  wviewer::regenerate $token
+  # the view is kept (user ruling 2026-11-16) except the X windows the toggle
+  # itself is about: wviewer::sharedx_keep
+  wviewer::regenerate $token \
+    [wviewer::sharedx_keep [dict get $lay graphs] $keep $was $now]
+}
+
+# PURE: wviewer::live_axes' answer `keep`, adjusted for a Shared X toggle from
+# `was` to `now` over the strips `gs`. Y, and the first strip of each subwindow,
+# are left as live_axes answered them. The other strips:
+#   turned ON   take the first strip's X window AS SHOWN (a zoom the engine
+#               made on it included); when the first strip carries no X, their
+#               own is dropped and regenerate gives them its stored one;
+#   turned OFF  a strip whose stored X window differs from the first strip's
+#               loses its `x1`/`x2` entry, so regenerate gives it its own back
+#               (its stored window, or a fit when it is auto) -- un-sharing shows
+#               the windows sharing hid; a strip storing the same window as the
+#               first keeps the X it shows.
+# No change of state, or a `keep` that is not one entry per strip: `keep` as is.
+proc wviewer::sharedx_keep {gs keep was now} {
+  if {[llength $keep] != [llength $gs]} { return $keep }
+  if {($was ? 1 : 0) == ($now ? 1 : 0)} { return $keep }
+  foreach r [wviewer::sw_runs $gs] {
+    lassign $r f l
+    set m [lindex $keep $f]
+    for {set i [expr {$f + 1}]} {$i <= $l} {incr i} {
+      set k [lindex $keep $i]
+      if {[llength $k] % 2} { continue }
+      if {$now} {
+        if {[llength $m] % 2 == 0 && [dict exists $m x1] && [dict exists $m x2]} {
+          dict set k x1 [dict get $m x1]
+          dict set k x2 [dict get $m x2]
+        } else {
+          set k [dict remove $k x1 x2]
+        }
+      } elseif {![wviewer::same_xwin [lindex $gs $f] [lindex $gs $i]]} {
+        set k [dict remove $k x1 x2]
+      }
+      set keep [lreplace $keep $i $i $k]
+    }
+  }
+  return $keep
+}
+
+# PURE: 1 when strip models `A` and `B` store the same X window: both ends
+# equal as numbers, or equal as text when either is not a number (`{}` = auto).
+proc wviewer::same_xwin {A B} {
+  foreach t {x1 x2} {
+    set a [wviewer::dget $A $t {}]
+    set b [wviewer::dget $B $t {}]
+    if {[string is double -strict $a] && [string is double -strict $b]} {
+      if {$a != $b} { return 0 }
+    } elseif {$a ne $b} {
+      return 0
+    }
+  }
+  return 1
 }
 
 # --- cursors + readout (item 12, D1/D2/D8/D9) --------------------------------
@@ -18091,17 +18745,22 @@ proc wviewer::fit {token} {
   }
   if {$rawok} {
     set out {}
+    set fitted {}
     set gi 0
     foreach G $gs {
       if {$gi >= $fswf_ && $gi <= $fswl_ && [llength [dict get $G traces]]} {
         foreach t {x1 x2 y1 y2} {
           catch {set G [dict replace $G $t [xschem getprop rect 2 $gi $t]]}
         }
+        lappend fitted $gi
       }
       lappend out $G
       incr gi
     }
     wviewer::set_graphs $token $out
+    # the fitted strips: model and rect now agree, and the fit is what a later
+    # zoom is measured against (wviewer::drawn_refresh)
+    if {[llength $fitted]} { wviewer::drawn_refresh $token $fitted }
   }
   wviewer::in_ctx $token {xschem redraw}
   wviewer::readout_refresh $token
@@ -18187,13 +18846,19 @@ proc wviewer::apply_range {token gi x1 x2 y1 y2} {
   # capture mutates the model and switches the xschem context) and BEFORE the
   # `gs` re-read below, since capture writes through set_graphs.
   wviewer::capture_live_view_state $token
+  # every OTHER strip keeps the view it shows (wviewer::view_take); on this one
+  # an axis given a range here shows that range, the other axis what it showed
+  set view [wviewer::view_take $token]
   set gs [dict get [wviewer::layout_for $token] graphs]
   set G [lindex $gs $gi]
   foreach {k v} [list x1 $x1 x2 $x2 y1 $y1 y2 $y2] {
     if {$v ne {}} { dict set G $k $v }
   }
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
-  wviewer::regenerate $token
+  set mine {}
+  if {$x1 ne {} || $x2 ne {}} { append mine x }
+  if {$y1 ne {} || $y2 ne {}} { append mine y }
+  wviewer::regenerate $token [wviewer::view_keep $token $view [list $gi $mine]]
   return 1
 }
 
@@ -18271,6 +18936,9 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
   # a zoom still dropped the selection on its regenerate. Fold at the top,
   # before the `gs` read (capture writes through set_graphs).
   wviewer::capture_live_view_state $token
+  # the strips of OTHER subwindows keep the view they show (wviewer::view_take);
+  # this subwindow's take the windows written below
+  set view [wviewer::view_take $token]
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   # ⚠ MIRRORED IN C: src/xschem.h GRAPH_AXIS_WHEEL_FACTOR carries this same 0.8,
@@ -18307,6 +18975,7 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
   # runs over the pointed strip's subwindow only (the whole tab with one)
   set gi_ok [expr {[string is integer -strict $gi] && $gi >= 0 && $gi < $n}]
   lassign [wviewer::sw_range $gs [expr {$gi_ok ? $gi : [wviewer::target_index $token]}]] swf swl
+  set mine {}
   for {set t $swf} {$t <= $swl} {incr t} {
     lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
     set G [lindex $gs $t]
@@ -18348,10 +19017,11 @@ proc wviewer::wheel_zoom {token dir gi {px {}} {py {}} {axis {}}} {
       }
     }
     set gs [lreplace $gs $t $t $G]
+    dict set mine $t xy
   }
   if {$changed} {
     wviewer::set_graphs $token $gs
-    wviewer::regenerate $token
+    wviewer::regenerate $token [wviewer::view_keep $token $view $mine]
   }
   return $changed
 }
@@ -18370,6 +19040,7 @@ proc wviewer::pan_x {token dir {gi {}}} {
   variable windows
   if {![dict exists $windows $token]} { return 0 }
   wviewer::capture_live_view_state $token   ;# issue 0194, as wheel_zoom
+  set view [wviewer::view_take $token]      ;# other subwindows, as wheel_zoom
   set gs [dict get [wviewer::layout_for $token] graphs]
   set n [llength $gs]
   set changed 0
@@ -18379,6 +19050,7 @@ proc wviewer::pan_x {token dir {gi {}}} {
     set gi [wviewer::target_index $token]
   }
   lassign [wviewer::sw_range $gs $gi] swf swl
+  set mine {}
   for {set t $swf} {$t <= $swl} {incr t} {
     lassign [wviewer::graph_range $token $t] ax1 ax2 ay1 ay2
     set G [lindex $gs $t]
@@ -18393,10 +19065,11 @@ proc wviewer::pan_x {token dir {gi {}}} {
       set changed 1
     }
     set gs [lreplace $gs $t $t $G]
+    dict set mine $t xy
   }
   if {$changed} {
     wviewer::set_graphs $token $gs
-    wviewer::regenerate $token
+    wviewer::regenerate $token [wviewer::view_keep $token $view $mine]
   }
   return $changed
 }
@@ -19685,6 +20358,10 @@ proc wviewer::axes_ok {token} {
   # entry means auto, and a fold that wrote ranges would pin every OTHER strip's
   # auto axes, quietly turning this dialog into a window-wide freeze.
   wviewer::capture_live_view_state $token
+  # every OTHER strip keeps the view it shows (wviewer::view_take). The strip
+  # the dialog names shows what the dialog says on both axes: a range as typed,
+  # a blank fitted -- so OK on a zoomed strip left at auto fits it.
+  set view [wviewer::view_take $token]
   set gs [dict get [wviewer::layout_for $token] graphs]
   set G [lindex $gs $gi]
   foreach en {x1 x2 y1 y2} v $vals {
@@ -19696,7 +20373,7 @@ proc wviewer::axes_ok {token} {
   wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
   array unset axl ${token},*
   destroy $w
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view [list $gi xy]]
 }
 
 # 1 when the pointer (last snapped position of the viewer ctx) sits inside a
@@ -20341,9 +21018,12 @@ proc wviewer::set_axis_scale {token gi axis log} {
   if {[wviewer::axis_scale_graphs $lay $gi $axis $log] eq $gs} { return 0 }
   # issue 0194, as in axes_ok: every other strip's selection survives
   wviewer::capture_live_view_state $token
+  # the axes whose scale changes are fitted in the new unit (their model range
+  # is blanked, so view_keep leaves them out); every other axis keeps its view
+  set view [wviewer::view_take $token]
   set lay [wviewer::layout_for $token]
   wviewer::set_graphs $token [wviewer::axis_scale_graphs $lay $gi $axis $log]
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   return 1
 }
 
@@ -21491,9 +22171,12 @@ proc wviewer::paste_traces {{token {}}} {
   # AFTER the capture, BEFORE the mutation: one undo point for the whole paste,
   # so `u` takes it all back rather than one trace at a time.
   wviewer::push_undo $token
+  # the view on screen: the strips the paste does not land in keep theirs, the
+  # ones it does keep a zoom or a pan (wviewer::view_entries)
+  set view [wviewer::view_take $token]
   wviewer::sw_splice_apply $token $gsall $swf $swl \
     [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   wviewer::tabbar_refresh $token
   if {[llength $missing]} {
     wviewer::echo "wviewer: [llength $missing] vector(s) not in this window's raw: [join $missing { }]"
@@ -21525,9 +22208,10 @@ proc wviewer::paste_payload {groups sites colors {token {}}} {
   set ext $gs
   while {[llength $ext] < $need} { lappend ext [wviewer::empty_graph] }
   wviewer::push_undo $token
+  set view [wviewer::view_take $token]      ;# as paste_traces
   wviewer::sw_splice_apply $token $gsall $swf $swl \
     [wviewer::paste_traces_in_graphs $ext $groups $sites $colors]
-  wviewer::regenerate $token
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
   return 1
 }
 

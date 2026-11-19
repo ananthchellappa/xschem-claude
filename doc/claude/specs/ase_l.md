@@ -1094,7 +1094,8 @@ They should not influence the input to the simulator."* ADE-L is the floor
 
 - **R-OUT15 — the plot destination drop-down (user 2026-10-15; BUILT 2026-10-15).** A
   read-only drop-down at the right end of the status bar — `Append`, `Replace`, `New SubWin`,
-  `New Win` — used by `~`, the run-end auto-plot and (since 2026-10-16) **Direct Plot**; it
+  `New Win` — used by `~` and the run-end auto-plot, and by nothing else: **Direct Plot does
+  not read it** (user 2026-11-16; it did from 2026-10-16 until then, see its bullet below). It
   lands in the active viewer tab's TARGET subwindow. It is ASE-L's OWN setting: the viewer has
   no destination setting (user ruling 2026-10-16: *"ViVA doesn't"*), and the Calculator's W13
   is a separate one; none moves another. The authority is `doc/claude/specs/waveform_viewer_subwindows.md` (SW7-SW11, SW18,
@@ -1121,13 +1122,21 @@ They should not influence the input to the simulator."* ADE-L is the floor
     is not emptied by a press that plots nothing); under the other three nothing changes.
   - Failed runs, refusals and the op-only notice are unchanged (R-OUT12/R-OUT13), under every
     choice.
-  - **Direct Plot** (2026-10-16): `ase::ui::dp_finish` passes `ase::ui::plot_dest` to
-    `wviewer::plot_signals` for each batch (one per ESC). ⚠ A user-visible change: under the
-    default Replace each Direct Plot batch now empties the target subwindow first, where it
-    used to append through the viewer's own (now retired) setting; pick Append to accumulate.
-    The tooltip reads "Where ~, the run-end plot and Direct Plot go". Band PO16k. Ratified by
-    the user 2026-10-16 (issue 1663, option (a)): *"Direct Plot follows the drop-down; default
-    is Replace."*
+  - **Direct Plot ALWAYS APPENDS** (user 2026-11-16, reversing the 2026-10-16 ruling of issue
+    1663 from option (a) to option (c)): *"The Direct Plot, which is same as Ctrl-4 should
+    always Append to the destination. The destination drop down is only for the ~ plot button
+    and automatic plot of results when simulation finishes."* `ase::ui::dp_finish` passes
+    `append` to `wviewer::plot_signals` for each batch (one per ESC), from Results > Direct
+    Plot and from Ctrl-4 alike, whatever the drop-down says. So nothing is emptied and no
+    subwindow or tab is made; within the target subwindow the viewer's plot mode and its
+    append rule decide (the run's auto strip is left as it is and the picks go beside it).
+    The tooltip reads "Where ~ and the run-end plot go". Band PO16k of
+    `test_ase_plot_outputs` (the hand-off, and the landing through the real
+    `plot_signals` chain under every choice), `test_ase_plot` P4 and `test_wave_modes` MG12
+    (the real Direct Plot under the default Replace).
+    Between 2026-10-16 and 2026-11-16 Direct Plot followed the drop-down (*"Direct Plot
+    follows the drop-down; default is Replace"*), so under the default each batch emptied the
+    target subwindow first.
   - **The rc default** (user 2026-10-16, issue 1663): `ase_plot_dest` (`set_ne` in
     `src/xschem.tcl`) = `append` | `replace` | `newsubwin` | `newwin` (labels and any case
     accepted); empty = Replace; anything else = Replace with ONE CIW warning per bad value

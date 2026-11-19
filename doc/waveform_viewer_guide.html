@@ -1216,12 +1216,14 @@ cleared plots back.</li>
 <li><b>New Tab</b> opens a new tab and plots into it.</li>
 </ul>
 
-<p>ASE-L has its own drop-down for <kbd>~</kbd>, the after-run plot and
-Direct Plot, at the right end of its status bar: <b>Append</b>, <b>Replace</b>,
-<b>New SubWin</b>, <b>New Win</b> (a new tab here). It is saved with the session
-state. Its default is <b>Replace</b>, so each Direct Plot batch clears the
-target subwindow; pick <b>Append</b> to add to it. To start every new session
-on another choice, put it in your rc file: the <code>--script</code> rc you
+<p>ASE-L has its own drop-down for <kbd>~</kbd> and the after-run plot, at the
+right end of its status bar: <b>Append</b>, <b>Replace</b>, <b>New SubWin</b>,
+<b>New Win</b> (a new tab here). It is saved with the session state. Its
+default is <b>Replace</b>, so each <kbd>~</kbd> press and each finished run
+clears the target subwindow first; pick <b>Append</b> to add to it.
+<b>Direct Plot</b> (<kbd>Ctrl-4</kbd> on the schematic) does not use this
+drop-down: its signals are always added to the target subwindow. To start every
+new session on another choice, put it in your rc file: the <code>--script</code> rc you
 launch with (a PDK workarea's <code>cadence_style_rc</code>), else your
 <code>xschemrc</code>. Run from the source tree, xschem does not read
 <code>~/.xschem/xschemrc</code>.</p>

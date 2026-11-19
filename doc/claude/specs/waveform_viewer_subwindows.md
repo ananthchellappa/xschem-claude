@@ -52,7 +52,7 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW15 | Closing a subwindow (Graph > Close SubWin on the target; deleting its last strip) re-tiles the rest; the target moves to the subwindow that took its slot, else the previous one. Closing the ONLY subwindow does nothing and says so (the D9a shape). |
 | SW16 | A trace can be dragged from a strip in one subwindow to a strip in another; Ctrl-V pastes into the target subwindow. |
 | SW17 | Subwindows (membership, order, target) are saved and restored per tab with the ASE session state; undo/redo and tab freeze/thaw carry them. A state saved before this feature loads as one subwindow per tab. |
-| SW18 | ASE-L status bar: a read-only drop-down at its RIGHT end, labels `Append` `Replace` `New SubWin` `New Win`, a session-state key (`plot_dest`), dirtying the session on change, logged as one replayable line, used by `~`, the run-end auto-plot and (since §16) Direct Plot. |
+| SW18 | ASE-L status bar: a read-only drop-down at its RIGHT end, labels `Append` `Replace` `New SubWin` `New Win`, a session-state key (`plot_dest`), dirtying the session on change, logged as one replayable line, used by `~` and the run-end auto-plot. (Direct Plot used it from §16 until 2026-11-16; it now always appends, ase_l.md R-OUT15.) |
 | SW19 | The multi-plot auto-plot strip ORDER (last Outputs row on top, R-OUT14) is unchanged. A separate user ruling is pending on it; nothing here touches it. |
 | SW20 | Every new gesture/command is logged through `wviewer::log_action`/`wviewer::echo` (tabs R6) and is undoable as ONE step where it mutates the model. |
 | SW21 | (user 2026-10-15) The plot mode (single/multi) and the grid are settings of each SUBWINDOW. "The active subwindow" is the TARGET one. A new subwindow takes the target's settings; with one subwindow nothing changes. |
@@ -612,6 +612,10 @@ unless the source said to create a new window or sub-window, etc.."*
   passes `ase::ui::plot_dest`), so with ASE-L's default Replace each Direct Plot
   batch clears the target subwindow; pick Append to accumulate. Tooltip: "Where
   ~, the run-end plot and Direct Plot go". Row PO16k of `test_ase_plot_outputs`.
+  > ⚠ **REVERSED 2026-11-16 (user ruling).** Direct Plot no longer reads the
+  > drop-down: `ase::ui::dp_finish` passes `append`, always, and the tooltip
+  > reads "Where ~ and the run-end plot go". The drop-down governs `~` and the
+  > run-end plot only. `ase_l.md` R-OUT15 has the ruling and the rows.
 - **Calculator.** W13 is the Calculator's own setting, stored in
   `::calc_plot_dest` (an rc variable, `set_ne` in `xschem.tcl`, like
   `calc_font_size`) by `calc::dest_changed` and read back by `calc::w13_saved`

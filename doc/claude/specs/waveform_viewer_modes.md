@@ -1331,6 +1331,15 @@ it. The consequence, which is shipped behaviour for the whole class: a plain
 window **resize** (`regenerate` from `on_configure`) discards an axis zoom the
 model never saw, exactly as it discards an MMB pan or an RMB box zoom.
 
+> ⚠ **CORRECTED 2026-11-16 (user rulings).** That consequence no longer holds for
+> a command that edits the plot: a resize, the grid toggle, the aA text size,
+> the Shared X toggle, Graph > Axes…, adding a trace or a strip, a paste, the
+> subwindow commands, undo and redo carry the live axis windows from the old
+> rects to the new ones (`wviewer::view_take` / `view_keep`,
+> `wviewer::regenerate`'s `keep`) without writing the model. It still holds
+> where new data is loaded. `waveform_viewer.md`, "Keeping the view across a
+> rebuild", has the rules and the list.
+
 It logs exactly **one** line per commit, in the VERB form, from the primitive:
 
 ```

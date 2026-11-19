@@ -61,6 +61,26 @@ Built on top of `f3976c1b`:
   CIW, now reads `Plot destination: Replace (xschemrc: set calc_plot_dest replace).`; a
   rebuild prints nothing; a garbage value is Append with one CIW warning.
 
+## Ruling reversed for Direct Plot (user, 2026-11-16): option (c)
+
+> "the Append/Replace/New Window/New Subwindow drop-down in the bottom-right of ASE-L gives a
+> setting. That needs to be applied only when ASE-L takes the action to plot - after a sim
+> finishes or user presses the ~ plot button. NOT for user plot actions using the Ctrl-4
+> shortcut in the linked schematic!"
+>
+> "The Direct Plot, which is same as Ctrl-4 should always Append to the destination. The
+> destination drop down is only for the ~ plot button and automatic plot of results when
+> simulation finishes."
+
+- `ase::ui::dp_finish` passes `append` to `wviewer::plot_signals`, always: Results > Direct
+  Plot and Ctrl-4 alike, whatever the drop-down says. This is option (c) above.
+- The drop-down, its `ase_plot_dest` rc default and its CIW line are unchanged and govern `~`
+  and the run-end plot only. The drop-down's tooltip no longer names Direct Plot.
+- Spec `doc/claude/specs/ase_l.md` R-OUT15; band PO16k of `test_ase_plot_outputs`,
+  `test_ase_plot` P4, `test_wave_modes` MG12.
+
+The sections above and below describe 2026-10-16 as built and are left as written.
+
 Fences: band RC of `tests/headless/test_ase_persist.tcl` (both arms), rows PD4/PD5 of
 `tests/headless/test_ase_window.tcl` (display), band PL6 of `tests/headless/test_calc_plot.tcl`
 (display). Specs: `doc/claude/specs/ase_l.md` R-OUT15, `doc/claude/specs/calculator.md` R601.

@@ -783,6 +783,10 @@ state, or `{}` plus a CIW error. Initial state from `wviewer_grid_show`
   it does not regenerate at all. The rest of the contract is unchanged:
   refuse-a-no-op-without-logging, verified `switch_ctx`, ONE regenerate, ONE
   log line.
+- **It keeps the view** (user report 2026-11-16: "When I use Ctrl-G in Waveform
+  Viewer to toggle grid, it also causes the window to zoom-fit"). Ctrl-Shift-G
+  and **Graph > Grid** share the body. See "Keeping the view across a rebuild"
+  below.
 - **The menu mirror is PUSHED, not polled.** `sync_grid_mirror` runs on every
   change, so the checkbutton is right however the state changed (key, command,
   restore) — the staleness `plot_mode_menu_post` has to solve with a
@@ -796,6 +800,111 @@ state, or `{}` plus a CIW error. Initial state from `wviewer_grid_show`
 - **Tests:** `tests/headless/test_wave_grid.tcl` `GT*` — 44 nogui / 80 DISPLAY
   including a real Ctrl-G, the sweep-survival seam, the menu checkbutton's type
   and double-invert, the change-only log rule and "not an undo point".
+
+## Keeping the view across a rebuild (2026-11-16)
+
+**A command that edits the plot leaves every strip showing the axis windows it
+showed; only View > Fit, a range typed into Graph > Axes… and new data change
+them.** User report and three rulings, 2026-11-16: Ctrl-G "also causes the
+window to zoom-fit"; then a resize, the aA text size and the Shared X toggle
+"should preserve current view"; then Graph > Axes…, adding a trace and adding a
+strip "should retain zoom".
+
+- **Why they re-fitted.** Every one of these ends in `wviewer::regenerate`,
+  which clears the canvas and re-places every rect from the Tcl model. The
+  engine writes a box zoom, an axis drag, a pan and the `t` key's tracked
+  dataset into the rect only, and the model keeps `{}` (auto) for an axis nobody
+  set through Tcl, so the rebuild fitted it again, on every strip, whichever
+  strip the command was about. (A wheel zoom was never affected: it writes the
+  model.) The first four did this from the commit that introduced each: Shared X
+  `c143cedb1` (2026-07-21), the resize refit `dc2495539` (2026-07-22), Ctrl-G
+  `0d648465e` (2026-07-29), aA `47c687ef4` (2026-10-16). Before `dc2495539` a
+  resize did not rebuild the strips at all.
+- **The carry.** `wviewer::view_take` reads `x1 x2 y1 y2 ypos1 ypos2 dataset`
+  off each live rect BEFORE the command changes the model; `wviewer::view_keep`
+  turns that into `wviewer::regenerate`'s `keep` for the model as it is AFTER;
+  regenerate writes the tokens onto the fresh rects and does not fit an axis an
+  entry names. `wviewer::live_axes` is the two in one, for a rebuild that changes
+  no strip. **The model is not written**: an auto axis stays auto, and a rebuild
+  that carries nothing fits it as before. So the two hazards
+  `capture_live_graph_state`'s header gives for folding ranges into the model do
+  not arise.
+- **Which strip takes which view** (`wviewer::view_map`, pure): by the strips'
+  traces, never by index, so a command may add or remove strips in between. A
+  strip whose traces did not change is itself; a strip that gained or lost a
+  trace is the strip on screen sharing the most traces with it; a strip sharing
+  none (a new strip, the first trace into an empty one, every trace replaced)
+  takes nothing from them, bar the X window below. No strip on screen serves
+  two.
+- **What a strip takes** (`wviewer::view_entries`, pure), X and Y judged
+  separately. "Moved" is an axis the engine moved since it was last fitted or
+  set, i.e. a zoom or a pan (`wviewer::view_zoomed`):
+  - **a strip with neither axis moved takes no axis.** It is rebuilt from the
+    model and the fit exactly as before this section existed, so the carry can
+    only change what happens to a strip somebody zoomed or panned. (A vector
+    recomputed in place is therefore still fitted again on an unzoomed strip.)
+  - an axis whose range or scale the MODEL changed since the rect was drawn is
+    the model's (`wviewer::axis_sigs`), so a range written with `set_graphs`
+    reaches the screen at the next rebuild instead of being hidden;
+  - a strip with the traces it was drawn with, and an axis moved, keeps BOTH
+    axes as shown. Fitting the untouched one again would fit it over the zoomed
+    window and change a view the command had no business with;
+  - a strip whose traces changed keeps only the axes that were moved. The other
+    is fitted again, so a trace added to a strip zoomed in X only gets Y fitted
+    over that X window. A trace added to a strip zoomed on both axes leaves both
+    alone, exactly as after a wheel zoom, and may be out of view until View >
+    Fit.
+- **A fresh strip joins the X window its subwindow shows**
+  (`wviewer::view_align`, pure; user report 2026-11-16, a Direct Plot into a
+  zoomed window: *"the zoom level when the Ctrl-4 sends a plot does not match
+  the prevailing zoom level"*). A strip with nothing on screen to take from was
+  fitted to its whole sweep, so it came up at 0..20u over strips showing
+  1.2u..3.9u. It now takes the X window of the nearest strip of its own
+  subwindow whose X is known after the rebuild: one that carries X, else one
+  whose model stores X (a wheel zoom). Only between strips whose X is the same
+  thing (`wviewer::x_source`: the same databases and X columns behind their
+  traces, and the same X scale), never across subwindows, and not when the
+  fresh strip's own model stores an X window. Its Y is fitted over the window
+  it ends up with. With nothing zoomed there is no known window and the strip
+  is fitted as before. The model is not written.
+- **"Moved since last fitted"** needs a memory: `regenerate` records, per strip
+  (`wviewer::drawn_records`), the model's signature and what each axis read
+  right after it was fitted or set. A carried axis keeps the older record, so a
+  zoom carried through a grid toggle is still known as a zoom when a trace is
+  added afterwards. Two commands make the model say what the rects show with no
+  rebuild, and take the record again themselves (`wviewer::drawn_refresh`):
+  View > Fit, for the strips it fitted, and `wviewer::marker_changed`, whose
+  fold freezes every live window into the model on every marker gesture.
+  Without that a zoom made AFTER a Fit or a marker was put back to the fitted
+  or frozen window by the next rebuild.
+- **The strip a range is set on.** `apply_range` shows the range on the axes it
+  was given, the other axis as it was. The Axes dialog's OK shows what the
+  dialog says on both axes of the strip it names: a typed range, or a fit for a
+  blank, so OK on a zoomed auto strip with nothing typed fits that strip.
+  Changing an axis to log or back fits that axis in the new unit.
+- **Shared X** (`wviewer::sharedx_keep`, pure). Y, and the first strip of each
+  subwindow, keep what they show. Turned ON, the other strips take the first
+  strip's X as shown. Turned OFF, a strip whose stored X window differs from the
+  first strip's gets its own back (that is what un-sharing is for); a strip
+  storing the same window keeps the X it shows.
+- **Undo and redo** (`wviewer::history_step`, `state_apply`). An axis the
+  snapshot pins shows the snapshot's window, as before. An axis it leaves auto
+  keeps what the strip shows instead of being fitted again.
+- **Rebuilds that do not carry**, each for its own reason; row `GZP20` of
+  `tests/headless/test_wave_grid.tcl` holds the list against every call site:
+  - new data (`display_raw`, `attach_raw`, `rawbar_load`): the windows on screen
+    fitted the old data. So after a re-run a wheel zoom (stored in the model)
+    is kept and a box zoom is not. Replace keeps the emptied strip's STORED
+    window by `sw_clear_graphs`' rule, and no more.
+  - the layout replaced or emptied (`restore`, `clear_all`);
+  - another tab's strips (`select_tab`, `new_tab`, `close_tab`): the tab stash
+    holds each tab's own view;
+  - the strip and trace moves, the split and the deletions freeze the view into
+    the model first (`capture_live_graph_state` with ranges), so their plain
+    rebuild shows it. That turns auto axes into stored ones, as it always did.
+- **Tests:** `tests/headless/test_wave_grid.tcl` rows `GZP*` (counted arm),
+  `GZ*` and `GV*` (display arm, including a real Ctrl-G, a real window resize
+  and the real Axes dialog).
 
 ## Graph grid density (viewer plan item 2, 2026-07-29)
 

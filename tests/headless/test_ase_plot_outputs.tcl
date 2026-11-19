@@ -1168,13 +1168,17 @@ group PO16 {
 }
 
 # =============================================================================
-# PO16k -- DIRECT PLOT FOLLOWS THE SESSION'S DESTINATION TOO (R-OUT15)
+# PO16k -- DIRECT PLOT ALWAYS APPENDS; THE DROP-DOWN IS NOT ITS BUSINESS (R-OUT15)
 # =============================================================================
-## User ruling 2026-10-16: the SOURCE owns the destination and the viewer has
-## none. ASE-L's drop-down therefore governs Direct Plot as well as `~` and the
-## run-end plot: ase::ui::dp_finish hands the session's code to
-## wviewer::plot_signals per call. The viewer doors are stood in for (open,
-## attach, plot_signals records what it was handed); the claim is the hand-off.
+## User ruling 2026-11-16, reversing issue 1663's of 2026-10-16: "The Direct
+## Plot, which is same as Ctrl-4 should always Append to the destination. The
+## destination drop down is only for the ~ plot button and automatic plot of
+## results when simulation finishes."
+## Two halves. The hand-off: ase::ui::dp_finish hands wviewer::plot_signals
+## `append` whatever the session's drop-down says (the viewer doors stood in
+## for; plot_signals records what it was handed). The landing: the real
+## wviewer::plot_signals chain on the model, under every choice of the
+## drop-down -- nothing emptied, no subwindow and no tab made.
 group PO16k {
     set key [po_session po16k tbpk {{name A expr v(sq) save 1 plot 1}} 1]
     set ::po16k_calls {}
@@ -1196,10 +1200,46 @@ group PO16k {
         rename ::wviewer::$p {}
         rename ::po16k_orig_$p ::wviewer::$p
     }
-    check "PO16k Direct Plot hands plot_signals the session's destination, the default Replace included, once per batch" \
-        $got {{replace replace 1} {append append 1} {newsubwin newsubwin 1} {newtab newtab 1} {replace replace 1}}
-    check "PO16k ...and the drop-down's tooltip names Direct Plot" \
-        [string match {*Direct Plot*} [ase::ui::lbl_plot_dest_tip]] 1
+    check "PO16k Direct Plot hands plot_signals `append` under every choice of the drop-down, once per batch" \
+        $got {{replace append 1} {append append 1} {newsubwin append 1} {newtab append 1} {replace append 1}}
+    check "PO16k ...and the drop-down's tooltip names what it governs: ~ and the run-end plot" \
+        [ase::ui::lbl_plot_dest_tip] {Where ~ and the run-end plot go}
+    catch {ase::session_close $key}
+
+    ## THE LANDING. `~` plots the run's row first (under the default Replace),
+    ## then one Direct Plot batch per choice of the drop-down: each is ADDED to
+    ## what is there.
+    set key [po_session po16k2 tbpk2 {{name A expr v(sq) save 1 plot 1}} 1]
+    po14_stub
+    po16_tabstub
+    proc ::wviewer::attach_raw {args} { return 0 }
+    set ::wviewer_plot_mode single
+    pcall ase::ui::plot_outputs $key
+    check "PO16k fixture: ~ put the run's row in one strip, and the drop-down reads the default Replace" \
+        [list [po14_strips $key] [ase::ui::plot_dest $key]] {{{1 v(sq)}} replace}
+    set got {}
+    foreach {d sig} {{} v(lp) append v(ramp) newsubwin v(a) newtab v(b) replace v(c)} {
+        if {$d ne {}} { pcall ase::ui::set_plot_dest $key $d }
+        pcall ase::ui::dp_finish $key [list $sig]
+        lappend got [list [ase::ui::plot_dest $key] [po14_strips $key] [po16_tags $key] \
+                          [llength $::po16_oldtabs]]
+    }
+    ## (the viewer's append rule for a hand plot: the run's auto strip is left
+    ## as it is, the first pick opens a strip beside it and the later ones join
+    ## that strip; one subwindow and one tab throughout)
+    check "PO16k each Direct Plot batch is ADDED beside the run's plot, whatever the drop-down says" \
+        $got [list \
+          {replace {{1 v(sq)} {0 v(lp)}} {- -} 0} \
+          {append {{1 v(sq)} {0 {v(lp) v(ramp)}}} {- -} 0} \
+          {newsubwin {{1 v(sq)} {0 {v(lp) v(ramp) v(a)}}} {- -} 0} \
+          {newtab {{1 v(sq)} {0 {v(lp) v(ramp) v(a) v(b)}}} {- -} 0} \
+          {replace {{1 v(sq)} {0 {v(lp) v(ramp) v(a) v(b) v(c)}}} {- -} 0}]
+    ## ...and the drop-down still governs `~`: under Replace it empties first
+    pcall ase::ui::plot_outputs $key
+    check "PO16k control: ~ under the same Replace DOES empty the subwindow first" \
+        [po14_strips $key] {{1 v(sq)}}
+    po16_tabunstub
+    po14_unstub $key
     catch {ase::session_close $key}
 }
 

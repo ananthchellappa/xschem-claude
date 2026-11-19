@@ -357,6 +357,451 @@ foreach p {grid_toggle grid_toggle_subwin grid_apply sharedx_toggle} {
     [regexp -all {wviewer::push_undo} [wvproc_body $wsrc wviewer::$p]] 0
 }
 
+# GZP* — the view a rebuild carries across itself (user report 2026-11-16:
+# Ctrl-G also zoom-fitted the window; then the user's ruling the same day that a
+# resize, the aA text size and the Shared X toggle keep the view too). The
+# behaviour is band GZ below, display arm only; these are the parts a counted
+# arm can see.
+check "GZP1 regenerate takes the carried view as its second argument" \
+  [info args wviewer::regenerate] {token keep}
+check "GZP1 ...defaulting to none, so every other call site rebuilds as before" \
+  [pcall {info default wviewer::regenerate keep gzd; set gzd}] {}
+check "GZP2 the carried tokens: both axis windows, the digital Y band, the dataset" \
+  [pcall {wviewer::live_axis_tokens}] {x1 x2 y1 y2 ypos1 ypos2 dataset}
+check "GZP3 live_axes on an unknown window answers nothing (no throw)" \
+  [pcall {wviewer::live_axes no_such_viewer}] {}
+# ORDER: the rects must be read while they are still the ones on screen, and
+# the answer handed to the one regenerate.
+foreach {gzp_p gzp_pat} {
+  grid_apply      {wviewer::regenerate $token $keep}
+  set_text_size   {wviewer::regenerate $token $keep}
+  configure_apply {wviewer::regenerate $token $keep}
+  sharedx_toggle  {[wviewer::sharedx_keep [dict get $lay graphs] $keep $was $now]}
+} {
+  set gzp_b [wvproc_body $wsrc wviewer::$gzp_p]
+  set gzp_r [string first {set keep [wviewer::live_axes $token]} $gzp_b]
+  set gzp_g [string first $gzp_pat $gzp_b]
+  check_true "GZP4 $gzp_p reads the live axes, then regenerates with them" \
+    [expr {$gzp_r >= 0 && $gzp_g > $gzp_r}]
+}
+
+# wviewer::sharedx_keep, PURE: what a Shared X toggle does to the carried view.
+# a/b: two strips' live entries with DIFFERENT X and Y, so no leg can pass by
+# two entries happening to be equal.
+set gzk_a  {x1 0.2 x2 0.4 y1 1 y2 6 ypos1 0 ypos2 2 dataset -1}
+set gzk_b  {x1 0.3 x2 0.5 y1 7.5 y2 8.5 ypos1 0 ypos2 2 dataset 0}
+set gzk_bm {x1 0.2 x2 0.4 y1 7.5 y2 8.5 ypos1 0 ypos2 2 dataset 0}
+set gzk_by {y1 7.5 y2 8.5 ypos1 0 ypos2 2 dataset 0}
+set gzg_auto [list [wviewer::empty_graph] [wviewer::empty_graph]]
+set gzg_own  [list [dict replace [wviewer::empty_graph] x1 0.0 x2 1e-3] \
+                   [dict replace [wviewer::empty_graph] x1 0.0 x2 1e-6]]
+set gzg_same [list [dict replace [wviewer::empty_graph] x1 0 x2 1e-3] \
+                   [dict replace [wviewer::empty_graph] x1 0.0 x2 0.001]]
+set gzk_ab [list $gzk_a $gzk_b]
+check "GZP6 no change of state: the carried view as it is" \
+  [list [pcall {wviewer::sharedx_keep $gzg_own $gzk_ab 1 1}] \
+        [pcall {wviewer::sharedx_keep $gzg_own $gzk_ab 0 0}]] [list $gzk_ab $gzk_ab]
+check "GZP7 turned ON: the other strip takes the first strip's X as shown, Y its own" \
+  [list [pcall {wviewer::sharedx_keep $gzg_own $gzk_ab 0 1}] \
+        [pcall {wviewer::sharedx_keep $gzg_auto $gzk_ab 0 1}]] \
+  [list [list $gzk_a $gzk_bm] [list $gzk_a $gzk_bm]]
+check "GZP8 turned OFF, no window of its own (both auto): keeps the X it shows" \
+  [pcall {wviewer::sharedx_keep $gzg_auto $gzk_ab 1 0}] $gzk_ab
+check "GZP8 turned OFF, the same window spelled differently: keeps it too" \
+  [pcall {wviewer::sharedx_keep $gzg_same $gzk_ab 1 0}] $gzk_ab
+check "GZP9 turned OFF, a stored window of its own: X goes back to the model, Y stays" \
+  [pcall {wviewer::sharedx_keep $gzg_own $gzk_ab 1 0}] [list $gzk_a $gzk_by]
+check "GZP9 ...and so does a strip that is auto beside a pinned first strip" \
+  [pcall {wviewer::sharedx_keep [list [lindex $gzg_own 0] [wviewer::empty_graph]] $gzk_ab 1 0}] \
+  [list $gzk_a $gzk_by]
+check "GZP10 turned ON with nothing read off the first strip: X is left to the model" \
+  [pcall {wviewer::sharedx_keep $gzg_auto [list {} $gzk_b] 0 1}] [list {} $gzk_by]
+# two subwindows: each follows ITS OWN first strip (spec SW13/SW14)
+set gzk_c {x1 5 x2 6 y1 0 y2 1 ypos1 0 ypos2 2 dataset -1}
+set gzk_d {x1 7 x2 8 y1 2 y2 3 ypos1 0 ypos2 2 dataset -1}
+set gzk_dm {x1 5 x2 6 y1 2 y2 3 ypos1 0 ypos2 2 dataset -1}
+set gzg_sw {}
+foreach gzp_t {1 1 2 2} { lappend gzg_sw [dict replace [wviewer::empty_graph] sw $gzp_t] }
+check "GZP11 the fixture really is two subwindows of two strips" \
+  [pcall {wviewer::sw_runs $gzg_sw}] {{0 1} {2 3}}
+check "GZP11 turned ON: each subwindow's strips follow their own first strip" \
+  [pcall {wviewer::sharedx_keep $gzg_sw [list $gzk_a $gzk_b $gzk_c $gzk_d] 0 1}] \
+  [list $gzk_a $gzk_bm $gzk_c $gzk_dm]
+check "GZP12 a carried view that is not one entry per strip is handed back as is" \
+  [pcall {wviewer::sharedx_keep $gzg_own [list $gzk_a] 0 1}] [list $gzk_a]
+check "GZP10 turned ON, nothing carried for the other strip: it still takes the first strip's X" \
+  [pcall {wviewer::sharedx_keep $gzg_auto [list $gzk_a {}] 0 1}] \
+  [list $gzk_a {x1 0.2 x2 0.4}]
+# wviewer::axes_same / axis_sigs / shared_graphs, PURE: an axis is carried only
+# while the model still says about its range and scale what the last rebuild
+# drew. The strip's traces are view_entries' business (GZP17), not axes_same's.
+set gzs_g  [dict replace [wviewer::empty_graph] traces {{vec a}} x1 0 x2 1]
+set gzs_0  [lindex [wviewer::axis_sigs [list $gzs_g]] 0]
+set gzs_x  [lindex [wviewer::axis_sigs [list [dict replace $gzs_g x2 2]]] 0]
+set gzs_y  [lindex [wviewer::axis_sigs [list [dict replace $gzs_g y1 -1 y2 1]]] 0]
+set gzs_lx [lindex [wviewer::axis_sigs [list [dict replace $gzs_g logx 1]]] 0]
+set gzs_tr [lindex [wviewer::axis_sigs [list [dict replace $gzs_g traces {{vec a} {vec b}}]]] 0]
+check "GZP14 the model unchanged: every token is carried" \
+  [pcall {wviewer::axes_same $gzk_b $gzs_0 $gzs_0}] $gzk_b
+check "GZP14 the model's X range changed: X is left to the model, the rest carried" \
+  [pcall {wviewer::axes_same $gzk_b $gzs_0 $gzs_x}] $gzk_by
+check "GZP14 ...and so for a change of X scale" \
+  [pcall {wviewer::axes_same $gzk_b $gzs_0 $gzs_lx}] $gzk_by
+check "GZP14 the model's Y range changed: Y and its digital band go, X and the dataset stay" \
+  [pcall {wviewer::axes_same $gzk_b $gzs_0 $gzs_y}] {x1 0.3 x2 0.5 dataset 0}
+check "GZP14 the strip's traces changed and nothing else: axes_same drops nothing" \
+  [pcall {wviewer::axes_same $gzk_b $gzs_0 $gzs_tr}] $gzk_b
+check "GZP14 ...the traces are in the signature all the same, as the strip's identity" \
+  [list [dict get $gzs_0 tr] [dict get $gzs_tr tr]] {{{vec a}} {{vec a} {vec b}}}
+check "GZP14 no record of the last rebuild, or nothing read off the rect: nothing carried" \
+  [list [pcall {wviewer::axes_same $gzk_b {} $gzs_0}] [pcall {wviewer::axes_same {} $gzs_0 $gzs_0}]] {{} {}}
+check_true "GZP14 the five signatures really differ where the legs say they do" \
+  [expr {[dict get $gzs_0 x] ne [dict get $gzs_x x] && [dict get $gzs_0 y] eq [dict get $gzs_x y]
+         && [dict get $gzs_0 y] ne [dict get $gzs_y y] && [dict get $gzs_0 x] eq [dict get $gzs_y x]
+         && [dict get $gzs_0 x] ne [dict get $gzs_lx x] && [dict get $gzs_0 y] eq [dict get $gzs_lx y]
+         && [dict get $gzs_0 x] eq [dict get $gzs_tr x] && [dict get $gzs_0 y] eq [dict get $gzs_tr y]
+         && [dict get $gzs_0 tr] ne [dict get $gzs_tr tr]}]
+proc gzs_xs {gs} { lmap G $gs {list [wviewer::dget $G x1 {}] [wviewer::dget $G x2 {}]} }
+check "GZP15 shared_graphs: Shared X off draws every strip's own X" \
+  [gzs_xs [pcall {wviewer::shared_graphs [dict create sharedx 0 graphs $gzg_own]}]] \
+  {{0.0 1e-3} {0.0 1e-6}}
+check "GZP15 ...on, the other strip is drawn with the first strip's" \
+  [gzs_xs [pcall {wviewer::shared_graphs [dict create sharedx 1 graphs $gzg_own]}]] \
+  {{0.0 1e-3} {0.0 1e-3}}
+set gzg_sw4 {}
+foreach {gzp_t gzp_x} {1 1 1 2 2 3 2 4} {
+  lappend gzg_sw4 [dict replace [wviewer::empty_graph] sw $gzp_t x1 0 x2 $gzp_x]
+}
+check "GZP15 ...and within each subwindow only" \
+  [gzs_xs [pcall {wviewer::shared_graphs [dict create sharedx 1 graphs $gzg_sw4]}]] \
+  {{0 1} {0 1} {0 3} {0 3}}
+check "GZP13 same_xwin: numbers compare as numbers, auto only equals auto" \
+  [list [pcall {wviewer::same_xwin {x1 0 x2 1e-3} {x1 0.0 x2 0.001}}] \
+        [pcall {wviewer::same_xwin {x1 {} x2 {}} {x1 {} x2 {}}}] \
+        [pcall {wviewer::same_xwin {x1 {} x2 {}} {x1 0 x2 1}}] \
+        [pcall {wviewer::same_xwin {x1 0 x2 1} {x1 0 x2 2}}]] {1 1 0 0}
+
+# GZP16.. — the view carried across a rebuild that CHANGES the strips (user
+# ruling 2026-11-16: Graph > Axes..., adding a trace and adding a strip keep the
+# view too). The behaviour is band GV below, display arm only.
+#
+# wviewer::view_map, PURE: which strip on screen each new strip takes from.
+# Traces are spelled as the model spells them; A..D are four different ones.
+set gvm_A {expr va name {} vec va color 4}
+set gvm_B {expr vb name {} vec vb color 5}
+set gvm_C {expr vc name {} vec vc color 6}
+set gvm_D {expr vd name {} vec vd color 7}
+set gvm_o [list [list $gvm_A $gvm_B] [list $gvm_C]]
+check "GZP16 nothing changed: every strip is itself" \
+  [pcall {wviewer::view_map $gvm_o $gvm_o}] {{0 same} {1 same}}
+check "GZP16 a strip appended: the old ones are themselves, the new one takes nothing" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_A $gvm_B] [list $gvm_C] {}]}] \
+  {{0 same} {1 same} {-1 {}}}
+check "GZP16 a strip inserted in the middle: the ones after it are found by their traces" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_A $gvm_B] {} [list $gvm_C]]}] \
+  {{0 same} {-1 {}} {1 same}}
+check "GZP16 a strip removed: the survivor is found, not taken by position" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_C]]}] {{1 same}}
+check "GZP16 a trace added: that strip is 'changed', the other 'same'" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_A $gvm_B $gvm_D] [list $gvm_C]]}] \
+  {{0 changed} {1 same}}
+check "GZP16 a trace removed: 'changed' as well" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_A] [list $gvm_C]]}] \
+  {{0 changed} {1 same}}
+check "GZP16 the first trace into an empty strip: nothing to take" \
+  [pcall {wviewer::view_map [list [list $gvm_A] {}] [list [list $gvm_A] [list $gvm_D]]}] \
+  {{0 same} {-1 {}}}
+check "GZP16 every trace replaced: nothing in common, nothing taken" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_D] [list $gvm_C]]}] \
+  {{-1 {}} {1 same}}
+# TWO STRIPS WITH THE SAME TRACES (one signal looked at in two places): a trace
+# added to the FIRST must not hand the first strip's view to the second.
+set gvm_dup [list [list $gvm_A] [list $gvm_A]]
+check "GZP16 twin strips, a trace added to the first: each stays itself" \
+  [pcall {wviewer::view_map $gvm_dup [list [list $gvm_A $gvm_D] [list $gvm_A]]}] \
+  {{0 changed} {1 same}}
+check "GZP16 twin strips, one inserted between them: order decides" \
+  [pcall {wviewer::view_map $gvm_dup [list [list $gvm_A] {} [list $gvm_A]]}] \
+  {{0 same} {-1 {}} {1 same}}
+check "GZP16 twin strips, the first removed and SAID so: the survivor is the second" \
+  [list [pcall {wviewer::view_map $gvm_dup [list [list $gvm_A]] {0}}] \
+        [pcall {wviewer::view_map $gvm_dup [list [list $gvm_A]]}]] {{{1 same}} {{0 same}}}
+check "GZP16 no strip on screen serves two: a second strip of the same trace takes nothing" \
+  [pcall {wviewer::view_map [list [list $gvm_A $gvm_B]] [list [list $gvm_A $gvm_B] [list $gvm_A]]}] \
+  {{0 same} {-1 {}}}
+check "GZP16 of two candidates the one sharing more traces is taken" \
+  [pcall {wviewer::view_map [list [list $gvm_A] [list $gvm_A $gvm_B $gvm_C]] \
+            [list [list $gvm_A $gvm_B $gvm_D]]}] {{1 changed}}
+check "GZP16 a removed strip serves nobody, even one sharing its traces" \
+  [pcall {wviewer::view_map $gvm_o [list [list $gvm_A $gvm_D]] {0}}] {{-1 {}}}
+check "GZP16 no strips either side" \
+  [list [pcall {wviewer::view_map {} {}}] [pcall {wviewer::view_map $gvm_o {}}] \
+        [pcall {wviewer::view_map {} [list [list $gvm_A]]}]] {{} {} {{-1 {}}}}
+check "GZP16 trace_key: the color and the display name do not make another trace" \
+  [list [expr {[wviewer::trace_key $gvm_A] eq [wviewer::trace_key [dict replace $gvm_A color 9 name zz]]}] \
+        [expr {[wviewer::trace_key $gvm_A] eq [wviewer::trace_key $gvm_B]}] \
+        [expr {[wviewer::trace_key $gvm_A] eq [wviewer::trace_key [dict replace $gvm_A rawfile /x.raw]]}] \
+        [expr {[wviewer::trace_key $gvm_A] eq [wviewer::trace_key [dict replace $gvm_A sweep vx]]}]] \
+  {1 0 0 0}
+check "GZP16 ...so a recolored trace is still the strip's own ('changed', not lost)" \
+  [pcall {wviewer::view_map [list [list $gvm_A]] [list [list [dict replace $gvm_A color 9]]]}] \
+  {{0 changed}}
+
+# wviewer::view_zoomed / view_drop, PURE
+set gvz_left {x1 0 x2 1 y1 1 y2 6 ypos1 0 ypos2 2}
+check "GZP17 view_zoomed: nothing moved since the fit" \
+  [pcall {wviewer::view_zoomed {x1 0.0 x2 1.0 y1 1 y2 6.0 ypos1 0 ypos2 2 dataset -1} $gvz_left}] {}
+check "GZP17 ...X moved, Y moved, both, and the digital band counts as Y" \
+  [list [pcall {wviewer::view_zoomed {x1 0.2 x2 1 y1 1 y2 6 ypos1 0 ypos2 2} $gvz_left}] \
+        [pcall {wviewer::view_zoomed {x1 0 x2 1 y1 1 y2 5 ypos1 0 ypos2 2} $gvz_left}] \
+        [pcall {wviewer::view_zoomed {x1 0 x2 0.4 y1 2 y2 6 ypos1 0 ypos2 2} $gvz_left}] \
+        [pcall {wviewer::view_zoomed {x1 0 x2 1 y1 1 y2 6 ypos1 0.5 ypos2 2} $gvz_left}]] \
+  {x y {x y} y}
+check "GZP17 ...no record of the fit, or nothing read: not a zoom" \
+  [list [pcall {wviewer::view_zoomed {x1 0.2 x2 0.4 y1 1 y2 6} {}}] \
+        [pcall {wviewer::view_zoomed {} $gvz_left}] \
+        [pcall {wviewer::view_zoomed {x1 0.2 x2} $gvz_left}]] {{} {} {}}
+check "GZP17 view_drop: X's two ends, Y's two ends with its band, both, neither" \
+  [list [pcall {wviewer::view_drop $gzk_b x}] [pcall {wviewer::view_drop $gzk_b y}] \
+        [pcall {wviewer::view_drop $gzk_b xy}] [pcall {wviewer::view_drop $gzk_b {}}]] \
+  [list $gzk_by {x1 0.3 x2 0.5 dataset 0} {dataset 0} $gzk_b]
+
+# wviewer::view_entries, PURE: the keep list out of a view. One strip on screen
+# with traces A B, auto on both axes, fitted to gvz_left; `cur` is what the
+# rect holds now.
+proc gve_view {cur {left {}} {tr {}}} {
+  global gvm_A gvm_B gvz_left
+  if {$left eq {}} { set left $gvz_left }
+  if {$tr eq {}} { set tr [list $gvm_A $gvm_B] }
+  return [list [dict create x {{} {} 0} y {{} {} 0} tr $tr left $left cur $cur]]
+}
+proc gve_sig {tr {x {{} {} 0}} {y {{} {} 0}}} { return [list [dict create x $x y $y tr $tr]] }
+set gve_fit  {x1 0 x2 1 y1 1 y2 6 ypos1 0 ypos2 2 dataset -1}
+set gve_zx   {x1 0.2 x2 0.4 y1 1 y2 6 ypos1 0 ypos2 2 dataset -1}
+set gve_zxy  {x1 0.2 x2 0.4 y1 2 y2 3 ypos1 0 ypos2 2 dataset -1}
+set gve_same [list $gvm_A $gvm_B]
+set gve_more [list $gvm_A $gvm_B $gvm_D]
+check "GZP18 the strip as it was, NOTHING moved: no axis is carried (the rebuild it always got)" \
+  [pcall {wviewer::view_entries [gve_view $gve_fit] [gve_sig $gve_same]}] {{dataset -1}}
+check "GZP18 the strip as it was, zoomed: every token carried, with what it was fitted to" \
+  [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same]}] \
+  [list [dict replace $gve_zxy left $gvz_left]]
+check "GZP18 ...zoomed in X only: the Y nobody moved is carried too (not fitted over the zoom)" \
+  [pcall {wviewer::view_entries [gve_view $gve_zx] [gve_sig $gve_same]}] \
+  [list [dict replace $gve_zx left $gvz_left]]
+check "GZP18 a trace added to an UNZOOMED strip: both axes are fitted again, the dataset stays" \
+  [pcall {wviewer::view_entries [gve_view $gve_fit] [gve_sig $gve_more]}] {{dataset -1}}
+check "GZP18 a trace added, X zoomed and Y untouched: X is kept, Y fitted again" \
+  [pcall {wviewer::view_entries [gve_view $gve_zx] [gve_sig $gve_more]}] \
+  [list [dict create x1 0.2 x2 0.4 dataset -1 left $gvz_left]]
+check "GZP18 a trace added, both axes zoomed: both kept" \
+  [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_more]}] \
+  [list [dict replace $gve_zxy left $gvz_left]]
+check "GZP18 the model gave X a range since: X is the model's, on a 'same' strip too" \
+  [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same {0 5 0}]}] \
+  [list [dict create y1 2 y2 3 ypos1 0 ypos2 2 dataset -1 left $gvz_left]]
+check "GZP18 `drop` takes the named axes of the named strip out, whatever the rules say" \
+  [list [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same] {0 x}}] \
+        [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same] {0 xy}}] \
+        [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same] {1 xy}}]] \
+  [list [list [dict create y1 2 y2 3 ypos1 0 ypos2 2 dataset -1 left $gvz_left]] \
+        {{dataset -1}} \
+        [list [dict replace $gve_zxy left $gvz_left]]]
+check "GZP18 `gone`: a removed strip's view goes to nobody" \
+  [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig $gve_same] {} {0}}] {{}}
+check "GZP18 a strip sharing no trace with the screen, and a rect that answered nothing: nothing" \
+  [list [pcall {wviewer::view_entries [gve_view $gve_zxy] [gve_sig [list $gvm_C]]}] \
+        [pcall {wviewer::view_entries [gve_view {}] [gve_sig $gve_same]}]] {{{}} {{}}}
+check "GZP18 one entry per strip of the NEW model, however many were on screen" \
+  [lmap gve_e [pcall {wviewer::view_entries [gve_view $gve_zxy] \
+     [concat [gve_sig {}] [gve_sig $gve_same] [gve_sig {}]]}] {dict exists $gve_e x1}] {0 1 0}
+check "GZP18 an empty view is the plain rebuild" \
+  [list [pcall {wviewer::view_entries {} [gve_sig $gve_same]}] \
+        [pcall {wviewer::view_keep no_such_viewer [gve_view $gve_zxy]}]] {{{}} {}}
+
+# wviewer::drawn_records, PURE: what regenerate remembers of each axis.
+set gvd_sig  [gve_sig $gve_same]
+set gvd_read {x1 0.2 x2 0.4 y1 1.1 y2 3.4 ypos1 0 ypos2 2}
+check "GZP19 nothing carried: each axis is remembered as it reads off the fresh rect" \
+  [dict get [lindex [pcall {wviewer::drawn_records $gvd_sig [list $gvd_read] {}}] 0] left] $gvd_read
+check "GZP19 X carried: X is remembered as it was last FITTED, so the zoom is still one" \
+  [dict get [lindex [pcall {wviewer::drawn_records $gvd_sig [list $gvd_read] \
+     [list [dict create x1 0.2 x2 0.4 dataset -1 left $gvz_left]]}] 0] left] \
+  {x1 0 x2 1 y1 1.1 y2 3.4 ypos1 0 ypos2 2}
+check "GZP19 both carried: both as last fitted; an entry with no `left`: as read" \
+  [list [dict get [lindex [pcall {wviewer::drawn_records $gvd_sig [list $gvd_read] \
+           [list [dict replace $gve_zxy left $gvz_left]]}] 0] left] \
+        [dict get [lindex [pcall {wviewer::drawn_records $gvd_sig [list $gvd_read] \
+           [list $gve_zxy]}] 0] left]] [list $gvz_left $gvd_read]
+check "GZP19 the record holds the strip's signature too" \
+  [dict remove [lindex [pcall {wviewer::drawn_records $gvd_sig [list $gvd_read] {}}] 0] left] \
+  [lindex $gvd_sig 0]
+check "GZP19 pinned_axes: an axis is pinned only with BOTH ends given" \
+  [pcall {wviewer::pinned_axes [list \
+     [dict replace [wviewer::empty_graph] x1 0 x2 1] \
+     [wviewer::empty_graph] \
+     [dict replace [wviewer::empty_graph] x1 0 y1 1 y2 2] \
+     [dict replace [wviewer::empty_graph] x1 0 x2 1 y1 1 y2 2]]}] {0 x 2 y 3 xy}
+
+# THE CALL SITES. Every proc that rebuilds the strips either carries the view or
+# is named here with the reason it does not. The population is gx_must + gx_pre
+# + gx_exempt, which GX4 holds equal to every call site, so a new rebuild
+# arrives as a red naming it.
+#   new data (the windows fitted the old data): display_raw attach_raw rawbar_load
+#   the layout replaced or emptied: restore clear_all
+#   another tab's strips (the tab stash holds each tab's view): select_tab new_tab close_tab
+#   gx_pre: the view is frozen into the MODEL first (GX3), so the plain rebuild shows it
+set gvc_plain [concat {display_raw attach_raw rawbar_load restore clear_all
+                       select_tab new_tab close_tab} $gx_pre]
+set gvc_bad {}
+set gvc_carry {}
+foreach p [concat $gx_must $gx_pre $gx_exempt] {
+  set gvc_plainn 0
+  set gvc_keepn 0
+  foreach {gvc_m gvc_rest} [regexp -all -inline -line {wviewer::regenerate \$token(.*)$} \
+                              [wvproc_body $wsrc wviewer::$p]] {
+    if {[regexp {^\s*(;.*)?$} $gvc_rest]} { incr gvc_plainn } else { incr gvc_keepn }
+  }
+  if {$p in $gvc_plain} {
+    if {$gvc_keepn != 0 || $gvc_plainn == 0} { lappend gvc_bad $p }
+  } else {
+    if {$gvc_plainn != 0 || $gvc_keepn == 0} { lappend gvc_bad $p }
+    lappend gvc_carry $p
+  }
+}
+check "GZP20 every rebuild carries the view, or is named with why it does not" $gvc_bad {}
+check_true "GZP20 ...and the scan found both kinds (add_trace carries, restore does not)" \
+  [expr {{add_trace} in $gvc_carry && {state_apply} in $gvc_carry && {apply_range} in $gvc_carry
+         && {restore} ni $gvc_carry && [llength $gvc_carry] + [llength $gvc_plain]
+            == [llength $gx_must] + [llength $gx_pre] + [llength $gx_exempt]}]
+# ORDER: the view is read off the rects BEFORE the proc writes the model.
+foreach p $gvc_carry {
+  set gvc_b [wvproc_body $wsrc wviewer::$p]
+  set gvc_t [string first {wviewer::view_take $token} $gvc_b]
+  if {$gvc_t < 0} { set gvc_t [string first {wviewer::live_axes $token} $gvc_b] }
+  set gvc_w -1
+  foreach gvc_pat {{wviewer::set_graphs $token} {wviewer::sw_splice_apply $token}
+                   {dict set layouts $token}} {
+    set gvc_i [string first $gvc_pat $gvc_b]
+    if {$gvc_i >= 0 && ($gvc_w < 0 || $gvc_i < $gvc_w)} { set gvc_w $gvc_i }
+  }
+  if {$p eq {state_apply}} {
+    # the snapshot goes in here; the view is its caller's, taken before the call
+    set gvc_h [wvproc_body $wsrc wviewer::history_step]
+    check_true "GZP21 history_step reads the view, then hands it to state_apply" \
+      [expr {[string first {set view [wviewer::view_take $token]} $gvc_h] >= 0
+             && [string first {set view [wviewer::view_take $token]} $gvc_h]
+                < [string first {wviewer::state_apply $token $snap $view} $gvc_h]}]
+    continue
+  }
+  check_true "GZP21 $p reads the view before it writes the model" \
+    [expr {$gvc_t >= 0 && ($gvc_w < 0 || $gvc_t < $gvc_w)}]
+}
+# wviewer::view_align, PURE: a fresh strip joins the X window its subwindow
+# shows. Three strips of one subwindow; strip 0 is the fresh one unless said.
+set gva_sigA [lindex [gve_sig [list $gvm_A]] 0]
+set gva_sigB [lindex [gve_sig [list $gvm_B]] 0]
+set gva_sigC [lindex [gve_sig [list $gvm_C]] 0]
+set gva_sigs [list $gva_sigA $gva_sigB $gva_sigC]
+set gva_e1 [dict replace $gve_zxy left $gvz_left]
+set gva_run {{0 2}}
+check "GZP25 a fresh strip takes the X window its neighbour carries, with what that was fitted to" \
+  [pcall {wviewer::view_align [list {} $gva_e1 {dataset -1}] $gva_sigs $gva_run {0}}] \
+  [list {x1 0.2 x2 0.4 left {x1 0 x2 1}} $gva_e1 {dataset -1}]
+check "GZP25 ...Y is not given: the rebuild fits it over that window" \
+  [dict exists [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] $gva_sigs $gva_run {0}}] 0] y1] 0
+check "GZP25 a neighbour whose MODEL pins X gives that window, with blank ends to be measured against" \
+  [lindex [pcall {wviewer::view_align [list {} {dataset -1} {}] \
+     [list $gva_sigA [lindex [gve_sig [list $gvm_B] {0.3 0.5 0}] 0] $gva_sigC] $gva_run {0}}] 0] \
+  {x1 0.3 x2 0.5 left {x1 {} x2 {}}}
+check "GZP25 ...and blank ends read as moved, so the window is carried again next time" \
+  [pcall {wviewer::view_zoomed {x1 0.3 x2 0.5 y1 1 y2 2} {x1 {} x2 {} y1 1 y2 2}}] x
+check "GZP25 no neighbour's X is known (all to be fitted): the fresh strip is left to the fit" \
+  [pcall {wviewer::view_align [list {} {dataset -1} {}] $gva_sigs $gva_run {0}}] [list {} {dataset -1} {}]
+check "GZP25 a fresh strip whose own model pins X keeps the model's" \
+  [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] \
+     [list [lindex [gve_sig [list $gvm_A] {0 9 0}] 0] $gva_sigB $gva_sigC] $gva_run {0}}] 0] {}
+check "GZP25 a fresh strip with no trace is given nothing" \
+  [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] \
+     [list [lindex [gve_sig {}] 0] $gva_sigB $gva_sigC] $gva_run {0}}] 0] {}
+check "GZP25 a strip that is not fresh is never given a window" \
+  [pcall {wviewer::view_align [list {dataset -1} $gva_e1 {}] $gva_sigs $gva_run {}}] \
+  [list {dataset -1} $gva_e1 {}]
+check "GZP25 another subwindow's window is not given" \
+  [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] $gva_sigs {{0 0} {1 2}} {0}}] 0] {}
+check "GZP25 a neighbour on another database, another X column or another X scale gives nothing" \
+  [list [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] \
+           [list $gva_sigA [lindex [gve_sig [list [dict replace $gvm_B rawfile /x.raw sim_type ac]]] 0] $gva_sigC] \
+           $gva_run {0}}] 0] \
+        [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] \
+           [list $gva_sigA [lindex [gve_sig [list [dict replace $gvm_B sweep vx]]] 0] $gva_sigC] \
+           $gva_run {0}}] 0] \
+        [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] \
+           [list [lindex [gve_sig [list $gvm_A] {{} {} 1}] 0] $gva_sigB $gva_sigC] $gva_run {0}}] 0]] \
+  {{} {} {}}
+check "GZP25 of two neighbours showing different windows the NEARER gives" \
+  [list [lindex [pcall {wviewer::view_align [list $gva_e1 {x1 5 x2 6} {}] $gva_sigs $gva_run {2}}] 2] \
+        [lindex [pcall {wviewer::view_align [list {} {x1 5 x2 6} $gva_e1] $gva_sigs $gva_run {0}}] 0]] \
+  {{x1 5 x2 6 left {x1 {} x2 {}}} {x1 5 x2 6 left {x1 {} x2 {}}}}
+check "GZP25 a strip in `skip` neither gives nor takes" \
+  [list [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] $gva_sigs $gva_run {0} {1}}] 0] \
+        [lindex [pcall {wviewer::view_align [list {} $gva_e1 {}] $gva_sigs $gva_run {0} {0}}] 0]] {{} {}}
+check "GZP25 a keep list that is not one entry per strip is handed back as is" \
+  [pcall {wviewer::view_align [list {} $gva_e1] $gva_sigs $gva_run {0}}] [list {} $gva_e1]
+check "GZP25 view_fresh: the strips with nothing on screen to take from" \
+  [list [pcall {wviewer::view_fresh [gve_view $gve_zxy] \
+                  [concat [gve_sig [list $gvm_C]] [gve_sig $gve_same] [gve_sig {}]]}] \
+        [pcall {wviewer::view_fresh [gve_view $gve_zxy] [gve_sig $gve_more]}] \
+        [pcall {wviewer::view_fresh [gve_view $gve_zxy] [gve_sig $gve_same] {0}}]] {{0 2} {} 0}
+check "GZP25 x_source: traces on the loaded sweep are one source; a database or an X column makes another" \
+  [list [expr {[wviewer::x_source [list $gvm_A $gvm_B]] eq [wviewer::x_source [list $gvm_C]]}] \
+        [expr {[wviewer::x_source [list $gvm_A]] eq [wviewer::x_source [list [dict replace $gvm_A rawfile /x.raw]]]}] \
+        [expr {[wviewer::x_source [list $gvm_A]] eq [wviewer::x_source [list [dict replace $gvm_A sweep vx]]]}]] \
+  {1 0 0}
+check "GZP22 the signatures: view_take, view_keep, state_apply's optional view" \
+  [list [info args wviewer::view_take] [info args wviewer::view_keep] \
+        [pcall {info default wviewer::view_keep drop gvd_d; set gvd_d}] \
+        [pcall {info default wviewer::view_keep gone gvd_g; set gvd_g}] \
+        [info args wviewer::state_apply] \
+        [pcall {info default wviewer::state_apply view gvd_v; set gvd_v}]] \
+  {token {token view drop gone} {} {} {token snap view} {}}
+check "GZP22 view_take on an unknown window answers nothing (no throw)" \
+  [pcall {wviewer::view_take no_such_viewer}] {}
+check "GZP23 drawn_refresh: its signature, and nothing done for an unknown window" \
+  [list [info args wviewer::drawn_refresh] \
+        [pcall {info default wviewer::drawn_refresh only gvd_o; set gvd_o}] \
+        [pcall {wviewer::drawn_refresh no_such_viewer}]] {{token only} {} 0}
+# Every rect token the engine writes on its own account is either carried here,
+# folded into the model by capture_live_graph_state, or named below with the
+# reason it needs neither. Derived from the C source every run, so a new
+# engine-written token arrives as a red naming it.
+set gzp_seen {}
+foreach gzp_f {callback.c draw.c} {
+  set fp [open [file join $repo src $gzp_f] r]; set gzp_src [read $fp]; close $fp
+  foreach {gzp_m gzp_t} [regexp -all -inline \
+      {subst_token\([a-z]+->prop_ptr, *"([a-z_0-9]+)"} $gzp_src] {
+    lappend gzp_seen $gzp_t
+  }
+}
+set gzp_seen [lsort -unique $gzp_seen]
+set gzp_folded {hilight_wave sel_waves markers}
+# cursors: the viewer's graphs are not `private_cursor`, so the positions are
+# global and no rect holds them. image_data / spice_data: not graph rects.
+set gzp_exempt {cursor1_x cursor2_x hcursor1_y hcursor2_y image_data spice_data}
+set gzp_left {}
+foreach gzp_t $gzp_seen {
+  if {$gzp_t ni [wviewer::live_axis_tokens] && $gzp_t ni $gzp_folded
+      && $gzp_t ni $gzp_exempt} { lappend gzp_left $gzp_t }
+}
+check "GZP5 no engine-written rect token is left to a rebuild to discard" $gzp_left {}
+check_true "GZP5 ...and the scan found the writers (x1, dataset and markers among them)" \
+  [expr {{x1} in $gzp_seen && {dataset} in $gzp_seen && {markers} in $gzp_seen}]
+set gzp_cap [wvproc_body $wsrc wviewer::capture_live_graph_state]
+foreach gzp_t $gzp_folded {
+  check_true "GZP5 the fold really reads '$gzp_t' off the rect" \
+    [expr {[string first "getprop rect 2 \$gi $gzp_t\]" $gzp_cap] >= 0}]
+}
+
 # THE RULE IS ABOUT regenerate, NOT ABOUT THIS FILE. `wviewer::regenerate` is
 # called from src/ase_window.tcl too, with a different token variable, so GX4's
 # count cannot see it and neither could an audit that only read wave_viewer.tcl.
@@ -1361,6 +1806,561 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "GS10 ...both tokens" [gs_tokens $vdrw 1] {0 {0 2}}
     send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 1}
   }
+
+  # ==========================================================================
+  # GZ* — a grid toggle keeps the view (user report 2026-11-16: "When I use
+  # Ctrl-G in Waveform Viewer to toggle grid, it also causes the window to
+  # zoom-fit").
+  #
+  # THE FIXTURE RULE is GS*'s: the zoom is written onto the RECTS ONLY, through
+  # the engine's own verb (what a box zoom, an axis drag and the axis wheel end
+  # in), and the model is left on `{}` = auto. A zoom the model already holds
+  # survives a rebuild whether or not the view is carried.
+  # Every leg zooms strip 1 and reads back EVERY strip: X propagates to every
+  # strip of the same analysis, Y does not.
+  # ==========================================================================
+  proc gz_axes {vdrw} {
+    xschem new_schematic switch $vdrw
+    set o {}
+    set n 0; catch {set n [xschem get graph_rects]}
+    for {set k 0} {$k < $n} {incr k} {
+      set r {}
+      foreach t {x1 x2 y1 y2} {
+        set v {}; catch {set v [xschem getprop rect 2 $k $t]}
+        lappend r [expr {[string is double -strict $v] ? double($v) : $v}]
+      }
+      lappend o $r
+    }
+    return $o
+  }
+  proc gz_model {tok} {
+    set o {}
+    foreach G [dict get [wviewer::layout_for $tok] graphs] {
+      set r {}
+      foreach t {x1 x2 y1 y2} {
+        set v [wviewer::dget $G $t {}]
+        lappend r [expr {[string is double -strict $v] ? double($v) : $v}]
+      }
+      lappend o $r
+    }
+    return $o
+  }
+  proc gz_zoom {vdrw} {
+    xschem new_schematic switch $vdrw
+    xschem graph_axis_zoom 1 x 0.2 0.4
+    xschem graph_axis_zoom 1 y 7.5 8.5
+  }
+  set gz_auto {{{} {} {} {}} {{} {} {} {}}}
+  set gz_want {{0.2 0.4 1.0 6.0} {0.2 0.4 7.5 8.5}}
+
+  gs_fill $tok
+  set gz_fit [gz_axes $vdrw]
+  check "GZ0 the fixture: both strips fitted to their data" \
+    $gz_fit {{0.0 1.0 1.0 6.0} {0.0 1.0 7.0 12.0}}
+  gz_zoom $vdrw
+  check "GZ0 the engine's zoom is on the rects (X on both strips, Y on strip 1)" \
+    [gz_axes $vdrw] $gz_want
+  check "GZ0 ...and the MODEL has not heard of it (else every leg is hollow)" \
+    [gz_model $tok] $gz_auto
+
+  # THE BUG: before the fix this came back as $gz_fit
+  check "GZ1 Ctrl-G turned the grid off" [pcall {wviewer::grid_toggle {} $tok}] 0
+  check "GZ1 ...it really rebuilt the strips (grid=0 reached every rect)" \
+    [list [pcall {xschem getprop rect 2 0 grid}] \
+          [pcall {xschem getprop rect 2 1 grid}]] {0 0}
+  check "GZ1 the zoom SURVIVED the grid toggle, on every strip" [gz_axes $vdrw] $gz_want
+  check "GZ1 the model was not written: every axis is still auto" [gz_model $tok] $gz_auto
+  check "GZ2 Ctrl-G back on" [pcall {wviewer::grid_toggle {} $tok}] 1
+  check "GZ2 the zoom survived that too" [gz_axes $vdrw] $gz_want
+  check "GZ3 Ctrl-Shift-G (the target subwindow's grid) keeps it as well" \
+    [list [pcall {wviewer::grid_toggle_subwin {} $tok}] [gz_axes $vdrw]] [list 0 $gz_want]
+  # the Graph > Grid checkbutton: Tk has written the mirror before the command
+  set ::wviewer::gridshow($tok) 1
+  check "GZ4 the menu checkbutton keeps it" \
+    [list [pcall {wviewer::grid_toggle_from_menu $tok}] [gz_axes $vdrw]] [list 1 $gz_want]
+  # NOTHING IS PINNED: the axis lifetime is what it was. A rebuild that does not
+  # carry the view fits the auto axes again.
+  pcall {wviewer::regenerate $tok}
+  check "GZ5 a plain rebuild still re-fits: the carry pinned nothing" \
+    [gz_axes $vdrw] $gz_fit
+
+  # a PINNED axis the engine zoomed afterwards: the strip keeps what it shows,
+  # and the model keeps the window it was given
+  gs_fill $tok
+  pcall {wviewer::apply_range $tok 1 0.1 0.9 7.0 12.0}
+  gz_zoom $vdrw
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GZ6 a pinned strip keeps the engine's later zoom across Ctrl-G" \
+    [lindex [gz_axes $vdrw] 1] {0.2 0.4 7.5 8.5}
+  check "GZ6 ...and its model window is the one it was given" \
+    [lindex [gz_model $tok] 1] {0.1 0.9 7.0 12.0}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # the dataset the `t` key tracks is engine-written too, and per rect
+  gs_fill $tok
+  wviewer::with_edit $tok { xschem setprop -fast rect 2 1 dataset 0 }
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GZ7 a tracked dataset survives Ctrl-G on its own strip only" \
+    [list [pcall {xschem getprop rect 2 0 dataset}] \
+          [pcall {xschem getprop rect 2 1 dataset}]] {-1 0}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # regenerate's `keep` contract, driven directly
+  gs_fill $tok
+  set gz_k {x1 0.2 x2 0.4 y1 7.5 y2 8.5 ypos1 0 ypos2 2 dataset -1}
+  pcall {wviewer::regenerate $tok [list {} $gz_k]}
+  check "GZ8 an empty entry is fitted, a full one is written" \
+    [gz_axes $vdrw] [list [lindex $gz_fit 0] {0.2 0.4 7.5 8.5}]
+  pcall {wviewer::regenerate $tok [list $gz_k]}
+  check "GZ8 a keep list of the wrong length is ignored: the plain rebuild" \
+    [gz_axes $vdrw] $gz_fit
+  pcall {wviewer::regenerate $tok [list {} {y1 7.5 y2 8.5}]}
+  check "GZ8 an entry naming Y only keeps Y and fits X" \
+    [gz_axes $vdrw] [list [lindex $gz_fit 0] {0.0 1.0 7.5 8.5}]
+  pcall {wviewer::regenerate $tok [list {} {x1 0.2 x2}]}
+  check "GZ8 a malformed entry is ignored: the plain rebuild" [gz_axes $vdrw] $gz_fit
+  check "GZ9 live_axes on fitted strips carries no axis: they are rebuilt as they always were" \
+    [lmap gz_e [pcall {wviewer::live_axes $tok}] {dict keys $gz_e}] {dataset dataset}
+  gz_zoom $vdrw
+  check "GZ9 ...on zoomed strips: one full token list each, with what it was fitted to" \
+    [lmap gz_e [pcall {wviewer::live_axes $tok}] {dict keys $gz_e}] \
+    [list [concat [wviewer::live_axis_tokens] left] [concat [wviewer::live_axis_tokens] left]]
+
+  # end-to-end through the REAL key
+  gs_fill $tok
+  gz_zoom $vdrw
+  set gz_del [send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 0}]
+  if {!$gz_del} {
+    puts "SKIPPED: GZ10 real-key leg (focus never confirmed)"
+  } else {
+    check "GZ10 a REAL Ctrl-G keeps the zoom" [gz_axes $vdrw] $gz_want
+    send_key $vdrw <Control-Key-g> {[wviewer::grid_shown $tok] == 1}
+    check "GZ10 ...and so does the one that turns the grid back on" [gz_axes $vdrw] $gz_want
+  }
+  # --- a RESIZE keeps the view (user ruling 2026-11-16) ------------------------
+  # through configure_apply with the no-change gate defeated, as GS6 does
+  pcall {wviewer::grid_toggle 1 $tok}
+  gs_fill $tok
+  gz_zoom $vdrw
+  set ::wviewer::fillwh($tok) {1 1}
+  pcall {wviewer::configure_apply $tok}
+  check "GZ11 the zoom survived a resize refit" [gz_axes $vdrw] $gz_want
+  check "GZ11 ...and the model is still auto" [gz_model $tok] $gz_auto
+  # ...and through a REAL resize of the toplevel: the <Configure> path, with the
+  # strips really re-placed into a canvas of another size
+  set gz_wh0 $::wviewer::fillwh($tok)
+  lassign [split [winfo geometry $vtop] x+] gz_w gz_h
+  wm geometry $vtop [expr {$gz_w + 120}]x[expr {$gz_h + 80}]
+  set gz_resized 0
+  for {set gz_i 0} {$gz_i < 150} {incr gz_i} {
+    update
+    if {[info exists ::wviewer::fillwh($tok)] && $::wviewer::fillwh($tok) ne $gz_wh0} {
+      set gz_resized 1; break
+    }
+    after 20
+  }
+  if {!$gz_resized} {
+    puts "SKIPPED: GZ12 real-resize leg (the canvas never changed size)"
+  } else {
+    check "GZ12 a REAL window resize keeps the zoom" [gz_axes $vdrw] $gz_want
+  }
+
+  # --- the aA text size keeps the view ----------------------------------------
+  gs_fill $tok
+  gz_zoom $vdrw
+  set gz_pt0 [wviewer::font_shown $tok]
+  set gz_pt1 [expr {$gz_pt0 + 2}]
+  check "GZ13 the text size really changed" \
+    [list [pcall {wviewer::set_text_size $gz_pt1 $tok}] [wviewer::font_shown $tok]] \
+    [list $gz_pt1 $gz_pt1]
+  check "GZ13 the zoom survived the text-size change" [gz_axes $vdrw] $gz_want
+  check "GZ13 ...and the model is still auto" [gz_model $tok] $gz_auto
+  pcall {wviewer::set_text_size $gz_pt0 $tok}
+  check "GZ13 ...and the change back" [gz_axes $vdrw] $gz_want
+
+  # --- Shared X keeps the view, except the X windows the toggle is about -----
+  set gz_sx0 [expr {[info exists ::wviewer::sharedx($tok)] && $::wviewer::sharedx($tok) ? 1 : 0}]
+  proc gz_share {tok v} {
+    set ::wviewer::sharedx($tok) $v
+    wviewer::sharedx_toggle $tok
+  }
+  gz_share $tok 0
+  # (a) every strip auto: nothing to hide or reveal, so nothing moves either way
+  gs_fill $tok
+  gz_zoom $vdrw
+  gz_share $tok 1
+  check "GZ14 Shared X really turned on" \
+    [wviewer::dget [wviewer::layout_for $tok] sharedx 0] 1
+  check "GZ14 the zoom survived turning Shared X on" [gz_axes $vdrw] $gz_want
+  gz_share $tok 0
+  check "GZ14 ...and turning it off" [gz_axes $vdrw] $gz_want
+  check "GZ14 the model is still auto throughout" [gz_model $tok] $gz_auto
+  # (b) strip 1 stores an X window of its own; Y is engine-zoomed on strip 1
+  gs_fill $tok
+  pcall {wviewer::apply_range $tok 0 0.0 1.0 {} {}}
+  pcall {wviewer::apply_range $tok 1 0.0 0.5 {} {}}
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 1 y 7.5 8.5
+  check "GZ15 the fixture: two stored X windows, strip 1's Y zoomed on the rect only" \
+    [list [gz_axes $vdrw] [lindex [gz_model $tok] 1]] \
+    [list {{0.0 1.0 1.0 6.0} {0.0 0.5 7.5 8.5}} {0.0 0.5 {} {}}]
+  gz_share $tok 1
+  check "GZ15 ON: strip 1 takes strip 0's X and keeps its zoomed Y" \
+    [gz_axes $vdrw] {{0.0 1.0 1.0 6.0} {0.0 1.0 7.5 8.5}}
+  check "GZ15 ...its stored window is untouched" [lindex [gz_model $tok] 1] {0.0 0.5 {} {}}
+  # the engine zooms X while shared: every strip follows on the rects
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 0 x 0.2 0.4
+  gz_share $tok 0
+  check "GZ15 OFF: strip 1 gets its own X back with its Y kept; strip 0 keeps what it shows" \
+    [gz_axes $vdrw] {{0.2 0.4 1.0 6.0} {0.0 0.5 7.5 8.5}}
+  check "GZ15 ...and neither stored window was written" \
+    [list [lindex [gz_model $tok] 0] [lindex [gz_model $tok] 1]] \
+    {{0.0 1.0 {} {}} {0.0 0.5 {} {}}}
+  gz_share $tok $gz_sx0
+
+  # --- a model change is not masked by the carry -------------------------------
+  # A range written to the model with no rebuild of its own must reach the
+  # screen at the next rebuild, carry or not (row SWG10 of test_wave_subwindows
+  # relies on it). Y, which the model did not touch, is still kept as shown.
+  gs_fill $tok
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 1 y 7.5 8.5
+  set gz_gs [dict get [wviewer::layout_for $tok] graphs]
+  lset gz_gs 1 [dict replace [lindex $gz_gs 1] x1 0.25 x2 0.75]
+  wviewer::set_graphs $tok $gz_gs
+  check "GZ16 the fixture: the model's new X is not on the rect yet" \
+    [lindex [gz_axes $vdrw] 1] {0.0 1.0 7.5 8.5}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GZ16 Ctrl-G shows the model's new X and keeps the Y that was on screen" \
+    [gz_axes $vdrw] {{0.0 1.0 1.0 6.0} {0.25 0.75 7.5 8.5}}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # --- the whole chain, one zoom carried through every site -------------------
+  gs_fill $tok
+  gz_zoom $vdrw
+  pcall {wviewer::grid_toggle {} $tok}
+  set ::wviewer::fillwh($tok) {1 1}
+  pcall {wviewer::configure_apply $tok}
+  pcall {wviewer::set_text_size $gz_pt1 $tok}
+  gz_share $tok 1
+  gz_share $tok 0
+  pcall {wviewer::set_text_size $gz_pt0 $tok}
+  pcall {wviewer::grid_toggle 1 $tok}
+  check "GZ17 one zoom survives grid, resize, text size and Shared X in a row" \
+    [gz_axes $vdrw] $gz_want
+  check "GZ17 ...with the model still auto at the end" [gz_model $tok] $gz_auto
+  gz_share $tok $gz_sx0
+
+  # ==========================================================================
+  # GV — the view survives a rebuild that CHANGES the strips (user ruling
+  # 2026-11-16: Graph > Axes..., adding a trace and adding a strip keep the view
+  # too). Same fixture and the same engine zoom as GZ: X 0.2..0.4 on both
+  # strips, Y 7.5..8.5 on strip 1 only, and the model has heard of none of it.
+  # So strip 0 has a zoomed X and an UNTOUCHED Y, strip 1 has both zoomed: the
+  # two cases the rule tells apart.
+  # ==========================================================================
+  proc gv_vecs {tok} {
+    lmap G [dict get [wviewer::layout_for $tok] graphs] {
+      lmap t [dict get $G traces] {dict get $t vec}}
+  }
+  # per strip, the axes the engine moved since they were fitted or set
+  proc gv_zoomed {tok} {
+    lmap r [wviewer::view_take $tok] {
+      wviewer::view_zoomed [wviewer::dget $r cur {}] [wviewer::dget $r left {}]}
+  }
+  proc gv_fresh {tok vdrw} { gs_fill $tok ; gz_zoom $vdrw }
+  set gv_s0 {0.2 0.4 1.0 6.0}
+  set gv_s1 {0.2 0.4 7.5 8.5}
+
+  # THE PREMISE of "zoomed": the engine leaves a fitted axis alone, so a token
+  # that differs from the fit is the user's doing.
+  gs_fill $tok
+  update
+  check "GV0 fitted strips read as not zoomed" [gv_zoomed $tok] {{} {}}
+  gz_zoom $vdrw
+  check "GV0 the engine's zoom reads as one: X on strip 0, X and Y on strip 1" \
+    [gv_zoomed $tok] {x {x y}}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV0 ...and still does after a rebuild that carried it" [gv_zoomed $tok] {x {x y}}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # --- Graph > Axes... ---------------------------------------------------------
+  gv_fresh $tok $vdrw
+  check "GV1 a Y range given to strip 0: its X and all of strip 1 stay as shown" \
+    [list [pcall {wviewer::apply_range $tok 0 {} {} 0 10}] [gz_axes $vdrw]] \
+    [list 1 [list {0.2 0.4 0.0 10.0} $gv_s1]]
+  check "GV1 ...strip 1 is still auto in the model" [lindex [gz_model $tok] 1] {{} {} {} {}}
+  gv_fresh $tok $vdrw
+  check "GV2 all four given to strip 1: strip 0 keeps its zoom" \
+    [list [pcall {wviewer::apply_range $tok 1 0.1 0.9 7 12}] [gz_axes $vdrw]] \
+    [list 1 [list $gv_s0 {0.1 0.9 7.0 12.0}]]
+  # the SAME range given again after the engine zoomed away from it: the model
+  # does not change, and the strip must show the range all the same
+  gz_zoom $vdrw
+  check "GV2 the fixture: strip 1 zoomed away from its stored range" \
+    [lindex [gz_axes $vdrw] 1] $gv_s1
+  pcall {wviewer::apply_range $tok 1 0.1 0.9 7 12}
+  check "GV2 a range given again is shown, though the model already held it" \
+    [gz_axes $vdrw] [list $gv_s0 {0.1 0.9 7.0 12.0}]
+  # the dialog itself
+  gv_fresh $tok $vdrw
+  set gv_w [pcall {wviewer::axes_dialog $tok}]
+  if {![winfo exists $gv_w]} {
+    check "GV3 the Axes dialog opened" $gv_w {a window}
+  } else {
+    $gv_w.graph set 0
+    wviewer::axes_load $tok
+    check "GV3 the dialog shows the MODEL's blanks for a zoomed auto strip" \
+      [lmap gv_e {x1 x2 y1 y2} {$gv_w.$gv_e get}] {{} {} {} {}}
+    $gv_w.y1 insert 0 -2
+    $gv_w.y2 insert 0 9
+    pcall {wviewer::axes_ok $tok}
+    check "GV3 OK: the named strip shows what the dialog says (X blank = fitted), strip 1 its zoom" \
+      [gz_axes $vdrw] [list {0.0 1.0 -2.0 9.0} $gv_s1]
+    check "GV3 ...strip 1 is still auto in the model" [lindex [gz_model $tok] 1] {{} {} {} {}}
+    gv_fresh $tok $vdrw
+    set gv_w [pcall {wviewer::axes_dialog $tok}]
+    $gv_w.graph set 1
+    wviewer::axes_load $tok
+    pcall {wviewer::axes_ok $tok}
+    check "GV3 OK with every field blank fits the named strip; strip 0 keeps its zoom" \
+      [gz_axes $vdrw] [list $gv_s0 [lindex $gz_fit 1]]
+  }
+  gv_fresh $tok $vdrw
+  check "GV4 Log Y on strip 0: its X and all of strip 1 stay as shown" \
+    [list [pcall {wviewer::set_axis_scale $tok 0 y 1}] \
+          [lrange [lindex [gz_axes $vdrw] 0] 0 1] [lindex [gz_axes $vdrw] 1]] \
+    [list 1 {0.2 0.4} $gv_s1]
+  check_true "GV4 ...and its Y really was fitted in the new unit" \
+    [expr {[lrange [lindex [gz_axes $vdrw] 0] 2 3] ne {1.0 6.0}}]
+
+  # --- adding a trace ----------------------------------------------------------
+  # vec_f (11..12) into strip 0 (1..6): X zoomed, Y untouched
+  gv_fresh $tok $vdrw
+  check "GV5 a trace added to strip 0" \
+    [list [pcall {wviewer::add_trace $tok 0 vec_f}] [lindex [gv_vecs $tok] 0]] \
+    {{} {vec_a vec_b vec_c vec_f}}
+  check "GV5 strip 1 keeps its zoom, strip 0 its zoomed X" \
+    [list [lindex [gz_axes $vdrw] 1] [lrange [lindex [gz_axes $vdrw] 0] 0 1]] \
+    [list $gv_s1 {0.2 0.4}]
+  lassign [lindex [gz_axes $vdrw] 0] gv_x1 gv_x2 gv_y1 gv_y2
+  check_true "GV5 strip 0's untouched Y was fitted again: the new trace is in view" \
+    [expr {$gv_y1 <= 1.2 && $gv_y2 >= 11.4}]
+  check "GV5 the model is still auto" [gz_model $tok] $gz_auto
+  # vec_a (1..2) into strip 1, zoomed on both axes to 7.5..8.5
+  gv_fresh $tok $vdrw
+  check "GV6 a trace added to a strip zoomed on both axes: the zoom is kept on both" \
+    [list [pcall {wviewer::add_trace $tok 1 vec_a}] [lindex [gv_vecs $tok] 1] [gz_axes $vdrw]] \
+    [list {} {vec_d vec_e vec_f vec_a} [list $gv_s0 $gv_s1]]
+  # nothing zoomed: the trace comes into view as it always did
+  gs_fill $tok
+  pcall {wviewer::add_trace $tok 0 vec_f}
+  lassign [lindex [gz_axes $vdrw] 0] gv_x1 gv_x2 gv_y1 gv_y2
+  check_true "GV7 a trace added to an UNZOOMED strip is fitted into view (X 0..1, Y to 12)" \
+    [expr {$gv_x1 == 0.0 && $gv_x2 == 1.0 && $gv_y1 <= 1.0 && $gv_y2 >= 12.0}]
+  check "GV7 ...the other strip is where it was" [lindex [gz_axes $vdrw] 1] [lindex $gz_fit 1]
+  # a zoom carried by another rebuild first is still a zoom, and an axis carried
+  # UNZOOMED is still not one
+  gv_fresh $tok $vdrw
+  pcall {wviewer::grid_toggle {} $tok}
+  pcall {wviewer::add_trace $tok 1 vec_a}
+  check "GV8 zoom, Ctrl-G, then a trace into strip 1: the zoom is still kept" \
+    [gz_axes $vdrw] [list $gv_s0 $gv_s1]
+  pcall {wviewer::add_trace $tok 0 vec_f}
+  lassign [lindex [gz_axes $vdrw] 0] gv_x1 gv_x2 gv_y1 gv_y2
+  check_true "GV8 ...and into strip 0: X kept, the Y nobody moved fitted again" \
+    [expr {$gv_x1 == 0.2 && $gv_x2 == 0.4 && $gv_y1 <= 1.2 && $gv_y2 >= 11.4}]
+  check "GV8 ...strip 1 through both" [lindex [gz_axes $vdrw] 1] $gv_s1
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # --- adding a strip ----------------------------------------------------------
+  gv_fresh $tok $vdrw
+  check "GV9 a strip added: the strips there keep their zoom" \
+    [list [pcall {wviewer::add_graph $tok}] [lrange [gz_axes $vdrw] 0 1]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  check "GV9 ...and the model is still auto" [lrange [gz_model $tok] 0 1] $gz_auto
+  pcall {wviewer::add_trace $tok 2 vec_f}
+  check "GV9 the first trace into the new strip comes up at the X window the others show" \
+    [list [lrange [gz_axes $vdrw] 0 1] [lrange [lindex [gz_axes $vdrw] 2] 0 1]] \
+    [list [list $gv_s0 $gv_s1] {0.2 0.4}]
+  lassign [lindex [gz_axes $vdrw] 2] gv_x1 gv_x2 gv_y1 gv_y2
+  check_true "GV9 ...with its Y fitted to ITS data over that window (vec_f is 11.2..11.4 there)" \
+    [expr {$gv_y1 > 8.5 && $gv_y1 <= 11.2 && $gv_y2 >= 11.4}]
+  check "GV9 ...and the model was not written: the new strip is auto" \
+    [lindex [gz_model $tok] 2] {{} {} {} {}}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV9 ...and it still shows that window after the next rebuild" \
+    [lrange [lindex [gz_axes $vdrw] 2] 0 1] {0.2 0.4}
+  pcall {wviewer::grid_toggle 1 $tok}
+  # `u` after it
+  gv_fresh $tok $vdrw
+  pcall {wviewer::add_graph $tok}
+  check "GV10 undo of the added strip keeps the zoom" \
+    [list [pcall {wviewer::undo $tok}] [gz_axes $vdrw] [gz_model $tok]] \
+    [list 1 [list $gv_s0 $gv_s1] $gz_auto]
+  check "GV10 ...and so does the redo" \
+    [list [pcall {wviewer::redo $tok}] [lrange [gz_axes $vdrw] 0 1]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  # a snapshot that PINS a window still restores it: move_strip freezes the view
+  # into its undo point, the engine then zooms further, `u` goes back
+  gv_fresh $tok $vdrw
+  pcall {wviewer::move_strip 0 1 $tok}
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 0 x 0.3 0.35
+  check "GV11 the fixture: zoomed further after a strip move" \
+    [lmap gv_r [gz_axes $vdrw] {lrange $gv_r 0 1}] {{0.3 0.35} {0.3 0.35}}
+  check "GV11 undo of the move puts back the windows its snapshot holds" \
+    [list [pcall {wviewer::undo $tok}] [gz_axes $vdrw]] [list 1 [list $gv_s0 $gv_s1]]
+
+  # --- plotting from another window (Direct Plot, the browser's Plot) ----------
+  gv_fresh $tok $vdrw
+  check "GV12 a signal plotted into a NEW strip: the strips there keep their zoom, and it joins it" \
+    [list [pcall {wviewer::plot_signals $tok {vec_f} {} newstrip}] [gv_vecs $tok] \
+          [lrange [gz_axes $vdrw] 0 1] [lrange [lindex [gz_axes $vdrw] 2] 0 1]] \
+    [list {} {{vec_a vec_b vec_c} {vec_d vec_e vec_f} vec_f} [list $gv_s0 $gv_s1] {0.2 0.4}]
+  # THE REPORTED CASE (user 2026-11-16, a Direct Plot in multi-plot mode: "the
+  # zoom level when the Ctrl-4 sends a plot does not match the prevailing zoom
+  # level", the new strip on top at 0..20u over strips at 1.2u..3.9u). Direct
+  # Plot lands through plot_signals with `append`; in multi-plot that is a new
+  # strip on top.
+  gv_fresh $tok $vdrw
+  set gv_mode0 [wviewer::plot_mode $tok]
+  pcall {wviewer::set_plot_mode multi $tok}
+  pcall {wviewer::set_target_strip 0 $tok}
+  check "GV19 multi-plot, a signal appended: the new strip is on top, at the X window of the strips under it" \
+    [list [pcall {wviewer::plot_signals $tok {vec_f} {} append}] [gv_vecs $tok] \
+          [lrange [lindex [gz_axes $vdrw] 0] 0 1] [lrange [gz_axes $vdrw] 1 2]] \
+    [list {} {vec_f {vec_a vec_b vec_c} {vec_d vec_e vec_f}} {0.2 0.4} [list $gv_s0 $gv_s1]]
+  pcall {wviewer::set_plot_mode $gv_mode0 $tok}
+  # the same when the window was zoomed with the WHEEL, which stores the window
+  # in the model: the new strip takes it off the model's word, without being
+  # given a stored window of its own
+  gs_fill $tok
+  pcall {wviewer::wheel_zoom $tok in 0}
+  set gv_wz [lrange [lindex [gz_axes $vdrw] 0] 0 1]
+  check_true "GV20 the fixture: a wheel zoom stored a narrower X window on both strips" \
+    [expr {$gv_wz ne {0.0 1.0} && [lrange [lindex [gz_axes $vdrw] 1] 0 1] eq $gv_wz
+           && [lrange [lindex [gz_model $tok] 0] 0 1] eq $gv_wz}]
+  pcall {wviewer::plot_signals $tok {vec_f} {} newstrip}
+  check "GV20 a signal plotted into a new strip after a WHEEL zoom joins that window too" \
+    [list [lrange [lindex [gz_axes $vdrw] 2] 0 1] [lrange [lindex [gz_model $tok] 2] 0 1]] \
+    [list $gv_wz {{} {}}]
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV20 ...and keeps it through the next rebuild" \
+    [lrange [lindex [gz_axes $vdrw] 2] 0 1] $gv_wz
+  pcall {wviewer::grid_toggle 1 $tok}
+  # nothing zoomed: the new strip is fitted, like the others
+  gs_fill $tok
+  pcall {wviewer::plot_signals $tok {vec_f} {} newstrip}
+  check "GV21 nothing zoomed: a new strip is fitted to its sweep, as before" \
+    [lmap gv_r [gz_axes $vdrw] {lrange $gv_r 0 1}] {{0.0 1.0} {0.0 1.0} {0.0 1.0}}
+  # a paste, and its undo
+  gv_fresh $tok $vdrw
+  pcall {wviewer::set_target_strip 0 $tok}
+  pcall {wviewer::paste_payload [list [list [dict create expr vec_f name {} vec vec_f color 4]]] {0} {4} $tok}
+  check "GV13 a paste into strip 0: its zoomed X and all of strip 1 stay as shown" \
+    [list [lindex [gv_vecs $tok] 0] [lrange [lindex [gz_axes $vdrw] 0] 0 1] [lindex [gz_axes $vdrw] 1]] \
+    [list {vec_a vec_b vec_c vec_f} {0.2 0.4} $gv_s1]
+  check "GV13 ...and through the undo of the paste" \
+    [list [pcall {wviewer::undo $tok}] [lindex [gv_vecs $tok] 0] \
+          [lrange [lindex [gz_axes $vdrw] 0] 0 1] [lindex [gz_axes $vdrw] 1]] \
+    [list 1 {vec_a vec_b vec_c} {0.2 0.4} $gv_s1]
+
+  # --- subwindows --------------------------------------------------------------
+  gv_fresh $tok $vdrw
+  set gv_n [pcall {wviewer::new_subwin $tok}]
+  check "GV14 a subwindow added: the strips there keep their zoom" \
+    [list $gv_n [lrange [gz_axes $vdrw] 0 1]] [list 2 [list $gv_s0 $gv_s1]]
+  pcall {wviewer::add_trace $tok 2 vec_f}
+  check "GV14 a strip in a NEW subwindow is fitted: the other subwindow's window is not its own" \
+    [lrange [lindex [gz_axes $vdrw] 2] 0 1] {0.0 1.0}
+  check "GV14 a wheel zoom in the new subwindow leaves the first one's zoom alone" \
+    [list [pcall {wviewer::wheel_zoom $tok in 2}] [lrange [gz_axes $vdrw] 0 1]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  check_true "GV14 ...and really zoomed its own strip" \
+    [expr {[lrange [lindex [gz_axes $vdrw] 2] 0 1] ne {0.0 1.0}}]
+  check "GV14 a pan there leaves it alone too" \
+    [list [pcall {wviewer::pan_x $tok right 2}] [lrange [gz_axes $vdrw] 0 1]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  # View > Fit is the TARGET subwindow's (strip 2 here): it must leave the first
+  # subwindow's zoom known as a zoom, or the next rebuild fits it away
+  pcall {wviewer::fit $tok}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV14 a Fit in the new subwindow, then Ctrl-G: the first one's zoom is still kept" \
+    [lrange [gz_axes $vdrw] 0 1] [list $gv_s0 $gv_s1]
+  pcall {wviewer::grid_toggle 1 $tok}
+  # Replace keeps the emptied strip's STORED window (sw_clear_graphs' rule, and
+  # the wheel zoom above stored one); the other subwindow is not its business
+  set gv_sw2 [lrange [lindex [gz_axes $vdrw] 2] 0 1]
+  check "GV14 a signal plotted with Replace empties that subwindow only" \
+    [list [pcall {wviewer::plot_signals $tok {vec_a} {} replace}] [gv_vecs $tok] \
+          [lrange [gz_axes $vdrw] 0 1] [lrange [lindex [gz_axes $vdrw] 2] 0 1]] \
+    [list {} {{vec_a vec_b vec_c} {vec_d vec_e vec_f} vec_a} [list $gv_s0 $gv_s1] $gv_sw2]
+  check "GV14 the subwindow closed: the survivors keep their zoom" \
+    [list [pcall {wviewer::close_subwin $tok 2}] [gz_axes $vdrw]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  check "GV14 the model is still auto after all of it" [gz_model $tok] $gz_auto
+
+  # --- a fit is still a fit ----------------------------------------------------
+  gv_fresh $tok $vdrw
+  pcall {wviewer::grid_toggle {} $tok}
+  pcall {wviewer::add_graph $tok}
+  check "GV15 View > Fit after carried rebuilds fits" \
+    [list [pcall {wviewer::fit $tok}] [lrange [gz_axes $vdrw] 0 1]] [list 1 $gz_fit]
+  pcall {wviewer::grid_toggle 1 $tok}
+  pcall {wviewer::set_target_strip 0 $tok}
+
+  # --- a zoom made AFTER the model was told what the rects show -----------------
+  # View > Fit and wviewer::marker_changed (every marker gesture) write the live
+  # windows into the model with no rebuild. The next carrying rebuild must not
+  # take that for a range the screen has not shown yet and go back to it.
+  gv_fresh $tok $vdrw
+  pcall {wviewer::fit $tok}
+  check "GV17 the fixture: fitted, and the model holds the fit" \
+    [list [gz_axes $vdrw] [gz_model $tok]] [list $gz_fit $gz_fit]
+  gz_zoom $vdrw
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV17 a zoom made after View > Fit survives Ctrl-G" [gz_axes $vdrw] [list $gv_s0 $gv_s1]
+  check "GV17 ...and the model still holds the fit" [gz_model $tok] $gz_fit
+  pcall {wviewer::grid_toggle 1 $tok}
+  gv_fresh $tok $vdrw
+  xschem new_schematic switch $vdrw
+  check "GV18 the hook every marker gesture calls: the model takes the windows on screen" \
+    [list [pcall {wviewer::marker_changed}] [gz_model $tok]] \
+    [list 1 [list $gv_s0 $gv_s1]]
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 1 x 0.3 0.35
+  check "GV18 the fixture: zoomed further after the fold" \
+    [lmap gv_r [gz_axes $vdrw] {lrange $gv_r 0 1}] {{0.3 0.35} {0.3 0.35}}
+  pcall {wviewer::grid_toggle {} $tok}
+  check "GV18 that later zoom survives Ctrl-G" \
+    [gz_axes $vdrw] {{0.3 0.35 1.0 6.0} {0.3 0.35 7.5 8.5}}
+  pcall {wviewer::add_graph $tok}
+  check "GV18 ...and a strip added after it" \
+    [lrange [gz_axes $vdrw] 0 1] {{0.3 0.35 1.0 6.0} {0.3 0.35 7.5 8.5}}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # --- a strip nobody zoomed is rebuilt as it always was -----------------------
+  # vec_a recomputed in place (as a re-evaluated expression vector is) while
+  # strip 0 is fitted and strip 1 is zoomed in Y: the next rebuild fits strip 0
+  # to the data it now has, and leaves strip 1's zoom alone
+  gs_fill $tok
+  xschem new_schematic switch $vdrw
+  xschem graph_axis_zoom 1 y 7.5 8.5
+  pcall {xschem raw add vec_a {vsweep 30 +}}
+  pcall {wviewer::grid_toggle {} $tok}
+  lassign [lindex [gz_axes $vdrw] 0] gv_x1 gv_x2 gv_y1 gv_y2
+  check_true "GV16 an unzoomed strip is fitted to its data again by a carrying rebuild" \
+    [expr {$gv_x1 == 0.0 && $gv_x2 == 1.0 && $gv_y2 >= 31.0}]
+  check "GV16 ...while the zoomed strip beside it keeps its zoom" \
+    [lindex [gz_axes $vdrw] 1] {0.0 1.0 7.5 8.5}
+  pcall {xschem raw add vec_a {vsweep 1 +}}
+  pcall {wviewer::grid_toggle 1 $tok}
+
+  # leave the window as the rows below expect it: grid on, axes auto
+  pcall {wviewer::grid_toggle 1 $tok}
+  gs_fill $tok
 
   # ==========================================================================
   # GH5/GH6 — the guide's table against the LIVE window (the widget half of GH*)
