@@ -16744,7 +16744,11 @@ proc ase::precheck_banner_text {banner} {
 # Resolve ONE identifier against the map.
 #
 # -> {status present|absent|unknown  real <the corrected identifier, or {}>
-#     ambiguous 0|1  why <text, for unknown>}
+#     ambiguous 0|1  why <text, for unknown>
+#     [miss {index <i> scope <s> prefix <p>}]}
+#
+# `miss` (issue 1723) rides only on the `absent` answer for an instance path
+# segment nothing in its scope even folds to: see the arm that sets it.
 #
 # `unknown` is not a weaker `absent`, it is a REFUSAL TO JUDGE, and every arm
 # that reaches it is a place where the netlist genuinely cannot answer:
@@ -16801,7 +16805,9 @@ proc ase::netlist_map_resolve {map kind name cs} {
   # binary aborted the analysis (measured: rc=1, RUN-FAILED, no raw).
   # (Fix round, item 10.)
   set segstale 0
+  set segi -1
   foreach s [lrange $segs 0 end-1] {
+    incr segi
     if {![dict exists $scopes $scope]} {
       dict set unk why "subcircuit '$scope' is not defined in this netlist"
       return $unk
@@ -16818,8 +16824,21 @@ proc ase::netlist_map_resolve {map kind name cs} {
  .include'd file can add cards to this scope"
         return $unk
       }
-      return [dict create status absent real {} ambiguous [dict get $hit ambiguous] \
+      set ab [dict create status absent real {} ambiguous [dict get $hit ambiguous] \
                           why "no instance '$s'"]
+      ## ISSUE 1723: WHERE THE PATH STOPPED, so the rename search
+      ## (ase::preflight_rename_try) can put another instance of the SAME scope in
+      ## this segment's place. `index` counts the identifier's own `.` fields,
+      ## branch letter included; `prefix` is the path as written up to and
+      ## including the missing segment, branch letter excluded (`x1` for both
+      ## `x1.a1` and `v.x1.vs`). Not for a fold-ambiguous segment: two instances
+      ## differing only in case are a case question, never a rename.
+      if {![dict get $hit ambiguous]} {
+        dict set ab miss [dict create \
+          index [expr {$segi + ($prefix ne {} ? 1 : 0)}] scope $scope \
+          prefix [join [lrange $segs 0 $segi] .]]
+      }
+      return $ab
     }
     if {[dict get $hit status] ne {present}} { set segstale 1 }
     lappend real [dict get $hit real]
@@ -16865,8 +16884,13 @@ proc ase::netlist_map_resolve {map kind name cs} {
 # THE PRE-FLIGHT. A pure function of a state and the circuit netlist text, so
 # every ruling here is drivable with no simulator and no files.
 #
-#   -> {mode <requested>  cs 0|1  absent {<row> ...}  unknown {<row> ...}}
-#      row = {expr <e> kind <k> ident <n> correction <c> ambiguous 0|1 why <w>}
+#   -> {mode <requested>  cs 0|1  absent {<row> ...}  unknown {<row> ...}
+#       measurements {<mrow> ...}  renames {<rename> ...}}
+#      row = {expr <e> kind <k> ident <n> correction <c> ambiguous 0|1 why <w>
+#             fixkind case|rename|{}  [miss .. stale .. fit .. candidates ..]}
+#      mrow = the same, plus {meas <name> index <i> field <f>}, `expr` being
+#             that field's text
+#      rename = see ase::preflight_rename_solve (issue 1723)
 #
 # The mode is the RUN's REQUEST — item 9 §13.4's ruling, and the same value item
 # 8's gate uses (profile `casemode` -> global floor `sim_case_mode` -> fold).
@@ -16906,14 +16930,231 @@ proc ase::preflight_scan {state netlist_text} {
       set r [ase::netlist_map_resolve $map $kind $ident $cs]
       set row [dict create expr $ex kind $kind ident $ident \
                  correction [dict get $r real] ambiguous [dict get $r ambiguous] \
-                 why [dict get $r why]]
+                 why [dict get $r why] \
+                 fixkind [expr {[dict get $r real] ne {} ? {case} : {}}]]
+      if {[dict exists $r miss]} { dict set row miss [dict get $r miss] }
       switch -- [dict get $r status] {
         absent  { lappend absent $row }
         unknown { lappend unknown $row }
       }
     }
   }
-  return [dict create mode $mode cs $cs absent $absent unknown $unknown]
+  ## ISSUE 1723: THE MEASUREMENTS, BUT ONLY FOR A MISSING INSTANCE. A
+  ## measurement's signal fields (`target`, and the `trig`/`targ`/`when` the
+  ## other kinds carry) spell hierarchy paths as literal text exactly as an
+  ## output row does, so a rename strands them the same way. They NEVER refuse
+  ## a run -- refusing on a measurement is a behaviour change nobody has ruled
+  ## on -- so they go in their own list, which the gate reads only when the
+  ## outputs have already refused, and which ase::preflight_fix_session applies.
+  ## Only a row whose path stops at a missing INSTANCE is collected: a plain
+  ## typo or a mis-cased leaf in a measurement is not this list's business.
+  set meas {}
+  set mi -1
+  foreach m [ase::state_get $state measurements] {
+    incr mi
+    if {[catch {dict size $m}]} { continue }
+    foreach f {target trig targ when} {
+      set tx [string trim [ase::state_get $m $f]]
+      if {$tx eq {}} { continue }
+      if {[catch {ase::preflight_idents $tx} ids]} { continue }
+      foreach id $ids {
+        lassign $id kind ident
+        set r [ase::netlist_map_resolve $map $kind $ident $cs]
+        if {[dict get $r status] ne {absent} || ![dict exists $r miss]} { continue }
+        lappend meas [dict create meas [ase::state_get $m name] index $mi \
+          field $f expr $tx kind $kind ident $ident correction {} ambiguous 0 \
+          why [dict get $r why] fixkind {} miss [dict get $r miss]]
+      }
+    }
+  }
+  lassign [ase::preflight_rename_solve $map $cs $absent $meas] absent meas renames
+  return [dict create mode $mode cs $cs absent $absent unknown $unknown \
+            measurements $meas renames $renames]
+}
+
+# ISSUE 1723: THE INSTANCES OF THE MISSING SEGMENT'S OWN SCOPE UNDER WHICH THE
+# REST OF ONE IDENTIFIER RESOLVES. `miss` is ase::netlist_map_resolve's record
+# of where the path stopped. -> {{<instance> <the corrected identifier>} ...},
+# in netlist order.
+#
+# "Resolves" means the resolver hands back a spelling: `present`, or `absent`
+# with a case correction under `distinguish`. An `unknown` answer never carries
+# one, which is what keeps every PDK device card (an X-card whose master this
+# netlist does not define) from being a candidate for every stale name. Only
+# ONE renamed segment per identifier: a rest that stops at a second missing
+# instance does not resolve, so it is never a candidate.
+proc ase::preflight_rename_try {map kind name cs miss} {
+  set out {}
+  if {[catch {dict get $miss scope} scope] || [catch {dict get $miss index} idx]} {
+    return {}
+  }
+  set insts {}
+  catch {set insts [dict get $map scopes $scope insts]}
+  set parts [split $name .]
+  if {$idx < 0 || $idx >= [llength $parts] - 1} { return {} }
+  set scopes [dict get $map scopes]
+  dict for {inst master} $insts {
+    ## a master this netlist does not define cannot hold the rest of a path
+    ## (the resolver would answer `unknown`): skipped before resolving, so a
+    ## scope full of PDK device cards costs one lookup each
+    if {![dict exists $scopes [string tolower $master]]} { continue }
+    set try $parts
+    lset try $idx $inst
+    set r [ase::netlist_map_resolve $map $kind [join $try .] $cs]
+    if {[dict get $r real] eq {}} { continue }
+    lappend out [list $inst [dict get $r real]]
+  }
+  return $out
+}
+
+# ISSUE 1723: THE STALE-INSTANCE CORRECTION. `orows` are the scan's absent
+# output rows, `mrows` its measurement rows; -> {orows mrows renames}, both row
+# lists with corrections filled in, and one record per stale prefix:
+#
+#   {prefix <as written>  to <the corrected prefix, or {}>  fit <f>
+#    candidates {<instance> ...}  outputs <n>  measurements <n>}
+#
+# THE RULE (issue 1723 item 1): the rows naming one stale prefix are corrected
+# only when ONE instance of that scope makes EVERY refused output row naming it
+# resolve. `fit` says which case this is:
+#   unique   exactly one such instance: every row it resolves is corrected
+#   several  two or more resolve them all: they are named, nothing is offered
+#   partial  none resolves them all; the ones resolving some are named
+#   none     nothing in the scope resolves any of them
+#
+# ⚠ THE OUTPUT ROWS DECIDE, NOT THE MEASUREMENTS. The measurements never refuse
+# the run, so a measurement that the chosen instance does not resolve (a typo
+# in its own leaf) must not cost the user the correction of the outputs that
+# DID refuse; it is left uncorrected and named. Only a prefix that no output row
+# names is decided by its measurement rows.
+#
+# ⚠ ONLY A ROW CARRYING `miss` IS A MEMBER, and the two kinds of correction
+# cannot meet on one row: the resolver sets `miss` only on the arm that
+# answers `real {}`, and never for a fold-ambiguous segment.
+proc ase::preflight_rename_solve {map cs orows mrows} {
+  set grp [dict create]
+  set tries [dict create]
+  foreach w {o m} rows [list $orows $mrows] {
+    set i -1
+    foreach row $rows {
+      incr i
+      if {![dict exists $row miss]} { continue }
+      dict lappend grp [dict get $row miss prefix] [list $w $i]
+      dict set tries $w,$i [ase::preflight_rename_try $map [dict get $row kind] \
+                              [dict get $row ident] $cs [dict get $row miss]]
+    }
+  }
+  set renames {}
+  dict for {p members} $grp {
+    set deciders {}
+    foreach mb $members { if {[lindex $mb 0] eq {o}} { lappend deciders $mb } }
+    if {![llength $deciders]} { set deciders $members }
+    set common {}
+    set union {}
+    set first 1
+    foreach d $deciders {
+      set names {}
+      foreach t [dict get $tries [join $d ,]] { lappend names [lindex $t 0] }
+      foreach n $names { if {[lsearch -exact $union $n] < 0} { lappend union $n } }
+      if {$first} {
+        set common $names
+        set first 0
+      } else {
+        set keep {}
+        foreach n $common { if {[lsearch -exact $names $n] >= 0} { lappend keep $n } }
+        set common $keep
+      }
+    }
+    set nc [llength $common]
+    set fit [expr {$nc == 1 ? {unique} : ($nc > 1 ? {several} :
+                   ([llength $union] ? {partial} : {none}))}]
+    set cands [expr {$nc >= 1 ? $common : $union}]
+    set to {}
+    set no 0
+    set nm 0
+    foreach mb $members {
+      lassign $mb w j
+      if {$w eq {o}} { incr no } else { incr nm }
+      set row [lindex [expr {$w eq {o} ? $orows : $mrows}] $j]
+      dict set row stale $p
+      dict set row fit $fit
+      dict set row candidates $cands
+      if {$fit eq {unique}} {
+        set fx {}
+        foreach t [dict get $tries $w,$j] {
+          if {[lindex $t 0] eq [lindex $common 0]} { set fx [lindex $t 1] }
+        }
+        if {$fx ne {}} {
+          dict set row correction $fx
+          dict set row fixkind rename
+          if {$to eq {}} {
+            ## the corrected PREFIX in the netlist's own spelling: the same
+            ## fields of the corrected identifier the stale prefix occupied
+            set idx [dict get $row miss index]
+            set n [llength [split $p .]]
+            set to [join [lrange [split $fx .] [expr {$idx - $n + 1}] $idx] .]
+          }
+        }
+      }
+      if {$w eq {o}} { lset orows $j $row } else { lset mrows $j $row }
+    }
+    lappend renames [dict create prefix $p to $to fit $fit candidates $cands \
+                       outputs $no measurements $nm]
+  }
+  return [list $orows $mrows $renames]
+}
+
+# Quoted names for a sentence: 'a' / 'a' and 'b' / 'a', 'b' and 'c'.
+proc ase::preflight_name_list {names} {
+  set q {}
+  foreach n $names { lappend q "'$n'" }
+  if {[llength $q] < 2} { return [join $q] }
+  return "[join [lrange $q 0 end-1] {, }] and [lindex $q end]"
+}
+
+# ISSUE 1723: THE `.include`d FILES THAT NAME A STALE PREFIX, listed and NEVER
+# edited -- they are the user's files, and ASE-L does not own their text.
+# -> {{path <resolved> file <as stored> prefix <p> to <t> count <n>} ...}
+#
+# The count is of `<prefix>.` with the dot, preceded by the start of a line or
+# by a character that cannot continue a name or a path: the same text a user's
+# own search-and-replace has to find. The dot is not optional -- a graph record
+# in a state file carries `x1 0 x2 9` as axis keys, and an include file can
+# just as well hold a bare `x1` that is not an instance path.
+#
+# A relative path resolves against `rundir`, because the simulator runs there.
+# An include that does not expand, is not a readable file, or is larger than
+# 8 MB is passed over: a nested `.include` inside one is not followed.
+proc ase::preflight_include_hits {state renames cs {rundir {}}} {
+  set out {}
+  if {![llength $renames]} { return {} }
+  set opts [list -all]
+  if {!$cs} { lappend opts -nocase }
+  foreach inc [ase::state_get $state includes] {
+    if {[llength $inc] >= 2 && ![catch {dict get $inc file} f]} {
+    } else {
+      set f $inc
+    }
+    if {[string trim $f] eq {}} { continue }
+    if {[catch {ase::expand_path $f} p]} { continue }
+    if {[catch {file pathtype $p} pt]} { continue }
+    if {$pt ne {absolute} && $rundir ne {}} { set p [file join $rundir $p] }
+    if {![file isfile $p] || ![file readable $p]} { continue }
+    if {[catch {file size $p} sz] || $sz > 8388608} { continue }
+    if {[catch {open $p r} fh]} { continue }
+    set txt [read $fh]
+    close $fh
+    foreach g $renames {
+      set pre [dict get $g prefix]
+      set q [regsub -all {[][{}()*+?.\\^$|]} $pre {\\&}]
+      set n [regexp {*}$opts -- "(?:^|\[^A-Za-z0-9_.\])$q\\." $txt]
+      if {$n} {
+        lappend out [dict create path [file normalize $p] file $f prefix $pre \
+                       to [dict get $g to] count $n]
+      }
+    }
+  }
+  return $out
 }
 
 # A scan's absent rows grouped by the OUTPUT ROW they came from, in
@@ -16966,10 +17207,111 @@ proc ase::preflight_fixed_expr {rows} {
 # a silent rewrite of a saved session means that when our map is wrong about
 # something we corrupt saved work with no trace.
 #
-# Rewrites session `key`'s output rows from the corrections the pre-flight found
-# against the CURRENT netlist artifact, marks the session dirty (the user still
-# has to save), and says what it changed. -> the number of rows rewritten.
+# Rewrites session `key`'s output rows -- and, since issue 1723, the measurement
+# fields a renamed instance stranded -- from the corrections the pre-flight
+# found against the CURRENT netlist artifact, marks the session dirty (the user
+# still has to save), and says what it changed. -> the number of output rows
+# plus measurement fields rewritten. The ASE-L window's Apply button
+# (ase::ui::repair_apply) is this command, pressed: the press IS the
+# confirmation D1 asks for, and nothing calls it without one.
 proc ase::preflight_fix_session {key} {
+  set state [ase::session_state $key]
+  set scan [ase::preflight_session_scan $key]
+  set a [ase::preflight_apply $state $scan]
+  foreach l [dict get $a said] { ::ase::echo $l }
+  set n [dict get $a n]
+  set nskip [dict get $a nskip]
+  if {$n} { ase::session_update $key [dict get $a state] }
+  # SAY SO WHEN THERE WAS NOTHING TO DO. A silent `0` from a command the refusal
+  # itself told the user to run reads as "it worked".
+  if {!$n} {
+    ::ase::echo "ase: pre-flight — nothing was rewritten in session '$key':\
+ [expr {$nskip ? "the $nskip refused output row(s) have no correction to offer"
+        : {the pre-flight found nothing to correct}}]." note
+  }
+  return $n
+}
+
+# THE APPLY ITSELF, PURE: STATE with every rewrite SCAN offers applied.
+# -> {state <new state>  n <rows rewritten>  outputs <output rows>
+#     measurements <measurement rows>  nskip <refused output expressions with
+#     no correction>  said {<line per output row or measurement field> ...}}
+# ase::preflight_fix_session is this plus the session write and the CIW; the
+# ASE-L window's offer (ase::ui::repair_offer) reads its counts, so the button
+# cannot promise a number the command does not then rewrite (issue 1723).
+proc ase::preflight_apply {state scan} {
+  # ONE REWRITE PER OUTPUT ROW, carrying ALL of that row's corrections. Applying
+  # them one absent identifier at a time matched rows by the ORIGINAL expr, so
+  # after the first rewrite every later correction for the same row silently
+  # failed to match and was dropped — while the count still reported success and
+  # the only signal was the next run refusing again. (Fix round, item 10.)
+  #
+  # ⚠ ISSUE 1723: THE LIST OF REWRITES IS ase::preflight_repairs'. It carries
+  # the measurement fields a stale instance strands as well as the output rows.
+  set reps [ase::preflight_repairs $scan]
+  set said {}
+  set n 0
+  set nout 0
+  set nrow 0
+  set nmeas 0
+  set mrows [dict create]
+  foreach rp $reps {
+    set why "the netlist's own spelling"
+    if {[dict get $rp renamed] ne {}} {
+      lassign [dict get $rp renamed] rfrom rto
+      set why "instance '$rfrom' is now '$rto'"
+    }
+    set ex [dict get $rp expr]
+    set fixed [dict get $rp fixed]
+    if {[dict get $rp what] eq {output}} {
+      incr nout
+      set outs {}
+      foreach o [ase::state_get $state outputs] {
+        if {[ase::state_get $o expr] eq $ex} {
+          dict set o expr $fixed
+          incr n
+          incr nrow
+          lappend said "ase: pre-flight — output '$ex' rewritten to\
+ '$fixed' ($why). The session is now unsaved."
+        }
+        lappend outs $o
+      }
+      dict set state outputs $outs
+      continue
+    }
+    ## a measurement: by POSITION, and only while the field still reads what
+    ## the scan read, so a row edited since cannot be overwritten
+    set ms [ase::state_get $state measurements]
+    set i [dict get $rp index]
+    set f [dict get $rp field]
+    set m [lindex $ms $i]
+    if {[catch {string trim [ase::state_get $m $f]} cur] || $cur ne $ex} { continue }
+    dict set m $f $fixed
+    lset ms $i $m
+    dict set state measurements $ms
+    ## counted per measurement ROW, not per field: a trig...targ row naming
+    ## the stale prefix twice is one measurement rewritten
+    if {![dict exists $mrows $i]} {
+      dict set mrows $i 1
+      incr n
+      incr nmeas
+    }
+    lappend said "ase: pre-flight — measurement '[dict get $rp meas]' $f '$ex'\
+ rewritten to '$fixed' ($why). The session is now unsaved."
+  }
+  set absent {}
+  catch {set absent [dict get $scan absent]}
+  set nskip [expr {[dict size [ase::preflight_group_rows $absent]] - $nout}]
+  return [dict create state $state n $n outputs $nrow measurements $nmeas \
+            nskip $nskip said $said]
+}
+
+# The scan of session KEY against its CURRENT netlist artifact,
+# <rundir>/<cell>.spice -- the file ase::run_existing runs and ase::run
+# rewrites. Raises, with the sentence the user needs, when there is none.
+# ase::preflight_fix_session and the ASE-L window's offer both read the scan
+# through here, so they cannot disagree about which netlist was asked.
+proc ase::preflight_session_scan {key} {
   set state [ase::session_state $key]
   if {$state eq {}} { return -code error "ase: no such session: $key" }
   set design [ase::state_get $state design]
@@ -16982,38 +17324,67 @@ proc ase::preflight_fix_session {key} {
  (Simulation > Netlist > Recreate first)"
   }
   set f [open $nl r] ; set txt [read $f] ; close $f
-  set scan [ase::preflight_scan $state $txt]
-  # ONE REWRITE PER OUTPUT ROW, carrying ALL of that row's corrections. Applying
-  # them one absent identifier at a time matched rows by the ORIGINAL expr, so
-  # after the first rewrite every later correction for the same row silently
-  # failed to match and was dropped — while the count still reported success and
-  # the only signal was the next run refusing again. (Fix round, item 10.)
-  set n 0
-  set nskip 0
-  dict for {ex grows} [ase::preflight_group_rows [dict get $scan absent]] {
-    set fixed [ase::preflight_fixed_expr $grows]
-    if {$fixed eq {}} { incr nskip ; continue }
-    set outs {}
-    foreach o [ase::state_get $state outputs] {
-      if {[ase::state_get $o expr] eq $ex} {
-        dict set o expr $fixed
-        incr n
-        ::ase::echo "ase: pre-flight — output '$ex' rewritten to\
- '$fixed' (the netlist's own spelling). The session is now unsaved."
+  return [ase::preflight_scan $state $txt]
+}
+
+# ISSUE 1723: EVERY REWRITE A SCAN OFFERS, as one list -- what
+# ase::preflight_fix_session applies and what ase::ui::repair_offer counts.
+#   {what output expr <old> fixed <new> fixkind case|rename renamed {<from> <to>}|{}}
+#   {what measurement index <i> meas <name> field <f> expr <old> fixed <new>
+#    fixkind rename renamed {<from> <to>}}
+# One record per output EXPRESSION (ase::preflight_fixed_expr composes all of
+# its corrections) and one per measurement FIELD, in scan order. Pure.
+proc ase::preflight_repairs {scan} {
+  set out {}
+  set to [dict create]
+  set rn {}
+  catch {set rn [dict get $scan renames]}
+  foreach g $rn {
+    if {[dict get $g to] ne {}} { dict set to [dict get $g prefix] [dict get $g to] }
+  }
+  set absent {}
+  catch {set absent [dict get $scan absent]}
+  set meas {}
+  catch {set meas [dict get $scan measurements]}
+  foreach what {output measurement} \
+          groups [list [ase::preflight_group_rows $absent] [ase::preflight_group_meas $meas]] {
+    dict for {k grows} $groups {
+      set fixed [ase::preflight_fixed_expr $grows]
+      if {$fixed eq {}} { continue }
+      set fk case
+      set renamed {}
+      foreach r $grows {
+        if {[ase::state_get $r fixkind] ne {rename} ||
+            [ase::state_get $r correction] eq {}} { continue }
+        set fk rename
+        set p [ase::state_get $r stale]
+        if {$renamed eq {} && [dict exists $to $p]} {
+          set renamed [list $p [dict get $to $p]]
+        }
       }
-      lappend outs $o
+      set r0 [lindex $grows 0]
+      set rec [dict create what $what expr [dict get $r0 expr] fixed $fixed \
+                 fixkind $fk renamed $renamed]
+      if {$what eq {measurement}} {
+        dict set rec index [dict get $r0 index]
+        dict set rec meas [dict get $r0 meas]
+        dict set rec field [dict get $r0 field]
+      }
+      lappend out $rec
     }
-    dict set state outputs $outs
   }
-  if {$n} { ase::session_update $key $state }
-  # SAY SO WHEN THERE WAS NOTHING TO DO. A silent `0` from a command the refusal
-  # itself told the user to run reads as "it worked".
-  if {!$n} {
-    ::ase::echo "ase: pre-flight — nothing was rewritten in session '$key':\
- [expr {$nskip ? "the $nskip refused output row(s) have no correction to offer"
-        : {the pre-flight found nothing to correct}}]." note
+  return $out
+}
+
+# A scan's measurement rows grouped by the FIELD they came from:
+# -> {{<index> <field>} {<mrow> ...} ...}. ase::preflight_group_rows' twin, for
+# a row whose `expr` is a measurement field's text rather than an output row.
+proc ase::preflight_group_meas {rows} {
+  set g [dict create]
+  foreach row $rows {
+    dict lappend g [list [dict get $row index] [dict get $row field]] $row
   }
-  return $n
+  return $g
 }
 
 # THE GATE. Called from ase::run_deck once the circuit netlist has been READ and
@@ -17076,6 +17447,16 @@ proc ase::preflight_refusal {{lead {}} {rdnote {}}} {
   append s "Nothing was generated: no deck, no raw, no log.$rdnote\
  `set ase_preflight 0` leaves this check in force."
   return $s
+}
+
+# ISSUE 1723: IS ERR THE GATE'S SAVE-NAME REFUSAL, the one refusal of this gate
+# that can carry corrections? Read off the head line ase::preflight_gate mints
+# below (`ase: REFUSED — <n> output expression(s) name(s) something this
+# circuit does not have.`); row PF1723m drives the real gate's error through
+# it, so a reworded head reds there rather than silently losing the offer.
+proc ase::preflight_is_name_refusal {err} {
+  set first [lindex [split $err "\n"] 0]
+  return [regexp {^ase: REFUSED — [0-9]+ output expressions? names? something this circuit does not have\.} $first]
 }
 
 proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
@@ -17302,9 +17683,22 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   # once per expression and offered once, on that expression's last line: a row
   # naming two mis-cased nodes has ONE repaired spelling, not two mutually
   # exclusive halves.
-  set nfix 0
+  ## ISSUE 1723: a stale-instance correction is offered beside the case one.
+  ## Each rename record is keyed by the stale prefix its rows carry.
+  set rnof [dict create]
+  foreach g [dict get $scan renames] { dict set rnof [dict get $g prefix] $g }
+  set ncase 0
+  set nren 0
   dict for {ex grows} $groups {
     set fixed [ase::preflight_fixed_expr $grows]
+    set rg {}
+    foreach row $grows {
+      if {[ase::state_get $row fixkind] eq {rename} &&
+          [ase::state_get $row correction] ne {}} {
+        set rg [dict get $rnof [dict get $row stale]]
+        break
+      }
+    }
     set glines {}
     foreach row $grows {
       set l "ase:   '$ex' — [dict get $row kind] '[dict get $row ident]'\
@@ -17316,9 +17710,15 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       lappend glines $l
     }
     if {$fixed ne {}} {
-      incr nfix
       set l [lindex $glines end]
-      append l ". Same name in another case IS: '$ex' -> '$fixed'"
+      if {$rg ne {}} {
+        incr nren
+        append l ". Instance '[dict get $rg prefix]' looks renamed to\
+ '[dict get $rg to]': '$ex' -> '$fixed'"
+      } else {
+        incr ncase
+        append l ". Same name in another case IS: '$ex' -> '$fixed'"
+      }
       lset glines end $l
     }
     foreach l $glines {
@@ -17326,12 +17726,86 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       lappend lines $l
     }
   }
-  if {$nfix} {
-    set l "ase: $nfix of them look like a CASE mismatch — an output row picked\
+  ## A stale prefix with no single correction says why, once, naming the
+  ## instances that came closest -- the user picks; ASE-L does not guess.
+  foreach g [dict get $scan renames] {
+    if {[dict get $g outputs] == 0} { continue }
+    set who [ase::preflight_name_list [dict get $g candidates]]
+    set many [expr {[llength [dict get $g candidates]] > 1}]
+    set l {}
+    switch -exact -- [dict get $g fit] {
+      several {
+        set l "ase:   the netlist has no instance '[dict get $g prefix]', and $who\
+ each have everything the refused rows name under it, so there is no single\
+ correction to offer"
+      }
+      partial {
+        set l "ase:   the netlist has no instance '[dict get $g prefix]', and $who\
+ [expr {$many ? {each have} : {has}}] some of what the refused rows name under\
+ it but not all, so there is no correction to offer"
+      }
+    }
+    if {$l ne {}} {
+      ::ase::echo $l error
+      lappend lines $l
+    }
+  }
+  ## ISSUE 1723 item 3: THE MEASUREMENTS AND THE INCLUDE FILES NAMING THE SAME
+  ## MISSING INSTANCES, said only here, inside a refusal the outputs already
+  ## caused -- a stale measurement alone never refuses a run.
+  set nmfix 0
+  dict for {mk grows} [ase::preflight_group_meas [dict get $scan measurements]] {
+    set r0 [lindex $grows 0]
+    set fixed [ase::preflight_fixed_expr $grows]
+    set l "ase:   measurement '[dict get $r0 meas]' — its [dict get $r0 field]\
+ '[dict get $r0 expr]' names instance '[dict get $r0 stale]', which the\
+ netlist does not have"
+    if {$fixed ne {}} {
+      incr nmfix
+      append l ": '[dict get $r0 expr]' -> '$fixed'"
+    }
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  set incs [ase::preflight_include_hits $state [dict get $scan renames] \
+              [dict get $scan cs] [ase::rundir $state]]
+  foreach ih $incs {
+    set nn [dict get $ih count]
+    set l "ase:   include file '[dict get $ih path]' names\
+ '[dict get $ih prefix].' $nn time[expr {$nn == 1 ? {} : {s}}]; ASE-L does not\
+ edit your files"
+    if {[dict get $ih to] ne {}} {
+      append l ", so change '[dict get $ih prefix].' to '[dict get $ih to].' there\
+ yourself"
+    }
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  ## THE CLOSING REMEDY, ONE SENTENCE PER KIND OF CORRECTION. It spoke only of a
+  ## CASE mismatch, and so told the user of a renamed instance that issue 0503
+  ## was their problem.
+  if {$ncase} {
+    set l "ase: $ncase of them look like a CASE mismatch — an output row picked\
  under a 'fold' profile and run under 'distinguish' stores the folded spelling\
- forever (issue 0503). Nothing is rewritten automatically: run\
- `ase::preflight_fix_session <key>` to apply the corrections above to this\
- session's output rows, then save."
+ forever (issue 0503)."
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  foreach g [dict get $scan renames] {
+    if {[dict get $g fit] ne {unique} || [dict get $g outputs] == 0} { continue }
+    set l "ase: the netlist has no instance '[dict get $g prefix]', and every\
+ refused row naming it resolves under '[dict get $g to]', so it looks like\
+ '[dict get $g prefix]' was renamed '[dict get $g to]'."
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  if {$ncase || $nren || $nmfix} {
+    set btn {Apply Corrections}
+    catch {set btn [ase::ui::lbl_repair_apply]}
+    set l "ase: Nothing is rewritten automatically: '$btn' (offered in the\
+ ASE-L window when its Run is refused) or `ase::preflight_fix_session <key>`\
+ applies the corrections above to this session's output\
+ rows[expr {$nmfix ? { and measurements} : {}}]; then save."
     ::ase::echo $l error
     lappend lines $l
   }

@@ -4516,6 +4516,235 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   puts "UX1498/UX1499 legs skipped (no DISPLAY)"
 }
 
+# =============================================================================
+# FX1723 -- A REFUSED RUN OFFERS THE PRE-FLIGHT'S CORRECTIONS BEHIND A BUTTON
+# =============================================================================
+# Issue 1723 item 2. A renamed DUT (`x1` -> `xdut`) strands a session's output
+# rows and measurement targets; the refusal names the corrections and a console
+# command. The window now offers them in a banner over the status bar with
+# Apply and Dismiss. The DECISION is ase::ui::repair_offer, pure, pinned on the
+# counted headless arm (test_ase_preflight.tcl, PF1723o*); these rows are the
+# ACT, and every gesture is a real press (Enter, press, release, Leave) on the
+# real widget, never `invoke`.
+#
+# ⚠ D1: THE PRESS IS THE CONFIRMATION. FX1723c is the row that matters most: a
+# refused Run, on its own, rewrites NOTHING and leaves the session clean.
+#
+# ⚠ `ase::run_precheck` IS RENAMED OUT for the band, and only it. This suite
+# runs against an EMPTY simulator registry (ISO1377), so the profile resolver
+# refuses before the save-name gate is ever reached; the subject here is what
+# the window does with the gate's refusal, not which simulator would start.
+# Nothing below can start one: every Run pressed here is refused by the gate.
+#
+# ⚠ SEPARATE VIEW, SEPARATE WINDOW, LAST BAND -- the UX1498/D1398 idiom.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+ if {[catch {
+
+  set fx_run [file join $scratch fx1723_run]
+  file mkdir $fx_run
+  ## the circuit netlist artifact Run reads: the DUT is now `xdut`
+  w_hier_write [file join $fx_run nfet_clean.spice] {** sch_path: /fixture/nfet_clean.sch
+**.subckt nfet_clean
+xdut IN OUT fx_amp
+V1 IN 0 1
+**.ends
+.subckt fx_amp INP OUTP
+R1 INP a1 1k
+R2 a1 tail 1k
+R3 tail OUTP 1k
+.ends
+.end
+}
+  set fx_inc [file join $fx_run fx_nodeset.spice]
+  set fx_inctxt ".nodeset v(x1.a1)=1 v(x1.tail)=0\n"
+  w_hier_write $fx_inc $fx_inctxt
+  set fx_stale {{expr v(x1.a1) save 1 plot 0} {expr v(x1.tail) save 1 plot 0}}
+  set fx_meas {{name m1 analysis tran kind find target v(x1.a1) at 0.5u}}
+
+  library_new_view aselib nfet_clean ngspice_state_fx1723 ngspice_state_fx1723
+  set fxpath [xschem cellview_path aselib/nfet_clean ngspice_state_fx1723]
+  set fxkey  [ase::session_key aselib nfet_clean ngspice_state_fx1723]
+  if {$fxpath eq {}} {
+    puts "SKIPPED: FX1723 (the fixture state view did not resolve)"
+  } else {
+    ase::session_open $fxkey [file normalize $fxpath]
+    set fxst [ase::session_state $fxkey]
+    dict set fxst design {lib aselib cell nfet_clean view schematic}
+    dict set fxst rundir $fx_run
+    dict set fxst analyses {{type tran enabled 1 stop 1u step 1n}}
+    dict set fxst outputs $fx_stale
+    dict set fxst measurements $fx_meas
+    dict set fxst includes [list [list file $fx_inc]]
+    ase::session_update $fxkey $fxst
+    ase::session_save $fxkey
+    ase::session_close $fxkey
+    check "FX1723 open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_fx1723] 1
+    update
+    set fxtop [ase::ui::window_for $fxkey]
+    catch {wm geometry $fxtop 900x560}
+    update ; after 150 ; update
+
+    ## a REAL press: Tk's Button fires on a release that follows <Enter>
+    proc fx_press {b} {
+      if {![winfo exists $b]} { return NOWIDGET }
+      for {set i 0} {$i < 50 && ![winfo ismapped $b]} {incr i} { update ; after 20 }
+      if {![winfo ismapped $b]} { return NOTMAPPED }
+      set x [expr {[winfo width $b] / 2}]
+      set y [expr {[winfo height $b] / 2}]
+      event generate $b <Enter> -x $x -y $y
+      event generate $b <ButtonPress-1> -x $x -y $y
+      event generate $b <ButtonRelease-1> -x $x -y $y
+      event generate $b <Leave> -x $x -y $y
+      update
+      return ok
+    }
+    proc wtext_fx {w} {
+      if {![winfo exists $w]} { return NOWIDGET }
+      if {[catch {$w cget -text} t]} { return NOTEXT }
+      return $t
+    }
+    proc readfile_fx {p} {
+      if {[catch {open $p r} fh]} { return NOFILE }
+      set t [read $fh] ; close $fh ; return $t
+    }
+    proc fx_banner_up {top} {
+      update
+      return [expr {[winfo exists $top.fix] && [winfo ismapped $top.fix]}]
+    }
+    ## every value the two output panes show, whichever tab carries the row
+    proc fx_pane_names {top} {
+      set out {}
+      foreach tv [list $top.body.outs.tv $top.body.saves.tv] {
+        if {![winfo exists $tv]} { continue }
+        foreach it [$tv children {}] { lappend out [lindex [$tv item $it -values] 0] }
+      }
+      return [lsort -unique $out]
+    }
+    proc fx_exprs {key} {
+      set out {}
+      foreach o [ase::state_get [ase::session_state $key] outputs] { lappend out [dict get $o expr] }
+      return $out
+    }
+    proc fx_targets {key} {
+      set out {}
+      foreach m [ase::state_get [ase::session_state $key] measurements] {
+        lappend out [ase::state_get $m target]
+      }
+      return $out
+    }
+    rename ::ase::run_precheck ::fx_saved_precheck
+    proc ::ase::run_precheck {state} { return {} }
+    set ::fx_said {}
+    rename ::ase::echo ::fx_saved_echo
+    proc ::ase::echo {msg {tag {}}} { lappend ::fx_said [list $tag $msg] ; return 1 }
+
+    # --- the refused Run puts the offer up, and changes nothing ------------
+    check "FX1723a the banner does not exist before any Run" [fx_banner_up $fxtop] 0
+    set fx_p1 [fx_press $fxtop.strip.run]
+    set fx_up1 [fx_banner_up $fxtop]
+    check "FX1723b pressing Run on the stale bench is refused by the gate and the banner comes up with its two buttons" \
+      [list $fx_p1 $fx_up1 [wtext_fx $fxtop.fix.apply] [wtext_fx $fxtop.fix.dismiss] \
+            [expr {[lsearch -glob [lmap e $::fx_said {lindex $e 1}] {ase: REFUSED — 2 output expressions*}] >= 0}]] \
+      [list ok 1 [ase::ui::lbl_repair_apply] [ase::ui::lbl_repair_dismiss] 1]
+    check "FX1723c D1 -- the refusal alone rewrites NOTHING: the rows still say x1 and the session is clean" \
+      [list [fx_exprs $fxkey] [fx_targets $fxkey] [ase::session_dirty $fxkey]] \
+      [list {v(x1.a1) v(x1.tail)} {v(x1.a1)} 0]
+    check "FX1723d the banner says what the press does, names the rename, and the include it will not edit" \
+      [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 2 output rows and 1 measurement in this session; Session > Save State keeps them.*1 include file names the old instance too*" \
+         [wtext_fx $fxtop.fix.msg]] 1
+    check "FX1723d2 the banner sits directly above the status bar" \
+      [expr {[winfo exists $fxtop.fix] &&
+             [winfo y $fxtop.fix] + [winfo height $fxtop.fix] <= [winfo y $fxtop.status] + 1}] 1
+
+    # --- Dismiss takes it down and leaves the session alone ----------------
+    set fx_p2 [fx_press $fxtop.fix.dismiss]
+    check "FX1723e Dismiss takes the banner down and rewrites nothing" \
+      [list $fx_p2 [fx_banner_up $fxtop] [fx_exprs $fxkey] [ase::session_dirty $fxkey]] \
+      [list ok 0 {v(x1.a1) v(x1.tail)} 0]
+
+    # --- Apply is the console command, pressed -----------------------------
+    fx_press $fxtop.strip.run
+    set ::fx_said {}
+    set fx_p3 [fx_press $fxtop.fix.apply]
+    check "FX1723f Apply rewrites the output rows and the measurement, marks the session unsaved, and takes the banner down" \
+      [list $fx_p3 [fx_exprs $fxkey] [fx_targets $fxkey] [ase::session_dirty $fxkey] \
+            [string match {* \*} [wm title $fxtop]] [fx_banner_up $fxtop]] \
+      [list ok {v(xdut.a1) v(xdut.tail)} {v(xdut.a1)} 1 1 0]
+    check "FX1723g ...says each rewrite on the CIW, as the console command does" \
+      [llength [lsearch -all -glob [lmap e $::fx_said {lindex $e 1}] {ase: pre-flight — * rewritten to *instance 'x1' is now 'xdut'*}]] 3
+    check "FX1723h ...the panes show the new spelling" \
+      [expr {[lsearch -exact [fx_pane_names $fxtop] v(xdut.a1)] >= 0 &&
+             [lsearch -exact [fx_pane_names $fxtop] v(x1.a1)] < 0}] 1
+    set fh [open $fxpath r] ; set fx_disk [read $fh] ; close $fh
+    check "FX1723i ...and touches no file: the include is byte-identical and the state file still says x1 until Save" \
+      [list [expr {[readfile_fx $fx_inc] eq $fx_inctxt}] [string match {*v(x1.a1)*} $fx_disk]] {1 1}
+
+    # --- a refusal with nothing to offer takes a stale banner down ---------
+    ase::session_revert $fxkey
+    fx_press $fxtop.strip.run
+    set fx_up4 [fx_banner_up $fxtop]
+    ## a typo, and no stale measurement either: a measurement the rename
+    ## stranded is still offered beside a refusal it did not cause
+    set fxst4 [ase::session_state $fxkey]
+    dict set fxst4 outputs {{expr v(nosuch) save 1 plot 0}}
+    dict set fxst4 measurements {}
+    ase::session_update $fxkey $fxst4
+    set fx_p5 [fx_press $fxtop.strip.run]
+    check "FX1723j a refusal with no correction to offer takes the previous offer down and puts none up" \
+      [list $fx_up4 $fx_p5 [fx_banner_up $fxtop]] {1 ok 0}
+
+    # --- a Run that STARTS takes the offer down ------------------------------
+    ## both Run doors call ase::ui::run_started only after ase::run* returned an
+    ## id; nothing here can start a simulator, so that door is driven directly,
+    ## with its log and trace attachments stubbed (they need a live run)
+    ase::session_revert $fxkey
+    fx_press $fxtop.strip.run
+    set fx_up6 [fx_banner_up $fxtop]
+    foreach p {attach_trace log_open log_clear} {
+      rename ::ase::ui::$p ::fx_saved_$p
+      proc ::ase::ui::$p args { return {} }
+    }
+    set fx_rsrc [catch {ase::ui::run_started $fxkey fx1723} fx_rs]
+    foreach p {attach_trace log_open log_clear} {
+      rename ::ase::ui::$p {}
+      rename ::fx_saved_$p ::ase::ui::$p
+    }
+    catch {ase::session_setattr $fxkey run_id {}}
+    check "FX1723k a Run that starts takes the refused Run's offer down" \
+      [list $fx_up6 $fx_rsrc [fx_banner_up $fxtop]] {1 0 0}
+
+    rename ::ase::echo {}
+    rename ::fx_saved_echo ::ase::echo
+    rename ::ase::run_precheck {}
+    rename ::fx_saved_precheck ::ase::run_precheck
+    ase::session_revert $fxkey
+    update
+    ase::ui::close $fxkey
+    catch {ase::session_close $fxkey}
+    update
+  }
+
+ } fx_bigerr]} {
+  puts "UNEXPECTED ERROR (FX1723 block): $fx_bigerr"
+  incr fail
+  catch {
+    if {[info commands ::fx_saved_echo] ne {}} {
+      catch {rename ::ase::echo {}} ; rename ::fx_saved_echo ::ase::echo
+    }
+    if {[info commands ::fx_saved_precheck] ne {}} {
+      catch {rename ::ase::run_precheck {}} ; rename ::fx_saved_precheck ::ase::run_precheck
+    }
+    foreach p {attach_trace log_open log_clear} {
+      if {[info commands ::fx_saved_$p] ne {}} {
+        catch {rename ::ase::ui::$p {}} ; rename ::fx_saved_$p ::ase::ui::$p
+      }
+    }
+  }
+ }
+} else {
+  puts "FX1723 legs skipped (no DISPLAY)"
+}
+
 # --- verdict -----------------------------------------------------------------
 if {$fail == 0} {
   puts "RESULT: ALL PASS ($npass checks)"

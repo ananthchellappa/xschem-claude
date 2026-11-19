@@ -53,6 +53,13 @@
 #              ngspice does not validate and fills a ~90-row table of zeros for,
 #              and a parameter filter that matches nothing and leaves the run
 #              with NO PLOT AT ALL at rc 0
+#   PF1723     issue 1723 -- a renamed instance: the stale-instance correction
+#              (unique / several / partial, a deeper segment), the measurement
+#              fields and include files it strands, the closing remedy per kind
+#              of correction, and the ASE-L button's pure decision
+#              (ase::ui::repair_offer). Placed ABOVE PF233, so the last row of
+#              this file is still `PF233f`; it moved no existing row. The
+#              button's display half is test_ase_window.tcl's FX1723 band.
 #
 # Standalone repro from the repo ROOT:
 #   ./src/xschem --nogui --pipe -q --nolog --script tests/headless/test_ase_preflight.tcl
@@ -3046,6 +3053,278 @@ eqcheck PF232j-a-disabled-row-and-an-unrenderable-one-are-left-alone \
         [dict size [pcheckx $MPNL {{type pss enabled 1}} {} $PFBAD]]] {0 0}
 
 } pf232err]} { puts "FATAL: PF232 $pf232err" ; incr fail }
+
+## ===========================================================================
+## PF1723 -- A RENAMED INSTANCE: THE STALE-INSTANCE CORRECTION, THE MEASUREMENTS
+## AND INCLUDE FILES IT STRANDS, AND THE ASE-L BUTTON'S DECISION. Issue 1723.
+## ===========================================================================
+## The user renamed a DUT `x1` -> `xdut`; the session's outputs, measurement
+## targets and nodeset include still spelled `x1.`, the run was refused, and
+## the refusal offered no way out (only a case mismatch had a correction).
+##
+## ⚠ THE FIXTURE IS BUILT SO EVERY RULE HAS SOMETHING TO TRIP OVER: `xa` and
+## `xb` are two instances of one master (two candidates), `xother` holds `b1`
+## and `xdut` holds `a1` (a partial match), `XM1`'s master is undefined (a PDK
+## card must never be a candidate), and `rn_amp` holds an `x7` so a renamed
+## DEEPER segment has a scope to be searched in.
+## ⚠ ITS OWN `catch`, like the sections around it.
+if {[catch {
+
+set NLR {** sch_path: /fixture/rn_top.sch
+**.subckt rn_top
+xdut IN OUT rn_amp
+xother IN OUT2 rn_amp2
+xa IN rn_twin
+xb IN rn_twin
+V1 IN 0 1
+R9 OUT 0 1k
+XM1 OUT G 0 0 sky130_fd_pr__nfet_01v8 L=0.15 W=1
+**.ends
+.subckt rn_amp INP OUTP
+x7 INP mid rn_leaf
+R1 INP a1 1k
+R2 a1 OUTP 1k
+vs a1 tail 0
+.ends
+.subckt rn_amp2 INP OUTP
+R1 INP b1 1k
+.ends
+.subckt rn_twin P
+R1 P n1 1k
+R2 n1 0 1k
+.ends
+.subckt rn_leaf A B
+R1 A B 1k
+.ends
+.end
+}
+set RDR [file join $tmp run_1723]
+file mkdir $RDR
+set ::sim_case_mode fold
+proc rn_state {outs {meas {}} {incs {}}} {
+  set s [mkstate $::RDR rn_top $outs]
+  if {[llength $meas]} { dict set s measurements $meas }
+  if {[llength $incs]} { dict set s includes $incs }
+  return $s
+}
+## {ident correction} of every row of one scan list, in order
+proc rn_fixes {sc key} {
+  set out {}
+  foreach r [dg $sc $key] { lappend out [list [dgn $r ident] [dgn $r correction]] }
+  return $out
+}
+proc rn_gate {st} {
+  said_clear
+  set rc [catch {ase::preflight_gate $st $::NLR} e]
+  return [list $rc $e]
+}
+set MAPR [pcall ase::netlist_map $NLR]
+
+## --- item 1: where the path stops, and who could stand in its place ---------
+eqcheck PF1723a-the-resolver-records-where-a-path-stops-at-a-missing-instance \
+  [list [dgn [pcall ase::netlist_map_resolve $MAPR voltage x1.a1 0] miss] \
+        [dgn [pcall ase::netlist_map_resolve $MAPR current v.x1.vs 0] miss] \
+        [dgn [pcall ase::netlist_map_resolve $MAPR voltage xdut.x8.a 0] miss] \
+        [dex [pcall ase::netlist_map_resolve $MAPR voltage xdut.nosuch 0] miss]] \
+  {{index 0 scope {} prefix x1} {index 1 scope {} prefix x1} {index 1 scope rn_amp prefix xdut.x8} 0}
+## the PDK card XM1 and the instances whose master lacks the rest are not
+## candidates; only the instance under which the rest resolves is
+eqcheck PF1723b-the-search-names-only-instances-of-the-same-scope-under-which-the-rest-resolves \
+  [list [pcall ase::preflight_rename_try $MAPR voltage x1.a1 0 {index 0 scope {} prefix x1}] \
+        [pcall ase::preflight_rename_try $MAPR voltage x9.n1 0 {index 0 scope {} prefix x9}] \
+        [pcall ase::preflight_rename_try $MAPR voltage x1.nothing 0 {index 0 scope {} prefix x1}]] \
+  {{{xdut xdut.a1}} {{xa xa.n1} {xb xb.n1}} {}}
+
+## --- item 1: a unique top-level rename is OFFERED for every refused row -----
+set RNOUT {{expr v(x1.a1) save 1} {expr v(x1.tail) save 1} {expr -i(v.x1.vs) save 1}}
+set scr [pcall ase::preflight_scan [rn_state $RNOUT] $NLR]
+eqcheck PF1723c-a-unique-rename-fills-the-rows-existing-correction-field \
+  [list [rn_fixes $scr absent] [lsort -unique [lmap r [dg $scr absent] {dgn $r fixkind}]] \
+        [dg $scr renames]] \
+  [list {{x1.a1 xdut.a1} {x1.tail xdut.tail} {v.x1.vs v.xdut.vs}} rename \
+        {{prefix x1 to xdut fit unique candidates xdut outputs 3 measurements 0}}]
+## ...so ase::preflight_fixed_expr applies it unchanged, the leading `-` kept
+eqcheck PF1723c2-and-the-existing-composer-applies-it-unchanged \
+  [lmap {ex g} [pcall ase::preflight_group_rows [dg $scr absent]] {pcall ase::preflight_fixed_expr $g}] \
+  {v(xdut.a1) v(xdut.tail) -i(v.xdut.vs)}
+lassign [rn_gate [rn_state $RNOUT]] rcr er
+eqcheck PF1723d-the-refusal-prints-the-rename-correction-per-expression \
+  [list $rcr [said_count {*'v(x1.a1)' -> 'v(xdut.a1)'*}] \
+        [said_count {*'-i(v.x1.vs)' -> '-i(v.xdut.vs)'*}] \
+        [said_count {*Same name in another case*}]] {1 1 1 0}
+## THE CLOSING REMEDY SAYS THE RIGHT THING FOR THE KIND: a rename is not issue
+## 0503, and the button and the console command are both named
+eqcheck PF1723e-the-closing-remedy-of-a-rename-speaks-of-a-rename-and-names-both-doors \
+  [list [said_count {*issue 0503*}] \
+        [said_count {*so it looks like 'x1' was renamed 'xdut'.}] \
+        [said_count "*'[pcall ase::ui::lbl_repair_apply]'*ase::preflight_fix_session <key>*"]] \
+  {0 1 1}
+set ::sim_case_mode distinguish
+lassign [rn_gate [rn_state {{expr v(in) save 1}}]] rcc ec
+set scc [pcall ase::preflight_scan [rn_state {{expr v(in) save 1}}] $NLR]
+eqcheck PF1723f-a-case-only-refusal-still-speaks-of-the-case-mismatch-and-of-no-rename \
+  [list $rcc [said_count {*issue 0503*}] [said_count {*renamed*}] \
+        [said_count "*'[pcall ase::ui::lbl_repair_apply]'*ase::preflight_fix_session <key>*"] \
+        [dgn [lindex [dg $scc absent] 0] fixkind] [dg $scc renames]] \
+  {1 1 0 1 case {}}
+## a segment two instances fold to (`xA`, `xa`) is a CASE question with no
+## answer, never a rename: no `miss`, no search, no rename record
+set NLAMB "* amb\nxA IN rn_twin\nxa IN rn_twin\nV1 IN 0 1\n.subckt rn_twin P\nR1 P n1 1k\n.ends\n.end\n"
+set scq [pcall ase::preflight_scan [rn_state {{expr v(XA.n1) save 1}}] $NLAMB]
+eqcheck PF1723q-a-fold-ambiguous-segment-is-not-searched-for-a-rename \
+  [list [llength [dg $scq absent]] [dgn [lindex [dg $scq absent] 0] ambiguous] \
+        [dex [lindex [dg $scq absent] 0] miss] [dg $scq renames]] {1 1 0 {}}
+set ::sim_case_mode fold
+
+## --- item 1: TWO candidates, and a PARTIAL one, offer nothing ---------------
+set sc2 [pcall ase::preflight_scan [rn_state {{expr v(x9.n1) save 1}}] $NLR]
+lassign [rn_gate [rn_state {{expr v(x9.n1) save 1}}]] rc2 e2
+eqcheck PF1723g-two-candidates-offer-nothing-and-the-refusal-names-both \
+  [list [rn_fixes $sc2 absent] [dgn [lindex [dg $sc2 renames] 0] fit] \
+        [dgn [lindex [dg $sc2 renames] 0] candidates] $rc2 \
+        [said_count {*no instance 'x9', and 'xa' and 'xb' each have everything*no single correction*}] \
+        [said_count {* -> *}] [said_count {*Nothing is rewritten automatically*}]] \
+  {{{x9.n1 {}}} several {xa xb} 1 1 0 0}
+## `xdut` holds a1 and nothing holds zz: one candidate resolving SOME rows
+set RNPART {{expr v(x5.a1) save 1} {expr v(x5.zz) save 1}}
+set sc3 [pcall ase::preflight_scan [rn_state $RNPART] $NLR]
+lassign [rn_gate [rn_state $RNPART]] rc3 e3
+eqcheck PF1723h-a-partial-match-offers-nothing-and-names-the-candidate \
+  [list [rn_fixes $sc3 absent] [dgn [lindex [dg $sc3 renames] 0] fit] \
+        [dgn [lindex [dg $sc3 renames] 0] candidates] $rc3 \
+        [said_count {*no instance 'x5', and 'xdut' has some of what*no correction to offer*}] \
+        [said_count {* -> *}]] \
+  {{{x5.a1 {}} {x5.zz {}}} partial xdut 1 1 0}
+## and two candidates EACH resolving a different row is partial too: xdut has
+## a1, xother has b1, and neither has both
+set sc3b [pcall ase::preflight_scan [rn_state {{expr v(x5.a1) save 1} {expr v(x5.b1) save 1}}] $NLR]
+eqcheck PF1723h2-two-candidates-each-resolving-a-different-row-are-a-partial-match \
+  [list [rn_fixes $sc3b absent] [dgn [lindex [dg $sc3b renames] 0] fit] \
+        [dgn [lindex [dg $sc3b renames] 0] candidates]] \
+  {{{x5.a1 {}} {x5.b1 {}}} partial {xdut xother}}
+## a renamed DEEPER segment falls out of the same code: x8 inside xdut -> x7
+set sc4 [pcall ase::preflight_scan [rn_state {{expr v(xdut.x8.a) save 1}}] $NLR]
+eqcheck PF1723p-a-renamed-deeper-segment-falls-out-of-the-same-search \
+  [list [rn_fixes $sc4 absent] [dg $sc4 renames]] \
+  {{{xdut.x8.a xdut.x7.A}} {{prefix xdut.x8 to xdut.x7 fit unique candidates x7 outputs 1 measurements 0}}}
+
+## --- item 3: measurements -------------------------------------------------
+set RNMEAS {{name m1 analysis tran kind find target v(x1.tail) at 1u}
+            {name d1 analysis tran kind trigtarg trig v(x1.a1) targ v(x1.tail)}
+            {name mt analysis tran kind find target v(x1.typo) at 1u}
+            {name ok analysis tran kind find target v(OUT) at 1u}}
+set sc5 [pcall ase::preflight_scan [rn_state {{expr v(x1.a1) save 1}} $RNMEAS] $NLR]
+## THE OUTPUT ROWS DECIDE: a measurement leaf nothing has (`typo`) must not cost
+## the refused outputs their correction; it stays uncorrected, and named
+eqcheck PF1723i-measurement-fields-with-the-stale-prefix-are-corrected-and-a-typo-among-them-does-not-block-the-outputs \
+  [list [rn_fixes $sc5 absent] \
+        [lmap r [dg $sc5 measurements] {list [dgn $r meas] [dgn $r field] [dgn $r correction]}] \
+        [dgn [lindex [dg $sc5 renames] 0] fit]] \
+  {{{x1.a1 xdut.a1}} {{m1 target xdut.tail} {d1 trig xdut.a1} {d1 targ xdut.tail} {mt target {}}} unique}
+lassign [rn_gate [rn_state {{expr v(x1.a1) save 1}} $RNMEAS]] rc5 e5
+eqcheck PF1723j-the-refusal-lists-the-measurements-with-their-corrections \
+  [list $rc5 \
+        [said_count {*measurement 'm1' — its target 'v(x1.tail)' names instance 'x1'*: 'v(x1.tail)' -> 'v(xdut.tail)'}] \
+        [said_count {*measurement 'd1' — its trig 'v(x1.a1)'*-> 'v(xdut.a1)'}] \
+        [said_count {*measurement 'mt' — its target 'v(x1.typo)'*not have}] \
+        [said_count {*measurement 'ok'*}] \
+        [said_count {*output rows and measurements; then save.}]] {1 1 1 1 0 1}
+## ⚠ A STALE MEASUREMENT ALONE NEVER REFUSES A RUN (unruled behaviour change),
+## and says nothing; the scan still carries it for the explicit command
+set RNMONLY [rn_state {{expr v(OUT) save 1}} {{name m1 analysis tran kind find target v(x1.a1) at 1u}}]
+lassign [rn_gate $RNMONLY] rc6 e6
+set sc6 [pcall ase::preflight_scan $RNMONLY $NLR]
+eqcheck PF1723k-a-stale-measurement-alone-does-not-refuse-and-is-not-said \
+  [list $rc6 $e6 [llength $::said] [dg $sc6 absent] \
+        [lmap r [dg $sc6 measurements] {dgn $r correction}]] {0 {} 0 {} xdut.a1}
+
+## --- item 3: include files, LISTED and never edited -------------------------
+set INCF [file join $RDR rn_nodeset.spice]
+## three hits: `x1.a1`, `x1.tail`, and `X1.tail` (fold compares without case);
+## NOT the bare `x1` axis key, and NOT `xdut.x1.q`, a deeper path
+set INCTXT ".nodeset v(x1.a1)=1 v(x1.tail)=0\n* graph keys x1 0 x2 9\n.ic v(xdut.x1.q)=0\n+ V(X1.tail)=0\n"
+putfile $INCF $INCTXT
+set INCQ [file join $RDR rn_quiet.spice]
+putfile $INCQ "* nothing to see\n.nodeset v(out)=0\n"
+set RNINC [rn_state $RNOUT {} [list [list file $INCF] [list file $INCQ]]]
+eqcheck PF1723l-an-include-file-is-listed-by-path-and-count-with-the-dot-required \
+  [lmap h [pcall ase::preflight_include_hits $RNINC [dg $scr renames] 0 $RDR] \
+     {list [file tail [dgn $h path]] [dgn $h prefix] [dgn $h to] [dgn $h count]}] \
+  {{rn_nodeset.spice x1 xdut 3}}
+lassign [rn_gate $RNINC] rc7 e7
+eqcheck PF1723l2-the-refusal-names-it-and-the-file-is-left-byte-identical \
+  [list $rc7 \
+        [said_count "*include file '[file normalize $INCF]' names 'x1.' 3 times*change 'x1.' to 'xdut.' there yourself"] \
+        [said_count {*rn_quiet*}] [expr {[readfile $INCF] eq $INCTXT}]] {1 1 0 1}
+
+## --- the predicate the window's offer is keyed on ---------------------------
+lassign [rn_gate [rn_state {{expr v(x1.a1) save 1}}]] rc8 e8
+set emit_err "ase: the tran analysis has no stop time\nase: it is enabled on this bench"
+eqcheck PF1723m-the-offer-predicate-reads-the-gates-own-refusal-head \
+  [list [pcall ase::preflight_is_name_refusal $er] [pcall ase::preflight_is_name_refusal $e8] \
+        [pcall ase::preflight_is_name_refusal $emit_err] [pcall ase::preflight_is_name_refusal {}]] \
+  {1 1 0 0}
+
+## --- item 2's apply, through the console command ---------------------------
+set RD9 [file join $tmp run_1723s]
+file mkdir $RD9
+putfile [file join $RD9 rn_top.spice] $NLR
+set INC9 [file join $RD9 rn_nodeset9.spice]
+putfile $INC9 $INCTXT
+putfile [file join $RD9 rn.state] \
+  "design {lib dlib cell rn_top view schematic} rundir [list $RD9] outputs [list $RNOUT]\
+ measurements [list $RNMEAS] includes [list [list [list file $INC9]]]"
+pcall ase::session_open rnk [file join $RD9 rn.state]
+set st9 [ase::session_state rnk]
+set sc9 [pcall ase::preflight_session_scan rnk]
+lassign [rn_gate $st9] rc9 e9
+## ⚠ THE BUTTON'S DECISION, PURE: on the refusal the user just saw, for this
+## session's state and its scan against the netlist artifact
+set off9 [pcall ase::ui::repair_offer $e9 $st9 $sc9 \
+            [ase::preflight_include_hits $st9 [dg $sc9 renames] 0 $RD9]]
+eqcheck PF1723o-the-buttons-decision-offers-every-rewrite-of-both-lists-and-names-the-include \
+  [list [dgn $off9 label] [dgn $off9 rows] [dgn $off9 outputs] [dgn $off9 measurements] \
+        [dgn $off9 rename] [dgn $off9 case] [dgn $off9 includes]] \
+  [list [pcall ase::ui::lbl_repair_apply] 5 3 2 3 0 1]
+## `2 measurements`, not 3: d1's trig AND targ are one measurement rewritten
+eqcheck PF1723o2-and-its-sentence-says-what-the-press-does-and-that-saving-is-the-users \
+  [list [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 3 output rows and 2 measurements in this session; Session > Save State keeps them.*1 include file names the old instance too; ASE-L does not edit your files*" [dgn $off9 text]]] {1}
+## the three arms where there is nothing to offer
+lassign [rn_gate [rn_state {{expr v(nosuch) save 1}}]] rct ett
+eqcheck PF1723o3-no-offer-for-another-error-for-a-refusal-with-nothing-to-apply-or-for-a-pass \
+  [list [pcall ase::ui::repair_offer $emit_err $st9 $sc9] \
+        [pcall ase::ui::repair_offer $ett [rn_state {{expr v(nosuch) save 1}}] \
+           [pcall ase::preflight_scan [rn_state {{expr v(nosuch) save 1}}] $NLR]] \
+        [pcall ase::ui::repair_offer {} $st9 $sc9]] {{} {} {}}
+## BOTH KINDS: a case-only refusal is offered too
+set ::sim_case_mode distinguish
+set stc [rn_state {{expr v(in) save 1} {expr v(out) save 1}}]
+lassign [rn_gate $stc] rcc2 ecc2
+set offc [pcall ase::ui::repair_offer $ecc2 $stc [pcall ase::preflight_scan $stc $NLR]]
+eqcheck PF1723o4-a-case-mismatch-is-offered-by-the-same-button \
+  [list [dgn $offc rows] [dgn $offc case] [dgn $offc rename] \
+        [string match {*2 output rows differ from the netlist's own names only in case.*} [dgn $offc text]]] \
+  {2 2 0 1}
+set ::sim_case_mode fold
+## ...and the press's command does exactly what the offer counted
+said_clear
+set n9 [pcall ase::preflight_fix_session rnk]
+set st9b [ase::session_state rnk]
+eqcheck PF1723n-fix-session-rewrites-outputs-and-measurements-and-marks-the-session-dirty \
+  [list $n9 [dgn $off9 rows] [lmap o [dg $st9b outputs] {dgn $o expr}] \
+        [lmap m [dg $st9b measurements] {list [ase::state_get $m target] [ase::state_get $m trig] [ase::state_get $m targ]}] \
+        [pcall ase::session_dirty rnk] [said_count {*rewritten to*instance 'x1' is now 'xdut'*}]] \
+  [list 5 5 {v(xdut.a1) v(xdut.tail) -i(v.xdut.vs)} \
+        {{v(xdut.tail) {} {}} {{} v(xdut.a1) v(xdut.tail)} {v(x1.typo) {} {}} {v(OUT) {} {}}} 1 6]
+eqcheck PF1723n2-the-repaired-session-passes-the-gate-and-the-include-is-still-untouched \
+  [list [lindex [rn_gate $st9b] 0] [expr {[readfile $INC9] eq $INCTXT}]] {0 1}
+## nothing on disk moved: the state file still holds the user's text until Save
+eqcheck PF1723n3-nothing-is-saved-until-the-user-saves \
+  [string match {*v(x1.a1)*} [readfile [file join $RD9 rn.state]]] 1
+pcall ase::session_close rnk
+
+} pf1723err]} { puts "FATAL: PF1723 $pf1723err" ; incr fail }
+set ::sim_case_mode fold
 
 ## ===========================================================================
 ## PF233 -- THE GATE'S THIRD ARGUMENT IS OPTIONAL, AND A FIXTURE STRING DONATES

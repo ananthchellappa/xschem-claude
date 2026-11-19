@@ -16878,6 +16878,8 @@ proc ase::ui::run_started {key id} {
   ## ISSUE 1705 (R911a): a launch that SUCCEEDED returns the view to the live
   ## run; both Run doors reach here only after `ase::run*` returned an id.
   catch {ase::result_view_reset $key}
+  ## issue 1723: a run that started was not refused, so an offer is stale
+  catch {ase::ui::repair_banner $key {}}
   ase::session_setattr $key run_id $id
   ase::session_setattr $key stopped 0
   ase::ui::log_open $key
@@ -16934,7 +16936,142 @@ proc ase::ui::run_raised {key err} {
   if {$lk ne {} && $err eq [ase::run_busy_msg $lk]} { return 0 }
   catch {::ase::echo $err error}
   ase::ui::set_status $key fail
+  ## ISSUE 1723: a refused Run surfaces HERE, for both doors (Netlist and Run,
+  ## Run), so this is where the repair is offered. Under `catch`: an offer that
+  ## cannot be composed must never cost the user the refusal itself.
+  catch {ase::ui::repair_after_refusal $key $err}
   return 1
+}
+
+# --- ISSUE 1723 item 2: THE PRE-FLIGHT'S CORRECTIONS, BEHIND A BUTTON ---------
+#
+# The refusal names its corrections and a console command that applies them
+# (`ase::preflight_fix_session <key>`); a user without a console never finds
+# it. So a refused Run that carries corrections -- a case mismatch (issue 0503)
+# or a renamed instance -- puts a banner over the status bar with an Apply
+# button and a Dismiss button.
+#
+# ⚠ D1 STANDS: CORRECTIONS ARE APPLIED ON CONFIRMATION, NEVER SILENTLY (see the
+# comment above ase::ui::repair_currents). The banner only OFFERS; the press is
+# the confirmation, and it runs exactly the console command -- the session is
+# rewritten and marked unsaved, and Session > Save State is still the user's.
+# Nothing here writes a file.
+#
+# ⚠ THE DECISION IS ase::ui::repair_offer, PURE (no Tk, no file read), and it is
+# what the counted headless arm tests (tests/headless/test_ase_preflight.tcl,
+# rows PF1723*). The act -- the banner and the press -- is display-only
+# (tests/headless/test_ase_window.tcl, rows FX1723*).
+
+proc ase::ui::lbl_repair_apply   {} { return {Apply Corrections} }
+proc ase::ui::lbl_repair_dismiss {} { return {Dismiss} }
+
+# "1 output row" / "7 output rows".
+proc ase::ui::repair_count {n one many} {
+  return "$n [expr {$n == 1 ? $one : $many}]"
+}
+
+# What the banner offers after a Run raised ERR, for a session whose state is
+# STATE and whose scan against its netlist artifact is SCAN (INCS: what
+# ase::preflight_include_hits answers for it). -> {} when there is nothing to
+# offer: ERR is not the save-name refusal, or the apply would rewrite nothing.
+# Else {label <button> text <banner sentence> rows <n> outputs <n>
+#       measurements <n> case <n> rename <n> includes <n>}.
+#
+# The counts are ase::preflight_apply's own, so the sentence cannot promise a
+# number the press does not rewrite.
+proc ase::ui::repair_offer {err state scan {incs {}}} {
+  if {![ase::preflight_is_name_refusal $err]} { return {} }
+  if {[catch {ase::preflight_apply $state $scan} a]} { return {} }
+  if {![dict get $a n]} { return {} }
+  set ncase 0
+  set nren 0
+  foreach rp [ase::preflight_repairs $scan] {
+    if {[dict get $rp what] ne {output}} { continue }
+    if {[dict get $rp fixkind] eq {rename}} { incr nren } else { incr ncase }
+  }
+  set parts [list {The run was refused.}]
+  set rn {}
+  catch {set rn [dict get $scan renames]}
+  foreach g $rn {
+    if {[dict get $g fit] ne {unique} || [dict get $g to] eq {}} { continue }
+    lappend parts "The netlist has no instance '[dict get $g prefix]'; it looks\
+ renamed '[dict get $g to]'."
+  }
+  if {$ncase} {
+    lappend parts "[ase::ui::repair_count $ncase {output row differs} {output rows differ}]\
+ from the netlist's own names only in case."
+  }
+  set what [ase::ui::repair_count [dict get $a outputs] {output row} {output rows}]
+  if {[dict get $a measurements]} {
+    append what " and [ase::ui::repair_count [dict get $a measurements] measurement measurements]"
+  }
+  set btn [ase::ui::lbl_repair_apply]
+  lappend parts "$btn rewrites $what in this session; Session > Save State keeps them."
+  set ninc [llength $incs]
+  if {$ninc} {
+    lappend parts "[ase::ui::repair_count $ninc {include file names} {include files name}]\
+ the old instance too; ASE-L does not edit your files, and the refusal lists them."
+  }
+  return [dict create label $btn text [join $parts { }] rows [dict get $a n] \
+            outputs [dict get $a outputs] measurements [dict get $a measurements] \
+            case $ncase rename $nren includes $ninc]
+}
+
+# The act after a refused Run: compose the offer for session KEY and show it,
+# or take a stale banner down. Display-only. -> the offer, or {}.
+proc ase::ui::repair_after_refusal {key err} {
+  set offer {}
+  if {[ase::preflight_is_name_refusal $err] &&
+      ![catch {ase::preflight_session_scan $key} scan]} {
+    set st [ase::session_state $key]
+    set incs {}
+    catch {set incs [ase::preflight_include_hits $st [dict get $scan renames] \
+                       [dict get $scan cs] [ase::rundir $st]]}
+    set offer [ase::ui::repair_offer $err $st $scan $incs]
+  }
+  ase::ui::repair_banner $key $offer
+  return $offer
+}
+
+# The banner over the status bar: OFFER (ase::ui::repair_offer's answer) shown
+# with its two buttons, or, for {}, taken down. Display-only.
+proc ase::ui::repair_banner {key offer} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set top [dict get $wins $key]
+  if {![winfo exists $top]} { return }
+  set w $top.fix
+  if {$offer eq {}} {
+    if {[winfo exists $w]} { pack forget $w }
+    return
+  }
+  if {![winfo exists $w]} {
+    frame $w -background [ase::palette accent]
+    label $w.msg -anchor w -justify left -wraplength 640 -padx 6 -pady 3 \
+      -background [ase::palette accent] -foreground [ase::palette panel]
+    button $w.apply -command [list ase::ui::repair_apply $key]
+    button $w.dismiss -command [list ase::ui::repair_banner $key {}]
+    pack $w.dismiss $w.apply -side right -padx 2 -pady 2
+    pack $w.msg -side left -fill x -expand 1
+  }
+  $w.msg configure -text [dict get $offer text]
+  $w.apply configure -text [dict get $offer label]
+  $w.dismiss configure -text [ase::ui::lbl_repair_dismiss]
+  pack $w -side bottom -fill x -after $top.status
+  return
+}
+
+# The Apply press: the console command, then the panes. -> the number of rows
+# rewritten, or -1 when the command raised (its sentence reaches the CIW).
+proc ase::ui::repair_apply {key} {
+  ase::ui::repair_banner $key {}
+  if {[catch {ase::preflight_fix_session $key} n]} {
+    catch {::ase::echo $n error}
+    return -1
+  }
+  ase::ui::log_action [list ase::preflight_fix_session $key]
+  catch {ase::ui::populate $key}
+  return $n
 }
 
 # ⚠ ONE ROUTER, TWO DOORS (issue 1464). This block used to be inline in
