@@ -167,7 +167,16 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_wave_subwindows" \
                   "headless/test_drag_tclvar_reads" \
                   "headless/test_drag_abort_backup_1716" \
-                  "headless/test_selection_look_plumbing"]
+                  "headless/test_selection_look_plumbing" \
+                  "headless/test_copy_retarget"]
+## `headless/test_copy_retarget` IS IN `hcases` ALONE, registered in the commit that
+## creates it (doc/claude/specs/copy_hierarchical.md): the Library Manager's copy of a
+## set of cells whose copies point at each other. Everything it fences is files and
+## plain data -- which lines of a schematic are instances, the hierarchy below a cell,
+## the names the form proposes, copy / use / keep, the refused plans, the copy itself
+## byte for byte, the ASE-L states of the copy, the three reference scopes, rollback,
+## and the Library Manager's copy / rename commands -- so it runs whole with no
+## display. The widgets are `headless/test_copy_form`, in `dcases` alone.
 ## `headless/test_selection_look_plumbing` IS IN `hcases` ALONE, registered in the
 ## commit that creates it (doc/claude/selection_look_batch/, the selection looks):
 ## how `selection_style`, `selection_text_style`, `selection_text_own_px` and
@@ -1011,7 +1020,16 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_wave_subwindows" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_pixels" \
-                  "headless/test_grid_toggle_sel_gc"]
+                  "headless/test_grid_toggle_sel_gc" \
+                  "headless/test_copy_form"]
+## `headless/test_copy_form` IS IN THIS LIST ALONE (doc/claude/specs/copy_hierarchical.md).
+## It was in neither list: it printed `RESULT: ALL PASS` and no `OVERALL: ok`, so it
+## could not be registered as it stood. It now presses the Copy form itself -- a name
+## typed in place in the table of cells, a row switched between Copy and Keep with a
+## real click, OK refusing a plan on the form, and right-click > Copy end to end
+## through the modal form -- and under --nogui it self-skips to zero checks
+## (`RESULT: SKIP (no X)`), so a counted entry would measure nothing. Its engine half
+## is `headless/test_copy_retarget`, in `hcases`.
 ## `headless/test_selection_look_pixels` IS IN THIS LIST ALONE, registered in the commit
 ## that creates it (doc/claude/selection_look_batch/): the selection looks read off the
 ## window itself through `xschem window_snapshot` (src/scheduler.c) -- after each

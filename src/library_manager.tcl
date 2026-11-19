@@ -1021,13 +1021,11 @@ proc libmgr::commit_dialog {title} {
   return $res
 }
 
-# --- copy / rename (destination library + new name dialog) ---
-# RMB > Copy on a cell now opens the Cadence-style Copy form (src/copy_form.tcl,
-# doc/claude/specs/copy_hierarchical.md) instead of the two-field cell_dialog.
-# It returns a PLAN dict. Pass 1 executes only the plan the old dialog could
-# already express — flat copy, all views — and reports the rest as not yet
-# implemented; the plan itself is the pass-2 handoff. cell_dialog stays as-is:
-# Rename still uses it.
+# --- copy / rename ---
+# RMB > Copy on a cell opens the Cadence-style Copy form (src/copy_form.tcl,
+# doc/claude/specs/copy_hierarchical.md). It returns a PLAN: which cells are
+# copied under which names, and what happens to the references between them.
+# libmgr::do_copy_plan runs it; libmgr::cell_dialog is still what Rename uses.
 proc libmgr::ctx_copy_cell {} {
   set lc [libmgr::current_cell]
   if {$lc eq {}} return
@@ -1035,21 +1033,45 @@ proc libmgr::ctx_copy_cell {} {
   set plan {}
   if {[catch {copyform::open $lib $cell} plan]} { libmgr::status "copy form failed: $plan"; return }
   if {$plan eq {}} return
-  lassign [dict get $plan dst] dl dc
-  if {[dict get $plan hier]} {
-    libmgr::status "hierarchical copy not implemented yet (pass 1: form only) — $lib/$cell -> $dl/$dc"
-    return
-  }
-  if {[dict get $plan viewmode] ne "all"} {
-    libmgr::status "per-view copy not implemented yet (pass 1: form only) — views: [join [dict get $plan views] { }]"
-    return
-  }
-  libmgr::do_copy_cell $lib $cell $dl $dc
+  libmgr::do_copy_plan $plan
 }
-proc libmgr::do_copy_cell {sl sc dl dc} {
-  if {[catch {library_copy_cell $sl $sc $dl $dc} e]} { libmgr::status "copy failed: $e"; return 0 }
+
+# The account of the last copy or rename, line by line, into the CIW. The
+# status bar carries the one-line summary; this is where the detail goes.
+proc libmgr::echo_lines {lines} {
+  if {[info commands ::ciw_echo] eq {}} return
+  foreach l $lines { catch {::ciw_echo $l} }
+}
+
+# Run a Copy form plan (copyform::execute): copy the cells, point the copies at
+# each other, and say what was done. The one executor of a plan and what the
+# action log replays, so a replayed copy is the same copy. The report of the
+# last run is kept in libmgr::last_copy_report.
+proc libmgr::do_copy_plan {plan} {
+  variable last_copy_report
+  if {[catch {copyform::execute $plan} rep]} { libmgr::status "copy failed: $rep"; return 0 }
+  set last_copy_report $rep
+  lassign [lindex [dict get $rep copied] 0] sl sc dl dc
   libmgr::refresh_after $dl $dc
-  libmgr::status "copied $sl/$sc -> $dl/$dc"
+  set t [copyform::report_text $rep]
+  libmgr::status [dict get $t summary]
+  libmgr::echo_lines [dict get $t lines]
+  xschem log_action [list libmgr::do_copy_plan [copyform::plan_min $plan]]
+  return 1
+}
+
+# Copy one cell, every view. The states of the copy are made to simulate the
+# copy (copyform::execute), which a file copy alone does not do: they would go
+# on simulating the cell they were copied from.
+proc libmgr::do_copy_cell {sl sc dl dc} {
+  variable last_copy_report
+  set plan [dict create cells [list [list $sl $sc $dl $dc copy]]]
+  if {[catch {copyform::execute $plan} rep]} { libmgr::status "copy failed: $rep"; return 0 }
+  set last_copy_report $rep
+  libmgr::refresh_after $dl $dc
+  set t [copyform::report_text $rep]
+  libmgr::status [join [concat [list "copied $sl/$sc -> $dl/$dc"] [dict get $t extras]] {, }]
+  libmgr::echo_lines [dict get $t lines]
   xschem log_action [list libmgr::do_copy_cell $sl $sc $dl $dc]
   return 1
 }
@@ -1063,10 +1085,52 @@ proc libmgr::ctx_rename_cell {} {
   lassign $r dl dc
   libmgr::do_rename_cell $lib $cell $dl $dc
 }
+
+# Rename a cell. Its own states follow the new name (their `design`, an include
+# file kept inside the cell, the result files of the saved plot setup): a state
+# left naming the old cell names a cell that no longer exists. OTHER cells that
+# instantiate the renamed cell, or hold a state that simulates it, are not
+# edited; the status bar says how many there are and the CIW names each.
 proc libmgr::do_rename_cell {sl sc dl dc} {
+  # who instantiates it is asked BEFORE the rename: afterwards the old name
+  # resolves to nothing and no reference to it can be recognised
+  set users {}
+  set susers {}
+  if {$sl ne $dl || $sc ne $dc} {
+    catch {set users [copyform::cell_users $sl $sc]}
+    catch {set susers [copyform::state_users $sl $sc]}
+  }
   if {[catch {library_rename_cell $sl $sc $dl $dc} e]} { libmgr::status "rename failed: $e"; return 0 }
+  set msg "renamed $sl/$sc -> $dl/$dc"
+  set lines {}
+  if {$sl ne $dl || $sc ne $dc} {
+    copyform::fresh
+    set map [dict create [list $sl $sc] [list $dl $dc]]
+    set fixed {}
+    catch {set fixed [copyform::retarget_states $dl $dc $map]}
+    set n [llength $fixed]
+    if {$n} { append msg ", $n state[expr {$n == 1 ? {} : {s}}] now simulate[expr {$n == 1 ? {s} : {}}] it" }
+    foreach e $fixed {
+      lassign $e path did
+      lappend lines "rename: $dc [file tail [file dirname $path]]: [join $did {; }]"
+    }
+    set still {}
+    set n [llength $users]
+    if {$n} { lappend still "$n cell[expr {$n == 1 ? {} : {s}}] still instantiate[expr {$n == 1 ? {s} : {}}] $sl/$sc" }
+    set m [llength $susers]
+    if {$m} {
+      lappend still "$m state[expr {$m == 1 ? {} : {s}}] still simulate[expr {$m == 1 ? {s} : {}}] [expr {$n ? {it} : "$sl/$sc"}]"
+    }
+    if {[llength $still]} { append msg "; [join $still {, }] (see the CIW)" }
+    foreach u $users { lappend lines "rename: [join $u /] still instantiates $sl/$sc" }
+    foreach u $susers {
+      lassign $u ul uc uv
+      lappend lines "rename: $ul/$uc $uv still simulates $sl/$sc"
+    }
+  }
   libmgr::refresh_after $dl $dc
-  libmgr::status "renamed $sl/$sc -> $dl/$dc"
+  libmgr::status $msg
+  libmgr::echo_lines $lines
   xschem log_action [list libmgr::do_rename_cell $sl $sc $dl $dc]
   return 1
 }
@@ -1305,10 +1369,27 @@ proc libmgr::ctx_copy_view {} {
   lassign $r dl dc dv
   libmgr::do_copy_view $sel_lib $sel_cell $v $dl $dc $dv
 }
+# Copy one view. A simulation state copied into ANOTHER cell is made to
+# simulate the cell it now belongs to (copyform::retarget_state): left alone it
+# would open under the new cell and run the old one. A state copied inside its
+# own cell is the same bench under a second name and is not touched.
 proc libmgr::do_copy_view {sl sc sv dl dc dv} {
   if {[catch {library_copy_view $sl $sc $sv $dl $dc $dv} e]} { libmgr::status "copy failed: $e"; return 0 }
+  set msg "copied view $sl/$sc/$sv -> $dl/$dc/$dv"
+  if {$sl ne $dl || $sc ne $dc} {
+    set f [file join [library_resolve $dl] $dc $dv $dc.state]
+    set did {}
+    if {[file isfile $f]} {
+      copyform::fresh
+      catch {set did [copyform::retarget_state $f [dict create [list $sl $sc] [list $dl $dc]]]}
+    }
+    if {[llength $did]} {
+      append msg ", it now simulates $dl/$dc"
+      libmgr::echo_lines [list "copy: $dc $dv: [join $did {; }]"]
+    }
+  }
   libmgr::refresh_after $dl $dc $dv
-  libmgr::status "copied view $sl/$sc/$sv -> $dl/$dc/$dv"
+  libmgr::status $msg
   xschem log_action [list libmgr::do_copy_view $sl $sc $sv $dl $dc $dv]
   return 1
 }

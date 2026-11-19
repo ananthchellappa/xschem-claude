@@ -1,19 +1,40 @@
-# Copy (Hierarchical) — Library Manager
+# Copy — Library Manager (a cell, or a set of cells that point at each other)
 
-Implementation: `src/copy_form.tcl`, entry point `libmgr::ctx_copy_cell`
-(`src/library_manager.tcl`). Test: `tests/headless/test_copy_form.tcl`.
+Status: built. Form and engine `src/copy_form.tcl`, entry points
+`libmgr::ctx_copy_cell`, `libmgr::do_copy_plan`, `libmgr::do_copy_cell`
+(`src/library_manager.tcl`). Tests: `tests/headless/test_copy_retarget.tcl`
+(engine and decisions, no display, `hcases`) and
+`tests/headless/test_copy_form.tcl` (the widgets, `dcases`).
+
+## What it is for
+
+The case that drove it: there is a cell `my_buf3` and its bench `my_buf3_tb`,
+which has saved ASE-L states (`ngspice_state1`, ...). The user makes a variant,
+`fast_buf3`, and wants the bench for it, `fast_buf3_tb`: the same bench, now
+instantiating `fast_buf3`, with states that simulate the new bench.
+
+A copy of the files alone does not give that. Measured on the real cells before
+this was built, the copied bench still instantiated `my_buf3`, and each copied
+state still had `design {lib ... cell my_buf3_tb ...}`: opening it under
+`fast_buf3_tb` and pressing Run simulated the OLD bench, with nothing to say so.
+Its include file and the result file of its saved plots were the old bench's too.
+
+So a copy does three things:
+
+1. copies the cells that were picked, under their new names;
+2. points the copies at each other: instances in the copied schematics, and the
+   copied states (section "What is re-pointed");
+3. says what in the copies still names an original, because a name inside a
+   title text or a hand-written SPICE block is not something to guess at.
 
 ## What it replaces
 
-RMB > Copy on a CELL used to pop `libmgr::cell_dialog` — destination library
-combobox + new cell name entry, nothing else. It always copied every view and
-had no way to express a hierarchy. `libmgr::cell_dialog` still exists and is
-still used by RMB > Rename; only Copy was re-pointed.
+RMB > Copy on a CELL used to pop `libmgr::cell_dialog` (destination library +
+new cell name). `libmgr::cell_dialog` still exists and is what RMB > Rename uses.
 
 ## Scope model
 
-lib / cell / view only. No config views, no DM/SCM integration, no
-cross-library reference rewriting outside the copied set.
+lib / cell / view only. No config views, no DM/SCM integration.
 
 ## View NAME vs view TYPE
 
@@ -58,8 +79,8 @@ datafile it holds, not from the name."*
 
 The subtype is derived from the view name, which is cheap and needs no I/O. A
 `.state` file also carries an explicit `simulator ngspice` key
-(`ase::state_default`, `src/ase.tcl:30`), so pass 2 may read that instead if a
-state view is ever named without the `<sim>_state<N>` convention.
+(`ase::state_default`), which could be read instead if a state view is ever
+named without the `<sim>_state<N>` convention.
 
 Procs: `copyform::view_type`, `copyform::view_subtype`,
 `copyform::cell_view_types`, `copyform::parse_view_spec`,
@@ -85,31 +106,27 @@ Always visible:
 Revealed by the checkbox (`copyform::sync_hier`, `grid` / `grid remove` plus
 `wm geometry $w {}` so the toplevel shrinks back):
 
-- **Exclude libraries** multi-select listbox + Defaults / None / All. Cells
-  whose master lives in an excluded library are not copied and the copies keep
-  referencing them in place — Cadence semantics. The exclude list also prunes
-  the traversal, so an excluded PDK never enters the cell table.
-- **Update instance references** — Cadence's three-way "Update Instances",
+- **Exclude libraries** multi-select listbox + Defaults / None / All. A cell
+  whose master lives in an excluded library is never listed, and nothing below
+  it is visited, so a PDK never enters the table. The copies keep referencing
+  such cells in place.
+- **Update instance references**, Cadence's three-way "Update Instances",
   `copyform::st(updaterefs)`:
-  - `none` — copy the tree verbatim; instances in the copies still bind to the
-    ORIGINAL libraries. An exact/archival snapshot that keeps tracking the
-    golden cells, and the right choice when the retarget happens later by other
-    means.
-  - `copies` (default) — retarget instances inside the newly copied cells to
-    the copies. What "hierarchical copy" normally means.
-  - `library` — also fix up cells ALREADY in the destination library that
-    reference the originals. Widest blast radius: touches cells the user did
-    not select.
-
-  The choice is echoed on the status bar (`copyform::sync_refs`) because
-  `none` silently yields copies that still simulate against the source library.
-- **On name conflict**: skip | rename | overwrite.
-- **Name prefix / suffix**.
-- **Cells to copy** table (Library, Cell, Views, Action) + Update table.
+  - `none`: instances in the copies still bind to the ORIGINAL cells. An exact
+    snapshot that keeps tracking the golden cells.
+  - `copies` (default): instances inside the newly copied cells are pointed at
+    the copies.
+  - `library`: cells ALREADY in the destination library that instantiate an
+    original are re-pointed as well. It edits cells the user did not pick, so
+    the table lists each of them (Action `Re-point`) before OK is pressed. A
+    schematic that is open in a window is left alone and named in the report:
+    the editor would write its own copy back over the change.
+- **Name prefix / suffix**: added to the names proposed for the cells below.
+- **The table of cells** (next section) + Rename, Copy / Keep, Rescan.
 
 Default exclude list is derived, not hand-maintained
 (`copyform::default_excludes {?srclib?}`): `devices`, `*_pr`, `*stdcells`, plus
-any registered library whose directory is not writable — minus `srclib`, which
+any registered library whose directory is not writable, minus `srclib`, which
 is never excluded.
 
 The match is on the **primitive** naming the PDKs share, not on a PDK prefix.
@@ -117,54 +134,133 @@ Every registry in the tree names primitives `<pdk>_pr` (`sky130_fd_pr`,
 `gf180mcu_pr`, `sg13g2_pr`) and cell libraries `*stdcells`, while the design
 libraries shipped beside them are `sky130_tests`, `sky130_tests_ase`,
 `gf180mcu_tests`, `sg13g2_tests`, `mips_cpu`. A `sky130*`-style prefix glob
-swallows those design libraries — and, when copying out of `sky130_tests_ase`,
+swallows those design libraries and, when copying out of `sky130_tests_ase`,
 the source library itself, leaving the traversal nothing to copy.
 
-## Pass 1 vs pass 2
+## The table of cells
 
-Pass 1 is look-and-feel. `copyform::open` returns a **plan dict** and that dict
-is the seam:
+The table is the plan, shown before OK. One row per cell: Library, Cell (indented
+by depth), New name, Action. Row 0 is the cell being copied; the rest are the
+cells below it (`copyform::hier`, read from the schematics as text).
+
+| Action | meaning |
+|---|---|
+| `Copy` | the cell is copied under New name |
+| `Use existing` | a cell of that name is already in the destination library: nothing is copied over it, references are pointed at it |
+| `Keep` | not copied; references to the original stay |
+| `Re-point` | ("Entire destination library" only) a cell already there, whose instances will be re-pointed |
+
+- Double-click a New name (or Rename, or F2) to type it in place; Return keeps
+  it, Escape drops it. Naming row 0 is naming the copy (the To field).
+- Click an Action (or Copy / Keep, or Space) to switch a row between copied and
+  kept. A kept cell of the destination library needs a new name before it can be
+  a copy there, so the name field opens.
+- `Use existing` is how a bench is copied AFTER its new device exists: name the
+  device's row after the existing cell.
+
+**Names proposed** (`copyform::suggest`). Two naming habits are followed and
+nothing else is guessed:
+
+- a bench is named after what it tests: copying `my_buf3_tb` as `fast_buf3_tb`
+  proposes `fast_buf3` for `my_buf3`;
+- a block is named after its owner: copying `my_buf3` as `fast_buf3` proposes
+  `fast_buf3_bias` for `my_buf3_bias`.
+
+**Which rows are copied by default** (`copyform::default_on`). A copy into
+another library takes the cells below along. A copy inside one library takes
+only the cells a new name was proposed for, so copying a bench inside its
+library never duplicates a block by surprise. A row the user named or switched
+by hand keeps what the user chose when the table is rebuilt.
+
+OK refuses a plan that cannot run (`copyform::plan_why`: a name that is taken,
+a name no cell can have, two copies with one name, ...) on the form's own
+status bar, with everything typed still there.
+
+## What is re-pointed
+
+The files are edited as text: loading each schematic into the editor would
+clobber the one the user has open, and would re-save every record. A line that
+is not changed comes back byte for byte (binary I/O; names compared as the
+UTF-8 bytes they have on disk).
+
+**Schematics** (`copyform::retarget_sch`). An instance record is a line that
+starts `C {` outside every attribute block. Its reference is resolved to a cell
+(`copyform::ref_cell`) and, if that cell is replaced, rewritten in the spelling
+it had:
+
+| reference | becomes |
+|---|---|
+| `lib/cell`, `lib/cell.sym`, `lib/cell.sch` | the same form, new library and cell |
+| a path found on the search list (`cell.sym`, `lib/cell/symbol/cell.sym`) | `lib/cell` (how this program writes it) |
+| an absolute path, or a path into a view with a name of its own | the path of the same file in the copy |
+
+**ASE-L states** (`copyform::retarget_state`):
+
+| key | rule |
+|---|---|
+| `design` | a design that is a replaced cell becomes its replacement. A state the user pointed at some other cell (Setup > Design) is left |
+| `models`, `includes` | a file inside a replaced cell's own directory is read from the copy, when the copy has it. Whatever is written in front of the cell is kept, so `$::HDO_DIR/lib/...` stays a variable |
+| `viewer` | only when the design moved: the selected result is cleared (a state's way of saying "my own last run"), and traces pinned to the old bench's result file (`<cell>_ase.raw`) are pinned to the copy's |
+
+A state ALWAYS follows its own cell, whatever "Update instance references"
+says: a state stored under one cell and simulating another is never what a copy
+is for.
+
+**The same rule elsewhere in the Library Manager**, because it is the same
+defect:
+
+- Rename (`libmgr::do_rename_cell`): the renamed cell's own states follow the
+  new name. Other cells that instantiate it, or hold a state that simulates it,
+  are NOT edited; the status bar counts them and the CIW names each.
+- Copy view (`libmgr::do_copy_view`): a state view copied into another cell
+  simulates the cell it now belongs to. Copied inside its own cell it is left.
+
+## The report
+
+`copyform::execute` returns a dict (`copied`, `used`, `kept`, `sch`, `states`,
+`edited`, `skipped`, `left`). The Library Manager's status bar gets one line
+(`copied 2 cells, 1 instance re-pointed, 2 states re-pointed, 3 places still
+name an original (see the CIW)`); the CIW gets the whole account, one sentence a
+line, ending with what is left:
 
 ```
-src {lib cell}  dst {lib cell}  views {…resolved…}  viewmode  viewfilter
-hier  exclude {…}  updaterefs  conflict  prefix  suffix
+copy: still names my_buf3_tb: fast_buf3_tb/schematic/fast_buf3_tb.sch line 8: T {my_buf3_tb (sky130): ...
 ```
 
-`libmgr::ctx_copy_cell` executes only what the old dialog could already do —
-flat copy, all views, via `libmgr::do_copy_cell` → `library_copy_cell`. A plan
-with `hier 1`, or with `viewmode` other than `all`, reports "not implemented
-yet (pass 1: form only)" on the Library Manager status bar.
+`left` is every line of the copied cells' files that still names an original as
+a whole word (`copyform::mentions`): comments, title texts, an include that was
+not copied, a `schematic=` attribute. They are reported, never edited.
 
-Stubbed, in the order pass 2 should take them:
+## All or nothing
 
-1. **Per-view copy** — copy only `views` instead of the whole cell directory.
-   `library_copy_view` already exists per view; the loop and the
-   cell-directory creation are what is missing.
-2. **Hierarchy scan** — `copyform::refresh_table` currently inserts the top
-   cell plus a placeholder row. Real version walks each copied schematic's
-   instance `symbol=` references, resolves them (`lib_qualified_abs` /
-   `abs_sym_path`), stops at excluded libraries, and fills the same four
-   columns.
-3. **Reference rewriting** — honour `updaterefs`. `none` is a no-op (and is
-   therefore the cheapest thing to ship first). `copies`: for each copied cell,
-   rewrite `symbol=` to the destination library where the master was also
-   copied, and leave it alone where the master was excluded. `library`: same
-   rewrite applied to every cell already in the destination library that
-   referenced an original — needs a confirmation step, since it edits cells the
-   user did not select. This is the part that makes hierarchical copy worth
-   having, and the part Cadence users check first.
-4. **Conflict policy and name mapping** — currently collected, not applied.
+`copyform::plan_why` refuses before anything is created. A failure after that
+(a state file that cannot be read, a file that cannot be written) puts every
+edited file back and moves every cell made so far to the library's trash;
+the error says `nothing was copied: <why>`.
 
-Not rewritten by any pass, and worth saying out loud in the UI later: paths
-inside `.state` files (ASE state `design {lib cell view}` points at the source
-cell), simulator model paths, and anything holding a literal library name in a
-property string.
+## Replay
+
+`libmgr::do_copy_plan <plan>` is the one executor and what the action log
+records, with the plan trimmed to the rows that do something
+(`copyform::plan_min`). `libmgr::do_copy_cell` (one cell, all views) logs as it
+always did.
 
 ## Testability
 
-Everything above the widgets is pure Tcl over the filesystem, so
-`tests/headless/test_copy_form.tcl` builds a fixture library in `/tmp`,
-registers it through `XSCHEM_LIBRARY_DEFS`, and checks type derivation, filter
-parsing, view matching, the plan dict, and then the widget behaviour that is
-the actual pass-1 deliverable (section hidden → revealed → hidden, exclude
-defaults pre-selected, accept/cancel results).
+The engine and the form's decisions are plain Tcl over the filesystem, so
+`tests/headless/test_copy_retarget.tcl` runs with no display: a fixture library
+with a bench, a device, a sub-block, states, a flat library, a second library.
+`tests/headless/test_copy_form.tcl` presses the form: a name typed in place, a
+row switched by a real click, OK refusing on the form, and right-click > Copy end
+to end through the modal form.
+
+## Not built
+
+- Re-pointing the cells that instantiate a RENAMED cell. Rename reports them.
+- A check, when a state is opened, that its design is the cell it is stored
+  under (a state copied by other means, before this, still has the old one).
+- Editing what `left` reports. A `schematic=` attribute or a name in a SPICE
+  block is shown, not rewritten.
+- Selecting several cells in the Library Manager's cell pane and copying them
+  as a set. The set is built in the form, from the cell that was right-clicked.
+- Overwriting an existing cell.
