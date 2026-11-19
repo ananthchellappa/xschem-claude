@@ -3430,6 +3430,11 @@ int Tcl_AppInit(Tcl_Interp *inter)
  }
  /* mirror --nolog so xschem.tcl can skip the CIW auto-open (issue 0002) */
  tclsetvar("cli_opt_nolog", cli_opt_nolog ? "1" : "0");
+ /* mirror --pipe: a session a script is driving through stdin, not a person. Read by
+  * startup_quiz::automation (src/startup_quiz.tcl), which must NOT use no_recent_files for
+  * this: that one is also set by --norecent, an option a person passes (the PDK launcher
+  * has a checkbox for it). */
+ tclsetvar("cli_opt_pipe", cli_opt_pipe ? "1" : "0");
  /* mirror --script so a CIW hint can name the rc this launch read (issue 1663's
   * ruling): run in-tree, xschem sources neither ./xschemrc nor ~/.xschem/xschemrc,
   * so for the PDK launcher (--script <pdk>/cadence_style_rc) that file is the rc.
@@ -4457,6 +4462,16 @@ int Tcl_AppInit(Tcl_Interp *inter)
    char s[40];
    my_snprintf(s, S(s), "exit %d", exit_code);
    tcleval(s);
+ }
+
+ /* Tip of the day, asked as a quiz (doc/claude/specs/startup_quiz.md). Asked HERE, after the
+  * rc files, the --script file and --command have all run, so a `set startup_quiz 0` in any of
+  * them decides for this launch; and after the -q exit above, so only a session that stays
+  * open gets this far. The Tcl side decides the rest (a --pipe or --nolog launch, the saved
+  * on/off choice) and only schedules the window, it never waits on it. Guarded because
+  * xschem.tcl's `source` of startup_quiz.tcl is caught: without the file there is no proc. */
+ if(has_x) {
+   tcleval("if {[info commands ::startup_quiz::at_launch] ne {}} {catch {startup_quiz::at_launch}}");
  }
 
 

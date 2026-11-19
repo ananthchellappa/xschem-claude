@@ -168,6 +168,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_drag_tclvar_reads" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_plumbing" \
+                  "headless/test_startup_quiz" \
                   "headless/test_copy_retarget"]
 ## `headless/test_copy_retarget` IS IN `hcases` ALONE, registered in the commit that
 ## creates it (doc/claude/specs/copy_hierarchical.md): the Library Manager's copy of a
@@ -177,6 +178,16 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## byte for byte, the ASE-L states of the copy, the three reference scopes, rollback,
 ## and the Library Manager's copy / rename commands -- so it runs whole with no
 ## display. The widgets are `headless/test_copy_form`, in `dcases` alone.
+## `headless/test_startup_quiz` IS IN BOTH LISTS, registered in the commit that creates
+## it (doc/claude/specs/startup_quiz.md, the tip of the day asked as a quiz). This arm
+## runs the decision layer -- the launch gates, the bank's validation, the choice of the
+## next question, the saved switch -- and band A, which evaluates the `proof` of EVERY
+## question in src/startup_quiz_bank.tcl against this tree, so a renamed menu entry, a
+## moved key or a planned feature that has since been built reddens the question that
+## talks about it. The dialog (band D) and the real launches on a display (band L) need
+## Tk and self-skip here with an UPPERCASE `SKIPPED:`, which summarize_all does not
+## count. Both arms' epilogues were captured in exactly these loops' shapes and scored
+## with `banner_complete` SOURCED from tests/banner_rule.tcl before the entries went in.
 ## `headless/test_selection_look_plumbing` IS IN `hcases` ALONE, registered in the
 ## commit that creates it (doc/claude/selection_look_batch/, the selection looks):
 ## how `selection_style`, `selection_text_style`, `selection_text_own_px` and
@@ -1021,6 +1032,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_pixels" \
                   "headless/test_grid_toggle_sel_gc" \
+                  "headless/test_startup_quiz" \
                   "headless/test_copy_form"]
 ## `headless/test_copy_form` IS IN THIS LIST ALONE (doc/claude/specs/copy_hierarchical.md).
 ## It was in neither list: it printed `RESULT: ALL PASS` and no `OVERALL: ok`, so it
@@ -1030,6 +1042,11 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## through the modal form -- and under --nogui it self-skips to zero checks
 ## (`RESULT: SKIP (no X)`), so a counted entry would measure nothing. Its engine half
 ## is `headless/test_copy_retarget`, in `hcases`.
+## `headless/test_startup_quiz` IS ALSO IN `hcases` (see the note there): this entry is
+## its display arm, where band D drives the quiz window through its widgets (an answer
+## pressed with the mouse, the "Don't show anymore" box, the Help-menu entries, the
+## command palette's toggle, every question of the shipped bank shown and answered) and
+## band L starts one child xschem per command line to measure which launches are asked.
 ## `headless/test_selection_look_pixels` IS IN THIS LIST ALONE, registered in the commit
 ## that creates it (doc/claude/selection_look_batch/): the selection looks read off the
 ## window itself through `xschem window_snapshot` (src/scheduler.c) -- after each

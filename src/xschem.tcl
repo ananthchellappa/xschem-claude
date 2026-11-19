@@ -18445,6 +18445,17 @@ if {[catch {source $XSCHEM_SHAREDIR/ciw.tcl} ciw_source_err]} {
   xschem::notify_degraded_once "src/ciw.tcl failed to source: $ciw_source_err"
 }
 
+# Tip of the day, asked as a quiz (doc/claude/specs/startup_quiz.md). Proc
+# definitions only at source time; the question bank beside it is read the first
+# time a question is needed. CAUGHT, like ciw.tcl above and for the same reason:
+# nothing else depends on this file, so a session without it is a session
+# without the quiz, announced once, and not an aborted startup. Every later use
+# of a startup_quiz:: proc in this file is behind an `info commands` test.
+# Both files are also listed in src/Makefile.in's /local/install_shares.
+if {[catch {source $XSCHEM_SHAREDIR/startup_quiz.tcl} startup_quiz_source_err]} {
+  xschem::notify_degraded_once "src/startup_quiz.tcl failed to source: $startup_quiz_source_err"
+}
+
 # issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir
 # and hands the path to the C side (`xschem fluid_trace start <path>`), then reports it in the CIW so
 # the user knows where to find it. Stop closes it. Portable temp-dir pick (TMPDIR/TEMP/TMP, else /tmp).
@@ -18679,6 +18690,14 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.help add command -label "Keybindings (from table)" -command "show_keybindings_help"
   $topwin.menubar.help add command -label "Command palette" -command "command_palette $topwin" \
        -accelerator {Ctrl+Shift+P}
+  # Tip of the day, asked as a quiz (doc/claude/specs/startup_quiz.md). The
+  # checkbutton is the same switch (::startup_quiz) as the dialog's "Don't show
+  # anymore" box and the command palette's toggle.
+  if {[info commands ::startup_quiz::show] ne {}} {
+    $topwin.menubar.help add command -label "Tip of the day (quiz)..." -command {startup_quiz::show}
+    $topwin.menubar.help add checkbutton -label "Tip of the day at startup" -variable startup_quiz \
+       -selectcolor $selectcolor -command {startup_quiz::pref_changed}
+  }
   $topwin.menubar.help add command -label "About XSCHEM" -command "about"
   # issue 0123: runtime FLUID_TRACE control. ONE entry that flips between Start and Stop,
   # relabelled by the -postcommand from the C-side `fluid_trace status`. Start opens a
@@ -20612,6 +20631,17 @@ if {[info exists no_recent_files] && $no_recent_files} {
 # source_tcl_file); a private flag would miss the --script case, i.e. reopen
 # 0119. Consumed by wviewer::rawhist_max.
 set_ne raw_history_max 20
+# Tip of the day, asked as a quiz at launch (doc/claude/specs/startup_quiz.md).
+# startup_quiz: 1 = ask one question when an interactive session starts, 0 = do
+# not. The same switch as the dialog's "Don't show anymore" box, Help > Tip of
+# the day at startup and the command palette's toggle, each of which saves it to
+# USER_CONF_DIR/startup_quiz -- read back by startup_quiz::load_conf below, AFTER
+# an xschemrc line, so the last choice made in the program wins over the rc. Read
+# when the launch has finished, so a --script rc or `--command {set startup_quiz
+# 0}` decides for that launch.
+# startup_quiz_done: the ids already answered (USER_CONF_DIR/startup_quiz_done).
+set_ne startup_quiz 1
+set_ne startup_quiz_done {}
 # Fluid editing: first-click tip/edge grab + incremental wire rip-up-reroute on drag
 # (doc/claude/specs/fluid_editing.md, nice_drag_rerouting.md). Default ON as of the
 # 0091-0096 reroute chain. The drag-to-move gesture itself still needs the intuitive/
@@ -21082,6 +21112,10 @@ ase::sim_load_conf
 # is sourced unconditionally at :14376, so the proc exists here; it never throws
 # (a corrupt store just leaves the dropdown empty).
 wviewer::rawhist_load
+# Tip-of-the-day quiz: the saved on/off choice and the answered list
+# (USER_CONF_DIR/startup_quiz, USER_CONF_DIR/startup_quiz_done). Guarded because
+# the `source` of startup_quiz.tcl is caught: without the file there is no proc.
+if {[info commands ::startup_quiz::load_conf] ne {}} { startup_quiz::load_conf }
 # schematic to preload in new windows 20090708
 set_ne XSCHEM_START_WINDOW {}
 

@@ -786,6 +786,16 @@
 #### affects viewer strips.
 # set wviewer_text_size 14
 
+###########################################################################
+#### TIP OF THE DAY
+###########################################################################
+#### Ask one quiz question about XSCHEM when an interactive session starts.
+#### Default: enabled (1). This is the same switch as the quiz window's
+#### "Don't show anymore" box, Help > Tip of the day at startup and the
+#### command palette's "Toggle tip of the day at startup"; a choice made
+#### there is saved in ~/.xschem/startup_quiz and wins over this line.
+# set startup_quiz 0
+
 #### redefine some variables to emulate Cadence UI / bindkeys
 # source /home/schippes/share/xschem/cadence_style_rc
 

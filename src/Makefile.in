@@ -30,6 +30,7 @@ put /local/install_shares {
  create_instance.tcl save_as_form.tcl copy_form.tcl alt2_toggle_view.tcl ase.tcl ase_window.tcl
  wave_viewer.tcl cmdmode.tcl calculator.tcl results.tcl op_annot.tcl op_param_lists.tcl
  rdw.tcl optexport_measures.py optexport_measures.tcl
+ startup_quiz.tcl startup_quiz_bank.tcl
 }
 
 # generate a list of objects from the list of source files
