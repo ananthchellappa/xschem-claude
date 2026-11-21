@@ -1,0 +1,500 @@
+{
+ "item": "ITEM 2 -- issue 1657, its two OPEN items: (1) the Options preview lists the operating point's per-analysis lines first whatever the deck will do; (2) a database of the file already loaded under type `op` is shown as it stands, and after a read that named no type it holds the noise totals. Implementation map for every option (1A/1B/1C, 2A/2B/2C). Read at HEAD 7c77f3594 (see the first trap: the 1724/1657 work is COMMITTED, not uncommitted).",
+ "mechanism": "ALL OF THIS IS READ FROM THE CODE; nothing was run.\n\nOPEN ITEM 1 -- how the pane is built today.\n(a) Trigger: ase::ui::optsheet_fill (src/ase_window.tcl; bound to the Find box <KeyRelease>, the Scope combobox, Show all, and called after a row commit) ends by calling ase::ui::optsheet_preview.\n(b) ase::ui::optsheet_preview calls `ase::opt_preview $sim [ase::session_state $key] {} [ase::ui::optsheet_netlist_text $key]` inside a catch.\n(c) ase::ui::optsheet_netlist_text reads <rundir>/<cell>.spice WHOLE (state `rundir`, else ::netlist_dir, else $USER_CONF_DIR/simulations; never netlists, never creates a directory; {} when there is no file), then KEEPS ONLY dot cards with their `+` continuations and `.control`..`.endc` blocks, and caches that reduced text per file by {size mtime} in ase::ui::optsheet_nlcache. The unreduced text is the local `nl` and is dropped. That is the \"reduced copy (or none)\".\n(d) ase::opt_preview (src/ase.tcl) uses netlist_text for ONE thing: ase::run_seed_line. It fills `control` as a list of {OPTION-NAME line} pairs: first, for every enabled ROW in the state's own row order, the lines of ase::analysis_suppress_lines (pre then post); then, for each TYPE of ase::preview_analysis_types, each ase::opt_scope_plan record's set line immediately followed by its restore line. Notes are a dict keyed by OPTION NAME: `leaks` -> \"set for the <type> analysis and left in force for every analysis after it -- <ase::opt_leak_why>\", `refused`, `suppressed`.\n(e) ase::preview_analysis_types de-duplicates the types of `ase::analysis_emit_order $state 0 $sim` (operating point first), falling back to plain row order when that raises.\n(f) What the pane really shows: optsheet_preview prints each slot heading (`above the analysis block`, `inside the analysis block`, `on the command line`, `in the run-directory start-up file`) then `\"    [lindex $e 1]\"` per entry -- THE LINE ONLY. Element 0 is never shown and there is no analysis label anywhere; notes follow under the heading `not delivered` as `<option> \u2014 <why>`. So the comment in opt_preview (\"each line tagged with the analysis it belongs to\") is not what is built: the tag is the option name and the window discards it. A set line and its restore line stand adjacent with no analysis between them.\n(g) The deck: ase::backend::ngspice::render_deck sets `op_last 1` iff `[llength $optier_ctl] || [llength $optier_post]`. Those carriers are filled only when ase::op_gate_on [save_op_params] AND ase::op_analysis_enabled AND `ase::op_cards_for $netlist_text` is non-empty, and then by `[dict get [ase::op_tier_now $state] tier]`: a -> optier_ctl; d -> optier_post; b -> optier_write only (no reorder); default (c) -> optier_ctl only when ase::n_enabled_analyses > 1. It then walks `ase::analysis_emit_order $state $op_last <backend>` (ase::analysis_emit_rank answers 90 for `op` under op_last) and writes, per row: scope pre lines, suppress pre lines, setup, checkpoint arm, verbatim, the analysis line, ..., suppress post lines, scope post lines.\n(h) \"Are device requests held for this netlist text\" is ase::op_cards_for / ase::op_cards_hit: EXACT string equality with the one process-wide slot `ase::op_cards` ({netlist <text> block <cards>}), written by ase::op_cards_capture / ase::op_cards_put / ase::op_cards_note_refusal at netlist time and emptied by ase::op_cards_clear at the start of every capture. ase::saves_op_cards_coming {state netlist_text} is a core proc that already spells the first three conditions (\"spelled once so the two cannot drift\") and render_deck calls it for its `.save all` leader. The reduced copy can only equal the captured text for a netlist that is nothing but dot cards and control blocks, so today's preview input is a MISS by construction.\n(i) Tier b is reachable only through ase::op_tier_force_set (ase::op_save_tier sets `b` nowhere else, and demotes it to c when the device count exceeds ase::op_write_max_names).\n\nOPEN ITEM 2 -- how a totals database gets stored under `op` and why some callers still see it.\n(a) read_dataset() (src/save.c), typeless call (`type` NULL): the file's first plot fixes `type`. `Integrated Noise` first -> the integrated-noise arm sets type \"op\"; `op_asked` is 0 so `integ_is_op` stays 1 and sim_type becomes \"op\": the database is stored as `op` holding v(onoise_total)/v(inoise_total). A later `Operating Point` plot is then a second \"op\" dataset and ends the read at the variable-count mismatch.\n(b) The registry key is (rawfile, sim_type). extra_rawfile() what==1, spice arm: a loop looks for an entry with the same resolved path and (type NULL or equal sim_type); a hit takes \"file found: switch to it\" -- NO READ, read_dataset() is not called (raw_restamp_design() runs if RAW_READ_REBIND is set). The non-spice arm has its own copy of the loop keyed on the path alone.\n(c) Doors into that arm: `xschem raw read <f> [type]` (scheduler.c, 1|RAW_READ_REBIND); `xschem raw select` -> raw_select() -> the same call; the annotate_op arm (three plain calls: \"op\", then \"dc\", then \"tran\"); raw_case_reread() (after its own delete); the graph walkers in src/draw.c with `autoload`.\n(d) `xschem raw_read` (underscore; used by load_raw, open_sub_schematic, hi_descend_newwin) is a different door: it clears the whole registry and calls read_rawfile_by_type() -> raw_read() -> read_dataset() DIRECTLY, bypassing extra_rawfile(). The database becomes xctx->raw with an empty registry and is adopted into slot 0 by the next extra_rawfile() call (\"insert extra_raw_arr[0]\").\n(e) The annotate_op arm (xschem_cmds..., src/scheduler.c) removes (xctx->raw->rawfile, xctx->raw->sim_type) ONLY when the CURRENT database is a one-point op/dc (`allpoints == 1`), then asks extra_rawfile(1, f, \"op\"). So: totals current -> removed, read afresh asking op -> the Operating Point; totals loaded but NOT current -> dedupe hit -> the totals are published.\n(f) Why ASE-L's own three callers were given the operating point: ase::attach_dbs runs `xschem raw clear $rawfile $sim_type` before its read; op_annot::db_attach drops every op/dc entry of the normalized path before `xschem annotate_op` (its guard G6, which is issue 0685's Tcl workaround); calc::eval_texts -> calc::et_run -> calc::et_alias reads through a private symlink/copy whenever the path is already in the registry. Three independent workarounds for one engine behaviour.\n(g) Sources of a typeless read: load_raw with no type (`xschem raw_clear` then `xschem raw_read $filename`); ase::attach_dbs with an empty type (`xschem raw clear $rawfile {}` then `xschem raw read $rawfile`), reached from wviewer::attach_raw when ase::plot_sim_type answers {}; and -- not in the issue's list -- results::select with an empty sim_type (`xschem raw select $target`, typeless in raw_select()).\n(h) \"The database must remember how it was taken\": Raw.req_sim_type (src/xschem.h) ALREADY records the type the caller asked for, NULL for unspecified -- but it is set only by extra_rawfile()'s two read arms. A database built by `xschem raw_read` (d), by raw_read_from_attr() or new_rawfile() has it NULL whatever was asked, so NULL does not mean \"typeless\".\n(i) Who carries a database to another window: open_sub_schematic and hi_descend_newwin (src/xschem.tcl) copy NO Raw. They read `xschem raw_query rawfile` and `sim_type` of the CURRENT database, open the window, and re-read there: `op` -> `xschem annotate_op $rawfile`, anything else -> `xschem raw_read $rawfile $sim_type`, then `xschem set raw_level`. A new context starts with raw NULL and an empty registry (src/xinit.c), so the new window's read is a real read that names `op` and gets the Operating Point.",
+ "code_sites": [
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::preview_analysis_types",
+   "role": "Item 1. Orders the per-analysis groups; asks ase::analysis_emit_order $state 0 (op first). Carries the DECLARED LIMIT comment naming issue 1657. Changes under 1A/1C (needs the op-last answer); its comment changes under every option."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::opt_preview",
+   "role": "Item 1. Signature {sim state {plan {}} {netlist_text {}}}. Builds deck/control/cmdline/prefile/notes. `control` entries are {option-name line}; notes keyed by option name. Changes under 1A (order + a text to ask with), 1B (group tag per entry), 1C (both + the unknown-order statement). Its in-body comment 'each line tagged with the analysis it belongs to' is false as built."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::opt_scope_plan / ase::opt_scope_lines / ase::analysis_suppress_lines / ase::opt_leak_why",
+   "role": "Item 1. The per-analysis records the pane and the deck both read. Not expected to change; the leak sentence is composed in opt_preview from opt_leak_why."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::analysis_emit_order / ase::analysis_emit_rank",
+   "role": "Item 1. {state {op_last 0} {sim {}}}: enabled rows as {rank index type}, op ranked 90 under op_last. No change needed; it is the argument the preview must start passing truthfully."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::backend::ngspice::render_deck (its `op_last`, `optier_ctl`, `optier_post`, `optier_write`)",
+   "role": "Item 1. The deck's own decision to run the operating point last. Heavily fenced (byte-identical rows); the work order should fence a predicate AGAINST it rather than restructure it."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::saves_op_cards_coming / ase::op_cards_for / ase::op_cards_hit / ase::op_cards_block / ase::op_cards_put / ase::op_cards_clear / ase::op_cards_capture / ase::op_cards_note_refusal",
+   "role": "Item 1. 'Are device requests held for this netlist text': exact-text match against one process-wide slot. saves_op_cards_coming is the core predicate for gate + op enabled + held block."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::op_tier_now / ase::op_save_tier / ase::op_tier_forced / ase::op_tier_force_set / ase::op_write_max_names / ase::sim_caps_cached",
+   "role": "Item 1. The tier decides whether held cards reorder (b does not). op_save_tier may START THE SIMULATOR on a capability-cache miss; op_tier_forced and sim_caps_cached are the side-effect-free reads."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::op_gate_on / ase::op_analysis_enabled / ase::n_enabled_analyses",
+   "role": "Item 1. The remaining inputs of the op-last decision; pure."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::run_seed_line / ase::run_seed_user",
+   "role": "Item 1. The only present consumer of the preview's netlist text (the reduced copy is shaped for it). Must keep working on the reduced text."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::backend::ngspice::dcvar_body",
+   "role": "Item 1 (truth of the leak note). A dc row sweeping a design variable re-loads the circuit per point and re-writes its own option lines because 'a reset wipes them'."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::backend_hook / ase::register_backend / the ngspice registration block (the dict holding `user_seed_line`)",
+   "role": "Item 1, only if the op-last answer is exposed as an optional adapter hook (precedent: ase::run_seed_user catching the `user_seed_line` hook)."
+  },
+  {
+   "file": "src/ase_window.tcl",
+   "symbol": "ase::ui::optsheet_preview",
+   "role": "Item 1. THE caller of ase::opt_preview and the renderer of the pane (prints only the line of each entry). Changes under 1A (hand over the unreduced text), 1B/1C (print group labels and the statement)."
+  },
+  {
+   "file": "src/ase_window.tcl",
+   "symbol": "ase::ui::optsheet_netlist_text (cache ase::ui::optsheet_nlcache)",
+   "role": "Item 1. Reads <rundir>/<cell>.spice whole, returns a reduced copy, caches by size+mtime. Under 1A/1C it must also make the unreduced text (or the answer computed from it) available."
+  },
+  {
+   "file": "src/ase_window.tcl",
+   "symbol": "ase::ui::optsheet_fill",
+   "role": "Item 1. Calls optsheet_preview on every Find keystroke: the cost bound for anything added to the preview."
+  },
+  {
+   "file": "src/save.c",
+   "symbol": "read_dataset() (the `integrated noise` arm and the comment above it; `op_asked`, `integ_is_op`, `integ_held`, `taken`)",
+   "role": "Item 2. Where a typeless read stores a totals-first file as `op`. 2B sets its 'taken from the totals by a typeless read' mark here (the one function both read doors pass through). The comment's paragraph 'AND THIS FUNCTION IS NOT CALLED AT ALL for a file that is already loaded' is rewritten under every option."
+  },
+  {
+   "file": "src/save.c",
+   "symbol": "extra_rawfile() (what==1 spice read arm and its dedupe loop; the what==3 clear arm; the base-raw adoption)",
+   "role": "Item 2. The switch-without-read. 2B changes the spice arm's hit handling for one marked case. 2A calls its clear arm from the annotate arm. The header's RETURN VALUE paragraph (R112) describes the dedupe."
+  },
+  {
+   "file": "src/save.c",
+   "symbol": "raw_read() / read_rawfile_by_type() / free_rawfile()",
+   "role": "Item 2. raw_read() callocs the Raw (a new int field starts 0); read_rawfile_by_type() is the bypass door's entry; free_rawfile() frees req_sim_type."
+  },
+  {
+   "file": "src/save.c",
+   "symbol": "raw_select()",
+   "role": "Item 2. A fourth door into the dedupe arm; decides read-versus-switch from the change in xctx->extra_raw_n (returns 1 or 2)."
+  },
+  {
+   "file": "src/xschem.h",
+   "symbol": "Raw (field req_sim_type; RAW_READ_REBIND)",
+   "role": "Item 2. Where 2B's mark would live, beside req_sim_type. req_sim_type's comment states it is NULL for databases built outside extra_rawfile()."
+  },
+  {
+   "file": "src/scheduler.c",
+   "symbol": "the `annotate_op` arm of the xschem command",
+   "role": "Item 2. Its 'delete previously loaded OP' test is on the CURRENT database only. 2A widens it to the file's `op` entry whether current or not. Its source text is sliced by rows of test_op_annot."
+  },
+  {
+   "file": "src/scheduler.c",
+   "symbol": "the `raw read` arm, the `raw_read` arm, raw_case_reread()",
+   "role": "Item 2. `raw read` infers a dedupe switch from an unchanged extra_raw_n and then calls raw_case_reread() for -case; `raw_read` bypasses the registry; raw_case_reread() re-reads with req_sim_type."
+  },
+  {
+   "file": "src/xschem.tcl",
+   "symbol": "load_raw",
+   "role": "Item 2. The menu path: `xschem raw_clear`, then `xschem raw_read $filename` with no type when called with none."
+  },
+  {
+   "file": "src/xschem.tcl",
+   "symbol": "open_sub_schematic / hi_descend_newwin",
+   "role": "Item 2. Carry the current database to a new window by (rawfile, stored sim_type): op -> `xschem annotate_op`, else `xschem raw_read <f> <type>`. No change needed under any option; a row should drive it."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "ase::attach_dbs",
+   "role": "Item 2. Clears (file, type) then reads; with an empty type clears every entry of the file and reads typeless. Unchanged; a caller to measure."
+  },
+  {
+   "file": "src/op_annot.tcl",
+   "symbol": "op_annot::db_attach (guard G6)",
+   "role": "Item 2. Issue 0685's targeted drop of the path's op/dc entries before `xschem annotate_op`. Under 2A its drop becomes a second copy of the engine's; its comment and rows F12/F12b/F14 speak of the engine defect as open."
+  },
+  {
+   "file": "src/calculator.tcl",
+   "symbol": "calc::eval_texts / calc::et_run / calc::et_alias",
+   "role": "Item 2. Reads a loaded path through a private alias, so it never meets the dedupe. Unchanged; a caller to measure."
+  },
+  {
+   "file": "src/calculator.tcl",
+   "symbol": "calc::aq_run / calc::aq_present",
+   "role": "Item 2. NOT in the issue's list: `xschem raw read $name $an` with no alias, and an in-place arm when the current slot's stored type already equals the analysis asked."
+  },
+  {
+   "file": "src/results.tcl",
+   "symbol": "results::select",
+   "role": "Item 2. A typeless `xschem raw select $target` when it holds only a path: a third source of typeless reads, not in the issue's list."
+  },
+  {
+   "file": "src/ase.tcl",
+   "symbol": "the comment above the `noise` entry of the ngspice analysis registry (paragraph '(b) A file ALREADY LOADED under `op`')",
+   "role": "Item 2. Says the limit; rewritten under every option."
+  }
+ ],
+ "existing_fences": [
+  {
+   "suite": "tests/headless/test_ase_core.tcl (section RO)",
+   "registered": "hcases",
+   "covers": "RO1 is a census: every proc under ::ase that calls ase::analysis_emit_order, and which of them call it with `$state 0`. It names ::ase::preview_analysis_types in BOTH lists. RO2 holds that the deck records op last when cards are held. The section header says the preview's order 'is open in the issue file and has no row here'.",
+   "rows": "RO1 (moves under 1A/1C: preview_analysis_types leaves the `$state 0` list; a new proc that calls analysis_emit_order joins the first list), RO2..RO10 unchanged. Helpers reusable for item 1's rows: ro_state, ro_deck (primes ase::op_cards_put), ro_recs, ro_walk.",
+   "prints_overall_ok": "string `OVERALL: ok` present in the file; not run"
+  },
+  {
+   "suite": "tests/headless/test_ase_optsheet_1441.tcl (sections PV, HK, UI)",
+   "registered": "both",
+   "covers": "PV1 and HK3 pin the preview's keys as EXACTLY {cmdline control deck notes prefile}. PV7 pins `control` empty on a bench with no per-analysis row. PV8 pins the WHOLE answer for ase::state_default (control {}, one note). PV6 pins one note per option. HK1 scans ase::opt_preview's body for ngspice words (`.control`, `.options`, `ngspice`...). UI14 pins the four slot headings, UI16 `(nothing)`, UI17 the heading `not delivered`, UI17d the seed line following ase::ui::optsheet_netlist_text, UI19 the live repaint.",
+   "rows": "PV1, PV6, PV7, PV8, HK1, HK3 (counted arm); UI14, UI15, UI16, UI17, UI17d, UI19 (display arm only; the section prints uppercase `SKIPPED:` under --nogui). None pins the ORDER of `control`.",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_ase_effective_1442.tcl (sections SP, DK, HK)",
+   "registered": "hcases",
+   "covers": "DK10 holds that every `option` line the deck writes inside the block is in the preview's `control` (membership, by `lindex $e 1`; not order). DK10b the `suppressed` note. SP2/SP3 the scope plan records (itl4 scoped on tran; sqrnoise LEAKS on noise). HK1 scans ase::preview_analysis_types (by name) for ngspice words.",
+   "rows": "DK10, DK10b, SP2, SP3, HK1",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_ase_run_seed.tcl",
+   "registered": "hcases",
+   "covers": "RS6b: opt_preview given a netlist drops the default seed as the deck does. RS9: ase::ui::optsheet_netlist_text through a real session -- before any netlist, after one whose .control resets, after replacements; asserts it writes nothing and follows changes. RS9 passes the proc's RETURN VALUE straight to opt_preview as its fourth argument.",
+   "rows": "RS6b, RS9 (RS9 constrains what optsheet_netlist_text may return)",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_raw_ascii_point_bounds.tcl (band M)",
+   "registered": "hcases",
+   "covers": "Which plot answers `op`: 29 hand-written files x {op noise - tran dc} x {ascii bin}, plus M-keep, M-wipe and M-annotate. m_ans does `xschem raw clear` BEFORE and AFTER its single read, and M-annotate clears first too.",
+   "rows": "NO ROW OF BAND M PINS THE ALREADY-LOADED ANSWERS: every cell starts from an empty registry, so none moves under 2A, 2B or 2C. The `-` (typeless) cells (e.g. in_nsd_op `-` = op with the totals' names) stay `same` under every option. New rows are needed for the sequences.",
+   "prints_overall_ok": "yes (the epilogue prints it; read in the file, not run)"
+  },
+  {
+   "suite": "tests/headless/test_annot_stale_0684.tcl (rows F9..F14)",
+   "registered": "both",
+   "covers": "Issue 0685. F12 GOLDS THE ENGINE'S STALE ANSWER: op file annotated, `xschem raw read <tran> tran`, op file rewritten, a bare `xschem annotate_op` hands back 1e-05 where the file says 0.009. F12b is db_attach's drop. F13 and F13b hold that a FAILED re-attach leaves the user's waveform attached (F13b at the same path). F14 greps op_annot::db_attach for `tran` and a bare `xschem raw clear`.",
+   "rows": "F12 MOVES under 2A (its naive value becomes 0.009 and its name, 'THE HAZARD, DEMONSTRATED', becomes false). F12b, F13, F13b, F14 are expected to hold under 2A if the engine's drop names only op (derived by reading). Nothing here moves under 2B or 2C.",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_calc_eval_text.tcl (band ET11)",
+   "registered": "hcases",
+   "covers": "Its DISTINCTNESS leg asserts that re-reading an overwritten path of a file with NO totals SWITCHES to the stale slot (registry text unmoved, old value) -- i.e. it pins the dedupe for ordinary files.",
+   "rows": "ET11: the tripwire for 'nothing changes for files that hold no noise totals' under 2B. Unmoved by 2A (it uses `raw read`, not annotate_op).",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_calc_analysis_tokens.tcl (bands AT10, AT11, AT14)",
+   "registered": "both",
+   "covers": "calc::aq_run's registry bracket around `xschem raw read <f> <an>`.",
+   "rows": "AT10/AT11/AT14: re-run after any change to the dedupe arm (2B).",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_op_annot.tcl",
+   "registered": "both",
+   "covers": "110 mentions of annotate_op; rows A64-2 and O29b slice the annotate_op arm's C source (comments stripped) and look for a variable name on its code lines.",
+   "rows": "A64-2, O29b and the T/V/AINJ bands: re-run after 2A.",
+   "prints_overall_ok": "string present; not run"
+  },
+  {
+   "suite": "tests/headless/test_raw_read_dispatch.tcl, tests/headless/test_results_select.tcl",
+   "registered": "none",
+   "covers": "The read dispatch (INJ rows) and the selection verb (R112/R301 behaviour of the dedupe). Neither is in tests/run_regression.tcl and neither file contains the string `OVERALL: ok`.",
+   "rows": "Run by hand through run_suites.sh after 2B; they gate nothing.",
+   "prints_overall_ok": "no (string absent from both files)"
+  }
+ ],
+ "specs_and_issues": [
+  {
+   "path": "doc/claude/issues/1657-results-are-matched-to-analysis-rows-by-position-while-the-sidecar-records-the-row.md",
+   "rules": "The issue. Stamp `claim=partial tree=d36cb429e fix=taken open=2`. 'Open items' 1 and 2 are the two items here; 'What follows from the rule, and where it stops' is the list of limits. Its opening says the work is 'in the working tree (nothing is committed)' -- no longer true (HEAD 7c77f3594 holds it)."
+  },
+  {
+   "path": "doc/claude/ase_analyses_batch/PLAN.md (sections '### 7c. Finding one option among 220', item 6, and '### 7e. Per-analysis scope is a GUI fiction, and the GUI says so')",
+   "rules": "THESE are the '\u00a77c-6' and '\u00a77e' the code comments name -- they are NOT sections of doc/claude/specs/ase_l.md. 7c-6: a live deck preview pane showing the exact lines that will be emitted AND WHERE; 'a setting with no line in the preview is visibly not in force'. 7e: the option is emitted immediately before its analysis and restored immediately after; two limits 'both stated on the form'. A batch plan (a dated record), so it is evidence of intent, not a file to rewrite."
+  },
+  {
+   "path": "doc/claude/specs/ase_l.md",
+   "rules": "Section 'The writer: one results file, many plots, and a sidecar that says which is which' holds the paragraph on a reader asked for `op`, including 'a file already loaded under `op`, which is not read again' (item 2's limit, stated as built). The Options pane itself is described NOWHERE in this spec: section 'Menu tree (v2)' says only 'Options\u2026 (simulator-specific options dialog, minimal for now)', which is stale against the shipped sheet."
+  },
+  {
+   "path": "doc/claude/issues/0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md",
+   "rules": "STATUS OPEN. The same engine path as item 2's option A: annotate_op deletes only a CURRENT one-point op/dc, then the dedupe hands back whatever is loaded. Section 4 is BINDING on any retry: drop only the type about to be read (op/dc, never tran), and/or verify the candidate parses before dropping; a blanket drop destroyed the user's waveform when the re-read failed. Section 5: 'C remains the right place; every Tcl caller that re-attaches has to carry this drop until then.'"
+  },
+  {
+   "path": "doc/claude/issues/1442-a-scope-the-simulator-does-not-have-and-a-readback-channel-that-was-half-broken.md and 1441-a-247-row-catalogue-with-no-finder-and-a-badge-nobody-had-measured.md",
+   "rules": "The issues that built the per-analysis scope and the sheet/preview. Not read in full by this scout."
+  },
+  {
+   "path": "doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md",
+   "rules": "The user's copy review. It holds the leak sentence ('set for the $atype analysis and left in force for every analysis after it -- ...') and notes that the four slot headings are the same four strings ase::opt_door_phrase returns mid-sentence. New or changed sentences on this pane are copy the user has ruled on before."
+  },
+  {
+   "path": "doc/claude/specs/results_selection.md (section 3.1, R110/R112; section 5, R301)",
+   "rules": "R112: for what==1 the return 1 means 'the request was SATISFIED', and an already-loaded file returns 1 with nothing re-parsed. R301: `raw select` answers 2 for a switch and 1 for a read. 2B changes when a `read` re-parses, so this spec's sentence needs one exception added."
+  },
+  {
+   "path": "doc/claude/issues/0300-skip-raw-ascii-points-loses-a-dataset-it-should-have-skipped-past.md",
+   "rules": "Owner of the CRLF limit (the skip of an ascii block looks for an LF-only blank line)."
+  },
+  {
+   "path": "doc/claude/specs/ase_l_adapter_authors.md (section '4. The optional hooks \u2014 forty-eight of them, grouped')",
+   "rules": "Only if item 1 adds an optional adapter hook: the hook table and the count in that heading would both need to move."
+  },
+  {
+   "path": "doc/claude/issues/NUMBERING.md",
+   "rules": "Read only for the pointer: its last un-struck line reads 'The next free number is 1727'. No new issue is needed for these two items unless the ruling splits something out; minting takes the two checks CLAUDE.md prescribes."
+  }
+ ],
+ "family": [
+  {
+   "sibling": "LIMIT 1 (issue list) -- more than one operating point in a file now gives each as a dataset",
+   "same_cause": "Belongs elsewhere (not the same cause as either open item). A consequence of the rule already built; it changes what annotate_op / attach_dbs / ase::optexport_datasets see only on files no tracked bench writes.",
+   "evidence": "Issue 1657, 'What follows from the rule': measured on hand-written files; 'No tracked ASE state has an enabled noise row or two enabled op rows'."
+  },
+  {
+   "sibling": "LIMIT 2 -- totals with as many variables as the operating point are no longer appended as a second dataset",
+   "same_cause": "Nothing to do: it is a cure, stated.",
+   "evidence": "Issue 1657, same list."
+  },
+  {
+   "sibling": "LIMIT 3 -- a malformed operating point behind the totals is refused, and a malformed header line clears every loaded database",
+   "same_cause": "Belongs elsewhere: the cause is read_dataset()'s `extra_rawfile(3, NULL, ...)` on a malformed header line, which is older than the rule. A candidate for its own issue ('a malformed header wipes the registry'), not for this pass.",
+   "evidence": "read_dataset(): the three header arms and the Variables arm each call extra_rawfile(3, NULL, NULL, ...) before `goto read_dataset_done`. Band M files in_opb, M-wipe rows."
+  },
+  {
+   "sibling": "LIMIT 4 -- a malformed header line BEHIND the operating point now costs the read and the loaded databases",
+   "same_cause": "Belongs elsewhere, with limit 3 (same wipe). The issue records the one alternative ('end the read with what it holds') and that it was not built.",
+   "evidence": "Band M files op_inb, op_in_nsb, op_trb and their M-wipe rows; comment above the integrated-noise arm."
+  },
+  {
+   "sibling": "LIMIT 5 -- an ASCII results file with CRLF line ends is not cured",
+   "same_cause": "Belongs to issue 0300 (skip_raw_ascii_points() looks for an LF-only blank line). No row exists on purpose ('it would hold a wrong answer in place').",
+   "evidence": "Issue 1657 list; comment above the integrated-noise arm; doc/claude/issues/0300-*.md exists."
+  },
+  {
+   "sibling": "LIMIT 6 -- a plot whose whole name is the word asked for (`Plotname: op`) counts as a taken plot",
+   "same_cause": "Belongs elsewhere / no action: no simulator writes it; holding the other answer needs the reader to know in advance whether an Operating Point plot stands anywhere in the file (a pre-scan). Pinned so it cannot drift.",
+   "evidence": "Band M file in_pno, the `named` cells, row M0b."
+  },
+  {
+   "sibling": "LIMIT 7 -- an `opinfo` plot ('NOISE Operating Point') reads as an operating point",
+   "same_cause": "Belongs elsewhere / no action: the reader's operating-point arm matches the words anywhere in the plot name, as it always did.",
+   "evidence": "read_dataset(): `strstr(lowerline, \"operating point\")`. Issue list: measured on hand-written files only."
+  },
+  {
+   "sibling": "LIMIT 8 -- which plot a read asking `noise` is given is still file order (the totals, in ASE-L's files)",
+   "same_cause": "Belongs elsewhere: it is the open reader ruling recorded above the `noise` entry of the adapter's registry (the comment calls it R3's reader question; `noise` has no viewrank).",
+   "evidence": "Comment above the noise entry in src/ase.tcl; read_dataset()'s noise arms."
+  },
+  {
+   "sibling": "LIMIT 9 -- a database of the file already loaded under `op` is not read again",
+   "same_cause": "THIS IS OPEN ITEM 2. Same pass.",
+   "evidence": "extra_rawfile() what==1 dedupe; issue list."
+  },
+  {
+   "sibling": "LIMIT 10 -- a window opened on a loaded database carries it across by its stored type ('Read from the code; not driven')",
+   "same_cause": "Same pass, as a MEASUREMENT and a row, not a code change: under every option the new window's read names `op` in an empty registry and gets the operating point, so the source window can show the totals while the window opened from it shows the operating point.",
+   "evidence": "open_sub_schematic and hi_descend_newwin: `if {$sim_type eq {op}} { xschem annotate_op $rawfile } else { xschem raw_read $rawfile $sim_type }`."
+  },
+  {
+   "sibling": "Issue 0685 (OPEN) -- annotate_op hands back a stale in-memory database when the path is loaded and something else is current",
+   "same_cause": "YES, the same cause as open item 2 seen from the annotate door: the arm's delete tests only the CURRENT database, then the dedupe switches. Item 2's option A IS issue 0685's engine fix. Under the user's 'fix the whole bug family' rule this sibling should be ruled on in the same breath.",
+   "evidence": "0685 sections 1 and 5; row F12 of test_annot_stale_0684 golds the stale answer; op_annot::db_attach guard G6 is its Tcl workaround."
+  },
+  {
+   "sibling": "Three Tcl workarounds for the dedupe: op_annot::db_attach (targeted drop), ase::attach_dbs (targeted clear), calc::et_alias (private alias)",
+   "same_cause": "Yes: each exists because `read` of a loaded path switches instead of reading. They are why ASE-L's own flows were measured right; none needs to change, and none becomes wrong under A or B.",
+   "evidence": "Their own header comments, read in src/op_annot.tcl, src/ase.tcl, src/calculator.tcl."
+  },
+  {
+   "sibling": "calc::aq_run (the Calculator buffer's analysis qualifier, e.g. vdc())",
+   "same_cause": "Probably the same cause, NOT in the issue's measured list: it calls `xschem raw read $name $an` with no alias, and runs IN PLACE when the current slot's stored type already equals the analysis asked. On a typeless-stored totals database the in-place arm would evaluate against the totals; no option on the table reaches that arm (no read is requested).",
+   "evidence": "Read in calc::aq_run and calc::aq_present; not driven."
+  },
+  {
+   "sibling": "The second way the pane's `control` slot differs from the deck: suppression lines are listed before every group, in the state's row order",
+   "same_cause": "Same cause as open item 1 (the pane is not laid out in deck order). Same pass if the ruling is A or C.",
+   "evidence": "ase::opt_preview: the `foreach arow [ase::state_get $state analyses]` loop runs before the `foreach atype [ase::preview_analysis_types $state]` loop; render_deck writes suppress lines beside their own analysis."
+  },
+  {
+   "sibling": "Other limits the issue leaves as built outside that section",
+   "same_cause": "Belong elsewhere: (a) three hand-made sidecar shapes the pairing by row no longer tells ('telling the first two would take a new sentence'); (b) ase::ckpt_report cannot tell a run stopped while its plot was being written from one stopped after.",
+   "evidence": "Issue 1657, section 'What was changed'."
+  }
+ ],
+ "design_options": [
+  {
+   "name": "1A -- the window hands the preview the unreduced netlist; the preview shows the deck's order",
+   "sketch": "(1) ase::ui::optsheet_netlist_text keeps the unreduced text beside the reduced one in its cache (or a sibling proc returns it from the same cache), without changing what RS9 receives. (2) ase::ui::optsheet_preview passes it to ase::opt_preview as a NEW optional fifth argument; the reduced text keeps feeding ase::run_seed_line. (3) A side-effect-free predicate answers 'will this deck run its operating point last': ase::saves_op_cards_coming $state $text (gate, op enabled, held block for exactly this text) AND ase::n_enabled_analyses > 1 AND NOT (ase::op_tier_forced is b and the held block's device count fits ase::op_write_max_names). (4) ase::preview_analysis_types takes that answer and passes it to ase::analysis_emit_order in place of the literal 0. (5) Decide where suppression lines go (with their analysis, in deck order). WHAT IT SHOWS BEFORE A NETLIST OF THIS SESSION EXISTS: the slot misses, so the predicate answers 'first' -- which is right for Run on an existing netlist this session did not capture (that deck carries no device cards and says so), and WRONG for Netlist and Run on a default bench, which captures and then runs the operating point last. A alone has no way to say that.",
+   "risks": "The predicate re-derives render_deck's switch (a second opinion) unless fenced against rendered decks over the whole matrix. ase::op_tier_now must not be called (it can start the simulator). The op_cards slot is one per process: netlisting another session's design turns this session's answer into a miss. 'Exact' means exact for the netlist ON DISK; Netlist and Run re-captures and can differ (dirty sheet -> refusal -> empty block -> op first). Per-keystroke cost of comparing the full text. RO1 must be moved. HK1 forbids ngspice words in both core procs.",
+   "blast_radius": "src/ase.tcl: ase::preview_analysis_types, ase::opt_preview, one new core predicate (or an optional adapter hook plus its registration). src/ase_window.tcl: ase::ui::optsheet_netlist_text, ase::ui::optsheet_preview. Tests: RO1 moved; new rows in section RO; RS9 extended. render_deck untouched."
+  },
+  {
+   "name": "1B -- the pane labels each group with its analysis; order stops carrying a meaning",
+   "sketch": "(1) ase::opt_preview adds the analysis to each `control` entry as a THIRD element ({option line type}), for scope lines and for suppression lines; keys stay {cmdline control deck notes prefile}. (2) ase::ui::optsheet_preview prints a label line when the type changes inside the `inside the analysis block` slot, then that analysis's lines. (3) The leak note can no longer lean on the pane's order: its words must say what 'after it' means (see the user question). (4) Notes are keyed by option name, so an option stored against two analyses needs a key that includes the analysis, or one note is lost. (5) Correct the false comment in opt_preview.",
+   "risks": "B alone leaves the leak note undetermined: 'left in force for every analysis after it' is only checkable if the reader knows which analyses run after. New copy on a pane whose copy the user reviewed (R9). Label wording is chrome or a minted sentence -- the file's own rule is that sentences are minted in src/ase.tcl. Pixel deliverable: needs the display arm and the user's eyes. Suppression lines currently sit ahead of all groups.",
+   "blast_radius": "src/ase.tcl: ase::opt_preview only. src/ase_window.tcl: ase::ui::optsheet_preview only. Tests: new counted rows on the entry shape; new display rows in section UI of test_ase_optsheet_1441; DK10 reads `lindex $e 1` and is unaffected; PV8 unaffected if a one-analysis bench prints no label (its control is {})."
+  },
+  {
+   "name": "1C -- both: the true order when it can be known, a plain statement when it cannot, and labelled groups",
+   "sketch": "A's predicate made three-valued: LAST (hit, non-empty block, gate on, op enabled, more than one enabled analysis, not forced b), FIRST (gate off, or op not enabled, or one analysis, or a hit with an empty block, or forced b), UNKNOWN (no file, or a miss, while gate on, op enabled and more than one analysis). LAST/FIRST order the groups; UNKNOWN keeps today's order and adds ONE core-minted statement (carried as a note or a note-shaped record so the dict keys do not move) saying the operating point runs last when device operating-point numbers are saved and that this is settled when the netlist is written. Plus all of B. The statement is emitted only when it can matter: at least two analyses with lines in the slot, or a leak note present.",
+   "risks": "The sum of A's and B's. The statement is a new sentence for the user to rule on. PV8 pins the default-state answer exactly, so the statement must be silent there (one enabled analysis). Three states need three fixtures and a non-vacuity leg each.",
+   "blast_radius": "As A plus B. Still no change to render_deck."
+  },
+  {
+   "name": "2A -- the annotate arm removes the file's `op` database whether or not it is current, before it reads",
+   "sketch": "In the annotate_op arm of src/scheduler.c, beside the existing 'delete previously loaded OP' test, call extra_rawfile(3, f, \"op\", ...) for the file being annotated (and decide whether a one-point `dc` entry of the same file goes too -- op_annot::db_attach drops both). The registry resolves `f` the same way in the clear arm and the read arm, so the key matches. This is issue 0685's engine fix; op_annot::db_attach's guard G6 then duplicates it harmlessly. Honour 0685 section 4: never `tran`.",
+   "risks": "IT CHANGES EVERY FILE, not only totals-first ones -- the reason the lead left it open. (a) A bare annotate_op with an op entry loaded-but-not-current now re-reads from disk: row F12's gold moves from 1e-05 to 0.009 and its name becomes false. (b) In-memory changes to that op database are lost (columns from `xschem raw add`, renames, the explicit case mode). (c) The clear arm resets extra_idx and extra_prev_idx to 0 and makes slot 0 current before the read, so `raw switch_back` after an annotate lands elsewhere. (d) When the re-read FAILS (file mid-rewrite) the old operating point is gone and the arm's `dc`/`tran` fallbacks run; today the loaded one is shown. (e) It cures ONLY the annotate door: `xschem raw read <f> op` and `xschem raw select <f> op` after a typeless read still show the totals. (f) Rows of test_op_annot slice this arm's source.",
+   "blast_radius": "src/scheduler.c (one arm). Tests: F12 moved and renamed, new rows for the totals sequence and for the failed re-read; test_op_annot, test_annot_stale_0684, test_annot_declutter_1244, test_backannotate_digital, test_zero_point_raw_0836 re-run. Docs: issue 0685 closed or re-stamped."
+  },
+  {
+   "name": "2B -- the registry reads again when a request that names `op` meets a database a typeless read took from the noise totals",
+   "sketch": "(1) A new int in Raw (src/xschem.h, beside req_sim_type), 0 from raw_read()'s calloc. (2) read_dataset() sets it in the integrated-noise arm when that arm answers `op` for a caller that did NOT ask for op and no dataset has been taken yet (`!op_asked`, raw->datasets == 0) -- the one place both read doors (`xschem raw read` and the bypassing `xschem raw_read`) pass through. Raw.req_sim_type cannot serve: it is NULL after ANY `xschem raw_read`, typed or not. (3) extra_rawfile() what==1, spice arm: a dedupe hit whose entry carries the mark, for a request whose type is `op`, is not a hit -- read the file asking op and replace the entry (order to be ruled: read first and replace on success, or drop then read). A request with no type, or any other type, and the what==2 switch arm, behave as today. (4) Nobody copies a Raw between windows, so the mark needs no carrying: open_sub_schematic and hi_descend_newwin re-read by name and type.",
+   "risks": "For files that hold no `Integrated Noise` plot the mark can never be set, so nothing changes BY CONSTRUCTION -- but that must be measured (ET11's distinctness leg is the tripwire). The dedupe arm is written twice (spice, non-spice) and its comment says to keep them in step; only the spice one is concerned. `xschem raw read -case` and raw_select() infer read-versus-switch from extra_raw_n: a replace-in-place leaves the count unchanged (raw_select() answers 2 'switched', and the -case path calls raw_case_reread() for a second read); an append-and-remove answers 1. A file with totals and NO operating point is marked too: the first `op` request re-reads once, gets the totals again (unmarked), and moves the entry. A malformed header met during the re-read wipes the whole registry inside read_dataset(), whatever order is chosen. Does not reach calc::aq_run's in-place arm or `xschem raw switch <f> op` (no read is requested). Leaves issue 0685 open.",
+   "blast_radius": "src/xschem.h (Raw), src/save.c (read_dataset(), extra_rawfile()). Every what==1 caller naming op: `xschem raw read`, `xschem raw select`, annotate_op, graph walkers with autoload=true, raw_case_reread(). Tests: new sequence cells in band M; test_calc_eval_text, test_calc_analysis_tokens, test_annot_stale_0684 re-run unchanged. Spec: results_selection.md R112 gains one exception."
+  },
+  {
+   "name": "2C -- leave it, documented",
+   "sketch": "No engine change. Add rows that PIN today's answers for the sequences (typeless read, then `raw read <f> op` -> totals; annotate_op with the totals loaded and not current -> totals; with them current -> operating point; a new window -> operating point), so they cannot drift unnoticed. State the limit once where a user reads (the tutorial or FAQ), and re-stamp the issue with this item recorded as ruled.",
+   "risks": "The rows hold answers the issue itself calls the totals 'in place of' the operating point -- the issue declined to write such a row for the CRLF limit for exactly that reason. A user who loads through the Waves menu with no type and then annotates with a graph open still gets no node voltage.",
+   "blast_radius": "tests/headless/test_raw_ascii_point_bounds.tcl (band M, new pinned cells); docs only otherwise."
+  }
+ ],
+ "recommended": "Scout's reading, for the lead to weigh -- the rulings are the user's.\n\nITEM 1: C. A alone silently shows operating-point-first whenever the slot misses (no netlist yet, or another session's netlist was captured since), which is the wrong order for the default Netlist and Run. B alone leaves the one sentence that makes order matter ('left in force for every analysis after it') uncheckable. C is A's predicate with a third answer, plus B's label as a third element of each `control` entry -- which keeps PV1/HK3/PV8 where they are -- and it leaves render_deck untouched, fenced instead by comparing the predicate with the order of the `echo \"PLOT ...` records of decks render_deck itself writes (the RO section's own method).\n\nITEM 2: B closes this issue's item at every door that asks for `op` and changes nothing for a file with no `Integrated Noise` plot, by construction. A is really issue 0685's engine fix: it changes every file (and moves row F12), and by itself leaves `xschem raw read <f> op` showing the totals. So: if the user wants only 1657 closed, B; if the user wants the family closed (0685 has been open since 2026-08-25 and says the engine is the right place), B and A together, A under 0685's section-4 constraints. A alone is the weakest choice for 1657. C costs nothing and leaves the Waves-menu path wrong.",
+ "acceptance_rows": [
+  "ITEM 1, counted arm (--nogui), tests/headless/test_ase_core.tcl section RO, new row (1A/1C): bench op + tran from ro_state, one stored option scoped to op (take a name from `ase::opt_scoped_names ngspice op`; test_ase_optsheet_1441 lists itl1, noopiter, gminsteps, srcsteps, copynodesets, nodedamping as op-scoped) and `{name itl4 value 200 analysis tran}`; device requests held with ase::op_cards_put on the fixture's netlist text as ro_deck does. Assert: the sequence of option lines in `[dict get [ase::opt_preview ngspice $st {} <reduced or {}> <the same text>] control]` equals the sequence of those same lines in the deck render_deck wrote. RED TODAY: the preview puts the op lines first (ase::preview_analysis_types asks for `$state 0`); the deck writes them last.",
+  "ITEM 1, counted arm, same section, the predicate's matrix (1A/1C): for {gate on/off} x {op enabled or not} x {slot: this text with a block / this text with an empty block / another text / empty} x {one or several enabled analyses} x {tier forced a, b, c, d, none}, the predicate's answer equals whether ro_recs of the rendered deck puts `op` after another type. Non-vacuity leg: both answers occur, and the forced-b cell differs from the forced-c cell. The legs where the deck moves the operating point are RED TODAY (no predicate exists; the walk is always op-first); the comparand is the deck's own record order, a different mechanism from the predicate.",
+  "ITEM 1, counted arm (1C only): with gate on, op enabled, two analyses carrying per-analysis lines, and NO netlist text (and again with a text the slot does not hold), the preview answers the unknown-order statement exactly once; with one enabled analysis, or with the slot holding the text, it answers none. Control: `ase::opt_preview ngspice [ase::state_default]` is byte-identical to row PV8's gold. RED TODAY: no such statement exists.",
+  "ITEM 1, counted arm (1B/1C), tests/headless/test_ase_effective_1442.tcl section DK or test_ase_optsheet_1441 section PV: every entry of `control` carries the analysis it is written around, entries of one analysis are contiguous, and a suppression line carries its row's type (fixture: DK10's klu + itl4 bench). RED TODAY: entries are {option line} pairs and suppression lines precede every group.",
+  "ITEM 1, DISPLAY arm (dcases), tests/headless/test_ase_optsheet_1441.tcl section UI (1B/1C): store one op-scoped and one tran-scoped option through the session, refill, and read `$top.simopt.prev.t`: between the heading `inside the analysis block` and the heading `on the command line` there is one label per analysis, each followed by that analysis's own lines and no other's. RED TODAY: the pane prints the bare lines only (ase::ui::optsheet_preview appends `[lindex $e 1]`). The section self-skips under --nogui with an uppercase `SKIPPED:` line, so it adds no `skip:` to the verdict.",
+  "ITEM 1, counted arm, the leak note (wording per the ruling): bench op + noise with `{name sqrnoise value 1 analysis noise}` (row SP3's leaking option), device requests held, so the deck runs noise then op. Assert the note for sqrnoise says something TRUE of that deck -- e.g. names the op analysis as running after it -- and that the same bench with the gate off (op first) does not. RED TODAY for any wording that names what follows; today's sentence says only 'every analysis after it' under a pane that lists the noise group after the op group.",
+  "ITEM 1, counted arm, tests/headless/test_ase_run_seed.tcl beside RS9 (1A/1C): through a real session, the text the window hands the preview for the ORDER question is byte-equal to the file on disk (so ase::op_cards_hit can answer 1 after ase::op_cards_put of that file's text), for a netlist that holds a device line; it still writes nothing and creates no directory; and the seed leg of RS9 is unmoved. RED TODAY: the only text the window has is the reduced copy, which differs from any netlist holding a device line.",
+  "ITEM 1, moved row, not a new one: RO1's second list loses ::ase::preview_analysis_types (and its sentence 'the four take the operating-point-first order' and the section header's 'has no row here' are rewritten). Pin the changed signatures with `info args` and `info default` on ::ase::opt_preview and ::ase::preview_analysis_types, not with a text scan.",
+  "ITEM 2, counted arm (--nogui, no simulator), tests/headless/test_raw_ascii_point_bounds.tcl band M, new cells 'M-loaded' (2B): for each block form and each totals-first file that holds an operating point (in_nsd_op, in_nsd_op_op2, in_op_nsd_op2, inc_nsd_op, inq_nsq_op, in_nsd_opm, ins_nsd_op where the form allows), `xschem raw clear`; a typeless read through EACH door (`xschem raw read $f` and `xschem raw_read $f`); then `xschem raw read $f op`; the answer string built as m_ans builds it must equal m_want's existing `op` cell for that file. RED TODAY: the second read switches to the stored database and answers the `-` cell (the totals).",
+  "ITEM 2, counted arm, band M, the nothing-changes legs (2A and 2B): the same two-read sequence on files with NO `Integrated Noise` plot (op; an operating point followed by a transient) must give the same answer AND the same `xschem raw info` text as the binary at HEAD, and on files with totals and no operating point (in_nsd, in, inq_nsq, cm_in_nsd) must still answer the totals. GREEN TODAY and after; under 2A the annotate variant of this leg on a no-totals file is the one that MOVES (it is row F12's shape) and must be written to say so.",
+  "ITEM 2, counted arm, band M, 'M-annotate-loaded' (2A or 2B): typeless read of in_nsd_op; `xschem raw read <a transient file> tran` so the totals database is loaded and not current; `xschem annotate_op $f`; the first name of `xschem raw list` is v(in). RED TODAY: v(onoise_total). Twin (green today, must stay): the same with the totals database current answers v(in).",
+  "ITEM 2, counted arm, the failed re-read (2A and 2B, outcome per the ruling): the marked/loaded database in place, the file replaced by truncated junk, then the request for `op`. Assert `xschem raw info` and `xschem raw loaded` afterwards -- either the previous database kept and current, or nothing attached -- and, at the same path read as a waveform first (row F13b's staging), that the transient entry is still attached and readable. Today's answer is 'the stale database is shown'.",
+  "ITEM 2, counted arm, a new-window row (limit 10, every option): with the totals stored as `op` and current in the source window, `open_sub_schematic` (or hi_descend_newwin) into a fixture with one instance; in the new context the first name is v(in). This is the leg the issue marks 'Read from the code; not driven'. Whether it can run under --nogui (it opens a window or tab) was not established; if not, it is a display-arm row.",
+  "ITEM 2, moved row under 2A only: F12 of tests/headless/test_annot_stale_0684.tcl (both arms) -- its third gold element goes from 1e-05 to 0.009 and its name ('THE HAZARD, DEMONSTRATED ... hands back the STALE numbers') is rewritten; F12b, F13, F13b, F14 are re-run and expected unmoved.",
+  "ITEM 2 under 2C: the 'M-loaded' and 'M-annotate-loaded' sequences written with TODAY's answers as their golds (green today), each named as a limit held in place.",
+  "MEASUREMENT, before and after, recorded in a receipt (not a row, and not a file under doc/claude/issues/): on one totals-first file holding an operating point and one control file with no totals, in both block forms, for prior states {nothing loaded; typeless-read database current via `raw read`; the same via `raw_read`; typeless-read database loaded and another current}, ask each caller and record the first name it shows and the `xschem raw info` text: `xschem raw read <f> op`, `xschem raw select <f> op`, `xschem raw switch <f> op`, `xschem annotate_op <f>`, `ase::attach_dbs <f> op`, `op_annot::db_attach <f>`, `calc::eval_texts {vdc(out)} <f> {}`, the Calculator buffer's vdc() through calc::aq_run, and a new window opened from it. The issue's own table has what the first, fourth, fifth, sixth and seventh were given; the others are unmeasured."
+ ],
+ "traps": [
+  "THE TREE STATE IS NOT WHAT THE BRIEF SAYS. `git log` shows HEAD = 7c77f3594 'feat(ase): a pin click saves the terminal current, and ASE-L says which simulator can (1724, 1657)' (2026-11-21 01:18 -0700) on fluid-editing, and `git status` shows src/ and tests/ clean (two modified files under sky130A/ and untracked files only). The 1724/1657 work is COMMITTED. The issue file still says 'in the working tree (nothing is committed)' and is stamped tree=d36cb429e.",
+  "'\u00a77c-6' and '\u00a77e' in the code comments are sections of doc/claude/ase_analyses_batch/PLAN.md, not of doc/claude/specs/ase_l.md. The spec has no section on the Options pane at all.",
+  "Do NOT call ase::op_tier_now or ase::op_save_tier from the preview: on a capability-cache miss ase::sim_capabilities makes a scratch folder and STARTS THE USER'S SIMULATOR (measured worst case 31.2 s with Tk frozen, per ase::sim_caps_cached's header), and op_save_tier's own header forbids moving it onto a path with no Run behind it. The order question needs only ase::op_tier_forced: tier b is the one tier that keeps the operating point first with cards held, and nothing but the override selects it.",
+  "The op_cards slot is ONE per process and is keyed on the EXACT netlist text. The reduced copy never matches. Netlisting a second session's design empties and refills the slot, so the first session's preview (and its plain Run) then miss.",
+  "The preview refills on every key typed in the Find box. The reduced copy exists for that reason; keep it for the seed rule and keep whatever is added per refill cheap.",
+  "Two HK1 rows (test_ase_optsheet_1441 and test_ase_effective_1442) scan the bodies of ase::opt_preview and ase::preview_analysis_types for ngspice words, `.control` and `.options` among them. A new core proc that spells one is the wrong turn; a proc that calls ase::analysis_emit_order also joins RO1's census.",
+  "PV1 and HK3 pin the preview's keys as exactly {cmdline control deck notes prefile}, and PV8 pins the whole answer for the default state. Carry new information as a third element of a `control` entry or as a note, or move those rows on purpose.",
+  "Notes are a dict keyed by OPTION NAME (PV6: one note per option). The same option stored against two analyses keeps only the last note, so a per-analysis label needs a per-analysis note key.",
+  "The pane's notes heading is `not delivered` although it also carries the default-seed, `leaks` and `suppressed` notes, which ARE delivered; UI17 pins that phrase. The four slot headings are also the phrases ase::opt_door_phrase returns mid-sentence. Rewording any of them has siblings.",
+  "The leak sentence went through the user's R9 copy review. Any new wording, the group label and the unknown-order statement are user-facing copy: record a `rule` (and a `look` for the pane) rather than reporting them done on a green suite.",
+  "In the pane a set line and its restore line are adjacent with no analysis between them, and suppression lines stand ahead of every group in row order. A label fixes the first; the second needs a decision under A or C.",
+  "render_deck is fenced by byte-identical rows (E8, E12, the deck goldens of test_ase_core, VB1/VB2, the CK rows). Fence a predicate against it; do not restructure its op-cards block for this.",
+  "`xschem raw_read` (underscore) is NOT `xschem raw read`: it clears the registry and bypasses extra_rawfile(), so Raw.req_sim_type stays NULL for a typed read too. A 'typeless' mark must be set inside read_dataset(), not inferred from req_sim_type.",
+  "The dedupe loop is written twice in extra_rawfile() (non-spice arm keyed on the path, spice arm on path + type) and its comment says half of why issue 0509 survived is that one copy was patched. Only the spice arm concerns `op`; say so in the comment.",
+  "`xschem raw read ... -case` treats an unchanged extra_raw_n as 'only switched' and then calls raw_case_reread(); raw_select() answers 2 or 1 from the same count. Replace-in-place versus append-then-remove under 2B changes both answers.",
+  "Issue 0685 section 4 is binding on 2A: drop only `op` (and at most a one-point `dc`), never `tran`, never the bare clear. op_annot::db_attach drops `dc` with no one-point test; the engine's existing delete has `allpoints == 1`. A same-file multi-point dc sweep is a user's waveform.",
+  "The clear arm of extra_rawfile() sets extra_idx and extra_prev_idx to 0 and makes slot 0 current. A drop inside the annotate arm therefore moves the switch-back cursor even when the read then succeeds.",
+  "A malformed header line met by read_dataset() clears the WHOLE registry from inside the read. A 'read the new one first, drop the old one on success' design under 2B does not protect the old database from that.",
+  "Band M cannot see the already-loaded case as written: m_ans clears before and after one read. The suite that DOES pin the engine's stale answer is test_annot_stale_0684 (row F12), for a file with no totals.",
+  "Rows A64-2 and O29b of test_op_annot slice the annotate_op arm's source with comments stripped. A new code line there is read by them.",
+  "A C change needs a rebuild before any suite is evidence (no harness builds). No new source file is involved, so src/Makefile.in does not move.",
+  "ase::ui::optsheet_netlist_text must keep querying the run directory without resolving or creating it (its header's rule, R602e); RS9 asserts it writes nothing.",
+  "A receipt or measurement write-up filed under doc/claude/issues/ with an NNNN- name reddens row D9 of test_issue_stamp. The issue file's own stamp line (`open=`) must change with the ruling and stay one physical line in the first 12."
+ ],
+ "open_questions_for_user": [
+  "ITEM 1 -- which: (A) the preview shows the deck's real order once a netlist of this session exists; (B) each group is labelled with its analysis and order stops meaning anything; (C) both, with a plain sentence when the order cannot be known yet.",
+  "ITEM 1 -- when the order cannot be known (no netlist yet, or the netlist on disk is not the one this session last captured device requests for): should the pane (a) keep today's order and say in one sentence that the operating point runs last when device operating-point numbers are saved, settled when the netlist is written; (b) show the order Netlist and Run would most likely give; or (c) show no order and only labels? Note that Run (existing netlist) and Netlist and Run can give different orders for the same bench.",
+  "ITEM 1 -- the note 'set for the tran analysis and left in force for every analysis after it': when the order is known, should it NAME what runs after (e.g. '...and left in force for the op analysis, which runs after it'), and say 'nothing runs after it' when it is last?",
+  "ITEM 1 -- should a group be one per analysis TYPE (as built: two tran rows share one group though the deck writes the lines around each row) or one per ROW? And what should the label read?",
+  "ITEM 1 -- the lines ASE-L adds itself (e.g. klu switched off around an AC sens) are listed today ahead of every group: move them under their own analysis?",
+  "ITEM 2 -- which: (A) annotate removes the file's operating-point database whether or not it is current, then reads; (B) the registry reads again when a request for `op` meets a database that a read naming no type took from the noise totals; (C) leave it, documented.",
+  "ITEM 2 -- option A is the engine fix of issue 0685 (open since 2026-08-25): it makes a bare annotate re-read ANY file whose operating point is loaded but not current, so a re-run's new numbers are shown where the old ones were. Do you want 0685 closed in this pass (A, or A with B), or kept apart?",
+  "ITEM 2 -- when that re-read FAILS (the simulator is still writing the file): keep showing the operating point that was loaded, or show nothing? (Issue 0684's rule says 'or blank'; issue 0685's says no loaded data may be lost.)",
+  "ITEM 2 -- under A, should a same-file `dc` database be removed too (Xyce writes its operating point as a one-point DC), and only when it is one-point?",
+  "ITEM 2 -- two readers ask for no read at all and so are reached by neither A nor B: `xschem raw switch <file> op`, and the Calculator's vdc() typed while the totals database is the current one. Document them, or should a read that names no type stop storing a totals-first file under `op` when the file holds an operating point (the issue lists that as deliberately unchanged)?"
+ ],
+ "unverified": [
+  "Nothing was built or run. Every 'red today', 'moves' and 'unmoved' above is derived from reading the code and the suites at HEAD 7c77f3594.",
+  "Whether the HEAD commit was made before or during this scouting pass; the brief's 'uncommitted on d36cb429e' no longer describes the tree.",
+  "Whether ase::op_cards_names, ase::op_cards_wildcards or op_annot::opdump_request can answer an empty list for a non-empty held block (which would leave op_last 0 under tier c, a or d). render_deck's comment says a non-empty block always carries at least one card; the wildcard and dump procs were not read.",
+  "Whether the reload in ase::backend::ngspice::dcvar_body discards an `option` that an earlier analysis set and did not put back. Its comment says 'a reset wipes them' of the row's own lines; if so, 'left in force for every analysis after it' is false across a design-variable dc row whatever the order.",
+  "Which op-scoped and tran-scoped options the issue's own measurement used; the issue does not name them.",
+  "That 'exact once a netlist of this session exists' holds for Netlist and Run as well as Run: read as holding only for the netlist on disk, since Netlist and Run re-captures.",
+  "calc::aq_run on a typeless-stored totals database (its in-place arm and its un-aliased `xschem raw read`): read, not driven, and not in the issue's list of measured callers.",
+  "results::select as a source of typeless reads on an ASE-L results file: read in the code, not driven.",
+  "That ASE-L's own flows never hand ase::attach_dbs an empty type for a file holding BOTH totals and an operating point: inferred from ase::plot_sim_type and `op` carrying viewrank 10 (a bench with op enabled answers a type; dp_finish and the auto-plot path return early on `op`).",
+  "That raw_case_reread() after a typed `xschem raw_read` re-reads typeless (req_sim_type NULL on that door): inferred from the two functions, not driven; if true it is a separate latent defect.",
+  "How the graph walkers in src/draw.c behave under 2B when a graph with autoload=true names sim_type op for a marked database (a read during a draw): only the call shapes were read.",
+  "Whether F12b, F13, F13b and F14 really stay green under 2A, and whether any other registered suite pins a bare annotate_op's stale answer: only test_annot_stale_0684 was read in detail.",
+  "Whether any suite counts the adapter's optional hooks or pins ase::opt_preview's argument list; none was found by searching the suites for the hook name `user_seed_line` or for 'optional hooks', which is not exhaustive.",
+  "That the suites named print `OVERALL: ok` when run: only the presence of the string in each file was checked (absent from test_raw_read_dispatch.tcl and test_results_select.tcl).",
+  "Whether the new-window row can run under --nogui.",
+  "Issues 1441 and 1442 and the R9 copy review were searched, not read through; a ruling recorded there about the pane's order or labels would bind this work."
+ ],
+ "user_docs_to_update": [
+  {
+   "path": "doc/claude/issues/1657-results-are-matched-to-analysis-rows-by-position-while-the-sidecar-records-the-row.md",
+   "what": "Both open items rewritten as ruled and built (or as ruled left); the stamp line's `open=` and `stamped=`; the sentence 'in the working tree (nothing is committed)'; limit 9 and limit 10 of 'What follows from the rule' (limit 10 loses 'not driven' once the row exists); the table 'The other procs that walk the rows' (ase::preview_analysis_types row)."
+  },
+  {
+   "path": "doc/claude/issues/0685-annotate-op-reuses-a-stale-registry-database-at-the-same-path.md",
+   "what": "Only under 2A: status, section 5 ('Still open: the C defect itself'), and what rows F12/F12b now hold."
+  },
+  {
+   "path": "doc/claude/specs/ase_l.md",
+   "what": "Section 'The writer: one results file, many plots, and a sidecar that says which is which': the sentence on 'a file already loaded under `op`' follows the ruling. Section 'Menu tree (v2)': 'Options\u2026 (\u2026 minimal for now)' is stale; this is the place a description of the preview pane (slots, groups, order rule, the unknown-order sentence) would have to be added, since the spec has none."
+  },
+  {
+   "path": "doc/ase_l_tutorial.html",
+   "what": "Section 'Simulator options' describes only a Name/Value table; if the pane's order or labels are a user-visible deliverable, the per-analysis block and what its order means belong here. Under 2C, the Waves-menu limit (load with no type, then annotate) is a user-facing note for this file or the FAQ."
+  },
+  {
+   "path": "doc/claude/FAQ.md",
+   "what": "One entry per ruling (newest on top): why the preview shows the order it shows / why a read asking for the operating point re-reads a totals database."
+  },
+  {
+   "path": "doc/claude/specs/results_selection.md",
+   "what": "Under 2B: R112's statement that an already-loaded file is returned with nothing re-parsed gains the one exception; R301's 2-versus-1 answer if the replace changes it."
+  },
+  {
+   "path": "doc/claude/specs/ase_l_adapter_authors.md",
+   "what": "Only if item 1 adds an optional adapter hook: the hook table of section 4 and the count in its heading."
+  },
+  {
+   "path": "src/ase.tcl (comments)",
+   "what": "The DECLARED LIMIT block above ase::preview_analysis_types; the '\u00a77e: THE IN-BLOCK SLOT' comment inside ase::opt_preview (its 'each line tagged with the analysis it belongs to' is false as built); paragraph '(b) A file ALREADY LOADED under `op`' above the `noise` entry of the ngspice analysis registry."
+  },
+  {
+   "path": "src/save.c and src/xschem.h (comments)",
+   "what": "The paragraph 'AND THIS FUNCTION IS NOT CALLED AT ALL for a file that is already loaded' above the integrated-noise arm of read_dataset(); extra_rawfile()'s RETURN VALUE paragraph; under 2B the comment of the new Raw field beside req_sim_type."
+  },
+  {
+   "path": "src/op_annot.tcl (comment above op_annot::db_attach, guard G6) and tests/headless/test_annot_stale_0684.tcl (comments above F12 and F12b)",
+   "what": "Only under 2A: they describe the engine's stale answer as a standing hazard."
+  },
+  {
+   "path": "tests/headless/test_ase_core.tcl (header of section RO)",
+   "what": "The entry for ase::preview_analysis_types ('that is open in the issue file and has no row here') and RO1's sentence."
+  }
+ ]
+}

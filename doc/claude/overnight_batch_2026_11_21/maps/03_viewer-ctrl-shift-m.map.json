@@ -1,0 +1,398 @@
+{
+ "item": "Item 3: Ctrl-Shift-M in the waveform viewer should toggle single/multi plot mode (what Ctrl-Shift-4 does from the design window); today it pops \"View is Read Only\". Read-only scout, nothing run. Tree state at read time: HEAD is 7c77f3594 (the 1724/1657 work is committed on top of d36cb429e) and every file this item touches is clean in `git status`.",
+ "mechanism": "READ in code, not reproduced at runtime.\n\nPath of Ctrl-Shift-M today (viewer canvas focused, pointer over a strip):\n1. Tk delivers KeyPress keysym M (77), state Control|Shift (5). `wviewer::strip_bindings` (src/wave_viewer.tcl) makes the canvas bindtags {WvFszCanvas, <canvas>, WaveViewer, Canvas, <toplevel>, all}. The only key binding on the widget is `<KeyPress>` -> `wviewer::key_filter %W %T %x %y %N %K %s`.\n2. `wviewer::key_filter`: `wviewer::case_keysym 77 5` keeps 77 (under Control the case is Shift XOR Lock). It is not f/Z/Ctrl-z/arrow/Escape. 77 is in `graphkeys` {97 98 100 115 109 116 65 66 77} and `wviewer::over_graph $W` is true, so `fwd = !((N==100||N==98) && (s&4))` = 1. Membership is by keysym only; the only modifier carve-outs are Ctrl-d and Ctrl-b. N is not 109/100, so it is forwarded raw (not inside `wviewer::with_edit`): `xschem callback $W 2 $x $y 77 0 0 5`.\n3. C `callback()` strips Lock/Mod2, rstate = ControlMask, and calls `handle_key_press()`. `key_chord_has_binding(77, ControlMask)` is 0 (no row for 'M' in `init_input_bindings`; src/keybindings.csv has no 77 row), so it reaches `switch(key)`, `case 'M'`. The `rstate == 0` arm has the `waves_selected()` guard (Shift+M tooltip). The `rstate == ControlMask` arm opens with `if(readonly_block()) break;` and has no waves guard. The viewer buffer is read-only for life, so `readonly_block()` runs `tk_messageBox ... {View is Read Only. ...}`.\n4. `key_filter` never `break`s, but no WaveViewer binding matches the chord (`wviewer::install_default_binds` has none for M; `wviewer::install_case_binds` covers only d g n w e u b c q v), so nothing else fires.\n\nPointer must be over a graph in the Tcl sense for the popup: `wviewer::over_graph` needs `xschem get current_win_path` to be this canvas and mousex_snap/mousey_snap inside a `graphbb` band. Otherwise `fwd` stays 0, the key is swallowed, no tag binding matches: silent no-op. The C arm itself does not look at the pointer.\n\nRoot cause shared by the family: `key_filter` allowlists by keysym, C re-decides by (key, modifier, mode) and by its own geometry, and several C arms for an allowlisted keysym are editor verbs with no waves guard. doc/claude/specs/graph_markers.md \u00a76.1 records the same defect for Shift+M; that fix guarded only the rstate==0 arm.\n\nHow plot mode is changed today: Options > Plot Mode has one command entry, `-command [list wviewer::set_plot_mode invert $token]`, no accelerator; `wviewer::plot_mode_menu_post` relabels entry 0 from a -postcommand. `wviewer::set_plot_mode` writes the TARGET subwindow's mode (`wviewer::target_index`, moved by `wviewer::click_target` on ButtonPress-1), pushes `wviewer::status_refresh`, and logs `wviewer::set_plot_mode <resolved> <token>` on a real change. Ctrl-Shift-4 is `bind .drw <Control-Key-dollar>` / `<Control-Shift-Key-4>` -> `ase::plot_mode_for_current invert` in src/cadence_style_rc; those are widget-level binds that `strip_bindings` sweeps off a viewer canvas. There is no `..._at %W` wrapper for plot mode.",
+ "code_sites": [
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::key_filter",
+   "role": "Widget-level <KeyPress>/<KeyRelease> handler. The `graphkeys` arm sets `fwd` by keysym only (carve-outs for Ctrl-d, Ctrl-b); forwards m/d inside with_edit. Needs the Ctrl+M carve-out at minimum; the family fix belongs here (decide by chord, not keysym)."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "variable graphkeys (namespace wviewer)",
+   "role": "The allowlist {97 98 100 115 109 116 65 66 77}. Pinned byte-exactly by BK03 of test_wave_sigbrowser_keys; keep it unchanged and carve out by modifier, as R9 did for Ctrl-b."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::over_graph",
+   "role": "Tcl gate for forwarding: context is this canvas and mousex_snap/mousey_snap inside a full graphbb band (no inset)."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::install_default_binds",
+   "role": "House pattern for viewer chords: `if {[bind WaveViewer <seq>] eq {}} { bind WaveViewer <seq> {wviewer::..._at %W; break} }`. Runs once per session. Existing spellings: <Control-Key-N>, <Control-Key-W>, <Control-Shift-Key-D>, <Control-Shift-Key-G>, <Key-E>, <Key-U>. The new default goes here as a literal sequence."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::case_pairs / wviewer::install_case_binds / wviewer::case_key / wviewer::typed_upper / wviewer::case_keysym",
+   "role": "Caps Lock ruling 2026-10-16. A new Ctrl-letter chord needs a case_pairs row; M would be the first row with an empty LOWER base (`m {} <Control-Shift-Key-M>`). By reading, case_key returns on an empty seq and install_case_binds would also bind <Control-Key-M> to the dispatcher."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::set_plot_mode / wviewer::plot_mode / wviewer::target_index",
+   "role": "The proc the chord should reach: `wviewer::set_plot_mode invert $token`. Already flips the TARGET subwindow (SW22), pushes the status bar, logs on change."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::clear_all_at, wviewer::grid_toggle_subwin_at, wviewer::clear_target_subwin_at",
+   "role": "Shape for the new %W wrapper: `wviewer::token_for_canvas $W`, return {} on a foreign canvas, call the token proc. No plot-mode wrapper exists; one must be added."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::build_menubar / wviewer::plot_mode_menu_post",
+   "role": "Options > Plot Mode entry (no accelerator today). Accelerators are static `-label {X} -accelerator Y` strings adjacent on one source line; menu_post changes only -label."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::strip_bindings",
+   "role": "Sweeps widget-level binds, inserts WaveViewer at bindtags index 1, installs key_filter. Ordering: key_filter first (no break), then the class tag."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "symbol": "wviewer::with_edit",
+   "role": "Sets readonly 0 around the forwarded m/d key, so readonly_block() answers 0 for any editor arm those keys reach."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/callback.c",
+   "symbol": "readonly_block",
+   "role": "The popup (tk_messageBox 'View is Read Only.')."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/callback.c",
+   "symbol": "handle_key_press (switch(key): case 'M', 'm', 's', 't', 'b', 'a', 'd')",
+   "role": "The editor key switch. case 'M' Ctrl arm is the reported popup; case 's' cadence_compat arm, Alt arm and Ctrl+Alt arm, case 't' Ctrl+other-mods arm, case 'b' Alt arm, case 'm' Alt arm are the siblings."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/callback.c",
+   "symbol": "waves_selected / waves_callback",
+   "role": "C over-graph test (5*tk_scaling px `border` inset, skips on Alt/Super via SET_MODMASK, on excl ui_state, on graph_use_ctrl_key without Ctrl) and the graph key arms (a b s M m d t; A B further down), gated by access_cond."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/callback.c",
+   "symbol": "init_input_bindings / dispatch_input_action / action_registry (mutates column)",
+   "role": "Binding table consulted before the switch. Rows for the forwarded set: a/0 graph, a/ctrl graph, A/0 graph+canvas(view.toggle_show_netlist), A/ctrl graph, b/0 graph, B/0 graph+canvas(prop.edit_header_license_text, mutates=1), B/ctrl graph, d/0 canvas(edit.deselect_mode)+graph, s/ctrl graph, t/0 graph, t/ctrl graph. None for m, M, s/0."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/cadence_style_rc",
+   "symbol": "bind .drw <Control-Key-dollar> / <Control-Shift-Key-4>",
+   "role": "The design-window chord -> ase::plot_mode_for_current invert. Sets cadence_compat 1. No binding of any M chord."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/ase.tcl",
+   "symbol": "ase::plot_mode_for_current",
+   "role": "Design-window path: session -> wviewer::set_plot_mode, plus a CIW echo naming 'target subwindow plot mode' with two or more subwindows."
+  },
+  {
+   "file": "/home/analog/dev/xschem-claude/src/xschem.tcl",
+   "symbol": "set_ne graph_use_ctrl_key 0",
+   "role": "Only place the variable is defaulted. The viewer never sets it (src/xschemrc has it commented out)."
+  }
+ ],
+ "existing_fences": [
+  {
+   "suite": "tests/headless/test_wave_viewer.tcl",
+   "registered": "dcases",
+   "covers": "Real key delivery to the viewer canvas with a tk_messageBox recording stub (`::mb_hits`, answers ok) and a key_filter witness (`::kf_calls`, `::kf_last` = type/keysym/state). Delivery: `send_key` = focus -force, `event generate $w $ev` WITHOUT -when now, update, retry up to 200 times on a done-predicate. `ca_send` = <Motion> to the pixel, then the chord with -x/-y so Tcl and C geometry agree. Also calls `wviewer::key_filter` directly for arrows. No row drives M, plain s, or any Alt chord.",
+   "rows": "G1s (sweep leaves only the allowed sequences), G5 (Insert/w/i reach the filter, no modal), G6 (Escape), G9a-c (Ctrl-W/Ctrl-Q), CA1-CA9 (Ctrl-A over a strip; CA4 asserts mb_hits unchanged)",
+   "prints_overall_ok": "yes"
+  },
+  {
+   "suite": "tests/headless/test_wave_subwindows.tcl",
+   "registered": "both",
+   "covers": "Per-subwindow plot mode and the Caps Lock dispatcher. Display band: `send_ks`/`ks_once` = focus -force, `event generate $w <KeyPress> -keysym K -state S` then KeyRelease, no -when now. Does NOT stub tk_messageBox. `swk_pairs` (the state 4/5/6/7 matrix) and SWK16's letter list are hand-kept and would have to gain `m`.",
+   "rows": "SWK1/SWK2 (Options > Plot Mode flips the target subwindow, status bar follows), SWK4-SWK8 (real Ctrl-Shift-G/Ctrl-G/Ctrl-Shift-D, Caps Lock matrix), SWK14-SWK16 both arms (typed_upper, case_keysym, case_pairs letters `{d g n w e u b c q v}`), SWK18 (key_filter with `xschem callback` and over_graph replaced by recorders), SWE1 (Ctrl-Shift-4 echo)",
+   "prints_overall_ok": "yes"
+  },
+  {
+   "suite": "tests/headless/test_wave_grid.tcl",
+   "registered": "both",
+   "covers": "Source-level census, both arms: guide \u00a79.1 `data-seq` rows vs `bind WaveViewer <seq>` statements in install_default_binds (both directions), and guide `data-menu`/`data-accel` pairs vs `-label {X} -accelerator Y` in build_menubar (both directions). Literal counts 20 keys / 15 accelerators.",
+   "rows": "GH0, GH1, GH2, GH3, GH4",
+   "prints_overall_ok": "yes"
+  },
+  {
+   "suite": "tests/headless/test_wave_sigbrowser.tcl",
+   "registered": "hcases",
+   "covers": "BT09 pins the guide's counts as `[list 20 15]` and ties them to the bind statements and accelerators.",
+   "rows": "BT09",
+   "prints_overall_ok": "yes (through wvbs_finish in tests/headless/wvbs_common.tcl)"
+  },
+  {
+   "suite": "tests/headless/test_wave_tabs.tcl",
+   "registered": "both",
+   "covers": "The five tab chords are WaveViewer defaults, call their `_at %W` proc, break, and are not bound on the canvas widget; bindtag position.",
+   "rows": "TG15",
+   "prints_overall_ok": "yes"
+  },
+  {
+   "suite": "tests/headless/test_startup_quiz.tcl",
+   "registered": "both",
+   "covers": "Band A evaluates quiz proofs that quote existing `bind WaveViewer <...> {...; break}` lines of src/wave_viewer.tcl verbatim; A8 fails when a topic has more than 6 questions ('Waveform viewer' has 6 now).",
+   "rows": "band A, A8",
+   "prints_overall_ok": "yes"
+  },
+  {
+   "suite": "tests/headless/test_wave_sigbrowser_keys.tcl",
+   "registered": "none",
+   "covers": "The only rows on the `set fwd` carve-out: BK01 regexps the exact expression text, BK02 extracts and evaluates it, BK03 pins graphkeys byte-exactly, BK10 pins guide counts `{20 15 1 1}` plus the two test_wave_grid literals.",
+   "rows": "BK01, BK02, BK03, BK10",
+   "prints_overall_ok": "yes (through wvbs_finish)"
+  },
+  {
+   "suite": "tests/headless/test_wave_modes.tcl",
+   "registered": "none",
+   "covers": "MG4 Plot Mode submenu label and invoke; MG13 Ctrl+Shift+4 resolves to the dollar form (the one `-when now` use, on a scratch toplevel); rc text regexps for the two Ctrl-Shift-4 binds; MG16 u/U.",
+   "rows": "MG4, MG13, MG16",
+   "prints_overall_ok": "no (RESULT: only)"
+  },
+  {
+   "suite": "tests/headless/test_wave_markers.tcl",
+   "registered": "none",
+   "covers": "MXK: <KeyPress> routes to key_filter, graphkeys carries 109/100/77, Delete is not a member; MX rows drive m/d through `send_key_fb`. CLAUDE.md: this suite times out on the dev display (issue 1488).",
+   "rows": "MXK, MX1...",
+   "prints_overall_ok": "no"
+  },
+  {
+   "suite": "tests/headless/test_key_graph_context.tcl",
+   "registered": "none",
+   "covers": "C routing of graph keys over a graph embedded in a schematic, driven as `xschem callback .drw 2 x y <keysym> 0 0 <state>`. The place a C fence for the `case 's'` cadence arm would go. Sets graph_use_ctrl_key 0; never sets cadence_compat.",
+   "rows": "not enumerated",
+   "prints_overall_ok": "no"
+  },
+  {
+   "suite": "tests/headless/test_wave_clear_all.tcl, test_wave_empty_strips.tcl, test_wave_hilight.tcl",
+   "registered": "none",
+   "covers": "install_default_binds runs once and an rc binding wins (CG6, EG10); keysym 101 not in graphkeys (EG8); three highlight keys are defaults (WH9j).",
+   "rows": "CG6, EG8, EG10, WH9j",
+   "prints_overall_ok": "no"
+  }
+ ],
+ "specs_and_issues": [
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer_modes.md",
+   "rules": "D7: Ctrl-Shift-4 on the schematic inverts the associated viewer's mode. \u00a77/\u00a77.1: set_plot_mode logs the RESOLVED mode with an explicit token, on change only. \u00a78: one dynamic Options > Plot Mode entry, relabelled by -postcommand. \u00a79: the chord path performs zero `new_schematic switch` calls (issue 0173). \u00a714.3: viewer keys live on the WaveViewer bindtag, installed only when unbound, `{break}` disables."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer_subwindows.md",
+   "rules": "SW21: plot mode and grid are per SUBWINDOW; the active one is the TARGET. SW22: Options > Plot Mode and Ctrl-Shift-4 change the target subwindow only; the status bar shows the target's mode. \u00a716 Keys: <Control-Shift-Key-D>/<Control-Shift-Key-G> spellings. Caps Lock ruling 2026-10-16: the case as typed decides every Ctrl-letter pair; case_pairs lists each letter's two bases. \u00a716 Rows text quotes 'GH0 (20 keys, 15 accelerators)'."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer.md",
+   "rules": "'The graphs OWN the viewer window' (issue 0149): no gesture may move the canvas; records the 5 px `border` inset as 'not a hole' for CLICKS only. Key-on-a-bindtag rule, rc wins, `{break}` not `{}`. States key_filter forwards only the waves_callback key set."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/graph_markers.md",
+   "rules": "\u00a76.1: `M` (Shift+m) was 'broken \u2014 no waves guard, ran readonly_block() + the cadence schematic move' and became the tooltip; 'Why the tooltip moved to M and not Ctrl+m' says M has no collision in either graph_use_ctrl_key mode. m/d are forwarded inside with_edit; read-only is enforced inside the marker ops."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/0186-viewer-context-destroyed-by-reload-and-inplace-loads.md",
+   "rules": "Records what `reload` does to a viewer (graph rects dropped, readonly cleared) and states it is 'not reachable from the viewer's own keyboard'. By reading, Alt-s over a strip reaches `case 's'`'s reload arm, which contradicts that sentence."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/1617-ctrl-a-over-a-waveform-graph-toggled-a-cursor-instead-of-selecting-the-traces.md",
+   "rules": "Precedent for a chord whose C meaning differs from the bare key: a C half plus a Tcl carve-out in key_filter. Not opened in this pass; cited from source comments."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/0171-viewer-clear-all-ctrl-d.md",
+   "rules": "Precedent for the Ctrl-d carve-out and the WaveViewer bindtag. Not opened in this pass; cited from source comments."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_signal_browser_two_pane.md",
+   "rules": "\u00a78.1 R9 and \u00a710 limits 8/9 (the Ctrl-B carve-out and its declared price) as cited by comments in install_default_binds. Not opened in this pass."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/NUMBERING.md",
+   "rules": "This clone's pointer reads 'The next free number is 1727'. The other-clone grep and the reserved-band check were not run."
+  }
+ ],
+ "family": [
+  {
+   "sibling": "Ctrl-Shift-M (keysym 77, state 5), pointer over a strip",
+   "same_cause": "yes: allowlisted keysym, C arm for this modifier has no waves guard",
+   "evidence": "READ: key_filter forwards 77 raw; `case 'M'` arm `rstate == ControlMask` opens with `if(readonly_block()) break;`. Popup every time; waves_selected is not consulted."
+  },
+  {
+   "sibling": "Caps Lock + Ctrl-m (state 6), or keysym M at state 4 with no Lock bit",
+   "same_cause": "yes",
+   "evidence": "READ: `wviewer::case_keysym` maps it to 77, then the same `case 'M'` Ctrl arm. Popup."
+  },
+  {
+   "sibling": "plain s (115, state 0) with cadence_compat 1 (the Cadence profile; src/cadence_style_rc sets it)",
+   "same_cause": "yes: the cadence arm of `case 's'` has no waves guard",
+   "evidence": "READ: `else if((rstate == 0) && cadence_compat)` goes semaphore test -> `readonly_block()` -> snapped_wire; only the `!cadence_compat` arm calls waves_selected. No table row for s/0. So `s` (documented as swap cursors) pops the read-only modal in the user's profile, and starts a snapped wire over a graph embedded in a schematic. No suite sets cadence_compat with a viewer."
+  },
+  {
+   "sibling": "Alt-s / Super-s (115, state 8 or 64), pointer over a strip",
+   "same_cause": "yes: keysym allowlisted for every modifier",
+   "evidence": "READ: `case 's'` EQUAL_MODMASK arm: tk_messageBox okcancel 'Are you sure you want to reload from disk?'; on ok unselect_all, remove_symbols, load_schematic. Issue 0186 describes what reload does to a viewer. Unconditional (waves_selected not consulted)."
+  },
+  {
+   "sibling": "Ctrl-Alt-s (115, state 12)",
+   "same_cause": "yes",
+   "evidence": "READ: `case 's'` arm `SET_MODMASK && (state & ControlMask)` -> `saveas(NULL, SYMBOL)` -> `save_as_cellview_dialog` (a modal form, not tk_messageBox). Unconditional."
+  },
+  {
+   "sibling": "Ctrl-Alt-t (116, state 12)",
+   "same_cause": "yes",
+   "evidence": "READ: `case 't'` arm `rstate & ControlMask`; its guard calls waves_selected, which skips on SET_MODMASK, so it falls to `new_schematic(\"create\", NULL, NULL, 1)`: a new schematic window/tab. Unconditional."
+  },
+  {
+   "sibling": "Alt-b / Super-b (98, state 8 or 64)",
+   "same_cause": "yes: the Ctrl-b carve-out tests only `$s & 4`",
+   "evidence": "READ: `case 'b'` EQUAL_MODMASK arm increments xctx->hide_symbols, writes the Tcl var hide_symbols, draw(). Silent editor view verb. Unconditional."
+  },
+  {
+   "sibling": "Alt-m / Super-m (109, state 8 or 64)",
+   "same_cause": "yes, made worse by with_edit",
+   "evidence": "READ: key_filter forwards 109 inside `wviewer::with_edit` (readonly 0) for any modifier; `case 'm'` EQUAL_MODMASK arm: readonly_block() answers 0, then connect_by_kissing=2 and MENUSTART|MENUSTARTMOVE (or move_objects(START) under infix_interface). A move command is armed in the viewer context with no popup."
+  },
+  {
+   "sibling": "Tcl/C geometry disagreement: pointer in the `border` inset (5*tk_scaling px) just inside a strip edge, or ui_state in waves_selected's excl set, or a `lock=true` rect without Ctrl",
+   "same_cause": "yes: key_filter decides with full graphbb bands, C re-decides with its own predicate and falls into the canvas arm",
+   "evidence": "READ (both predicates; inferred for keys, see unverified). Canvas arms then reached: a -> 'do you want to make symbol view ?' dialog; b -> readonly_block; t -> readonly_block; Shift+M -> readonly_block; Shift+B -> prop.edit_header_license_text (mutates=1) -> readonly_block; Shift+A -> view.toggle_show_netlist; d -> edit.deselect_mode (inside with_edit); m and Ctrl-m -> stretch/move armed (inside with_edit, readonly bypassed); s without cadence_compat -> 'Run circuit simulation?' dialog; Ctrl-a -> select_all(); Ctrl-s -> saveas/save; Ctrl-t -> new_schematic create."
+  },
+  {
+   "sibling": "graph_use_ctrl_key 1 profile (not the shipping default; the viewer never sets it)",
+   "same_cause": "yes",
+   "evidence": "READ: waves_selected skips every chord without Ctrl, so each plain graph key takes the canvas arm listed above anywhere over a strip (the CA9 comment in test_wave_viewer says so for bare `a`). The tooltip chord that profile needs, Ctrl+Shift+M, is the popup arm, so the tooltip has no working key there; graph_markers.md \u00a76.1 says otherwise."
+  },
+  {
+   "sibling": "A user row in USER_CONF_DIR keybindings.csv or `xschem bind` for a forwarded chord in ctx canvas",
+   "same_cause": "yes",
+   "evidence": "READ: `handle_key_press` consults `dispatch_input_action` before the switch for any (keysym, kmods) with a row; a canvas or global row for e.g. key 77 ctrl would run from a viewer."
+  },
+  {
+   "sibling": "NOT in the family (safe today when C agrees the pointer is over a graph)",
+   "same_cause": "no",
+   "evidence": "READ: a/0, a/Ctrl, A/Shift, A/Ctrl+Shift, b/0, B/Shift, B/Ctrl+Shift, d/0, s/0 without cadence_compat, s/Ctrl, m/0, m/Ctrl, M/Shift, t/0, t/Ctrl reach waves_callback. Not forwarded: Ctrl-b, Ctrl-d, Ctrl-Alt-b, Ctrl-Alt-d, and every keysym outside graphkeys (S, T, D, ...). Forwarded but no C arm (inert): Alt-a, Alt-d, Alt-t, Alt-Shift-A/B/M, Ctrl-Alt-a, Ctrl-Alt-m, Ctrl-Alt-Shift-*. Escape is always forwarded to escape_terminal() by design (D10). f/Z/Ctrl-z are forwarded only when token_for_canvas answers {}."
+  }
+ ],
+ "design_options": [
+  {
+   "name": "A. Minimal: the new chord only (Tcl)",
+   "sketch": "(1) New wrapper beside set_plot_mode, clear_all_at shape: token_for_canvas, {} on a foreign canvas, `wviewer::set_plot_mode invert $token`. (2) In install_default_binds: `if {[bind WaveViewer <Control-Shift-Key-M>] eq {}} { bind WaveViewer <Control-Shift-Key-M> {wviewer::<wrapper> %W; break} }`. (3) case_pairs row `m {} <Control-Shift-Key-M>`. (4) key_filter refuses to forward 77 under Control (the Ctrl-b/Ctrl-d shape; mandatory because key_filter runs before the tag and never breaks). (5) Optional `-accelerator Ctrl+Shift+M` on the Plot Mode entry. (6) Guide row and count literals.",
+   "risks": "Leaves every other family member live: plain s in the Cadence profile, Alt-s reload prompt, Ctrl-Alt-s, Ctrl-Alt-t, Alt-b, Alt-m, the border band. First case_pairs row with an empty lower base. Conflicts with the user's standing 'fix the whole bug family' memory.",
+   "blast_radius": "src/wave_viewer.tcl; doc/waveform_viewer_guide.html; literals in test_wave_grid GH0, test_wave_sigbrowser BT09, test_wave_sigbrowser_keys BK10; test_wave_subwindows SWK16 and swk_pairs; specs. No C, no rebuild."
+  },
+  {
+   "name": "B. Tcl allowlist by chord (closes the modifier family)",
+   "sketch": "Option A plus: factor the forward decision into a pure proc of (case-mapped keysym, state), no Tk, that answers 1 only for chords whose C arm routes to waves_callback: never with Mod1 or Mod4 set; under Control only a, s, m, t, A, B; never Ctrl with b, d, M. key_filter calls it in place of the bare `lsearch graphkeys` + carve-out. graphkeys itself stays byte-identical.",
+   "risks": "Does not close plain `s` under cadence_compat (the C arm decides) or the border-band disagreement. If the existing `set fwd [expr {...}]` line changes text, BK01/BK02 of the unregistered test_wave_sigbrowser_keys go red in full_audit.sh; either keep that line or update them in the same commit. The pure proc's table must be derived from the C arms and stated in one place.",
+   "blast_radius": "As A, plus a counted-arm matrix row. No C."
+  },
+  {
+   "name": "C. C repair of the unguarded arms",
+   "sketch": "In `handle_key_press`: give `case 's'`'s cadence arm the `case 'm'` idiom (`if(waves_selected(...)) { waves_callback(...); break; }` before readonly_block), and optionally the same guard on `case 'M'`'s Ctrl arm for schematic-embedded graphs.",
+   "risks": "Changes behaviour over graphs embedded in schematics in the Cadence profile (`s` over a graph would swap cursors instead of starting a snapped wire). C edit: rebuild before any suite. Needs a fence in a suite that drives `xschem callback` directly; test_key_graph_context is unregistered and prints no OVERALL sentinel.",
+   "blast_radius": "src/callback.c; every user of `s` over an embedded graph with cadence_compat 1; a registered C-level fence has to be created or an existing suite registered."
+  },
+  {
+   "name": "D. C backstop keyed on xctx->wave_viewer",
+   "sketch": "At the top of `handle_key_press`, before the binding-table dispatch: when `xctx->wave_viewer` is set and the key is not Escape, call waves_callback only if waves_selected() answers, then return; a viewer context never enters the editor switch or a canvas table row. The flag is already set by the viewer (`xschem set wave_viewer 1`) and read in actions.c/scheduler.c.",
+   "risks": "Closes the whole family including the border band, the graph_use_ctrl_key profile and future arms, but it is a behaviour change for every key sent to a viewer context by any route (`xschem callback` from scripts and tests included); the idle-only semantics of the a/b/Ctrl-s rows (skip at semaphore >= 2) must be kept; needs its own sweep of suites that drive keys into a viewer. C edit, rebuild.",
+   "blast_radius": "src/callback.c; every viewer key suite (registered: test_wave_viewer, test_wave_subwindows, test_wave_tabs, test_wave_grid; unregistered: test_wave_markers, test_wave_modes, test_wave_clear_all, test_wave_empty_strips, test_wave_sigbrowser_keys)."
+  }
+ ],
+ "recommended": "Build A + B in one unit, and C's `case 's'` guard if the user agrees to the embedded-graph change; treat D as a separate, optional hardening the user rules on. Reasons: A alone leaves six unconditional siblings and the user's memory says siblings get fixed in the same pass; B is pure Tcl and its decision can be fenced on the counted arm; plain `s` in the Cadence profile cannot be fixed from Tcl without either C or a Tcl-side reroute.\n\nConcrete shape:\n- Chord spelled `<Control-Shift-Key-M>` (the SW22 siblings' spelling) in `wviewer::install_default_binds`, as a literal `bind WaveViewer <...>` line (GH1/GH2 scan for that text), calling a new `_at %W` wrapper that ends in `wviewer::set_plot_mode invert $token`. That proc already targets the TARGET subwindow, pushes the status bar and logs, so no new model code.\n- `wviewer::case_pairs` gains `m {} <Control-Shift-Key-M>` so Caps Lock + Ctrl-m does the same and Caps Lock + Ctrl-Shift-M stays the engine's Ctrl-m.\n- key_filter stops forwarding Ctrl+M and every Alt/Super chord, via a pure decision proc; `graphkeys` and the existing `set fwd` line stay byte-identical unless BK01/BK02 are updated with them.\n- Menu: `-label {Set Multi-plot Mode} -accelerator Ctrl+Shift+M` adjacent on one line (plot_mode_menu_post only rewrites -label), with a guide row carrying `data-seq`, `data-menu=\"Set Multi-plot Mode\"`, `data-accel`; GH0/BT09/BK10 literals move 20->21 and 15->16 in the same commit.\n- Put the red-first real-key row in test_wave_viewer (dcases), the only registered suite that stubs tk_messageBox; put census and pure rows in test_wave_subwindows / test_wave_grid, which are in both lists.\n- The private tree carries the same code (key_filter, case_pairs, install_default_binds, same graphkeys, no M binding), so the port hand-over applies.",
+ "acceptance_rows": [
+  "DISPLAY (dcases, test_wave_viewer, CA-style band using ca_send): a real <Control-Shift-Key-M> at a pixel inside strip 0. Assert as separate legs: kf_last is {2 77 5} (the chord arrived as that chord); `::mb_hits` unchanged; `wviewer::plot_mode $tok` flipped; the status bar label reads the new mode; exactly one `wviewer::set_plot_mode <resolved> $tok` log line; `xschem get graph_flags` bit 64 unchanged. A second press flips back. RED today: mb_hits +1 (readonly_block through the stub), mode and log unmoved.",
+  "DISPLAY (same band), positive controls so the carve-out is not over-broad, GREEN today: Shift+M over a strip toggles graph_flags bit 64 and leaves the mode alone; Ctrl+m over a trace still creates one marker; bare `m` still creates one.",
+  "DISPLAY (dcases, test_wave_subwindows SWK band, two subwindows): a real Ctrl-Shift-M flips the TARGET subwindow only: `[list [wviewer::plot_mode $tok] [wviewer::base_mode $tok] [stmode]]`; after `wviewer::click_target` in the other subwindow it flips that one. The suite must stub tk_messageBox first or the row hangs on today's tree. RED today: no flip.",
+  "DISPLAY (test_wave_subwindows Caps Lock matrix): `m` at states 4/5/6/7 with the new wrapper as a recorder: 5 and 6 reach it, 4 and 7 do not; plus `<Control-Lock-Key-m>`, `<Control-Lock-Key-M>`, `<Control-Shift-Lock-Key-m>`, `<Control-Shift-Lock-Key-M>` are the dispatcher (the existing SWK8 loop derives this from case_pairs). RED today: no `m` pair.",
+  "COUNTED (hcases, test_wave_subwindows both-arms band beside SWK16): case_pairs letters include `m` and its bases are `{}` and `<Control-Shift-Key-M>`; `info args` of the new wrapper is `W`; the wrapper answers {} for an unknown canvas path without raising. RED today: letter absent, proc absent.",
+  "COUNTED (pure decision proc, matrix with a riding count): for every graphkeys member x state in {0,1,4,5,8,9,12,13,64,68} plus Lock variants {2,6,7}, the decision equals a table derived from the C arms. Must-refuse legs RED today (expressed through key_filter with `xschem callback` and over_graph as recorders, the SWK18 shape, on an unregistered canvas path): 77/5, 109/6 (maps to 77), 115/8, 115/12, 116/12, 98/8, 109/8. Must-forward controls: 97/0, 97/4, 65/1, 65/5, 98/0, 66/1, 66/5, 100/0, 115/0, 115/4, 109/0, 109/4, 77/1, 116/0, 116/4. A non-vacuity leg asserts the forwarded count.",
+  "COUNTED + DISPLAY (source census, test_wave_grid GH0-GH4; test_wave_sigbrowser BT09): the guide carries a `data-seq=\"Control-Shift-Key-M\"` row, install_default_binds carries the matching bind statement, and (if the accelerator is added) the menu pair matches both ways. RED on a half-done edit by construction: GH2 when the bind lands without the guide row, GH1 the other way round, GH4 when an accelerator has no guide pair; the three literals move in the same commit.",
+  "COUNTED (only if option C is taken; a suite driving `xschem callback .drw 2 x y 115 0 0 0` over an embedded graph with cadence_compat 1): `s` swaps the cursors and creates no wire (`xschem get wires` unchanged, ui_state clean). RED today: a snapped wire starts. The suite must print `OVERALL: ok` and be registered in the same commit.",
+  "Sabotage acceptance for the unit: remove the key_filter refusal and the real-key row must redden on mb_hits; remove the bind and it must redden on the mode; restore the old keysym-only decision and the matrix must redden on exactly the seven must-refuse legs."
+ ],
+ "traps": [
+  "The tag binding alone does not fix the popup: key_filter is on the widget, runs first, never breaks, and forwards to C before the WaveViewer tag fires. Without the refusal in key_filter one keystroke would pop the modal AND flip the mode.",
+  "Only test_wave_viewer stubs tk_messageBox. A red-first Ctrl-Shift-M row in test_wave_subwindows, test_wave_tabs or test_wave_grid pops a real modal on today's tree and stalls until the watchdog.",
+  "test_wave_viewer's stub answers `ok`. Driving Alt-s through real C dispatch on today's tree would therefore RELOAD the viewer buffer and destroy the fixture. Ctrl-Alt-s opens `save_as_cellview_dialog` (not tk_messageBox, so unstubbed: a hang) and Ctrl-Alt-t opens a new schematic window. Fence those siblings through the forward decision or recorders, not through real dispatch.",
+  "`event generate <Alt-Key-s>` does not produce Mod1: Tk's Alt pattern modifier is the virtual META bit (comment in init_input_bindings at the Ctrl-Alt-V row). Drive `-state 8` or `<Mod1-Key-s>`.",
+  "Send a <Motion> to the pixel first and give the key event -x/-y (the ca_send shape): Tcl over_graph reads the mousex_snap mirror, C waves_selected reads the event's own coordinates.",
+  "GH1 and GH2 scan install_default_binds for the literal text `bind WaveViewer <seq>`; a default bound through a loop variable is invisible to them. GH3 needs `-label {X} -accelerator Y` adjacent on ONE source line.",
+  "The count literals 20/15 live in three suites (test_wave_grid GH0, test_wave_sigbrowser BT09, test_wave_sigbrowser_keys BK10, which also regexps test_wave_grid's own literals) and in prose in waveform_viewer_subwindows.md \u00a716. They move together or a registered suite goes red.",
+  "test_startup_quiz band A quotes existing `bind WaveViewer <...> {...; break}` lines of src/wave_viewer.tcl verbatim in proofs: do not reformat existing bind lines. Row A8 caps a topic at 6 and 'Waveform viewer' already has 6, so a new quiz entry under that topic reddens a registered suite.",
+  "BK01 of the unregistered test_wave_sigbrowser_keys regexps the exact `set fwd [expr {!(($N == 100 || $N == 98) && ($s & 4))}]` text and BK02 evaluates the first such line; full_audit.sh runs it. Leave that line alone or update both rows in the same commit.",
+  "A case_pairs row with an empty LOWER base has no precedent. In the SWK8 real-key matrix, states 4 and 7 for `m` are a real Ctrl-m that key_filter forwards to C inside with_edit (no recorder on `xschem callback` there): over a trace it creates a marker on the fixture, and the 'recorders left the plots alone' leg checks only tags and traces.",
+  "install_default_binds runs once per session (`tagbinds`); a suite that already opened a viewer will not see a default added later in the same process, and an rc that bound the sequence wins.",
+  "m and d are forwarded inside with_edit, so any refusal for those two must happen in Tcl BEFORE the forward; readonly cannot backstop them.",
+  "A C edit needs a rebuild before any suite (no harness builds); a Tcl-only change does not. src/Makefile.in is not involved.",
+  "hdo-design runs ~/private/xschem-private, which carries the same viewer key code; the fix reaches the user only through the port (memory: make_port.sh, run last).",
+  "The task brief said the 1724/1657 work was uncommitted on d36cb429e; at read time it is committed as 7c77f3594 and the relevant files are clean, so a gate clone should be cut from 7c77f3594.",
+  "test_wave_markers is the suite with the most m/d/M rows, is unregistered, prints no OVERALL sentinel, and times out on the dev display (issue 1488): do not use it as the fence for this item.",
+  "If an issue file is opened, this clone's pointer says 1727, but the other-clone grep and the reserved-band check in CLAUDE.md still have to be run, and the file needs a valid STAMP line (row D9 of test_issue_stamp)."
+ ],
+ "open_questions_for_user": [
+  "Scope: besides Ctrl-Shift-M, these keys over a strip reach editor code today: Alt-S (asks 'reload from disk?'), Ctrl-Alt-S (Save-as-symbol form), Ctrl-Alt-T (new schematic window), Alt-B (cycles hide-symbols), Alt-M (arms a move, no popup). Close all of them in this pass by making the viewer swallow them silently?",
+  "In the Cadence profile, plain `s` over a strip pops 'View is Read Only' instead of swapping cursors A and B (by reading; the guide says it swaps). Fixing it in C also changes `s` over a graph embedded in a schematic from 'start a snapped wire' to 'swap cursors'. Fix it for the viewer only, or for embedded graphs too?",
+  "Which subwindow does Ctrl-Shift-M flip: the TARGET subwindow (yellow bar; what Options > Plot Mode and Ctrl-Shift-4 do, SW22), or the one under the pointer?",
+  "Should the chord also work while the keyboard focus is in the Signal Browser (tree, search entry, lower pane)? Today only `E` does; the other viewer chords need the plot area focused.",
+  "Show `Ctrl+Shift+M` as an accelerator on the Options > Plot Mode entry?",
+  "With `graph_use_ctrl_key 1` (not your profile), Ctrl+Shift+M is the chord the measurement tooltip would need, and by reading it never worked there. Accept that the viewer takes it for plot mode?",
+  "Add a tip-of-the-day question for the new chord? The 'Waveform viewer' topic is at its limit of six, so it needs another topic or replaces one.",
+  "Optional hardening (design D): a C guard so a viewer window can never run an editor key verb whatever the pointer position. Wanted in this batch, or filed for later?"
+ ],
+ "unverified": [
+  "Nothing was run. The popup path, every family row and every 'RED today' statement come from reading src/wave_viewer.tcl and src/callback.c.",
+  "Plain `s` under cadence_compat popping the read-only modal in a viewer: read from `case 's'`; no suite drives it and no issue records it.",
+  "The border-band disagreement for KEY events: inferred from `wviewer::over_graph` (full graphbb bands) versus `waves_selected` (inset by 5*tk_scaling px). waveform_viewer.md records that band for clicks only. Whether a key press there really reaches the canvas arms was not measured.",
+  "That Alt arrives as Mod1 (state 8) on the user's X server and is not taken by the window manager first.",
+  "That physical Ctrl-Shift-M arrives as keysym M with state 5 on the user's HC-Consult server; the source comments measured keysym case under Caps Lock on Xvfb only.",
+  "A case_pairs row with an empty lower base: `wviewer::case_key` and `wviewer::install_case_binds` appear to tolerate it by reading; no existing row exercises it.",
+  "Whether `wviewer::key_filter` can be driven under --nogui on an unregistered canvas path with `xschem callback` and over_graph replaced by recorders. SWK18 does this only inside the display band.",
+  "That `-accelerator` on the Plot Mode command entry survives `plot_mode_menu_post`'s `entryconfigure 0 -label` (expected; not tried).",
+  "Consequences after the silent siblings fire (Alt-m leaving MENUSTART armed in the viewer context, Alt-b's hide_symbols reaching other windows through the global Tcl variable) were not traced past the arm.",
+  "The contents of issues 0171 and 1617 and of waveform_signal_browser_two_pane.md \u00a78.1/\u00a710 were not opened; they are cited from source comments.",
+  "Whether any registered suite other than those listed drives keys into a viewer context through `xschem callback` directly (relevant to design D) was not swept.",
+  "The 20/15 guide counts and the six 'Waveform viewer' quiz entries are values read from the files today; a row should re-derive them.",
+  "Whether 1727 is free in the other checkouts (~/dev/*, ~/private/*) and outside the reserved bands."
+ ],
+ "user_docs_to_update": [
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/waveform_viewer_guide.html",
+   "what": "'Single-plot and multi-plot mode': the sentence 'Switch modes with Options > Plot Mode ... or with Ctrl-Shift-4 on the schematic window' gains Ctrl-Shift-M in the viewer. \u00a79.1: a new row with `data-seq=\"Control-Shift-Key-M\"` (and `data-menu`/`data-accel` if the accelerator is added), 'Where it works' = target subwindow. The Caps Lock note's letter list (G, N, W, E, U, Z / B, C, Q, V) gains M and what Ctrl-m does. \u00a79.3 if `s` or the Alt chords change behaviour."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/ase_l_tutorial.html",
+   "what": "'Viewer menus, at a glance': the Options line 'Plot Mode (single / multi)' can name the key. (Its File line still says 'Close (Ctrl+W)', which predates tabs; outside this item.)"
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer_modes.md",
+   "what": "D7 table row; \u00a78 Menu (accelerator); \u00a79 gains the viewer-side entry beside the schematic-side one; note the key_filter refusal."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer_subwindows.md",
+   "what": "SW22 (names the chords that change the target subwindow); \u00a716 Keys and the Caps Lock paragraph (letters); \u00a716 Rows text that quotes GH0's '20 keys, 15 accelerators'."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/waveform_viewer.md",
+   "what": "The statements that key_filter forwards only the waves_callback key set: say it now decides by chord, and list what is refused."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/graph_markers.md",
+   "what": "\u00a76.1: the `M` row and 'Why the tooltip moved to M' (the 'no collision in either mode' sentence) once Ctrl-Shift-M is the viewer's plot-mode chord."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/0186-viewer-context-destroyed-by-reload-and-inplace-loads.md",
+   "what": "A dated note on the 'not reachable from the viewer's own keyboard' sentence (Alt-s over a strip reaches the reload arm by reading), and that the fix closes it."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/src/wave_viewer.tcl",
+   "what": "Header prose that lists how the mode is changed (the issue 0151 paragraph), the key_filter header's allowlist description, the build_menubar comment naming 'the Ctrl-Shift-4 chord on the design window'."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/src/cadence_style_rc",
+   "what": "Optional: the Ctrl-Shift-4 comment can mention the viewer's own chord. No binding change needed there."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/src/startup_quiz_bank.tcl",
+   "what": "No entry mentions the plot-mode chord (searched Ctrl-Shift-4, Ctrl+Shift+4, plot mode); nothing to correct. A new entry is optional and cannot go under topic 'Waveform viewer' (already 6, row A8)."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/src/actions.csv",
+   "what": "No viewer or plot-mode rows (searched wviewer, wave_viewer, plot mode, Direct Plot): nothing to change. src/keys.help lists schematic keys only (its 'ctrl+shift M' row is the schematic move) and the viewer has no Help or keys dialog."
+  }
+ ]
+}

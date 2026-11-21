@@ -1,0 +1,272 @@
+{
+ "item": "Item 1: a how-to that the Claude session working in ~/private/xschem-private (branch assembler, HEAD a464b7f6b when read on 2026-11-21) follows to get a tip-of-the-day quiz like the one commit d36cb429e added here (engine src/startup_quiz.tcl, bank src/startup_quiz_bank.tcl, suite tests/headless/test_startup_quiz.tcl, spec doc/claude/specs/startup_quiz.md). Scout result in one line: the private tree has every dependency the engine and the suite need, 8 of the commit's 10 file patches pass `git apply --check` there, and 80 of the bank's 82 entries give the same static proof answers in both trees (the other 2 are the quiz's own entries), so the how-to can be a port-and-extend recipe rather than a rebuild.",
+ "mechanism": "ALL READ in the working tree (engine, suite and spec are byte-for-byte as committed in d36cb429e; only the bank has two reworded entries, direct-plot and calc-pick, uncommitted, for issue 1724).\n\nWHEN. C function Tcl_AppInit (src/xinit.c), at its very end: after source_tcl_file(cli_opt_tcl_script) (--script), after the launch_library_manager autostart, after the extra-file loads, after tcleval(cli_opt_tcl_post_command) (--command) and after the `if(cli_opt_quit)` block that evals \"exit %d\". The hook is `if(has_x) { tcleval(\"if {[info commands ::startup_quiz::at_launch] ne {}} {catch {startup_quiz::at_launch}}\"); }`. Earlier in Tcl_AppInit, beside the existing mirror tclsetvar(\"cli_opt_nolog\", ...), the commit added tclsetvar(\"cli_opt_pipe\", cli_opt_pipe ? \"1\" : \"0\") (the C int cli_opt_pipe already existed in globals.c/options.c/xschem.h).\n\nWHAT DECIDES. startup_quiz::at_launch normalises ::startup_quiz through startup_quiz::enabled, calls startup_quiz::launch_decision under catch, stores {show reason} in the namespace variable startup_quiz::launch, and if show is 1 schedules `after $launch_delay [list startup_quiz::launch_show 0]` (launch_delay 400 ms). launch_decision builds the dict {tk automation nolog enabled questions} from startup_quiz::have_tk (info commands winfo first, then winfo exists .), startup_quiz::automation (::cli_opt_pipe), ::cli_opt_nolog and startup_quiz::enabled, and calls the PURE startup_quiz::decide, whose order is: no Tk -> {0 no-display}; automation -> {0 automation}; nolog -> {0 nolog}; switch off -> {0 off}; no eligible question -> {0 no-questions}; else {1 show}. The bank is read (startup_quiz::load_bank) only when the first four gates already say yes. startup_quiz::launch_show waits while `![winfo viewable .]` or `[grab current] ne {}`, retrying every launch_retry (200 ms) up to launch_tries (25), then calls startup_quiz::show anyway; it returns at once if .startup_quiz exists. Nothing waits on the window (no tkwait, no grab).\n\nWHICH QUESTION. startup_quiz::show {id} -> load_bank -> startup_quiz::pick $cur -> startup_quiz::window (toplevel .startup_quiz, class Dialog, wm transient to [winfo toplevel [xschem get topwindow]], WM_DELETE_WINDOW and <Escape> -> startup_quiz::dismiss) -> startup_quiz::display. pick: pool 1 = eligible ids neither in the answered list (startup_quiz::done_ids, i.e. ::startup_quiz_done filtered to ids the bank holds) nor in the per-process `shown` list; pool 2 = eligible, not answered, not the one on display; pool 3 = a new round: ::startup_quiz_done is cut down to the ids NOT eligible in this session and every eligible id except the one on display is a candidate. Random through startup_quiz::randint (namespace variable rng is a test hook). startup_quiz::eligible evaluates an entry's `only` expression at global scope; raise or non-boolean = not eligible. Options: startup_quiz::order_options (tf fixed {0 1}; mc Fisher-Yates, an index named by `last` pinned at the bottom); startup_quiz::option_text letters mc options A..E by displayed position.\n\nANSWERING. A radiobutton's -command is startup_quiz::answer <pos>: startup_quiz::grade (six verdict sentences, by correct/kind/type), options relabelled \"(correct)\" / \"(your answer)\" and disabled, verdict and `why` shown, then startup_quiz::mark_done -> startup_quiz::write_done.\n\nWHAT IS STORED, WHERE. Two Tcl files under $::USER_CONF_DIR (config.h: \"~/.xschem\" in both trees): `startup_quiz` holding `set startup_quiz 0|1` (startup_quiz::write_pref, called by startup_quiz::pref_changed, which is the -command of the dialog's \"Don't show anymore\" checkbutton, of the Help-menu checkbutton, and the body of set_enabled/toggle; pref_changed also tells the user through ::xschem::notify, caught), and `startup_quiz_done` holding `set startup_quiz_done {ids}` (write_done; written only when an answer is clicked, and NOT when startup_quiz::automation is true). Both are read back by startup_quiz::load_conf with `uplevel #0 [list source $p]` (issue 0925's shape), called from the tail of src/xschem.tcl behind an `info commands` guard, AFTER the defaults `set_ne startup_quiz 1` and `set_ne startup_quiz_done {}`.\n\nPRECEDENCE of the switch (order of execution, read in xinit.c and xschem.tcl): --preinit, then xschemrc, then xschem.tcl's set_ne default (only if still unset), then the saved file (load_conf overrides), then --script and --command (run later, decide for that launch), then the hook reads it.\n\nTURNING IT OFF. One Tcl variable ::startup_quiz, four doors: the dialog's box, Help > \"Tip of the day at startup\" (checkbutton on variable startup_quiz), the palette row help.tip_of_the_day_startup (command startup_quiz::toggle), `set startup_quiz 0` in an rc. Help > \"Tip of the day (quiz)...\" / palette row help.tip_of_the_day (command startup_quiz::show) asks regardless of the switch.\n\nHEADLESS / HARNESS / SCRIPT (rows of band L measure each with a child process): --nogui: has_x is 0, the hook is never called and the bank never read (L1); xschem.tcl still sources the engine, which defines procs only (F2). --pipe with a display: {0 automation} (L5). --nolog: {0 nolog} (L7). -q: the process exits inside Tcl_AppInit before the hook (L13). --norecent: asked (L6; deliberately not a gate). A launch with only --script and a display: asked, {1 show}, window up, no grab (L2-L4), unless the script itself exits. Saved off: {0 off} (L8). --command {set startup_quiz 0}: off for that launch over a saved ON (L10). --preinit {set startup_quiz 0}: off with nothing saved, but a saved ON wins (L11, L12). Under the test harness the throwaway HOME has NO saved switch, so the default is ON there; what keeps the quiz out of every other suite is the launch flags, not the HOME: T1's hcases arm runs `--nogui --pipe -q --script`, its dcases arm `--pipe -q --logdir ... --script`, run_suites.sh `--pipe -q --nolog [--nogui] --script` (read in tests/run_regression.tcl and tests/headless/run_suites.sh). The spec (section 4) records a one-off census over a full regression run (a line appended by at_launch for that run) that found the hook reached only by this suite's own child launches.",
+ "code_sites": [
+  {
+   "file": "src/startup_quiz.tcl",
+   "symbol": "namespace startup_quiz: validate, add, bank_path, load_bank, has, get",
+   "role": "Bank loading. validate enforces the entry format (see traps/recommended for the rules); add leaves a bad entry out and names it in bank_errors; load_bank never raises (missing or half-broken file = the entries read so far plus one bank_errors line). bank_path is [file join $::XSCHEM_SHAREDIR startup_quiz_bank.tcl]. Copy verbatim."
+  },
+  {
+   "file": "src/startup_quiz.tcl",
+   "symbol": "startup_quiz::pick, eligible, eligible_ids, done_ids, randint, order_options, option_text, prompt, grade",
+   "role": "Decision layer, no Tk, runs under --nogui: choice of the next question, the `only` condition, option shuffle, the six verdict sentences. Copy verbatim."
+  },
+  {
+   "file": "src/startup_quiz.tcl",
+   "symbol": "startup_quiz::enabled, automation, conf_path, write_file, write_pref, write_done, load_conf, mark_done, pref_notice, pref_changed, set_enabled, toggle",
+   "role": "The switch and the answered list under $::USER_CONF_DIR. automation reads ::cli_opt_pipe (returns 0 if the variable is absent, i.e. if the C mirror was not ported). pref_notice and hint_text quote the palette label \"Toggle tip of the day at startup\" word for word (row F11)."
+  },
+  {
+   "file": "src/startup_quiz.tcl",
+   "symbol": "startup_quiz::decide, have_tk, launch_decision, at_launch, launch_show",
+   "role": "Launch decision (decide is pure) and the scheduled, never-waited-on show."
+  },
+  {
+   "file": "src/startup_quiz.tcl",
+   "symbol": "startup_quiz::tone, tone_of, hint_text, window, display, show, answer, next_question, dismiss",
+   "role": "Act layer (needs Tk): toplevel .startup_quiz, private named font startup_quiz_bold (never a Tk*Font), no grab. External things it touches, all caught or universal: xschem get topwindow, ::xschem::notify, $::XSCHEM_SHAREDIR, $::USER_CONF_DIR."
+  },
+  {
+   "file": "src/startup_quiz_bank.tcl",
+   "symbol": "82 startup_quiz::add <id> {...} calls; header comment documents every key and the P_* proof helpers",
+   "role": "The questions. Take it from THIS tree's working tree (it carries the issue-1724 wording of direct-plot and calc-pick, and the private tree already has that feature as its commit 4838ce839)."
+  },
+  {
+   "file": "src/xinit.c",
+   "symbol": "Tcl_AppInit",
+   "role": "Two edits: (1) `tclsetvar(\"cli_opt_pipe\", cli_opt_pipe ? \"1\" : \"0\");` beside the cli_opt_nolog mirror; (2) the hook `if(has_x) { tcleval(\"if {[info commands ::startup_quiz::at_launch] ne {}} {catch {startup_quiz::at_launch}}\"); }` after the `if(cli_opt_quit)` block and before the END PROCESSING USER OPTIONS comment. C change, so `make -C src` is needed."
+  },
+  {
+   "file": "src/xschem.tcl",
+   "symbol": "top-level code after the caught `source $XSCHEM_SHAREDIR/ciw.tcl` block",
+   "role": "`if {[catch {source $XSCHEM_SHAREDIR/startup_quiz.tcl} startup_quiz_source_err]} { xschem::notify_degraded_once \"src/startup_quiz.tcl failed to source: $startup_quiz_source_err\" }` -- a CAUGHT source, so a missing file is a session without the quiz, not issue 0423's segfault. Row F1 matches the opening text of this line."
+  },
+  {
+   "file": "src/xschem.tcl",
+   "symbol": "build_widgets",
+   "role": "Help menu, between \"Command palette\" and \"About XSCHEM\", inside `if {[info commands ::startup_quiz::show] ne {}}`: `add command -label \"Tip of the day (quiz)...\" -command {startup_quiz::show}` and `add checkbutton -label \"Tip of the day at startup\" -variable startup_quiz -selectcolor $selectcolor -command {startup_quiz::pref_changed}` (rows F12, F13, D25-D28)."
+  },
+  {
+   "file": "src/xschem.tcl",
+   "symbol": "top-level defaults block (after `set_ne raw_history_max 20`) and file tail (after `wviewer::rawhist_load`)",
+   "role": "`set_ne startup_quiz 1` and `set_ne startup_quiz_done {}` (row Z6 wants the line exactly `set_ne startup_quiz 1` at column 0); and `if {[info commands ::startup_quiz::load_conf] ne {}} { startup_quiz::load_conf }` before `set_ne XSCHEM_START_WINDOW {}`."
+  },
+  {
+   "file": "src/actions.csv",
+   "symbol": "rows help.tip_of_the_day and help.tip_of_the_day_startup",
+   "role": "Palette rows, 11 columns (id,type,menu,label,accel,command,submenu,hook,help,idle,nolog): `help.tip_of_the_day,command,help,Tip of the day (quiz)...,,startup_quiz::show,,,Ask one quiz question about what this XSCHEM can do,` and `help.tip_of_the_day_startup,command,help,Toggle tip of the day at startup,,startup_quiz::toggle,,,Turn the tip-of-the-day quiz asked at launch on or off (saved for later sessions),` (rows F7-F10)."
+  },
+  {
+   "file": "src/Makefile.in",
+   "symbol": "put /local/install_shares { ... }",
+   "role": "Both new .tcl files on the install list (rows F3, F4). Editing it obliges ./configure."
+  },
+  {
+   "file": "src/xschemrc",
+   "symbol": "TIP OF THE DAY comment block",
+   "role": "The rc template shows the switch commented out; row F14 wants the line `# set startup_quiz 0` exactly once in the file."
+  },
+  {
+   "file": "tests/run_regression.tcl",
+   "symbol": "set hcases [list ...] and set dcases [list ...], plus one `##` note after each list",
+   "role": "\"headless/test_startup_quiz\" in BOTH lists, registered in the commit that creates the suite."
+  },
+  {
+   "file": "tests/headless/test_startup_quiz.tcl",
+   "symbol": "check, check_true, q, slurp, spit, fresh, P_text, P_proc, P_body, P_bodyre, P_has, P_hasre, P_order, P_file, P_row, P_action, P_palette, P_label, P_bind, P_sub, P_default, proves, launch, wl, press",
+   "role": "The suite. The P_* helpers live HERE, not in the engine: the engine stores a proof and never evaluates it. Depends on tests/headless/scratch.tcl (test_scratch), ::action_table (load_action_table in src/action_registry.tcl), `xschem bindings dump`, fuzzy_subseq_score, command_palette / palette_refilter / palette_run, ::xschem::notify_last (src/ciw.tcl)."
+  },
+  {
+   "file": "/home/analog/private/xschem-private (read only)",
+   "symbol": "dependency check, each read on 2026-11-21 at a464b7f6b",
+   "role": "PRESENT AND BYTE-IDENTICAL to this tree: src/action_registry.tcl, src/ciw.tcl, src/keybindings.csv, src/callback.c, src/options.c, src/cadence_style_rc, tests/banner_rule.tcl, tests/test_utility.tcl, tests/headless/run_suites.sh, test_home.sh, xvfb_arm.sh, devdisplay.sh, full_audit.sh, test_home_isolation.tcl, test_suite_watchdog_1403.tcl, test_registered_banner_1626.tcl. PRESENT, DIFFERENT, BUT COMPATIBLE: tests/headless/scratch.tcl (a superset; test_scratch is there), src/actions.csv (same 11-column header, lacks only the two help rows), src/xschemrc (lacks the block; has a LAYOUT TOOL block this tree lacks), src/Makefile.in (same `put /local/install_shares` list with more files after rdw.tcl), tests/run_regression.tcl (same list names tcases/hcases/dcases; lists are longer and end differently), src/xinit.c Tcl_AppInit (same tail: source_tcl_file(cli_opt_tcl_script), launch_library_manager, tcleval(cli_opt_tcl_post_command), the cli_opt_quit exit, END PROCESSING USER OPTIONS; has the cli_opt_nolog mirror and the C int cli_opt_pipe; has NO tclsetvar(\"cli_opt_pipe\") and no hook), src/xschem.tcl (has the caught ciw.tcl source, xschem::notify_degraded_once, the Help-menu lines, $selectcolor in build_widgets, set_ne raw_history_max, wviewer::rawhist_load, set_ne XSCHEM_START_WINDOW). ABSENT: src/startup_quiz.tcl, src/startup_quiz_bank.tcl, tests/headless/test_startup_quiz.tcl, doc/claude/specs/startup_quiz.md."
+  }
+ ],
+ "existing_fences": [
+  {
+   "suite": "tests/headless/test_startup_quiz.tcl",
+   "registered": "both (hcases and dcases; checked in tests/run_regression.tcl of the working tree)",
+   "covers": "Engine, bank and wiring. Bands: Z session start state; B launch decision gates; V bank validation; C choosing; N `only` conditions; O option order; G verdict wording; E saved switch and answered list (USER_CONF_DIR redirected to a scratch dir); A the shipped bank's rules and EVERY entry's proof; F the wiring (caught source, Tk-less sourcing, Makefile.in, generated Makefile, hook position, the two actions.csv rows, Help-menu lines, rc template); L real launches, one child xschem per command line with its own HOME; D the dialog through its widgets.",
+   "rows": "Counted (--nogui) arm runs Z1-Z6, B1-B14, V1-V17, C1-C11, N1-N8, O1-O11, G1-G11, E1-E25, A1-A20, F1-F14, L1. Display arm adds L2-L14 and D1-D43 (with D33b, D37b, D37c, D37d). The rows that check an entry against the product: A15, one row per question, `proves` evaluates the entry's `proof` at global scope and wants 1 (a raise is reported as RAISED(...) and fails); A12/A13 prove each P_* helper can answer both 0 and 1 on fixed anchors; A14 a proof that cannot be evaluated is not a pass; A16 a proof was evaluated for every question; A17 no proof is a bare constant (it only checks the proof contains a `[`); A18 every `only` evaluates to a clean boolean in a plain launch. What the helpers derive from: P_action / P_palette / P_label from ::action_table (src/actions.csv as loaded by load_action_table); P_bind from the LIVE table `xschem bindings dump` (first five fields device code mods ctx action); P_sub from the literal `strcmp(argv[1], \"<name>\")` in src/scheduler.c; P_default from the first `set_ne <var> <value>` line of src/xschem.tcl; P_has / P_hasre / P_order / P_text / P_file from file text under the repo root; P_proc / P_body / P_bodyre from the running interpreter (info commands, info body). Bank rules: A1 loads clean, A2 every add became a question, A3 at least 60, A4 both files plain ASCII, A5 at least 10 of each type, A6 tf kinds at least 8 shipped / 4 upcoming / 3 myth, A7 at least 12 topics, A8 at most 6 per topic, A9 length budgets (q 240, why 420, topic 28, option 110 characters), A10 no duplicate question text, A11 at least a third of tf answers false, A19 at least 60 apply in a plain launch, A20. Self-skips are UPPERCASE `SKIPPED:` at three sites (F4 when no generated src/Makefile, L2-L14 and D1-D43 when no Tk), which summarize_all does not count.",
+   "prints_overall_ok": "yes (puts \"RESULT: ALL PASS ($npass checks)\" then puts \"OVERALL: ok ($npass checks)\"; on failure RESULT: n FAILED and OVERALL: notok, exit 1)"
+  },
+  {
+   "suite": "tests/headless/test_home_isolation.tcl",
+   "registered": "hcases",
+   "covers": "Row G2: any script that starts xschem must be armed, run inside xschem, or be allowlisted. test_startup_quiz.tcl starts child xschems (`exec env HOME=$home ... $bin`) and the commit added no allowlist entry; the file is byte-identical in the private tree.",
+   "rows": "G2, G2b",
+   "prints_overall_ok": "not checked by running; the literal `OVERALL: ok` is in the file"
+  },
+  {
+   "suite": "tests/headless/test_suite_watchdog_1403.tcl",
+   "registered": "hcases",
+   "covers": "Row W20h: a registered suite that reaches the event loop must arm a stall bound. test_startup_quiz.tcl sources scratch.tcl (the watchdog) and uses vwait/update/toplevel/grab on the display arm. Byte-identical in the private tree.",
+   "rows": "W20h (FLOOR ratchet in the file header)",
+   "prints_overall_ok": "not checked by running; the literal is in the file"
+  },
+  {
+   "suite": "tests/headless/test_registered_banner_1626.tcl",
+   "registered": "hcases",
+   "covers": "Rows RB1/RB2: every registered entry resolves to a file and has a puts whose text satisfies banner_complete. Byte-identical in the private tree.",
+   "rows": "RB1, RB2, RB4",
+   "prints_overall_ok": "not checked by running; the literal is in the file"
+  }
+ ],
+ "specs_and_issues": [
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/startup_quiz.md",
+   "rules": "The whole design. Sec 2 what the person sees and the verdict table; sec 3 the five type/kind combinations (`upcoming` only for a feature the repository has written down as planned; a merely false statement is a `myth`); sec 4 the gates and why --norecent is not one, plus the census sentence; sec 5 the four doors and the precedence (a `set startup_quiz 1` in a PDK launcher's rc would defeat the box: do not put one there); sec 6 choice of question and when the answered list is written; sec 7.1 every question carries a proof, an upcoming one's proof says the thing is still absent, and WRONG OPTIONS ARE NOT COVERED: 'checked by hand against the source when the bank was written (a wrong option must not be a second way of doing the thing), and nothing re-checks them'; sec 7.2 the bank rules; sec 7.3 adding a question (never reuse an id; the proof must fail if the feature were removed); sec 8 file table; sec 9 not built (score, user/PDK question file, 'show me' button, answer keys)."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/src/startup_quiz_bank.tcl (header comment)",
+   "rules": "Entry format and the P_* helper list. 'When you rename a menu entry or move a key, the proof of every question that mentions it fails; fix the question, not the proof.' 'Text inside a proof must have balanced braces.' Plain ASCII only."
+  },
+  {
+   "path": "commit d36cb429e (message)",
+   "rules": "States the gates, the four doors, 82 questions, and that the suite was 256 checks counted / 316 on the display arm at that commit; that src/Makefile.in obliges ./configure; that the full regression was run in a clone. It does NOT say how the questions were chosen."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/CLAUDE.md (and the private tree's CLAUDE.md, same text for this rule)",
+   "rules": "Editing src/Makefile.in obliges ./configure; verify with `/usr/bin/grep -c <newfile> src/Makefile`, expect 2 (measured here: 2 for startup_quiz.tcl and 2 for startup_quiz_bank.tcl). Register a suite in the commit that creates it; check its epilogue against banner_complete (tests/banner_rule.tcl), not run_suites.sh; derive the T1 trailer delta from summarize_all's own arms, never predict it; gate in a clone at a short path; winfo is absent under --nogui; never font configure a Tk*Font; alert_ is the wrong channel for a notice (xschem::notify is the right one); a press on a Tk button needs Enter/press/release with coordinates; a write-up under doc/claude/issues with an NNNN- name and no STAMP reddens T1 (row D9)."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/0423-tcl-error-in-a-sourced-helper-segfaults-instead-of-reporting.md and 0424-make-install-ships-xschem-tcl-sourcing-an-uninstalled-op-annot.md (both also present in the private tree)",
+   "rules": "The installed-tree failure a new Tcl file can cause. The quiz sidesteps the segfault by sourcing under catch; an uninstalled file then means a silent absence of the quiz, which rows F3/F4 fence."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/issues/0925-saved-net-highlight-styles-are-discarded-at-every-startup.md",
+   "rules": "A saved conf file sourced inside a proc sets locals; load_conf uses uplevel #0 (rows E4, E20)."
+  },
+  {
+   "path": "~/.claude/xschem_owed/look/startup_quiz_dialog.1794984895.4059727",
+   "rules": "An OPEN look debt of this clone: the dialog's fonts, wrapping, mark colours and placement on the user's real screen are unratified (suites green on Xvfb+openbox only)."
+  },
+  {
+   "path": "/home/analog/port_1724/README.md, /home/analog/port_1724/tool/adapt/not_in_target.txt, tool/lib/register_suites.py, tool/make_port.sh",
+   "rules": "The issue-1724 port tool is written on the premise that the private tree has NO startup quiz: the bank is listed as not-in-target, the registration helper explains anchors that hang on \"headless/test_startup_quiz\", and make_port.sh dies if src/startup_quiz_bank.tcl was not left out ('edit the note'). Read by grep only."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/wish_list.txt, doc/claude/suggestions/voice_control_atomic_plan.md, doc/claude/specs/calculator.md, doc/claude/specs/graph_markers.md (all four also exist in the private tree)",
+   "rules": "Places where features asked about by `upcoming` questions are written down as planned (Combine Strips, voice control, eyeDiagram, marker re-snap). Found by grep; the bank does not cite them."
+  }
+ ],
+ "family": [
+  {
+   "sibling": "The two programs share one ~/.xschem. Once the private xschem has a quiz, both read and write ~/.xschem/startup_quiz and ~/.xschem/startup_quiz_done.",
+   "same_cause": "startup_quiz::done_ids keeps only ids the running program's bank holds, and mark_done -> write_done rewrites the file with that filtered list. So an answer given in one program erases from the file every id that only the other program's bank has.",
+   "evidence": "READ: startup_quiz::done_ids, mark_done, write_done in src/startup_quiz.tcl; config.h of both trees defines USER_CONF_DIR \"~/.xschem\". Consequence INFERRED, not run: with different banks, questions come round again sooner; with the switch file, 'Don't show anymore' in one program turns it off in both."
+  },
+  {
+   "sibling": "The issue-1724 port tool (/home/analog/port_1724/tool) assumes the target has no quiz.",
+   "same_cause": "Its adapt rules leave src/startup_quiz_bank.tcl out and assert that it was left out; its registration helper's notes hang on the quiz suite's entries. After the private tree gains the quiz, the next make_port.sh run meets a target that has the file.",
+   "evidence": "READ by grep: adapt/not_in_target.txt line for src/startup_quiz_bank.tcl; make_port.sh `die \"adapt/issue_port_note.md says the startup-quiz entries were not ported, and this run did not leave src/startup_quiz_bank.tcl out: edit the note\"`; README 'Not ported, as before: ... the startup-quiz entries'. What the tool does when a not_in_target file DOES exist in the target was not read."
+  },
+  {
+   "sibling": "Bank entries must move with the product in BOTH trees from now on.",
+   "same_cause": "A feature change rewords the questions that mention it (issue 1724 reworded direct-plot and calc-pick here, uncommitted). The private tree got the 1724 feature without those two rewordings because it had no bank.",
+   "evidence": "READ: `git diff HEAD -- src/startup_quiz_bank.tcl` shows the two entries; private commit 4838ce839 is the 1724 port; static check shows the reworded proofs' calls answer the same in both trees."
+  },
+  {
+   "sibling": "Features only the private tree has get no question from a plain port.",
+   "same_cause": "The bank was written against this tree: no entry mentions Layout XL / xlay, the ASE-L integrator, Monte Carlo or the stability analysis.",
+   "evidence": "READ: private-only src files layout_xl.tcl, ase_integ_*.tcl, ase_mc*.tcl, ase_stb*.tcl, python/ase_mc; private-only menu entries Tools > \"Launch xlay\" and Tools > [annot_lbl_launch_integ]; private-only specs ase_integrator.md, ase_integrator_core_api.md."
+  }
+ ],
+ "design_options": [
+  {
+   "name": "A. Port and extend (apply this commit, carry the bank, let band A re-prove it, then add that tree's own questions)",
+   "sketch": "Copy the four new files (bank from this tree's working tree), make the six wiring edits, ./configure, make, run the suite on both arms; every A15 red is a question to fix or drop for that tree; then add questions for private-only features under NEW topic names. MEASURED read-only: `git apply --check` of d36cb429e's per-file patches against the private working tree accepts src/actions.csv, src/xinit.c, src/xschem.tcl, src/xschemrc and all four new files; it rejects src/Makefile.in (the list line after rdw.tcl differs) and tests/run_regression.tcl (the lists end differently): two one-line hand edits plus the two `##` notes. Static differential of all proofs (my script, source text only): 82 entries; every P_has/P_hasre/P_order/P_file/P_sub/P_default/P_action/P_palette/P_label call, every P_proc/P_body/P_bodyre looked up as proc text in src/*.tcl, and every P_bind looked up in src/keybindings.csv gives the same answer in both trees for 80 entries; the two that differ are quiz-switch and quiz-close, which ask about the quiz itself and become true with the port. The remaining live-only fragments were checked by grep in the private tree and agree (no undo_barrier/undo_group/undo_transaction, no 'fly' in keybindings.csv/actions.csv, no sw_drag.. names, no 'combine' in wave_viewer.tcl, one -label \"Calculator\", no voice/recipe namespace, only ngspice registered through ase::register_backend, calc::sel_rows identical).",
+   "risks": "Static agreement is not a run: band A must still go green in that tree's own binary. Wrong options and unproved clauses of `why` are checked by nothing in either tree. The private tree moves daily, so the hunks' context can go stale within a day. The ids are shared with this tree's bank, which is good for the shared answered file only while both banks hold the same ids (see family).",
+   "blast_radius": "Private tree: 4 new files, 6 edited files, a C rebuild, a ./configure, two registrations (planned_cases +2). User-visible: every interactive launch of the private xschem, including the hdo-design launcher (`<xschem> --rcfile xschemrc --script hdo_rc.tcl`), is asked a question until the box is ticked."
+  },
+  {
+   "name": "B. Engine and suite verbatim, a new bank written for the private tree",
+   "sketch": "Same wiring as A, but the other session writes its own questions from its own menus, actions.csv, binding table and specs, each with a proof, to the bank rules (at least 60, at least 60 unconditional, 12 topics, at most 6 per topic, a third of tf false, length budgets).",
+   "risks": "Sixty or more statements about the product, each needing a proof that would fail if the feature were removed and distractors checked by hand: the largest source of false entries, which is the failure the how-to exists to prevent. Throws away 80 entries that already hold there. New ids mean the two programs erase each other's answered ids in ~/.xschem/startup_quiz_done.",
+   "blast_radius": "As A, plus the authoring effort and its review."
+  },
+  {
+   "name": "C. Rebuild from the spec alone",
+   "sketch": "Hand the other session doc/claude/specs/startup_quiz.md and have it write engine, bank and suite again.",
+   "risks": "The spec does not carry startup_quiz::validate's rules, the P_* helpers, the child-witness harness of band L, or the house traps the code already answers (have_tk order, uplevel #0 source, private font, Enter/press/release). Highest cost, lowest fidelity, and two divergent engines to maintain.",
+   "blast_radius": "As B, plus a second engine."
+  },
+  {
+   "name": "D. This session hands over a tested patch and commit kit; the how-to shrinks to apply, configure, build, run, extend",
+   "sketch": "Follow the user's standing convention for the private tree (memory: a patch comes with tested commit commands and a message file; /home/analog/port_1724/tool makes and tests one in a scratch copy). The how-to then covers only what a patch cannot: re-proving the bank, the census, adding questions, the look debt.",
+   "risks": "Goes beyond what was asked (a how-to for the other session to refer to). make_port.sh is keyed to issue 1724 and derives its manifest from UNCOMMITTED status, while the quiz is committed here, so the tool needs a different input path or a hand-made manifest; its adapt rules about the quiz would have to be reversed. A patch goes stale within a day there.",
+   "blast_radius": "A second deliverable in /home/analog/, a scratch copy and a build of the private tree, about a quarter of an hour of suite time per run of the tool."
+  }
+ ],
+ "recommended": "Option A, written up as the how-to, with option B's authoring rules kept as the section on adding that tree's own questions and option C named only as what not to do. Ask the user first whether they also want option D's patch (their convention says a port comes as a tested patch).\n\nOUTLINE FOR THE HOW-TO (sections in order, with the facts each must carry)\n\n1. What you are building, and what done looks like. One question at launch in a non-modal window; done = the suite green on both arms in that tree, a census showing no other suite's launch is asked, a full regression in a short-path clone, a look debt recorded. Point at the four source files here by absolute path and at commit d36cb429e.\n\n2. Read these first. The spec (sections 4, 5, 7), the bank header, the suite header. State that the engine never evaluates a proof and that the P_* helpers live in the suite.\n\n3. Before you start: re-check the dependencies, do not trust this list. A short command block the reader runs in their tree: cmp of src/action_registry.tcl, src/ciw.tcl, src/keybindings.csv, tests/banner_rule.tcl against this tree; presence of test_scratch in tests/headless/scratch.tcl; the 11-column header of src/actions.csv; the anchors in Tcl_AppInit (the cli_opt_nolog mirror, source_tcl_file(cli_opt_tcl_script), tcleval(cli_opt_tcl_post_command), the cli_opt_quit exit); the anchors in src/xschem.tcl (caught ciw.tcl source, Help menu lines in build_widgets, set_ne raw_history_max, wviewer::rawhist_load). Give the result this scout got on 2026-11-21 at a464b7f6b as dated evidence, not as a baseline.\n\n4. Wiring, in this order, each step with its check.\n 4.1 Copy src/startup_quiz.tcl and tests/headless/test_startup_quiz.tcl and doc/claude/specs/startup_quiz.md unchanged; copy src/startup_quiz_bank.tcl from this tree's working tree.\n 4.2 src/Makefile.in: both files in `put /local/install_shares`. Then ./configure from the repo root, then `/usr/bin/grep -c startup_quiz.tcl src/Makefile` and the same for startup_quiz_bank.tcl, each 2. Rows F3, F4. Say that ./configure regenerates config.h, so everything recompiles.\n 4.3 src/xinit.c, Tcl_AppInit: the cli_opt_pipe mirror, then the hook after the -q exit. make -C src. Rows B11, F5, F6, L1, L13. Say why --norecent / no_recent_files is the wrong thing to read.\n 4.4 src/xschem.tcl, four sites: the caught source; the guarded Help entries; the two set_ne defaults; the guarded load_conf at the tail, after the defaults. Rows F1, F12, F13, Z6, E4.\n 4.5 src/actions.csv: the two rows, text given exactly. Rows F7-F11.\n 4.6 src/xschemrc: the commented block. Row F14.\n 4.7 tests/run_regression.tcl: the entry in hcases and in dcases plus the two `##` notes; capture both arms' output first and score it with banner_complete sourced from tests/banner_rule.tcl.\n\n5. Run it. `tests/headless/run_suites.sh --nogui test_startup_quiz`, then without --nogui. Never a bare ./src/xschem --script on the user's display: band L starts about a dozen child xschems with real windows. Which bands run on which arm; the three uppercase SKIPPED lines; that B11 needs the --pipe the drivers pass.\n\n6. Make the bank true for THIS tree (the section that prevents false entries).\n 6.1 Every A15 red is a question that is false here: fix the question (q, a, why), not the proof; if the feature is absent here, delete the entry and never reuse its id.\n 6.2 An `upcoming` entry goes red the day the feature is built: move it to `shipped`, rewrite `why`, turn the proof round. Check each of the ten upcoming entries against this tree's own plans by hand once, because a proof of absence that guesses future names can stay green after the feature is built under another name.\n 6.3 What no row checks: the wrong options of every multiple-choice entry and any clause of `why` the proof does not name. Review rule from the spec: a wrong option must not be a second way of doing the thing. Read all 37 option lists against this tree's menus and keys once, with the features this tree has and the other lacks in mind.\n 6.4 A17 only checks that a proof calls something: whether the proof is the RIGHT check is a review question. State the standard: the proof must fail if the feature were removed or renamed.\n\n7. Adding this tree's own questions. Entry format field by field with startup_quiz::validate's rules; the five type/kind combinations and the verdict each produces; the bank rules of band A with their thresholds; the topic cap (four topics are already at 6: CIW and action log, ASE-L, Waveform viewer, Calculator, so new ASE-L-family questions need new topic names of at most 28 characters); conventions read in the bank (right option written first and shuffled on screen, four options each, `last` for an 'any of these'); how distractors are built (a real command that does something else, with `why` saying what it does; the right label under the wrong menu; an invented name whose absence the proof asserts; a common misconception); the helper to use for each kind of claim (menu label: P_has on the exact `-label` text; palette: P_palette; key: P_bind with device, keysym code, mods, context, action id; default: P_default; subcommand: P_sub; Tcl behaviour: P_body); `only` for anything tied to a profile or a PDK, and keep at least 60 unconditional.\n\n8. The trap for the whole tree: a startup window in other suites' runs. What gates it (--pipe, --nolog, -q, --nogui, the switch); that the throwaway HOME does not; how to repeat the census (a temporary line in at_launch appending pid, argv and the decision to a file outside HOME, one full regression in a clone, then remove the line); what to do with a hit (give that launch --pipe or -q, or `--command {set startup_quiz 0}`; never change the default). Name the one candidate this scout's static scan found there: tests/headless/test_asemc_u5.tcl relaunches xschem with `--rcfile ... --script $child` and neither --pipe nor -q.\n\n9. Gate. Full regression from tests/ in a clone at a short path after ./configure and make; read tests/results.<pid>.log; derive the trailer delta from summarize_all's own arms (two entries, uppercase SKIPPED only), do not quote a figure from this how-to.\n\n10. What the user sees and owes: every interactive launch is asked (the design workarea's launcher included) until the box is ticked; record a look debt for the dialog on the real screen; the two files in ~/.xschem are shared with the other program and what that means for the answered list.\n\n11. Keeping two banks honest afterwards: a feature ported between the trees takes its reworded questions with it; the 1724 port tool's rules that say the target has no quiz need editing.\n\nRules for the crew that writes the how-to: cite procs and rows by name, no line numbers; every count either re-derived by a command the how-to prints or left out; file it under doc/claude/code_analysis/ or doc/claude/suggestions/, never under doc/claude/issues/.",
+ "acceptance_rows": [
+  "HOW-TO DRY RUN, counted arm: in a scratch `cp -a` of ~/private/xschem-private (never the checkout), a crew member follows the how-to and nothing else, then runs `tests/headless/run_suites.sh --nogui test_startup_quiz` there and gets `OVERALL: ok`. Red today because that tree has no engine, bank or suite (row Z1 would fail first: the engine's procs do not exist).",
+  "HOW-TO DRY RUN, display arm: the same copy, `tests/headless/run_suites.sh test_startup_quiz` (dev display or private Xvfb, never the user's screen): bands L2-L14 and D1-D43 green. Red today for the same reason; this is also the only arm that measures whether a plain --script launch of the private binary is asked and whether every question fits the window (D41-D43).",
+  "Row F4 as the configure check: after the Makefile.in edit and ./configure in the scratch copy, `/usr/bin/grep -c startup_quiz.tcl src/Makefile` and `/usr/bin/grep -c startup_quiz_bank.tcl src/Makefile` both print 2. Red today (0 and 0 in the private tree); red also for anyone who edits Makefile.in and skips ./configure, which is the trap the how-to must make impossible to miss.",
+  "Band A as the truth check of the bank in the OTHER tree: row A15 once per question plus A16 (a proof was evaluated for every question), counted arm. The how-to must tell the other session that a red A15 row names a false question and that the fix is the question. Expected from the static differential: green for 80 entries once the wiring is in; this is unmeasured until that tree's binary runs it.",
+  "Rows B11, F5, F6 (counted arm) as the check of the C edits: B11 fails if the cli_opt_pipe mirror was not ported (the engine then reads every --pipe session as a person); F5 fails if the hook is not after --script, --command and the -q exit; F6 fails if `startup_quiz::at_launch]` occurs anywhere else in src/xinit.c. All red today in the private tree (no mirror, no hook).",
+  "Census, display arm, one full regression in the scratch copy with a temporary line in startup_quiz::at_launch that appends pid, command line and decision to a file outside HOME: every line whose decision is {1 show} must belong to test_startup_quiz's own children. Not a permanent row in this tree either (the spec records it as a one-off measurement); the how-to must present it as a required step and name tests/headless/test_asemc_u5.tcl as the launch to look at first.",
+  "Text check of the how-to itself, by script, before it is handed over: every file path, proc name (startup_quiz::*), row id (Z1..D43) and anchor string the how-to quotes exists in this tree's files, and every anchor it says is in the private tree is found there by /usr/bin/grep. Nothing re-checks a how-to after it is written, so the crew drops any count it cannot regenerate with a printed command."
+ ],
+ "traps": [
+  "A proof covers only what its author put in it. Row A17 checks nothing more than that the proof contains a `[`. Wrong options and extra clauses in `why` are re-checked by no row (spec 7.1 says so for the options). Copying the bank into a tree with different features can therefore leave a false distractor or a false aside under a green band A. This is the gap the how-to must name most loudly.",
+  "The throwaway test HOME does not protect other suites: it has no saved switch, so the default there is ON. Only the launch flags do (--pipe, -q, --nolog, --nogui). A child launched with a display and none of them is asked. The private tree has about 70 more test suites than this one (547 test_*.tcl against 478, 207 hcases against 148, 111 dcases against 73 when counted on 2026-11-21), so this tree's census does not carry over.",
+  "The window takes no grab and nothing waits on it, so it cannot hang a suite by itself; what it can do is add a toplevel .startup_quiz about 400 ms after the hook, which changes window lists, stacking, focus and screenshots of any launch that is asked.",
+  "Without the cli_opt_pipe mirror the engine still loads and startup_quiz::automation answers 0 for everything: a --pipe session that stays open with a display would be asked, and write_done would write in automation sessions. Row B11 is the only thing that says so.",
+  "Rows F5/F6 read src/xinit.c as text: F5 takes the FIRST occurrence of `startup_quiz::at_launch` and wants it after the -q exit; F6 wants `startup_quiz::at_launch]` exactly once. A comment anywhere earlier in xinit.c that names the hook reddens them (here the mirror's comment names startup_quiz::automation and the hook's own comment names no proc).",
+  "Row Z6 wants a line that is exactly `set_ne startup_quiz 1`; row F14 wants the line `# set startup_quiz 0` exactly once in src/xschemrc; rows F9/F11 want the palette label `Toggle tip of the day at startup` word for word in three places (actions.csv, startup_quiz::hint_text, startup_quiz::pref_notice). Rewording any of them in the other tree means changing all of its copies.",
+  "src/Makefile.in obliges ./configure, and ./configure rewrites config.h, so the whole tree recompiles; in-tree the miss is invisible because XSCHEM_SHAREDIR is src/. Because the source of startup_quiz.tcl is caught, an installed tree without the files does not segfault as in issues 0423/0424: it starts with no quiz and one degraded-notice line, and a missing bank gives the decision {0 no-questions}. Silent absence is the failure mode here.",
+  "A bare `./src/xschem --script tests/headless/test_startup_quiz.tcl` on the user's display starts about a dozen child xschem windows there (band L), fails B11 if --pipe is missing, and keeps the real HOME. The armed spelling is tests/headless/run_suites.sh [--nogui] test_startup_quiz.",
+  "The suite's self-skips are uppercase `SKIPPED:`. Registering it in both lists adds two cases and no counted skip; anyone predicting the trailer from 'both lists costs a skip' will call a green run wrong. Derive from summarize_all.",
+  "Topic cap: four topics already hold 6 questions (CIW and action log, ASE-L, Waveform viewer, Calculator). One more question under any of them reddens A8. A topic name longer than 28 characters reddens A9.",
+  "An id is for ever: the answered list remembers ids, so a removed question's id must not be reused, and a question whose meaning changes should get a new id.",
+  "Proofs of absence scan file text (for example `![regexp -nocase {combine} [P_text src/wave_viewer.tcl]]`): any occurrence counts, a comment included, so an innocent word in a comment reddens the question; and a feature built under a name the proof did not guess leaves a false question green.",
+  "kind and ok must agree for true/false (validate refuses shipped with false and myth/upcoming with true), and for a multiple-choice `upcoming` every WRONG option must be something that works, because a wrong pick is told 'Not quite: that one already works.'",
+  "`only` is evaluated in the running session at global scope; one that raises or is not a boolean makes the question never asked, silently (row A18 catches it only for a plain launch). The four Cadence questions use `[namespace exists ::cadence]`, the two sky130 ones `[llength [info commands ::sky130_fet_limits]] > 0`.",
+  "The private tree is committed to daily by another session and is read-only for this one. Anything measured against it here (apply check, dependency table, static proof differential) is dated 2026-11-21 at a464b7f6b and must be re-derived by the reader; the how-to should print the commands, not the answers.",
+  "tests/results.*.log in the private tree's tests/ directory are old (the newest one read is dated 2026-10-21 with planned_cases=182); they are not that tree's current baseline.",
+  "The private tree's working tree has untracked files only (no modified tracked file when read), but an applied, uncommitted port has been the normal state there; a patch or a how-to step that says `git add <file>` can sweep in someone else's lines (the user's own complaint of 2026-11-21, in memory).",
+  "If the how-to is saved under doc/claude/issues/ with an NNNN- name it reddens row D9 of test_issue_stamp."
+ ],
+ "open_questions_for_user": [
+  "Same quiz or its own? Should the private xschem get THIS quiz (same engine, these 82 questions re-proved there, plus questions for Layout XL, the ASE-L integrator, Monte Carlo and stability), or should the other session write a separate bank? The scout's evidence favours the first: 80 of 82 entries already check out statically in that tree.",
+  "Do you also want a tested patch with commit commands for the private tree (your usual hand-over), or strictly a how-to that the other session carries out by itself?",
+  "Both programs keep the switch and the answered list in the same ~/.xschem files. Is one shared switch what you want ('Don't show anymore' in either turns both off)? And is it acceptable that, if the two banks differ, answering in one program forgets the other program's answered ids, or should the private tree use its own file name for the answered list?",
+  "Default ON in the private tree? Your design workarea (hdo-design) launches the private xschem, so every design session would open with a question until you tick the box.",
+  "The dialog's look on your real screen is still an open look debt here (startup_quiz_dialog). Do you want to look at it before the design is replicated in the other tree?",
+  "Where should the how-to live so the other session can read it: in this repository under doc/claude/ (code_analysis or suggestions), or as a file in a neutral folder such as /home/analog/ beside the 1724 port?"
+ ],
+ "unverified": [
+  "Nothing was run: no xschem, no suite, no build. That band A (row A15) is green in THIS working tree today is inferred from the commit message's claim of a green regression plus the fact that the two reworded entries were edited together with the 1724 code; it was not re-measured.",
+  "The static proof differential (script /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/quiz_scout/proofdiff.tcl, plain tclsh over source text; the scratchpad can be cleared) approximates three helpers: P_proc/P_body/P_bodyre by finding `proc <name>` text in src/*.tcl instead of asking a live interpreter, and P_bind by looking the row up in src/keybindings.csv instead of `xschem bindings dump`. keybindings.csv and callback.c are byte-identical in the two trees, so the live binding table is inferred to be the same, not measured. Two bracketed fragments did not parse in the script and were ignored (one is a regexp character class, not a call).",
+  "Whether the 80 statically agreeing entries are TRUE STATEMENTS in the private tree beyond their proofs: wrong options and unproved clauses of `why` were not read against the private tree's extra features.",
+  "`git apply --check` was run per file against the private working tree as it stood (a read that applies nothing; the 1724 port tool does the same). It was not run for the working-tree version of the bank as a patch (the file is new there, so a copy is enough) and says nothing about tomorrow's HEAD.",
+  "Whether any launch in the private tree's suites or scripts would be asked a question. A crude static scan (single-line grep for exec of the binary without --pipe/--nogui/-q) flagged one private-only site, tests/headless/test_asemc_u5.tcl (registered in both lists there), whose child script ends in `exit 0`; if that exit runs inside the --script phase the hook is never reached, but this was not confirmed. Multi-line launches and launches through helpers escape the scan.",
+  "Wall time of the suite's display arm in the private tree (a dozen child launches, each polled for up to 10 s) against run_suites.sh's 200 s cap was not measured in either tree.",
+  "Row D2 (wm transient is `.`), D40 (TkDefaultFont weight normal) and L2 (a fresh-HOME launch with only --script is asked and the window appears) depend on the private binary's startup behaviour (extra windows, first-run dialogs, grabs); not measured.",
+  "That test_startup_quiz passes row G2 of test_home_isolation without an allowlist entry is inferred from the commit touching no allowlist and the commit message's green regression; the row was not run.",
+  "How make_port.sh behaves when a file listed in adapt/not_in_target.txt exists in the target was not read; only the lines grep returned were.",
+  "How the 82 questions were chosen is NOT in the record. The spec, the commit message and the code say only: every entry carries a proof; wrong options were checked by hand against the source when the bank was written; `upcoming` is for features the repository has written down as planned; add a question when you ship a feature. What the proofs lean on can be counted (file references in proofs: src/xschem.tcl 43, src/wave_viewer.tcl 15, src/cadence_style_rc 14, src/xinit.c 10, src/ase_window.tcl 7, src/ciw.tcl 5, src/options.c 4, src/callback.c 4, src/actions.csv 4; helper uses: P_has 107, P_proc 34, P_body 31, P_bind 15, P_default 15, P_palette 14, P_sub 12), which shows where each claim was anchored, not how the list of topics was drawn up. That the topic list follows the feature list in spec section 1 is my reading.",
+  "Bank statistics were computed by my own script over the working-tree bank, not by the suite: 82 entries; 45 true/false (27 shipped, 8 upcoming, 10 myth) and 37 multiple choice (35 howto, 2 upcoming); 26 topics; 6 conditional entries (4 Cadence profile, 2 sky130), so 76 apply in a plain launch; every multiple-choice entry has 4 options; the right option is written first in 34 of 35 howto entries; one entry uses `last`; longest q 151, why 414, option 86, topic 18 characters. The suite's fixed row count outside A15 (174 counted, 234 display) is my arithmetic from reading the file; it reproduces the commit message's 256/316 with 82 questions but nothing re-checks it.",
+  "Whether any user-facing manual page (doc/*.html) lists the Help menu or the palette rows and so needs the two new entries: the commit touched none and I did not search the HTML."
+ ],
+ "user_docs_to_update": [
+  {
+   "path": "NEW, in this repository: /home/analog/dev/xschem-claude/doc/claude/code_analysis/startup_quiz_port_howto.md (or doc/claude/suggestions/; the name is a proposal, the location is an open question for the user). Not under doc/claude/issues/.",
+   "what": "The how-to itself, to the outline in `recommended`."
+  },
+  {
+   "path": "/home/analog/dev/xschem-claude/doc/claude/specs/startup_quiz.md",
+   "what": "Optional, if the lead wants the spec to stay the single source: one paragraph in section 7 or 8 saying that the two files under ~/.xschem are shared by every xschem build the user runs and that the answered list is rewritten with the running bank's ids only; and a pointer to the how-to. Nothing in the spec was found to contradict the code."
+  },
+  {
+   "path": "In the private tree, by the OTHER session (this one must not write there): src/xschemrc, doc/claude/specs/startup_quiz.md, its CLAUDE.md if it records registered suites",
+   "what": "The rc template block with the single `# set startup_quiz 0` line; a copy of the spec with the bank size and file table adjusted to that tree; whatever that tree's conventions require for a newly registered suite."
+  },
+  {
+   "path": "/home/analog/port_1724/tool/adapt/not_in_target.txt and /home/analog/port_1724/tool/adapt/issue_port_note.md",
+   "what": "Not user docs, but they state that the target has no startup quiz; once the private tree has one they are wrong and the next make_port.sh run trips on it. Flag for whoever runs that tool next."
+  }
+ ]
+}
