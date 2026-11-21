@@ -155,6 +155,9 @@ async function twice(prompt, opts) {
 }
 
 const HEAD_LINE = 'Overnight batch of 2026-11-21, item ' + NN + ' (' + SLUG + '), kind ' + KIND + '.'
+// args.note: one paragraph from the driver for the stages that repair (for instance after a run was cut short).
+// It is not part of the build's or the readers' prompts, so a resumed run still finds their answers.
+const NOTE = (A.note && typeof A.note === 'string') ? ['', 'NOTE FROM THE DRIVER:', A.note, ''] : []
 
 // ------------------------------------------------------------------ Build
 phase('Build')
@@ -237,8 +240,7 @@ if (KIND === 'doc' && (blockers(problems).length + shoulds(problems).length) > 0
     HEAD_LINE + ' You are the WRITER again, before the document is tried.', '', READ_FIRST, '', RULES, '',
     DIFF + ' Your repair is one more work-in-progress commit on top: explicit file list, subject  wip(' + TAG + '): after review .',
     'Two readers went through the document. For each problem below: make the document right, or refute the problem with evidence a reader can check. A sentence you cannot stand behind is removed, not softened.',
-    'Problems:', JSON.stringify(problems, null, 1),
-  ].join('\n'), { label: 'repair:' + NN + '.0', phase: 'Review', schema: REPAIR_SCHEMA })
+  ].concat(NOTE, ['Problems:', JSON.stringify(problems, null, 1)]).join('\n'), { label: 'repair:' + NN + '.0', phase: 'Review', schema: REPAIR_SCHEMA })
   repairs.push(pre)
 }
 
@@ -314,8 +316,7 @@ while (blockers(open).length > 0 && round < 3) {
     HEAD_LINE + ' You are the REPAIR crew, round ' + round + '.', '', READ_FIRST, '', RULES, '',
     (KIND === 'port' ? 'The deliverable is under ' + PORTDIR + ' ; nothing is committed anywhere.' : DIFF + ' Your repair is one more work-in-progress commit on top: explicit file list, subject  wip(' + TAG + '): repair ' + round + ' .'),
     'For each problem below: fix it, or refute it with evidence a reader can check. A fix to the product comes with the row that would have caught it, red before the fix. A problem about a sentence is fixed by making the sentence true or removing it. Blockers first; fix the ones marked should if they are cheap and safe. ' + (KIND === 'code' ? 'Re-run every touched suite on both arms before you commit.' : ''),
-    'Problems:', JSON.stringify(open, null, 1),
-  ].join('\n'), { label: 'repair:' + NN + '.' + round, phase: 'Repair', schema: REPAIR_SCHEMA })
+  ].concat(NOTE, ['Problems:', JSON.stringify(open, null, 1)]).join('\n'), { label: 'repair:' + NN + '.' + round, phase: 'Repair', schema: REPAIR_SCHEMA })
   repairs.push(fix)
   if (!fix) { log('item ' + NN + ': repair round ' + round + ' returned nothing'); break }
   const retry = (KIND === 'doc' && dryBlocked)

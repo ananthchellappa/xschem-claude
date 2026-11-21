@@ -4,6 +4,9 @@
 "OK, when ready, proceed with implementing the batch plan. Don't wait for another
 go-ahead. This is it". The driver log at the foot of this file says where it stands.
 
+**It did not run through the night.** The session that drives it ended at about 03:00
+with item 01 in its repair stage, and nothing ran until the user resumed it at 09:26.
+
 Four items the user asked for on 2026-11-21, and a fifth that carries the product changes
 to the tree the user's design work runs on.
 
@@ -21,7 +24,7 @@ gesture items, so those land first.
 
 | mark | item | slug | kind | what the user gets |
 |------|------|------|------|--------------------|
-| `[ ]` | 01 | `quiz-howto` | doc | a how-to another session can follow to build a tip-of-the-day quiz in `~/private/xschem-private` |
+| `[E]` | 01 | `quiz-howto` | doc | a how-to another session can follow to build a tip-of-the-day quiz in `~/private/xschem-private` |
 | `[ ]` | 03 | `viewer-ctrl-shift-m` | code | Ctrl-Shift-M in the waveform viewer toggles single/multi plot mode; no "View is Read Only" popup from a key in the viewer |
 | `[ ]` | 04 | `dblclick-grow-takes-labels` | code | the double-click grow takes the net-name labels on the wires it selects |
 | `[ ]` | 02 | `issue-1657-open-items` | code | the Options preview shows the deck's order with labelled groups; a request for `op` reads again when an untyped read stored the noise totals |
@@ -110,7 +113,11 @@ The pipeline gives every crew these rules in full. The ones that shape the batch
 Taken during preparation, in the clone, at `7c77f3594` (the commit the batch starts from):
 
 - Build: `./configure` and `make`, both rc 0.
-- Full regression on a private display: BASELINE_PENDING
+- Full regression on a private display (`T1_DISPLAY=private`), 2026-11-21 01:25 to 01:49:
+  `cases=225 blocks=224 counted_failures=0 skips=13 elapsed=1424s`
+  (`/home/analog/ob21/tests/results.2248040.log`; `wc -l` 679; no case off zero, no
+  counted shape, no live peer announced). It is the trailer the 1724 gate gave on the
+  same code in `~/g1724`.
 
 A gate of an item compares its own trailer with this one after deriving, from the
 registration lists, what the item must add.
@@ -214,8 +221,13 @@ is part of the item.
 ### 02 issue-1657-open-items
 
 Rulings 1 and 2 above: two changes, in two different places (`src/ase.tcl` and the window
-for the first, `src/save.c` for the second), one commit. When the item is done the issue's
-stamp line says so and its "Open items" section records both rulings and what was built.
+for the first, `src/save.c` and the registry for the second), one commit. The second
+reader found that the second change, built the plain way, breaks three things that work
+today (a read during a draw, the Calculator's restore, the rule that a select never
+frees). The work order gives the shape that keeps them working and says what to do if it
+cannot be built within it: land the first change, leave the second open with the
+measurements. When the item is done the issue's stamp line and its "Open items" section
+say what is closed, what is a stated limit and what the user can still choose.
 
 ### 05 port-to-private
 
@@ -227,3 +239,17 @@ commands to commit it there; a patch without them is not finished.
 
 Times are local, 2026-11-21 unless a date is given.
 
+- 01:18 the issue 1724/1657 work committed in the main tree as `7c77f3594` (82 files; the two modified `sky130_fd_sc_hvl` files are not this session's and stay uncommitted).
+- 01:21 work clone `/home/analog/ob21` made from `7c77f3594` and built (`./configure`, `make`, both rc 0).
+- 01:25 baseline full regression started in the clone (private display, pid 2248040; verdict `/home/analog/ob21/tests/results.2248040.log`).
+- 01:48 plan committed as `23c551453`; clone pulled to it. Owed ledger backed up to `~/.claude/xschem_owed.bak.20261121`. Check-in job `2fa16655` (minutes 7, 27, 47).
+- 01:48 item 01 launched: task `wklght3xr`, run `wf_b9029379-036`, base `23c551453`, transcripts `/home/analog/.claude-taiga/projects/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/subagents/workflows/wf_b9029379-036`.
+- 01:49 baseline regression ended at zero counted failures (see "Baseline").
+- 01:50 the three remaining second-reader answers arrived (items 03, 04, 02). Work orders 03, 04 and 02 rewritten with their corrections; to be committed and pulled into the clone when item 01 has landed, before item 03 starts.
+- 02:18 item 01: the how-to written (work-in-progress commit `722c84627` in the clone). 02:38 both readers answered; the writer started on what they found.
+- about 03:00 the driving session ended (last transcript write 02:59). The item's pipeline stopped with it; the check-in job, which lives in the session, went too. Nothing ran for six and a half hours.
+- 09:23 another session committed `444126b6e` in the main tree: `CLAUDE.md` condensed, the lessons that left it in `doc/claude/TEST_LESSONS.md`. The main tree's branch has therefore moved past the plan commit; the clone does not have that commit yet.
+- 09:26 the user said "resume". 09:28 item 01 resumed from its journal: task `wbo3506uj`, run `wf_b9029379-036` (same run, same transcript directory), base `23c551453`. The how-to and both readers' answers were reused; the repair runs again, told about the interrupted writer's uncommitted edits in the clone and about the condensed `CLAUDE.md`. The pipeline gained an optional driver note for its repair stages for this. New check-in job (minutes 7, 27, 47).
+- Because the main tree moved, item 01 lands by cherry-pick, not fast-forward. Then: the clone is put on the main tree's head, the revised work orders and this file are committed and pulled, and item 03 starts from there.
+- 10:08 item 01: the repair done; the dry run started in `/home/analog/pq21`. 10:37 the pipeline returned: verdict E, no blocker left, no repair round after the dry run, commit `462c192b4` in the clone.
+- 10:40 item 01 landed in the main tree by cherry-pick as `d198fce04` (the branch had moved, see 09:23). Receipt copied to `receipts/01_quiz-howto.md` with a driver's note. Rule debt filed from the main tree: `startup_quiz_shared_conf`. Marked `[E]`: the census and the gate in the other tree were written from reading and run by nobody, and the window there has to be looked at once it exists.

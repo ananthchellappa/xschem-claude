@@ -1,6 +1,7 @@
 # Work order 04 — the double-click grow takes the net-name labels on the wires it selects
 
-Prepared 2026-11-21.
+Prepared 2026-11-21; revised the same night after a second reader, told to refute the
+scout's notes, checked them against the tree. This text already carries its corrections.
 
 ## The request
 
@@ -18,11 +19,15 @@ devices are not taken.
 As a test: the symbol's type is exactly `label` (`inst_is_netlabel()` in `src/check.c`)
 AND its `global` attribute, read from the instance first and then from the symbol, is
 neither `ground` nor a true boolean. `lab_generic` and `bus_connect` are labels with no
-`global` and so are taken; say so in the spec.
+`global` and so are taken; say so in the spec. What the product itself calls a wire
+label is covered: Add Wire Label (key `l`) and `xschem net_label` place `lab_pin.sym` or
+`lab_wire.sym`, and the pin stubs of the Space key end in a `lab_pin`.
 
 This overrules decision O2 ("rings are wires only") of
 `doc/claude/specs/dblclick_connected_select.md`, ratified 2026-07-12, for these labels
-only. O1, O3 (the third level is a GEOMETRIC flood) and O4 (cap at three) stand.
+only. O1, O3 (the third level is a GEOMETRIC flood) and O4 (cap at three) stand. The
+user was offered the wider sets (labels with ports; everything the older one-shot
+takes) and did not take them.
 
 ## What the user gets
 
@@ -34,31 +39,36 @@ coordinates) do the same.
 
 ## What is true today
 
-Read from the code on 2026-11-21 at `7c77f3594`, not run. Full notes:
+Read from the code on 2026-11-21 at `7c77f3594`, not run. The scout's notes and the
+second reader's answer are
 `/home/analog/dev/xschem-claude/doc/claude/overnight_batch_2026_11_21/maps/04_dblclick-grow-takes-labels.map.json`
-(read only). A skeptic's corrections, if any, are at the foot of this work order.
-Reproduce first; the tree wins.
+and `.check.json` beside it (read only). Reproduce first; the tree wins.
 
 - `handle_double_click()` (`src/callback.c`) calls `select_grow_connected_step()`
   (`src/select.c`), which picks the seed, keeps the level, recomputes from the seed (the
-  coordinate form) or grows the live selection (the coordless form), and then, in a tail
-  both forms share, rebuilds the selection, stores a selection COUNT in `dblgrow_sel_sig`,
-  writes one action-log line and draws.
+  coordinate form: it unselects everything first) or grows the live selection (the
+  coordless form), and then, in a tail both forms share, rebuilds the selection, stores a
+  selection COUNT in `dblgrow_sel_sig`, writes one action-log line and draws.
 - `dblgrow_apply_level()` calls `grow_one_ring_wires()`: once per level for levels 1 and
   2, to a fixed point for level 3. That routine marks wires only; its ELEMENT arm expands
   from every selected instance's pins. No instance is ever selected by the grow.
+- The subcommand's branch is in `xschem_cmds_s()` (`src/scheduler.c`), with `select_at`,
+  `selected_set` and `selection`.
 - `tests/headless/test_dblclick_connected_grow.tcl` is in no list of
   `tests/run_regression.tcl`, exits at its top when there is no display, and issues
-  `update` with no stall bound. Its rows T1a and T6, and row T2 of
-  `tests/headless/test_select_same_net_by_label.tcl` (also in no list), are the old
-  ruling written as rows.
+  `update` with no stall bound. Two checks are the old ruling written as rows and go red
+  with this change: its T6, and the second check of row T2 in
+  `tests/headless/test_select_same_net_by_label.tcl` (also in no list).
 
 ## Decided by the lead (spec holes; the receipt lists them for the user)
 
-1. **Labels are leaves.** The set of WIRES at every level stays exactly what it is today.
-   A label never carries the grow onto another wire: not across a crossing where two
-   wires share no endpoint, and not by name to another island. (The name-wise selection
-   has its own chord, Ctrl+Alt+Shift+LMB.)
+1. **Labels are leaves.** A label never carries the grow onto another wire: not across a
+   crossing where two wires share no endpoint, and not by name to another island. (The
+   name-wise selection has its own chord, Ctrl+Alt+Shift+LMB.) The set of WIRES at every
+   level stays what it is today, with one exception to state and fence: in the coordless
+   form, a label that the caller selected beforehand and that sits on a pure crossing
+   pulls in the crossing wire today; after this change it does not when a selected wire
+   is already under it.
 2. **"Touches a selected wire" is the whole rule.** A label on the joint between a selected
    wire and one not yet selected is selected. The spec says what follows: deleting at
    level 1 or 2 can take the label of a wire that stays.
@@ -66,18 +76,26 @@ Reproduce first; the tree wins.
    changes nothing.
 4. **A label as the seed** behaves as today (it stays selected, the wires touching its
    pin are ring 1) and now also brings the other labels on those wires.
-5. **Locked labels** follow what the wire walk does for locked wires. State the choice in
+5. **A device as the seed:** a label that sits directly on a pin of that device with no
+   wire under it is NOT taken (the rule is about wires). The older one-shot takes it.
+   State it as a limit, pin it with a row, and return a `rule` debt.
+6. **Locked labels** follow what the wire walk does for locked wires. State the choice in
    the spec.
-6. **`q` after the grow.** Edit Properties prefers an instance in a mixed selection, so
+7. **`q` after the grow.** Edit Properties prefers an instance in a mixed selection, so
    after a wire-seeded grow that selected labels it may open a label's form where it
    opened the wire's. Measure what it does today and after. If `q` can stay on the object
    the user double-clicked by a change inside the grow itself, do that. If it needs a
-   change in a selection primitive other gestures share, do not make it: leave it,
-   describe it in the spec, and return a `rule` debt.
-7. **ALT-R / ALT-F on the grown selection:** a selected label is placed by the move
-   itself and does not ride its wire (section 16.4 of
-   `doc/claude/specs/wire_label_ride.md`). Accepted; describe it and return a `rule` debt.
-8. **The stock profile (`cadence_compat` 0) does not change.**
+   change in a selection primitive other gestures share, do not make it: describe it in
+   the spec and return a `rule` debt.
+8. **Moving the grown selection.** A selected label is placed by the move itself and does
+   not ride its wire (section 16.4 of `doc/claude/specs/wire_label_ride.md`). Accepted for
+   ALT-R / ALT-F; describe it and return a `rule` debt. What must hold is in the rows
+   below: after a move or a copy of the grown selection every selected label is still on
+   its wire.
+9. **Replay.** The log line carries no level and no object list, so a log recorded before
+   this change replays with the labels selected too. No recorded log under `tests/` holds
+   the verb. Say so in the spec.
+10. **The stock profile (`cadence_compat` 0) does not change.**
 
 ## How
 
@@ -98,6 +116,8 @@ on W2's interior, LC on W4's interior; a resistor with one pin exactly on W4's f
 (read the pin's coordinate back); a separate island wire with a label that carries LA's
 net name; one label off any copper with that name. Read instances by name
 (`xschem selected_set`) and wires by id (`xschem selection`), and assert exact sets.
+Never seed on a point that is also a label's pin: on the display arm the pixel round trip
+can hand the pick to the label.
 
 1. Level 1: wires {W0, W1}, instances {LA}.
 2. Level 2: wires {W0, W1, W2}, instances {LA, LB}; and LB is NOT in the set at level 1.
@@ -110,8 +130,10 @@ net name; one label off any copper with that name. Read instances by name
 7. Rings stay geometric: the island and the off-copper label are never selected (green
    today).
 8. Labels are leaves: with a label on the crossing point of two wires that share no
-   endpoint, a grow seeded on one never selects the other, in both forms, at every level
-   (green today; it tells the built design from the one that lets labels carry the grow).
+   endpoint, a grow seeded on one never selects the other, in the coordinate form at
+   every level and in the coordless form after `select_at` (green today; it tells the
+   built design from one that lets labels carry the grow). And the exception of decision
+   1, as its own leg with today's answer recorded beside the new one.
 9. The coordless form: `xschem select_at` on the seed, then three bare calls give levels
    1, 2, 3 with the sets of rows 1 to 3. This is the fence for the order of the label
    pass and the stored count: with the pass after the count, the level never leaves 1.
@@ -120,63 +142,95 @@ net name; one label off any copper with that name. Read instances by name
 11. Scope, each asserted in or out BY NAME at level 3 on the chain: `lab_wire` in;
     `lab_generic` in; `vdd` and `gnd` out; a `lab_pin` instance carrying `global=true`
     out; `ipin`, `opin`, `iopin` out; `lab_show` out; a probe out.
-12. The real streams, display arm, under the shipping profile (`cadence_compat`,
-    `fluid_editing`, `en_pin_select` all 1): the stream Tk really emits (press, release,
-    double, release) and the stream with a second press before the double, three times
-    each, give rows 1 to 3; afterwards the wire and instance counts are unchanged, no
-    label has moved, and no move or wire-draw state is left armed.
-13. Reset with labels: after three double clicks, one single click ON the seed, then one
+12. The pin stub: a device pin, a stub wire from it, a `lab_pin` at the stub's far end.
+    One grow on the stub selects the stub and the label and not the device; Delete
+    leaves the bare pin.
+13. Decision 5 as a row: a device with a label directly on one pin and no wire there;
+    grow seeded on the device; the label is not selected.
+14. The real streams, display arm, under the SHIPPING profile. That profile is more than
+    three variables: `src/cadence_style_rc` also sets `persistent_command` and
+    `infix_interface`. Source the rc or set what it sets, and say which. The stream Tk
+    really emits (press, release, double, release) and the stream with a second press
+    before the double, three times each, give rows 1 to 3; afterwards the wire and
+    instance counts are unchanged, no label has moved, and no move or wire-draw state is
+    left armed.
+15. Reset with labels: after three double clicks, one single click ON the seed, then one
     double click gives row 1, not row 3.
-14. One row with a real Tk double click (`event generate` with time stamps on one pixel,
-    the shape of `pg_dblclick` in `tests/headless/test_calc_pick.tcl`) and a command trace
-    proving which callback events the editor saw.
-15. The stock profile: a real double click on W0 opens Edit Properties (bounded by a
+16. One row with a real Tk double click (`event generate` with time stamps on one pixel,
+    the shape of `pg_dblclick` in `tests/headless/test_calc_pick.tcl`, with its read-back
+    of the pointer position) and a command trace proving which callback events the
+    editor saw.
+17. Move and copy. After level 3, and after level 1 with a label on the joint to an
+    unselected wire: `xschem move_objects` by a fixed offset (plain and with kissing) and
+    a real connected drag; every selected label's pin is on its wire afterwards. A copy
+    carries the labels. If the joint case leaves a label off its wire, that is a finding:
+    repair it if the cause is in the grow, otherwise describe it, pin today's answer
+    outside the gate, and return a `rule` debt.
+18. The stock profile: a real double click on W0 opens Edit Properties (bounded by a
     timer that closes and names whatever popped), the selection is W0 alone and the log
     gained no grow line (green today, must stay).
-16. Logging: one line per gesture and per command, as rows T11a and T11b hold; replaying
+19. Logging: one line per gesture and per command, as rows T11a and T11b hold; replaying
     the logged lines on a rebuilt fixture reproduces row 3.
-17. Restated, not deleted: T1a, T1b and T6 of the grow suite; T2 of
-    `test_select_same_net_by_label.tcl`.
+20. Restated, not deleted: T6 of the grow suite and the second check of T2 in
+    `test_select_same_net_by_label.tcl`. T1a stays as it is (its label sits on a ring-2
+    wire) and T1b gains the label that arrives with its wire.
 
 Registration, in the same change:
 
 - `test_dblclick_connected_grow`: give it a stall bound (source `tests/headless/scratch.tcl`
   below its display gate), a `RESULT:` line with a check count, and an epilogue that
-  satisfies `banner_complete`. Measure whether the engine rows (the command forms) run
-  under `--nogui`. If they do, restructure the top-of-file gate so they run on the counted
-  arm and register the suite in both lists; if not, register it in `dcases` alone and say
-  what you measured. Row W20h of `test_suite_watchdog_1403` must stay green.
-- `test_select_same_net_by_label`: you change its row T2, so it is registered too,
-  unless its baseline is red for a reason outside this item; then run it by
-  `run_suites.sh`, report the reds and the reason, and leave it out.
+  satisfies `banner_complete`. Its failing rows print `FAIL:` as a PREFIX, so the
+  regression's verdict names none of them: a red shows only as one line saying the case
+  did not complete. If you touch the epilogue, give a failing row a shape the verdict can
+  name. Its `check` takes a boolean and an optional detail; other suites' take a value
+  and a wanted value: rows cannot be pasted across. By reading, the command forms need
+  no display (they use what `xschem select_at` uses, which a registered suite drives
+  under `--nogui`); measure it once. If they run there, restructure the top-of-file gate
+  so the engine rows run on the counted arm and register the suite in both lists; if
+  not, register it in `dcases` alone and say what you measured. Row W20h of
+  `test_suite_watchdog_1403` must stay green.
+- `test_select_same_net_by_label`: you change a check of its row T2, and it is in no
+  list. Either register it (it has the same display gate, the same banner and the same
+  `update` calls, so it needs the same stall bound), or move the contrast into the grow
+  suite and leave that suite's own check consistent. If its baseline is red for a reason
+  outside this item, report the reds and take the second way.
 
 ## Texts to update
 
-The spec `dblclick_connected_select.md`: a ruling dated 2026-11-21 that names what O2
-said and what replaces it, the level table, the scope test, decisions 1 to 8 above; its
-status line still says the feature is not implemented, its "reused infrastructure"
-section says `select_connected_nets(2)` is a one-ring grow (it is not: that call grows no
-wire), and its line coordinates are stale: name symbols instead.
-`select_same_net_by_label.md` (the sentence and the table that say the double click
-reaches wire segments only). The comments above `grow_one_ring_wires`,
-`dblgrow_apply_level`, `select_grow_connected_step` and the same-net block in
-`src/select.c`; above the `select_grow_connected` branch in `src/scheduler.c`; in
-`handle_double_click` and above the same-net action in `src/callback.c`; the two comments
-in `src/cadence_style_rc`. The headers of the two suites. A new entry on top of
-`doc/claude/FAQ.md`: what the double click selects now and what it still leaves (labels
-of the same name on another island, devices, ports, power symbols).
-`doc/claude/suggestions/plan_dblclick_connected_select.md` is a dated record: leave it.
+- The spec `dblclick_connected_select.md`: a ruling dated 2026-11-21 that names what O2
+  said and what replaces it; the level table; the scope test; decisions 1 to 10 above.
+  And what is already untrue in it: its status line says the feature is not implemented;
+  its "reused infrastructure" section says `select_connected_nets(2)` is a one-ring grow
+  (that call grows no wire); its target-behaviour section says the double click is
+  purely additive (the coordinate form unselects first); decision O1 says the rc rebinds
+  the double click while its trigger section says no rc line is needed (there is none);
+  its line coordinates are stale: name symbols.
+- `select_same_net_by_label.md`: the sentence and the table that say the double click
+  reaches wire segments only.
+- Comments: above `grow_one_ring_wires`, `dblgrow_apply_level`,
+  `select_grow_connected_step` and the same-net block in `src/select.c`; above the
+  subcommand's branch in `src/scheduler.c` ("wires only", and its claim that the seed is
+  added additively); in `handle_double_click` and above the same-net action in
+  `src/callback.c`; the two comments in `src/cadence_style_rc`.
+- The headers of the two suites (the grow suite's says the engine needs a real X window).
+- A new entry on top of `doc/claude/FAQ.md`: what the double click selects now and what
+  it still leaves (labels of the same name on another island, devices, ports, power
+  symbols, a label on a bare device pin).
+- `doc/claude/suggestions/plan_dblclick_connected_select.md` is a dated record: leave it.
 
 ## Traps
 
 - The label pass must come before the selection count is stored, or the coordless form
   resets to level 1 on every call. No existing row asks for coordless level 2.
-- `tests/headless/test_selflog_grep_guard.tcl` (registered) pins the number of
-  `log_action` sites of this verb in `src/select.c`. Add none, and do not quote that
-  literal in a comment there.
+- `tests/headless/test_selflog_grep_guard.tcl` (registered) reads source files as text,
+  comments included. For `src/select.c` it wants AT LEAST the two log sites of this verb.
+  For `src/scheduler.c` it wants NONE: a comment there that quotes the log call of this
+  verb reddens a registered case. Add no log site, and quote that call in no comment of
+  either file.
 - `get_inst_pin_coord` answers the origin for a pin that does not exist: check the pin
-  count first. `touch()` on a zero-length wire answers yes for every point on its row,
-  and the first press of a double click can leave zero-length stubs: skip them.
+  count first, and that the instance is bound to a symbol. `touch()` on a zero-length
+  wire answers yes for every point on its row, and the first press of a double click can
+  leave zero-length stubs: skip them.
 - Setting `cadence_compat` to 1 turns `autotrim_wires` on and nothing turns it off again:
   attach devices at wire ENDS and derive wire counts.
 - A bare double-click event (`-3` alone) skips the abort of the armed gesture and the
@@ -188,6 +242,9 @@ of the same name on another island, devices, ports, power symbols).
 - Under `--nogui` the command `winfo` does not exist.
 - This change mutates no wire, but read `doc/claude/WIRING.md` before you touch
   `src/select.c`'s wire walk, as `CLAUDE.md` asks.
+- If you file an issue: this clone's pointer reads 1727 unless an earlier item of tonight
+  took it; 1728 is taken in `~/private/xschem-private`, whose pointer reads 1729. Every
+  number takes the two checks again; it is not the pointer plus one.
 
 ## Out of scope
 
@@ -197,5 +254,5 @@ profile.
 
 ## Done means
 
-Rows 1 to 17 green on the arm each belongs to, each new row shown red on the unchanged
+Rows 1 to 20 green on the arm each belongs to, each new row shown red on the unchanged
 product, the suite registered and gating, and the spec saying what the gesture does now.
