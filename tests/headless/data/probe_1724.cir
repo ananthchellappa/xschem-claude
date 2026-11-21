@@ -1,0 +1,27 @@
+* probe shape check
+.subckt nfet_wrap D G S B
+M1 D G S B nm W=1u L=1u
+.model nm nmos level=1 vto=0.5 kp=100u
+.ends
+.subckt blk in out vss
+XM1 out in vss vss nfet_wrap
+R1 out vdd_i 10k
+V2 vdd_i vss 1.8
+.ends
+X1 g out 0 blk
+V1 g 0 1 ac 1
+Vm out2 0 0
+R9 out out2 1meg
+.save v(out) i(v1)
+.probe I(x1.xm1,D) I(x1.xm1,G) I(x1.xm1,3) I(x1.r1,1) I(x1,in) I(r9,1) I(x1.nope,d)
+.control
+echo pv=$?probe_version
+op
+remzerovec
+write op.raw
+tran 1n 10n
+remzerovec
+write tran.raw
+display
+.endc
+.end

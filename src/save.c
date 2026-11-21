@@ -871,6 +871,18 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   int exit_status = 0, npoints = 0, nvars = 0;
   int dbglev=1;
   int seen_plotname = 0;
+  /* issue 1657 -- which plot answers "op". The rule and what it leaves alone
+   * are written above the `integrated noise` arm below. */
+  int op_asked = 0;     /* the caller ASKED for "op": `type` as given on entry */
+  int integ_is_op = 1;  /* an Integrated Noise plot answers "op" in this pass */
+  int integ_held = 0;   /* this pass met one and held it back */
+  int taken = 0;        /* this pass took a plot */
+  int hdr_case_mode_on_entry;
+  #ifdef __unix__
+    long startpos;
+  #else
+    __int3264 startpos;
+  #endif
   const char *sim_type = NULL;
   Raw *raw;
 
@@ -888,6 +900,13 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
     if(!my_strcasecmp(type, "spectrum")) type = "ac";
     else if(!my_strcasecmp(type, "sp")) type = "ac";
   }
+  if(type && !strcmp(type, "op")) {
+    op_asked = 1;
+    integ_is_op = 0;
+  }
+  hdr_case_mode_on_entry = raw->hdr_case_mode;
+  startpos = xftell(fd);
+  read_dataset_pass:
   while((line = my_fgets(fd, NULL))) {
     my_strdup2(_ALLOC_ID_, &lowerline, line);
     strtolower(lowerline);
@@ -974,12 +993,103 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
       if(!strcmp(type, "op")) sim_type = "op";
       dbg(dbglev, "read_dataset(): op sim_type=%s\n", sim_type ? sim_type : "<NULL>");
     }
+    /* ISSUE 1657 -- WHICH PLOT ANSWERS "op".
+     *
+     * Besides the plots whose name holds `operating point`, this one reads
+     * back as "op": the one-point totals of a noise analysis (upstream users
+     * annotate the totals through `xschem annotate_op`, which asks for "op").
+     * This arm used to say yes to every caller, so the answer depended on
+     * FILE ORDER: a deck that
+     * runs its operating point after its noise analysis -- ASE-L's does
+     * whenever the per-device requests ride inside `.control` (issue 0964) --
+     * writes the totals first, a caller asking for "op" was handed them, and
+     * the operating point itself was dropped further down at the
+     * variable-count mismatch. `xschem annotate_op` then published no node
+     * voltage, and an expression over the operating point had nothing to read.
+     *
+     * THE RULE. For a caller that ASKED for "op" (`op_asked`: the type argument
+     * as given on entry) this plot answers only when the pass took no other
+     * plot. Such a caller's first pass holds every Integrated Noise plot back
+     * (`integ_held`) and its block is skipped like that of a plot of another
+     * type. A pass that reaches the end of the file having taken nothing and
+     * held one back is run again from where it began, with this arm answering
+     * as it always did: see the block after the loop.
+     *
+     * "Took no other plot" is "the file holds no `Operating Point` plot" for
+     * every plot name a simulator writes, because the arm above takes each of
+     * those for such a caller -- ON A FILE WHOSE BLOCKS THIS FUNCTION CAN STEP
+     * OVER. There is one kind it cannot, ACCEPTED HERE AND NOT CURED: an ascii
+     * `Values:` block whose lines end CRLF. skip_raw_ascii_points() looks for
+     * an LF-only blank line (issue 0300), so the skip of the held totals'
+     * block runs to the end of the file, the pass takes nothing, and the
+     * second pass hands the caller the totals although an operating point
+     * stands behind them -- the answer such a file had before this rule. The
+     * cure is issue 0300's skip and not this arm. A `Binary:` block is stepped
+     * over by its size, so a binary file is read right whatever its header's
+     * line ends, and an operating point standing FIRST is taken before any
+     * skip in either form.
+     *
+     * The one other way to be taken is the plot-name arm below, by a plot
+     * whose whole name is the word the caller asked for; a file holding one of
+     * those and no `Operating Point` plot no longer has its totals read beside
+     * it. With the totals standing first such a file used to answer with the
+     * totals, and answers with that plot now (the `named` cells of band M
+     * hold it).
+     *
+     * AND THIS FUNCTION IS NOT CALLED AT ALL for a file that is already
+     * loaded under the type asked for: extra_rawfile() switches to that
+     * database and reads nothing. A read that names no type stores a
+     * totals-first file under "op" (the first item below), so a later
+     * `xschem raw read <file> op` is shown those totals, and so is `xschem
+     * annotate_op <file>` unless that database is the current one, which it
+     * removes before it reads. Older than this rule and untouched by it.
+     *
+     * DELIBERATELY UNCHANGED:
+     *  - a read that names no type (`type` NULL on entry) takes the first plot
+     *    of the file and every later one of that plot's type, this one
+     *    included, in every order;
+     *  - a read asking for "noise" takes this plot and the spectral density
+     *    curves alike, first in file order (which of the two a noise read
+     *    should be given is an open ruling recorded above the `noise` entry of
+     *    ASE-L's analysis registry in src/ase.tcl, and is not decided here);
+     *  - a file that holds no operating point, and no plot named after the
+     *    type (above), still answers "op" with the totals;
+     *  - the multi-point promotion of "op" to "dc", the casemode rules, issue
+     *    0213's malformed-block rules and the mismatch rule.
+     *
+     * A CONSEQUENCE, stated rather than hidden: with the operating point FIRST
+     * the totals used to arrive as a second "op" dataset, meet the mismatch
+     * rule, and END the read there. They are skipped now and the read goes on,
+     * so a later `Operating Point` plot of the same file is read as a further
+     * dataset, under the mismatch rule like any other, where it used to be
+     * lost.
+     *
+     * AND WHAT THE READ GOING ON COSTS A FILE WITH A DAMAGED HEADER. A header
+     * line that cannot be read (`No. of Data Rows :`, `No. Variables:` or
+     * `No. Points:` holding no number) refuses the whole file and clears every
+     * loaded database, in a plot this function skips as in one it takes. While
+     * the read ended at the totals, such a line standing behind them -- in the
+     * totals' own header after its `No. Variables:` line, or in any later
+     * plot -- was never met: the caller was given the operating point and what
+     * was loaded stayed loaded. It is met now, so that file is refused and the
+     * databases loaded before it are gone. With the totals FIRST and a damaged
+     * `No. Points:` line in the operating point's header the totals used to
+     * answer; that read is refused now and clears the databases too, as a read
+     * of that operating point alone always did. Rows (each drives a `No. Points:`
+     * line): the files op_inb, op_in_nsb and in_opb of band M and its M-wipe
+     * rows; op_trb there is the same refusal on a file that holds no totals,
+     * where nothing moved.
+     *
+     * Fenced by band M of tests/headless/test_raw_ascii_point_bounds.tcl. */
     else if(!strncmp(line, "Plotname:", 9) && strstr(lowerline, "integrated noise")) {
       if(!type) type = "op";
       else if(!strcmp(type, "noise")) {
         sim_type = "noise";
       }
-      if(!strcmp(type, "op")) sim_type = "op";
+      if(!strcmp(type, "op")) {
+        if(integ_is_op) sim_type = "op";
+        else integ_held = 1;
+      }
       dbg(dbglev, "read_dataset(): op sim_type=%s\n", sim_type ? sim_type : "<NULL>");
     }
     else if(!strncmp(line, "Plotname:", 9) &&
@@ -1234,9 +1344,49 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
     if(sim_type && !strncmp(line, "Variables:", 10)) {
       variables = 1 ;
     }
+    if(sim_type) taken = 1; /* issue 1657: this pass has a plot of its own */
     my_free(_ALLOC_ID_, &line);
   } /*  while((line = my_fgets(fd, NULL))  */
 
+  /* ISSUE 1657, THE SECOND PASS (the rule is above the `integrated noise` arm).
+   * The caller asked for "op", the pass ran to the end of the file, took no
+   * plot and held an Integrated Noise plot back: the totals are this file's
+   * answer, as they always were. Run the pass again from where it began, with
+   * that arm answering.
+   *
+   * WHAT THE FIRST PASS LEFT BEHIND, and why nothing read has to be thrown
+   * away. A pass that took no plot never had `sim_type` set, and every write to
+   * `raw` in the loop is behind `sim_type` -- the names, the values, npoints,
+   * nvars, the hash table, datasets, raw->sim_type -- with this exception: a
+   * casemode line standing before any `Plotname:` is the file's own and is
+   * recorded while `sim_type` is still NULL. That field is put back to what it
+   * was on entry, so the second pass meets the line as a first pass does. The
+   * loop's own locals are put back to their initial values. `lowerline` is a
+   * buffer the loop reuses; `line` is NULL here because my_fgets() answered
+   * NULL, and `varname` is NULL because it is only allocated for a taken plot.
+   * `type` still holds what the caller asked.
+   *
+   * A pass that stopped at a malformed header went to read_dataset_done and
+   * never gets here; one that stopped at a malformed block had taken a plot.
+   * If the stream cannot be put back the read ends as a read that found
+   * nothing ends. */
+  if(op_asked && !integ_is_op && integ_held && !taken && !xfseek(fd, startpos, SEEK_SET)) {
+    dbg(dbglev, "read_dataset(): no operating point in the file: the integrated noise plot answers op\n");
+    integ_is_op = 1;
+    integ_held = 0;
+    variables = 0;
+    done_points = 0;
+    n = 0;
+    done_header = 0;
+    ac = 0;
+    d0 = 0;
+    npoints = 0;
+    nvars = 0;
+    seen_plotname = 0;
+    sim_type = NULL;
+    raw->hdr_case_mode = hdr_case_mode_on_entry;
+    goto read_dataset_pass;
+  }
 
   /* no analysis was found: delete */
   if(exit_status != 1) {
@@ -4295,8 +4445,21 @@ static Int_hashentry *raw_lookup_name(Raw *raw, const char *name)
  *   3  the same two, v()-wrapped                MidNode -> v(MidNode) -> v(midnode)
  *   4  the same two, with an `i(v.x` prefix     i(v.x1.vp) -> i(x1.vp)
  *      rewritten to `i(`
+ *   5  rungs 1 to 4 once more, on the query     i(x1.xm1:d) -> i(x1.xm1.d)
+ *      with every `:` written as `.`
  *
- * Rung 2 (and the folded half of 3 and 4) is the whole of the case
+ * Rung 5 exists because read_dataset() stores every `:` of a variable name as
+ * `.` (its Xyce hierarchy-separator transform), while a caller may hold the name
+ * from the other side of that transform: ngspice writes a `.probe` terminal
+ * current as `i(x1.xm1:d)`, and that file spelling is what an ASE-L Outputs row
+ * or a Calculator expression carries. A miss here is silent for two consumers --
+ * `xschem raw value` answers an empty string and `xschem raw add` registers a
+ * column of zeros -- so the file spelling has to resolve, not merely be refused.
+ * It runs LAST and only for a query that holds a `:`: a name rungs 1 to 4
+ * resolve never reaches it, and neither does a colon-free query.
+ * The stored names keep their dots; this is a lookup rung, not a rename.
+ *
+ * Rung 2 (and the folded half of 3, 4 and 5) is the whole of the case
  * insensitivity the deleted read-path fold used to provide, and it is
  * suppressed for a `distinguish` database (Raw.case_sensitive).
  *
@@ -4324,47 +4487,68 @@ static Int_hashentry *raw_lookup_name(Raw *raw, const char *name)
  * `raw switch`, which is a different answer to the same question.
  * Splitting the function is all that keeps that honest: there is still exactly
  * one ladder, and the two entry points differ only in which Raw they ask. */
-int get_raw_index_in(Raw *raw, const char *node, Int_hashentry **entry_ret)
+
+/* Rungs 1 to 4 of the ladder above for ONE spelling of the query: the entry of
+ * the stored name it resolves to, or NULL. get_raw_index_in() runs it on the
+ * caller's spelling and, for rung 5, on the dotted one. */
+static Int_hashentry *raw_lookup_rungs(Raw *raw, const char *node)
 {
   char vnode[512];
   Int_hashentry *entry;
 
-  dbg(1, "get_raw_index_in(): node=%s\n", node);
-  if(entry_ret) *entry_ret = NULL;
-  if(raw) {
-    entry = raw_lookup_name(raw, node);              /* rungs 1 and 2 */
-    if(!entry) {                                     /* rung 3: v() wrap */
-      my_snprintf(vnode, S(vnode), "v(%s)", node);
-      entry = raw_lookup_name(raw, vnode);
-    }
-    /* Rung 4: ngspice names the current of a voltage source inside subcircuit
-     * x1 `i(v.x1.vp)` in some versions and `i(x1.vp)` in others; drop the `v.`.
-     * The prefix test is now case-INSENSITIVE and ANCHORED at offset 0.
-     *
-     * WHY case-insensitive, stated the right way round (an earlier revision of
-     * this comment had the history backwards): the old ladder reached this rung
-     * in ANY casing, because the in-place strtolower() two rungs up had already
-     * destroyed the query's case -- `I(V.X1.VP)` arrived here as `i(v.x1.vp)`.
-     * What broke the rung was item 1, which stopped folding the STORED name: the
-     * lowercased probe `i(x1.vp)` no longer matched a stored `i(X1.Vp)`. The
-     * ladder no longer mutates the query, so the test must be case-blind against
-     * the caller's own spelling, and the rewritten name goes back through
-     * raw_lookup_name() so the folded rung can still find a stored `i(X1.Vp)`.
-     *
-     * ANCHORED: the old strstr() matched anywhere but then rewrote inode[2] and
-     * inode[3] regardless, so a match at any other offset produced a garbage
-     * string -- e.g. "xi(v.x1.vp)" probed "i(.x1.vp)". Anchoring removes only
-     * that garbage path; no name it could ever have found is lost. A database
-     * that really does store the garbage spelling is what test check CS39f
-     * measures: the anchored form declines it, an unanchored one resolves it. */
-    if(!entry && !my_strncasecmp(node, "i(v.x", 5)) {
-      my_snprintf(vnode, S(vnode), "i(%s", node + 4);
-      entry = raw_lookup_name(raw, vnode);
-    }
-
-    if(entry_ret) *entry_ret = entry;
-    if(entry) return entry->value;
+  entry = raw_lookup_name(raw, node);                /* rungs 1 and 2 */
+  if(!entry) {                                       /* rung 3: v() wrap */
+    my_snprintf(vnode, S(vnode), "v(%s)", node);
+    entry = raw_lookup_name(raw, vnode);
   }
+  /* Rung 4: ngspice names the current of a voltage source inside subcircuit
+   * x1 `i(v.x1.vp)` in some versions and `i(x1.vp)` in others; drop the `v.`.
+   * The prefix test is now case-INSENSITIVE and ANCHORED at offset 0.
+   *
+   * WHY case-insensitive, stated the right way round (an earlier revision of
+   * this comment had the history backwards): the old ladder reached this rung
+   * in ANY casing, because the in-place strtolower() two rungs up had already
+   * destroyed the query's case -- `I(V.X1.VP)` arrived here as `i(v.x1.vp)`.
+   * What broke the rung was item 1, which stopped folding the STORED name: the
+   * lowercased probe `i(x1.vp)` no longer matched a stored `i(X1.Vp)`. The
+   * ladder no longer mutates the query, so the test must be case-blind against
+   * the caller's own spelling, and the rewritten name goes back through
+   * raw_lookup_name() so the folded rung can still find a stored `i(X1.Vp)`.
+   *
+   * ANCHORED: the old strstr() matched anywhere but then rewrote inode[2] and
+   * inode[3] regardless, so a match at any other offset produced a garbage
+   * string -- e.g. "xi(v.x1.vp)" probed "i(.x1.vp)". Anchoring removes only
+   * that garbage path; no name it could ever have found is lost. A database
+   * that really does store the garbage spelling is what test check CS39f
+   * measures: the anchored form declines it, an unanchored one resolves it. */
+  if(!entry && !my_strncasecmp(node, "i(v.x", 5)) {
+    my_snprintf(vnode, S(vnode), "i(%s", node + 4);
+    entry = raw_lookup_name(raw, vnode);
+  }
+  return entry;
+}
+
+int get_raw_index_in(Raw *raw, const char *node, Int_hashentry **entry_ret)
+{
+  Int_hashentry *entry = NULL;
+
+  dbg(1, "get_raw_index_in(): node=%s\n", node);
+  if(raw) {
+    entry = raw_lookup_rungs(raw, node);             /* rungs 1 to 4 */
+    /* Rung 5: the query spells a `:` that read_dataset() stored as `.`. One retry,
+     * on a copy holding no `:` at all, so there is nothing left to retry. The copy
+     * is on the heap for raw_fold_key()'s reason: a name has no upper bound, and a
+     * truncated copy would ask for a different name. */
+    if(!entry && strchr(node, ':')) {
+      char *dotted = NULL, *p;
+      my_strdup2(_ALLOC_ID_, &dotted, node);
+      for(p = dotted; *p; ++p) if(*p == ':') *p = '.';
+      entry = raw_lookup_rungs(raw, dotted);
+      my_free(_ALLOC_ID_, &dotted);
+    }
+  }
+  if(entry_ret) *entry_ret = entry;
+  if(entry) return entry->value;
   return -1;
 }
 

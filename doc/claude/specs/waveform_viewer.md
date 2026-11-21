@@ -370,7 +370,10 @@ Full detail: `doc/claude/issues/0154-ase-cannot-plot-auto-named-net.md`.
 An UNLABELED net carries the engine's marker name `#netN` (`get_unnamed_node`,
 `netlist.c`) and the netlister emits it **without** the marker (`V1 net1 GND`).
 Clicking one in Select On Design / Direct Plot used to print the
-"v1 queues source currents only" notice and plot nothing. Two causes:
+"v1 queues source currents only" notice and plot nothing. (That was the miss
+notice of the time; since issue 1724 it reads "nothing to queue there — click
+a wire or a net label for a voltage, an instance pin for its terminal current,
+or a voltage source/ammeter for its current".) Two causes:
 
 - the picker resolved the net through `xschem flylines at`, and fly-lines rule
   **A6 deliberately excludes `#` nets** (a `#netN` cluster is unique per physical
@@ -397,6 +400,86 @@ fails silently.
 also contaminated on its first call (issue 0154's adjacent-defect list).
 Unchanged: a BUS pick still emits a single invalid `v(a[1:0])`, and descended
 picking still emits an unqualified name.
+
+## Terminal currents from a pin click (issue 1724, 2026-11-19)
+
+Full detail: `doc/claude/specs/ase_l.md`, "A click on a device pin queues its
+terminal current" (the pick) and R-OUT17 (the deck and the report).
+
+- In Select On Design and in Direct Plot a click **on a device pin** queues the
+  current into that terminal, `i(<path>:<tname>)` (`i(x1.xm1:d)`, `i(r1:n1)`).
+  A click on a source's or an ammeter's body is still its branch current, and
+  a click on a wire, off the pin's own square, is still the wire's voltage.
+  While the mode is up the design window's prompt names the pin a click would
+  take, as long as the pointer is in the window the mode is on, and a click
+  in a window that does not show the session's design queues nothing and
+  says so (ase_l.md T12).
+- **Direct Plot plots a terminal only if the last run saved it.** Direct Plot
+  writes no session row, so it adds no probe to a deck. The click queues the
+  trace when the session's results file lists the vector, and otherwise says
+  *"ase: terminal current 'i(x1.xm1:d)' is not in this session's results"*
+  and why, where that is known (`ase::ui::sod_terminal_pick`,
+  `ase::probe_absent_groups`; ase_l.md T9): *"…: <program>, the simulator of
+  the last run, cannot save it. <which registered simulator can, and where to
+  pick it>"* when the last run's report said so (ending *"<entry> is picked
+  now — run again."* once the session has picked one known able); the reason
+  that report gave for any other terminal; *"…: it is set to be saved, and
+  these results are from before that — run again."* (or, where that cannot be
+  told, *"… but these results do not hold it — run again."*; with no results
+  at all, *"… and this session has no results yet — run."*) for a row that is
+  already set -- ending, for a terminal below the top level when the session's
+  simulator is already known unable, with that program, that it cannot save
+  the current, and which registered one can, in place of *"run again"*; and
+  for a terminal nothing is known about, *"… — pick it under Outputs > To Be
+  Saved > Select On Design and run again"*. This is the terminal's form of
+  item 14's finding above, that Direct Plot needs the net saved.
+- **Except on the pin of a voltage source or an ammeter.** When that pin's
+  terminal is not in the results, or cannot be named, the click plots the
+  source's own branch current `i(v1)`, as a click on its body does
+  (`ase::ui::sod_terminal_as_source`). Every run holds that current, and it
+  is what the same click plotted before pins were picked. On the source's
+  first pin, alone on its point, nothing more is said. On its second pin the
+  trace is the negative of that pin's own current (`i(v1)` is `i(v1:n1)` and
+  the negative of `i(v1:n2)`), and the click says so; on a pin that is
+  neither (a controlling pin of a controlled source) it says that the trace
+  is not that pin's current; on a point shared with another device's pin it
+  names that pin and says it took the source's current
+  (`ase::ui::sod_source_standin_notes`; the sentences are in ase_l.md T9).
+  If the window Direct Plot is on is closed with traces queued, none is
+  plotted and the CIW says how many (ase_l.md T12).
+- **The name in the viewer has a dot.** ngspice writes the vector as
+  `i(x1.xm1:d)`; `read_dataset()` stores every `:` of a variable name as `.`,
+  so `xschem raw list` and the signal browser show `i(x1.xm1.d)`. A trace
+  expression in either spelling resolves: `wviewer::name_rungs` appends the
+  dotted spelling's candidates for a token that holds a `:`, mirroring rung 5
+  of `get_raw_index_in()` (`doc/claude/specs/raw_case_mode.md` §9).
+- **The picked pin carries an ellipse in the trace's colour.** The pick hands
+  the plot queue the pin, `{<instance index> <pin index>}` of the sheet shown,
+  and `ase::ui::dp_hilight terminal <pin> <layer>` runs `xschem pin_marker add
+  -layer <layer> -tag plot` (`doc/claude/specs/pin_selection.md` §4.7). The
+  layer is the one `ase::ui::dp_queue` takes from `wviewer::predict_colors`
+  and hands to `plot_signals`, so the ellipse and the trace cannot disagree:
+  measured with the real viewer after a real click and a real ESC, the
+  trace's `color` is the marker's layer and the marker's pixels are that
+  layer's colour. Any other token under kind `terminal` (the vector's name, a
+  net's name) answers 0 and asks the engine nothing: handed to
+  `hilight_netname` such a word would colour nothing, or an unrelated net of
+  that name. The ellipse stays past ESC, as the net and source colours of
+  issue 0153 do, and `xschem unhilight_all` clears it with them, in the
+  window it is given in and in the windows linked to it by a descend. The
+  source stand-in above colours the source's body and marks no pin.
+- **Only Direct Plot's ellipse has its trace's colour, and only while that
+  trace is there** (declared). A pin picked under Outputs > To Be Plotted has
+  the light-green ellipse of a saved one, which goes when the mode ends, and
+  its waveform, plotted after the run, has the viewer's next colour. And a
+  Direct Plot ellipse keeps its colour until the highlights are cleared: after
+  a run whose plot replaces the viewer's traces (a row with Plot ticked,
+  destination Replace) it shows the colour of a trace that is gone, or that
+  another signal now has, as a Direct Plot net colour does.
+- **In the Signal Browser** a terminal current files under a node named after
+  its device and is labelled by its terminal (`d:i`, `in_p:i`;
+  `doc/claude/specs/waveform_signal_browser_two_pane.md` §5.4). `Descend to
+  here` on such a node is the device ending of *Hierarchy sync*, below.
 
 ## X is shared, Y is per-strip (issue 0150, 2026-07-25)
 
@@ -1646,7 +1729,9 @@ Full contract: `doc/claude/specs/waveform_viewer_modes.md` §12. As shipped:
 `Descend to here` moves the ASE-L session's **schematic** window to the point in
 the hierarchy the selected Signal Browser row(s) name, raising and activating
 that window — or leaves it *exactly* where it started, with a reason, if any
-step fails. Entry points: the browser's RMB menu (the slot item 10 reserved),
+step fails. (One ending is neither: a row that names a DEVICE takes the window
+to the device's parent sheet and selects the device there — *A path that ends
+in a device*, below.) Entry points: the browser's RMB menu (the slot item 10 reserved),
 `View > Descend to here`, and `E` (Shift-e) on the `WaveViewer` bindtag **and**
 on the tree widget. All Tcl; no C was added (settled decision 8).
 
@@ -1692,6 +1777,48 @@ all.
    `sch_path` *before* `load_schematic()`, so a failed load leaves the tree one
    level deep while returning 0. The rollback is the same walk primitive run
    with rollback off, back to the recorded start.
+
+### A path that ends in a device (issue 1724, 2026-11-19)
+
+A terminal current `i(x1.xm9.d)` files under the path `x1.xm9`, and `xm9` is a
+transistor: a place on its parent's sheet, with no sheet of its own. Before
+this the walk answered *"no instance 'xm9'"* for a transistor that is on the
+sheet (the sheet calls it `M9`, the deck `XM9`), or *"descend refused"*, and
+rolled back. What changed, all in `src/wave_viewer.tcl`:
+
+1. **A third tier in the resolver.** When no instance is called the segment in
+   any case, the resolver takes the ONE instance that netlists under that
+   name. The netlisted name is `ase::inst_path_segment`'s answer, the reader
+   the schematic → browser direction already uses (issue 0319), so the two
+   directions cannot disagree about what an instance is called. It runs no
+   netlister and no symbol's `tcleval(...)` format. The scan behind it
+   (`hier_scan`) lists every instance of the current sheet that is called the
+   segment or netlists as it; `hier_device` narrows that to the best tier,
+   the deck's name first.
+2. **The walk can stay.** `hier_walk` takes a third argument `leaf` (default
+   0, everything above unchanged), which `browser_descend_to` passes. With it
+   on, when the LAST segment resolves and the engine refuses the descend as
+   not a block (`xschem get descend_error` answers `not-descendable:<type>`,
+   read by `hier_no_sheet`), or when the last segment does not resolve because
+   SEVERAL instances could be it, the walk does not roll back. `hier_stay`
+   checks, by readback, that the window is standing on the parent of that
+   segment, clears the selection, selects the one device by index, reads the
+   selection back, and the walk answers a fourth shape,
+   `{device <parent path> <instance names> <selected 0|1>}`.
+3. **Never the wrong instance.** Several candidates select none, and the
+   sentence names them all (`hier_device_msg`): *"'xm9' is a device with no
+   sheet of its own; selected M9 at the top level"*, or *"'xm5' could be any
+   of 2 instances at the top level (M5, m5); none is selected"*.
+   `browser_descend_to` answers 1 only when the device is really selected.
+
+Still an error with a rollback, as before: a last segment nothing on the sheet
+answers to; a descend refused for any other reason (`busy`, a schematic or a
+symbol that did not load); a device in the middle of a path. Two shapes the
+scan cannot see, both misses and never another instance: a format that writes
+a literal letter in front of `@name` (`X@name …`), and the second element of a
+format that writes two lines. A block whose symbol has no schematic file is
+refused by the engine as a failed load, not as "not a block", and stays an
+error. Rows BV01 and up of `tests/headless/test_wave_sigbrowser_panes.tcl`.
 
 ### The origin guard
 

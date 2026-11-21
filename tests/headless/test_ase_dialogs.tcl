@@ -3001,6 +3001,16 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   } else {
     set cv   $::ase::ui::sod($key,canvas)
     set prev $::ase::ui::sod($key,prevesc)
+    # the double click is seized too, over the editor's own script, which
+    # the canvas must have back when the mode ends
+    set prevdbl NORECORD
+    if {[info exists ::ase::ui::sod($key,prevdbl)]} { set prevdbl $::ase::ui::sod($key,prevdbl) }
+    set heldbl  [expr {[bind $cv <Double-Button-1>] eq [bind $cv <ButtonPress-1>] ? 1 : 0}]
+    # ...and so is the motion with the left button held, swallowed while the
+    # mode is up
+    set prevmotion NORECORD
+    if {[info exists ::ase::ui::sod($key,prevmotion)]} { set prevmotion $::ase::ui::sod($key,prevmotion) }
+    set heldmotion [bind $cv <B1-Motion>]
     # the test_ase_interact I7 pattern via send_key: done = the seized
     # Key-Escape binding reverted (restored by the product's sod_end)
     send_key $cv <Key-Escape> {[bind $cv <Key-Escape>] eq $prev}
@@ -3008,6 +3018,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [expr {[bind $cv <Key-Escape>] eq $prev ? 1 : 0}] 1
     check "GE16 canvas Escape binding restored verbatim" \
       [bind $cv <Key-Escape>] $prev
+    check "GE16 the double click was the mode's while it was up, and is the editor's own script again (held; the editor's script was what the mode kept; the slot now)" \
+      [list $heldbl [string match {xschem callback %W -3 *} $prevdbl] \
+            [expr {[bind $cv <Double-Button-1>] eq $prevdbl ? 1 : 0}]] {1 1 1}
+    check "GE16 the motion with the left button held was swallowed while the mode was up, and the slot holds what the mode kept for it again (the slot while up; the slot now against the record)" \
+      [list $heldmotion [expr {[bind $cv <B1-Motion>] eq $prevmotion ? 1 : 0}]] {break 1}
   }
 
   } geerr]} {

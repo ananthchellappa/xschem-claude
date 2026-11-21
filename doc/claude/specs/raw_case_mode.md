@@ -35,6 +35,7 @@ and the other spec cite these sections by number.
 | **Xyce: no reader-side fold, and it is UNVERIFIED** | §5 | 1 |
 | the AC `v(` prefix test, and why it had to become case-blind | §8 | 1 |
 | the one lookup ladder, the separate lazy alias index, D2's decline | §9 | 2 |
+| why `i(x1.xm1:d)` resolves when the stored name is `i(x1.xm1.d)` (rung 5) | §9, its rung-5 ruling | issue 1724 |
 | how a **file's** mode is worked out — four sources — and the global floor | §10 | 3 |
 | the Ctrl-K / gaw senders, and the Xyce uppercase **fallback** | §11 | 4 |
 | the viewer's Tcl mirror and its `Options ▸ Case Mode` control | §12 | 5 |
@@ -357,8 +358,9 @@ every raw database, whatever reader built it. Item 2 rewrote it. Given a node:
 | 2 | the **case-folded alias** | `v(midnode)`, `V(MIDNODE)` → `v(MidNode)` |
 | 3 | rungs 1–2 on `v(<node>)` | `MidNode` → `v(MidNode)` → `v(midnode)` |
 | 4 | rungs 1–2 with a leading `i(v.x` rewritten to `i(x` (the `x` is part of the prefix, and it is anchored) | `i(V.X1.Vp)` → `i(X1.Vp)` |
+| 5 | rungs 1–4 once more, on the query with every `:` written `.`; tried last, and only for a query that holds a `:` (issue 1724, ruling below) | `i(x1.xm1:d)` → `i(x1.xm1.d)` |
 
-Rung 2 (and the folded half of 3 and 4) is the whole of the case
+Rung 2 (and the folded half of 3, 4 and 5) is the whole of the case
 insensitivity the deleted read-path fold used to buy. It is suppressed for a
 `distinguish` database (`Raw.case_sensitive`, §2) and by the collision rule
 below.
@@ -488,6 +490,73 @@ alike — measured: a deliberately unanchored rung left the whole suite ALL PASS
 The fixture therefore stores a second column spelled `i(.x1.vp)`, which is
 exactly what the unanchored rewrite produces from that query: `CS39h` proves the
 bait resolves exactly (index 2), and `CS39f` is red the moment the anchor goes.
+
+### RULING — rung 5: a `:` in the query is the `.` the reader stored (issue 1724, 2026-11-19)
+
+`read_dataset()` (`src/save.c`) stores every `:` of a variable name as `.` (its
+Xyce hierarchy-separator transform; check `CS53d`). ngspice writes the current
+into a terminal, the vector a `.probe I(x1.xm1,d)` card makes, as `i(x1.xm1:d)`,
+and that file spelling is what an ASE-L Outputs row and a Calculator expression
+carry. Measured before the rung, on the operating-point fixture
+`tests/headless/data/probe_1724_op.raw`:
+
+```
+xschem raw list                -> ... i(x1.xm1.d) ...   (the stored name)
+xschem raw index {i(x1.xm1.d)} -> 4
+xschem raw index {i(x1.xm1:d)} -> -1                    (4 with the rung)
+```
+
+A miss here is silent for two consumers: `xschem raw value` answers the empty
+string, and `xschem raw add` registers a column of zeros. So the file spelling
+has to resolve, not merely be refused.
+
+- **The rung.** After rungs 1–4 have all declined the caller's own spelling,
+  and only if the query holds a `:`, rungs 1–4 run once more on a copy with
+  every `:` written `.` (`raw_lookup_rungs()`, called twice by
+  `get_raw_index_in()`). One retry: the copy holds no `:`.
+- **It runs last.** A name that rungs 1–4 resolve never reaches it, and a
+  colon-free query never reaches it, so no lookup that answered before answers
+  differently.
+- **The fold and D2 apply to the dotted spelling as to any other.**
+  `I(X1.XM1:D)` resolves on a folding database and misses on a `distinguish`
+  one.
+- **Every `:` is mapped**, so `i(x1:xm1:d)` resolves too, and `i(v.x1:in)`
+  resolves through rung 4 of its dotted spelling. What still misses: a terminal
+  the file does not hold (`i(x1.xm1:zz)`, `i(x1.nope:d)`), the bare
+  `x1.xm1:d`, and a stray colon (`out:`).
+- **A probe's stored name can be the name rung 4 makes.** A probe on port `vp`
+  of the block `x1` is written `i(x1:vp)` and stored `i(x1.vp)`, and rung 4
+  rewrites a query for the source `i(v.x1.vp)` to exactly that. So where a
+  voltage source inside a block has the same name as one of the block's ports,
+  and the source's own current was not saved, a query for the source's current
+  answers the PORT's terminal current. **Measured** with the fork simulator on
+  a block whose port and internal source are both `vp` and carry different
+  currents: `xschem raw index {i(v.x1.vp)}` answered the probe's column, and
+  its value was the port's current; with `.save i(v.x1.vp)` in the deck the
+  exact name wins and the answer is the source's. The same in `raw case 1`, in `wviewer::name_rungs`
+  and in `calc::eval_text`. Declared, not changed: rung 4 predates the probe.
+- **It is a lookup rung, not a rename.** The stored names keep their dots:
+  `xschem raw list` and every browser show `i(x1.xm1.d)`. ASE-L's own file
+  readers (`ase::raw_vectors_present`, `ase::raw_scalars`) read the file's
+  header and keep the colon.
+- **The mirror.** `wviewer::name_rungs` appends the dotted spelling's
+  candidates after the caller's own, and only for a token that holds a `:`,
+  so its list for a colon-free token is what it was. `wviewer::name_lookup`,
+  `wviewer::validate_rpn`, `wviewer::name_fold_candidates` and
+  `wviewer::repair_current_token` read those rungs and inherit it: a colon
+  current that resolves is kept, and one whose case alone is wrong is repaired
+  to the stored spelling.
+
+Checks: the `LR` rows of `tests/headless/test_pin_at_1724.tcl`. The agreement
+rows compare `xschem raw index` with `wviewer::name_lookup` in both directions,
+over tokens derived from the committed fixture's own names plus decoys, with
+folding on and off; `LR5` pins the colon-free lists; `LR7` holds the consumers
+the rung exists for (`xschem raw value`, `xschem raw add` giving the data and
+not zeros, `wviewer::validate_rpn`, `calc::eval_text`); `LR8` fences "it runs
+last" on a database that holds a colon-named column beside its dotted twin
+(`xschem raw add` makes one): the colon spelling is its own column, and the
+twin's values do not move. A build that tried the dotted spelling first passed
+every row the suite had before it.
 
 ### The `@dev[param]` shape needs no rung of its own
 
@@ -1189,6 +1258,14 @@ rewrite, both hit:
   rewrite of `xi(v.x1.vp)` produces. This is item 2's `CS39f` bait on the Tcl
   side; without it both sides refuse for a boring reason and the check is
   vacuous.
+
+**Rung 5 is mirrored as well** (issue 1724, 2026-11-19; §9's ruling on it).
+`wviewer::name_rungs` appends `[wviewer::name_rungs [string map {: .} $tok]]`
+when, and only when, the token holds a `:`. Appended, not inserted, because the
+C runs rung 5 after rungs 1–4 have declined the caller's own spelling; and a
+colon-free token earns nothing, so the lists `CS89b`–`CS89g` pin are what they
+were. Its agreement rows are not in the `CS90*` leg: they live with the rung's
+other checks, the `LR` rows of `tests/headless/test_pin_at_1724.tcl`.
 
 **RULING — the fold key is ASCII-only, because the authority is byte-wise.**
 `wviewer::fold_key` is a 26-pair `string map`, not `string tolower`. The engine

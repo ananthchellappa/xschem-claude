@@ -64,6 +64,11 @@
 # GROUP PREFIX: the two-pane skeleton is `BW`, never reused. Numbers are BLOCKED
 # by arm: 01-19 source/pure (BOTH arms), 20-39 the throwaway toplevel (X only).
 #
+# A SECOND BAND, `BV` (issue 1724), sits at the foot of the file: "Descend to
+# here" on a DEVICE node. BV01-BV15 drive the walk on a scratch design and need
+# no Tk (both arms); BV20-BV27 drive the real command with a real viewer and a
+# real design window (X only). The band's own header says what it claims.
+#
 # ⚠ THE ARM STATEMENT. The `--nogui` arm runs BW01-BW14 only — the source greps.
 # EVERY shape claim (the panedwindow, the scrollbars, browse-mode, the sash
 # fraction, the checkbuttons) needs real Tk and real X, so A GREEN `--nogui` RUN
@@ -1655,6 +1660,451 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 } else {
   puts "SKIPPED: BW2x/BW3x group (Tk/X arm only)"
 }
+
+# ============================================================================
+# BV — "DESCEND TO HERE" ON A DEVICE NODE (issue 1724)
+#
+# A terminal current `i(x1.xm9.d)` files under the path `x1.xm9`, so the
+# browser's tree has a node for the transistor, and "Descend to here" on it
+# used to fail: `no instance 'xm9'` for a FET the sheet calls `M9` (its
+# `spiceprefix` makes the deck's `XM9`), or `descend refused` with the design
+# window rolled back to where it was. A device is a place on its PARENT's
+# sheet. The command now goes there and selects it.
+#
+# WHAT THE BAND CLAIMS
+#   BV02  wviewer::hier_device finds, for every element the fixture's instances
+#         write into the deck, the instance that wrote it, or nothing -- NEVER
+#         another instance. The comparand is the Select-On-Design pick's own
+#         expansion of each instance's format (bv_elems), a different mechanism
+#         from the one under test (`ase::inst_path_segment`).
+#   BV05-BV08  the walk with `leaf` on stays on the parent sheet with the device
+#         selected; two instances that could be the segment select NONE; the
+#         deck's name beats the instance's own.
+#   BV04, BV09  what did NOT change: the default walk, a real block, a name
+#         nothing answers to.
+#   BV13, BV14  the answer's read-backs: the selection that did not take, the
+#         sheet the walk is not standing on, the index a row is selected by.
+#   BV15  a descend refused for any reason other than not-a-block is not a
+#         device, and neither is a device in the middle of a path.
+#   BV20-BV27  the same through wviewer::browser_descend_to and the real menu
+#         entry, read back on the design window BY NAME.
+#
+# DECLARED MISSES, asserted as misses (BV02's `none` leg, BV09): a format that
+# writes a literal letter in front of `@name`, and the second element of a
+# two-line format. Such a node still says `no instance`.
+#
+# THE FIXTURE IS WRITTEN INTO THE SCRATCH DIRECTORY, never a repo sheet, and
+# BV12 asserts the band left it unmodified.
+# ============================================================================
+proc bv_w {path text} { set fp [open $path w] ; puts -nonewline $fp $text ; close $fp }
+proc bv_home {} {
+  for {set k 0} {$k < 20} {incr k} {
+    set c 0
+    catch {set c [xschem get currsch]}
+    if {![string is integer -strict $c] || $c <= 0} { break }
+    catch {xschem go_back}
+  }
+  catch {xschem unselect_all}
+}
+# the selected instances as a plain list of names; `ERR` when it cannot be read
+proc bv_sel {} {
+  if {[catch {xschem selected_set} s]} { return ERR }
+  if {[catch {lrange $s 0 end} l]} { return ERR }
+  return $l
+}
+proc bv_at {} {
+  return [list [pcall xschem get sim_sch_path] [pcall xschem get currsch] [bv_sel]]
+}
+# THE COMPARAND: the element name(s) instance `i` writes into the deck -- the
+# first word of each element line its own format expands to, by the chain the
+# Select-On-Design pick names a terminal with (src/ase_window.tcl). `ERR:...`
+# as a value when a step raises, so a broken comparand reddens a row by name.
+proc bv_elems {i} {
+  if {[catch {
+    set out {}
+    set fmt [lindex [ase::ui::sod_term_format $i] 0]
+    if {[string trim $fmt] ne {}} {
+      set pins [ase::ui::sod_term_pins $i]
+      set marked [ase::ui::sod_term_rewrite $pins [ase::ui::sod_term_pieces $fmt]]
+      foreach l [ase::ui::sod_term_lines $i $marked] { lappend out [lindex $l 0] }
+    }
+  } err]} { return [list "ERR:$err"] }
+  return $out
+}
+
+set bv_lib [file join $scratch bvlib]
+file mkdir $bv_lib
+set bv_symh "v {xschem version=3.4.8RC file_version=1.3}\nG {}"
+set bv_symt "V {}\nS {}\nF {}\nE {}\nL 4 -40 -20 40 -20 {}\nL 4 -40 20 40 20 {}"
+set bv_schh "v {xschem version=3.4.8RC file_version=1.3}\nG {}\nK {}\nV {}\nS {}\nF {}\nE {}"
+set bv_pins "B 5 17.5 -32.5 22.5 -27.5 {name=D dir=inout}\nB 5 -22.5 -2.5 -17.5 2.5 {name=G dir=in}\nB 5 17.5 27.5 22.5 32.5 {name=S dir=inout}\nB 5 17.5 -2.5 22.5 2.5 {name=B dir=in}\n"
+# a format that writes a LITERAL prefix, and one that writes TWO elements
+bv_w [file join $bv_lib bv_lit.sym] "$bv_symh\nK {type=nmos\nformat=\"X@name @pinlist nf W=1\"\ntemplate=\"name=M1\"}\n$bv_symt\n$bv_pins"
+bv_w [file join $bv_lib bv_two.sym] "$bv_symh\nK {type=nmos\nformat=\"@name @pinlist nm W=1u L=1u\nR@name @@D @@S 1k\"\ntemplate=\"name=M1\"}\n$bv_symt\n$bv_pins"
+bv_w [file join $bv_lib bv_blk.sym] "$bv_symh\nK {type=subcircuit\nformat=\"@name @pinlist @symname\"\ntemplate=\"name=x1\"}\n$bv_symt\nB 5 -42.5 -12.5 -37.5 -7.5 {name=in_p dir=inout}\nB 5 -42.5 7.5 -37.5 12.5 {name=in_n dir=inout}\nB 5 37.5 -2.5 42.5 2.5 {name=out dir=inout}\n"
+bv_w [file join $bv_lib bv_blk.sch] "$bv_schh
+C {devices/ipin.sym} 0 0 0 0 {name=p1 lab=in_p}
+C {devices/ipin.sym} 0 200 0 0 {name=p2 lab=in_n}
+C {devices/opin.sym} 300 100 0 0 {name=p3 lab=out}
+C {devices/res.sym} 100 50 0 0 {name=R1 value=10k}
+C {devices/nmos4.sym} 200 150 0 0 {name=M1 model=nm}
+C {devices/nmos4.sym} 400 150 0 0 {name=M2 model=nm spiceprefix=X}
+"
+# TOP, in this instance order: a source, a resistor, a prefixed FET (`M9`, the
+# deck's XM9), the two declared misses, two FETs that netlist under ONE name in
+# two cases (`M5`, `m5`), an instance CALLED `XM4` that netlists as XXM4 beside
+# the `M4` that netlists as XM4, a block, a label.
+bv_w [file join $bv_lib bv_top.sch] "$bv_schh
+C {devices/vsource.sym} 0 0 0 0 {name=V1 value=1}
+C {devices/res.sym} 200 0 0 0 {name=RT value=1k}
+C {devices/nmos4.sym} 400 0 0 0 {name=M9 model=nm spiceprefix=X}
+C {bv_lit.sym} 600 0 0 0 {name=M7}
+C {bv_two.sym} 800 0 0 0 {name=M3}
+C {devices/nmos4.sym} 1000 0 0 0 {name=M5 model=nm spiceprefix=X}
+C {devices/nmos4.sym} 1200 0 0 0 {name=m5 model=nm spiceprefix=X}
+C {devices/nmos4.sym} 1400 0 0 0 {name=XM4 model=nm spiceprefix=X}
+C {devices/nmos4.sym} 1600 0 0 0 {name=M4 model=nm spiceprefix=X}
+C {bv_blk.sym} 700 300 0 0 {name=xa}
+C {devices/lab_pin.sym} 0 -100 0 0 {name=l1 sig_type=std_logic lab=g}
+"
+set bv_path0 {} ; set bv_pfx0 1
+catch {set bv_path0 $XSCHEM_LIBRARY_PATH}
+catch {set bv_pfx0 $::spiceprefix}
+# UNQUALIFIED on purpose: the write trace that rebuilds the search path compares
+# the variable's name as it was written (test_wave_sigbrowser_0319.tcl's note).
+set XSCHEM_LIBRARY_PATH "$bv_lib:[file join $repo xschem_library]"
+set ::spiceprefix 1
+set bv_top [file join $bv_lib bv_top.sch]
+set bv_load [pcall xschem load $bv_top]
+set bv_dwin0 [pcall xschem get current_win_path]
+check {BV01 (FIXTURE) the scratch design loads at its top, its symbols resolve (a FET is an nmos, the block a subcircuit) and the spiceprefix switch is on} \
+  [list [expr {![string match ERR:* $bv_load]}] [pcall xschem get sim_sch_path] \
+        [pcall xschem get currsch] [pcall xschem getprop instance M9 cell::type] \
+        [pcall xschem getprop instance xa cell::type] $::spiceprefix] \
+  [list 1 {} 0 nmos subcircuit 1]
+
+# --- BV02: the scan against the pick's expansion, element by element --------
+set bv_all {} ; set bv_own {} ; set bv_none {} ; set bv_several {} ; set bv_wrong {}
+set bv_n [pcall xschem get instances]
+if {![string is integer -strict $bv_n]} { set bv_n 0 }
+for {set bv_i 0} {$bv_i < $bv_n} {incr bv_i} {
+  foreach bv_e [bv_elems $bv_i] {
+    lappend bv_all $bv_e
+    set bv_seg [string tolower $bv_e]
+    set bv_idx {}
+    foreach bv_r [pcall ::wviewer::hier_device $bv_seg] { lappend bv_idx [lindex $bv_r 0] }
+    if {![llength $bv_idx]} {
+      lappend bv_none $bv_seg
+    } elseif {$bv_idx eq [list $bv_i]} {
+      lappend bv_own $bv_seg
+    } elseif {[llength $bv_idx] > 1 && [lsearch -exact $bv_idx $bv_i] >= 0} {
+      lappend bv_several $bv_seg
+    } else {
+      lappend bv_wrong "$bv_seg->$bv_idx"
+    }
+  }
+}
+check {BV02 (THE COMPARAND IS REAL) the pick's expansion names every element the fixture writes, in instance order -- not a list of error sentinels} \
+  $bv_all {V1 RT XM9 XM7 M3 RM3 XM5 Xm5 XXM4 XM4 xa}
+check {BV02 (NEVER THE WRONG INSTANCE) for every element of the deck, lower-cased as a raw spells it, hier_device answers the instance that wrote it, or nothing, or several including it -- and never another one} \
+  [list $bv_wrong $bv_own $bv_none $bv_several] \
+  [list {} {v1 rt xm9 m3 xxm4 xm4 xa} {xm7 rm3} {xm5 xm5}]
+
+check {BV03 hier_resolve finds the ONE instance that netlists under a name no instance is called (xm9 is M9), still finds a name in another case, and answers NOTHING for two candidates or for a declared miss} \
+  [list [pcall ::wviewer::hier_resolve xm9] [pcall ::wviewer::hier_resolve rt] \
+        [pcall ::wviewer::hier_resolve xm5] [pcall ::wviewer::hier_resolve xm7] \
+        [pcall ::wviewer::hier_resolve {xa[3]}]] \
+  [list M9 RT {} {} VECTOR]
+
+# --- BV04: what did not change ----------------------------------------------
+bv_home
+check {BV04 (THE DEFAULT WALK IS WHAT IT WAS) without leaf a device is a refused descend and a missing name is no instance, each an err that leaves the walk at the top} \
+  [list [pcall ::wviewer::hier_walk rt] [pcall xschem get sim_sch_path] \
+        [pcall ::wviewer::hier_walk zz9] [pcall xschem get sim_sch_path]] \
+  [list {err {descend refused at 'RT'} {}} {} {err {no instance 'zz9'} {}} {}]
+bv_home
+pcall ::wviewer::hier_walk xa
+check {BV04 (STILL A ROLLBACK, AFTER REAL MOVEMENT) with leaf ON a last segment nothing answers to errs and returns to the sheet it started from: up out of xa, a miss at the top, back into xa} \
+  [list [pcall xschem get sim_sch_path] [pcall ::wviewer::hier_walk zz9 1 1] \
+        [pcall xschem get sim_sch_path] [pcall xschem get currsch]] \
+  [list {xa.} {err {no instance 'zz9'} xa} {xa.} 1]
+
+# --- BV05: the device arm, FROM ANOTHER SHEET -------------------------------
+# The start is inside `xa`, so "stays on the parent" is an ASCEND that happens
+# and is kept -- from the top it would be indistinguishable from not moving.
+bv_home
+pcall ::wviewer::hier_walk xa
+check {BV05 (THE DEVICE ARM) from inside the block, the walk to a top-level transistor ascends, STAYS at the top and leaves the transistor selected: xm9 is M9} \
+  [list [pcall ::wviewer::hier_walk xm9 1 1] [bv_at]] \
+  [list {device {} M9 1} [list {} 0 M9]]
+
+bv_home
+check {BV06 (A DEVICE INSIDE A BLOCK) the walk descends into the block and stays there with the device selected, by its own name and by the name its spiceprefix gives it} \
+  [list [pcall ::wviewer::hier_walk xa.m1 1 1] [bv_at] \
+        [pcall ::wviewer::hier_walk xa.xm2 1 1] [bv_at]] \
+  [list {device xa M1 1} [list {xa.} 1 M1] {device xa M2 1} [list {xa.} 1 M2]]
+
+# --- BV07: two instances could be it -> NONE is selected --------------------
+bv_home
+pcall xschem select instance RT
+set bv_presel [bv_sel]
+check {BV07 (TWO CANDIDATES) a segment two instances netlist under selects NEITHER, names both, and clears the selection that was there, so none-selected is true of the sheet} \
+  [list $bv_presel [pcall ::wviewer::hier_walk xm5 1 1] [bv_at]] \
+  [list RT {device {} {M5 m5} 0} [list {} 0 {}]]
+
+# --- BV08: the DECK's name beats the instance's own -------------------------
+bv_home
+set bv_r4 [pcall ::wviewer::hier_walk xm4 1 1]
+set bv_a4 [bv_at]
+bv_home
+check {BV08 (DECK NAME FIRST) xm4 is the M4 that netlists as XM4, not the instance merely CALLED XM4, which is the raw's xxm4} \
+  [list $bv_r4 $bv_a4 [pcall ::wviewer::hier_walk xxm4 1 1] [bv_at]] \
+  [list {device {} M4 1} [list {} 0 M4] {device {} XM4 1} [list {} 0 XM4]]
+
+# --- BV09: a real block, and the declared misses ----------------------------
+bv_home
+set bv_rb [pcall ::wviewer::hier_walk xa 1 1]
+set bv_ab [bv_at]
+bv_home
+check {BV09 with leaf on a REAL block is still entered, and a declared miss (a literal prefix in the format, a second element line) is still no instance with the walk back at the top} \
+  [list $bv_rb $bv_ab [pcall ::wviewer::hier_walk xm7 1 1] \
+        [pcall ::wviewer::hier_walk rm3 1 1] [bv_at]] \
+  [list {ok xa} [list {xa.} 1 {}] {err {no instance 'xm7'} {}} \
+        {err {no instance 'rm3'} {}} [list {} 0 {}]]
+
+# --- BV10: the sentences, PURE ----------------------------------------------
+set bv_m1 [pcall ::wviewer::hier_device_msg xm9 {} M9 1]
+set bv_m2 [pcall ::wviewer::hier_device_msg m1 xa M1 1]
+set bv_m3 [pcall ::wviewer::hier_device_msg xm5 {} {M5 m5} 0]
+set bv_m4 [pcall ::wviewer::hier_device_msg xm9 {} M9 0]
+check {BV10 the three sentences: a device selected on its sheet, several candidates with none selected, a device that could not be selected} \
+  [list $bv_m1 $bv_m2 $bv_m3 $bv_m4] \
+  [list "'xm9' is a device with no sheet of its own; selected M9 at the top level" \
+        "'m1' is a device with no sheet of its own; selected M1 at xa" \
+        "'xm5' could be any of 2 instances at the top level (M5, m5); none is selected" \
+        "'xm9' is a device with no sheet of its own; it is M9 at the top level, which could not be selected"]
+set bv_bad 0
+foreach bv_m [list $bv_m1 $bv_m2 $bv_m3 $bv_m4] {
+  if {[string match {*no instance*} $bv_m] || [string match {*failed*} $bv_m] || [string match ERR:* $bv_m]} { incr bv_bad }
+}
+check {BV10 ...and none of them says no instance or failed} $bv_bad 0
+
+# --- BV11: which refusals are "no sheet" ------------------------------------
+bv_home
+pcall xschem descend -inst RT
+set bv_ns1 [pcall ::wviewer::hier_no_sheet]
+set bv_why1 [pcall xschem get descend_error]
+bv_home
+pcall xschem descend -inst xa
+set bv_ns2 [pcall ::wviewer::hier_no_sheet]
+bv_home
+check {BV11 hier_no_sheet is 1 after a descend refused because the instance is not a block, with the engine's own token to show for it, and 0 after a descend that entered one} \
+  [list $bv_ns1 [string match {not-descendable*} $bv_why1] $bv_ns2] [list 1 1 0]
+
+# --- BV13: the selection is READ BACK, never assumed ------------------------
+# The select verb is made a no-op for ONE walk (the `xschem` command wrapped,
+# then put back -- the last leg says it is back). The refused descend has
+# selected M9 by then; hier_stay clears that, asks for the selection, and has to
+# notice it did not take.
+bv_home
+rename ::xschem ::bv_real_xschem
+proc ::xschem {args} {
+  if {[lindex $args 0] eq {select}} { return 0 }
+  return [uplevel 1 [linsert $args 0 ::bv_real_xschem]]
+}
+set bv_r13 [pcall ::wviewer::hier_walk xm9 1 1]
+rename ::xschem {}
+rename ::bv_real_xschem ::xschem
+set bv_a13 [bv_at]
+bv_home
+check {BV13 (THE SELECTION IS READ BACK) with the select verb a no-op for one walk the answer says the device was NOT selected, and nothing is; with the verb back the same walk selects it} \
+  [list $bv_r13 $bv_a13 [pcall ::wviewer::hier_walk xm9 1 1] [bv_at] \
+        [expr {[info commands ::bv_real_xschem] eq {}}]] \
+  [list {device {} M9 0} [list {} 0 {}] {device {} M9 1} [list {} 0 M9] 1]
+
+# --- BV14: hier_stay's own two read-backs, driven directly ------------------
+# Leg 1: a target whose parent sheet (`xa`) the design is NOT standing on --
+# nothing is answered and the selection that was there is untouched. Leg 2: at
+# the top, the one row is selected. Leg 3: the row is selected BY INDEX: its
+# name is the all-digit `1`, which the engine would read as instance number 1
+# (the resistor), while its index 2 is the transistor -- so the transistor is
+# what gets selected, and the read-back, which compares NAMES, says 0.
+bv_home
+pcall xschem select instance RT
+set bv_r14 [pcall ::wviewer::hier_stay {xa m1} [list [list 0 V1 exact exact]]]
+set bv_a14 [bv_at]
+set bv_r14b [pcall ::wviewer::hier_stay {v1} [list [list 0 V1 {} nocase]]]
+set bv_a14b [bv_at]
+check {BV14 (THE POSITION IS READ BACK, AND THE INDEX IS WHAT IS SELECTED) off the parent sheet hier_stay answers nothing and touches nothing; on it, it selects the one row; and a row whose name is all digits is selected by its index, not by that name} \
+  [list $bv_r14 $bv_a14 $bv_r14b $bv_a14b \
+        [pcall ::wviewer::hier_stay {zz} [list [list 2 1 {} nocase]]] [bv_at] \
+        [pcall xschem getprop instance 1 name] [pcall xschem getprop instance 2 name]] \
+  [list {} [list {} 0 RT] {device {} V1 1} [list {} 0 V1] \
+        {device {} 1 0} [list {} 0 M9] RT M9]
+bv_home
+
+# --- BV15: ONLY an instance that is not a block makes a device --------------
+# Two refusals that must stay errors with leaf on. The first is a descend the
+# engine declines for a reason that says nothing about the instance: its
+# dispatcher gate is raised for the one walk (`xschem set semaphore`, put back
+# and asserted back), so the verb answers 0 with the token `busy`. The second
+# is a device in the MIDDLE of a path, which is not where a walk can end.
+set bv_sem0 [pcall xschem get semaphore]
+pcall xschem set semaphore 1
+set bv_r15 [pcall ::wviewer::hier_walk rt 1 1]
+set bv_why15 [pcall xschem get descend_error]
+pcall xschem set semaphore $bv_sem0
+bv_home
+check {BV15 (ONLY A NON-BLOCK IS A DEVICE) a last-segment descend refused because the engine is busy is an err and not a device, and so is a device in the middle of a path} \
+  [list $bv_sem0 $bv_why15 $bv_r15 [pcall xschem get semaphore] \
+        [pcall ::wviewer::hier_walk rt.foo 1 1] [pcall xschem get sim_sch_path]] \
+  [list 0 busy {err {descend refused at 'RT'} {}} 0 \
+        {err {descend refused at 'RT'} {}} {}]
+bv_home
+
+# --- BV12: hygiene ----------------------------------------------------------
+check {BV12 the walks and the scans changed nothing: the design is unmodified at its top with nothing selected, and no backup sits beside the fixture} \
+  [list [bv_at] [pcall xschem get modified] [glob -nocomplain -directory $bv_lib *~*]] \
+  [list [list {} 0 {}] 0 {}]
+
+# --- BV20-BV27: THE COMMAND, a real viewer AND a real design window ---------
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+
+  set bv_defs [file join $scratch bv_library.defs]
+  bv_w $bv_defs "DEFINE bvlib $bv_lib\n"
+  set bv_had_defs [info exists XSCHEM_LIBRARY_DEFS]
+  set bv_defs0 {}
+  if {$bv_had_defs} { set bv_defs0 $XSCHEM_LIBRARY_DEFS }
+  set XSCHEM_LIBRARY_DEFS $bv_defs
+  set bv_state [file join $scratch bv_top.state]
+  pcall ase::state_save $bv_state [dict merge [ase::state_default] \
+    [dict create design [dict create lib bvlib cell bv_top view schematic]]]
+  set bv_tok [ase::session_key bvlib bv_top schematic]
+  pcall ase::session_open $bv_tok $bv_state
+  set bv_open [pcall ::wviewer::open $bv_tok]
+  set bv_vtop [pcall ::wviewer::window_for $bv_tok]
+  if {$bv_open ne 1 || $bv_vtop eq {} || [string match ERR:* $bv_vtop] || ![viewer_ready $bv_vtop]} {
+    puts "SKIPPED: BV2x group (the bv_top viewer never opened/mapped)"
+    catch {wviewer::close $bv_tok}
+  } else {
+    # the verified context switch of test_wave_sigbrowser_i11.tcl (bh_ctx_to):
+    # synchronous on the fast path, a bounded retry for the bounce an `update`
+    # can cause by delivering an Enter on the other canvas
+    proc bv_ctx_to {w} {
+      if {[xschem get current_win_path] eq $w} { return 1 }
+      catch {xschem new_schematic switch $w}
+      if {[xschem get current_win_path] eq $w} { return 1 }
+      for {set i 0} {$i < 10} {incr i} {
+        update
+        catch {xschem new_schematic switch $w}
+        if {[xschem get current_win_path] eq $w} { return 1 }
+        after 20
+      }
+      return 0
+    }
+    # where the DESIGN window is, read on it by name: {switched sim currsch sel}
+    proc bv_design {w} {
+      set ok [bv_ctx_to $w]
+      return [linsert [bv_at] 0 $ok]
+    }
+    proc bv_status {vtop} {
+      return [pcall $vtop.wvbrowser.ph cget -text]
+    }
+
+    # a raw in the VIEWER's own context, with a terminal current under each
+    # kind of node the band walks to
+    xschem new_schematic switch $bv_vtop.drw
+    pcall xschem raw new bv_e2e.raw dc vsweep 0 1.0 0.5
+    foreach bv_nm {v(g) i(xm9.d) i(rt.n1) i(xa.m1.d) i(xa.in_p) i(xm5.d) i(zz9.d)} {
+      pcall xschem raw add $bv_nm {vsweep 1 +}
+    }
+    xschem new_schematic switch $bv_dwin0
+    pcall ::wviewer::browser_toggle 1 $bv_tok
+    update
+    set BVTV $bv_vtop.wvbrowser.pw.tvf.tv
+    check {BV20 (FIXTURE) the browser populated from the real raw: every device is a tree node, and the transistor's node resolves to the path xm9} \
+      [list [pcall $BVTV exists {g:xm9}] [pcall $BVTV exists {g:rt}] \
+            [pcall $BVTV exists {g:xa.m1}] [pcall $BVTV exists {g:xm5}] \
+            [pcall ::wviewer::browser_target_path $bv_tok {g:xm9}]] \
+      [list 1 1 1 1 {ok xm9}]
+
+    # THE ROW. The design window is walked INTO the block first, so the parent
+    # of `xm9` (the top) is somewhere the command has to go and stay.
+    bv_ctx_to $bv_dwin0
+    bv_home
+    pcall ::wviewer::hier_walk xa
+    set bv_pre [bv_design $bv_dwin0]
+    set bv_m [pcall ::wviewer::browser_menu_build $bv_tok {g:xm9}]
+    set bv_inv [pcall $bv_m invoke 7]
+    update
+    set bv_st [bv_status $bv_vtop]
+    check {BV21 (THE ROW) the REAL menu entry on a transistor's node, with the design window inside another block: it answers 1, the design window is at the top, the parent of xm9, and M9 is selected there} \
+      [list $bv_pre [pcall $bv_m entrycget 7 -label] $bv_inv [bv_design $bv_dwin0]] \
+      [list [list 1 {xa.} 1 {}] {Descend to here} 1 [list 1 {} 0 M9]]
+    check {BV21 ...and the status line says what it is and what was selected, with no instance and failed nowhere in it} \
+      [list $bv_st [string match {*no instance*} $bv_st] [string match {*failed*} $bv_st]] \
+      [list "Signal Browser\n'xm9' is a device with no sheet of its own; selected M9 at the top level" 0 0]
+
+    bv_ctx_to $bv_dwin0
+    bv_home
+    set bv_r2 [pcall ::wviewer::browser_descend_to $bv_tok {g:xa.m1}]
+    update
+    check {BV22 a device INSIDE a block: the design window descends into the block and stays there with the device selected} \
+      [list $bv_r2 [bv_design $bv_dwin0] [bv_status $bv_vtop]] \
+      [list 1 [list 1 {xa.} 1 M1] \
+            "Signal Browser\n'm1' is a device with no sheet of its own; selected M1 at xa"]
+
+    bv_ctx_to $bv_dwin0
+    bv_home
+    set bv_r3 [pcall ::wviewer::browser_descend_to $bv_tok {g:xm5}]
+    update
+    check {BV23 two instances could be the node: the command answers 0, selects neither and names both} \
+      [list $bv_r3 [bv_design $bv_dwin0] [bv_status $bv_vtop]] \
+      [list 0 [list 1 {} 0 {}] \
+            "Signal Browser\n'xm5' could be any of 2 instances at the top level (M5, m5); none is selected"]
+
+    bv_ctx_to $bv_dwin0
+    bv_home
+    set bv_r4 [pcall ::wviewer::browser_descend_to $bv_tok {g:xa}]
+    update
+    check {BV24 (CONTROL) a real block's node still descends and says so} \
+      [list $bv_r4 [bv_design $bv_dwin0] [bv_status $bv_vtop]] \
+      [list 1 [list 1 {xa.} 1 {}] "Signal Browser\ndescended to xa"]
+
+    # still inside xa: a node nothing on the top sheet answers to
+    set bv_r5 [pcall ::wviewer::browser_descend_to $bv_tok {g:zz9}]
+    update
+    check {BV25 (CONTROL) a node nothing answers to is still a failure that says no instance and returns the design window to the block it was in} \
+      [list $bv_r5 [bv_design $bv_dwin0] [bv_status $bv_vtop]] \
+      [list 0 [list 1 {xa.} 1 {}] \
+            "Signal Browser\ndescend to 'zz9' failed: no instance 'zz9' (returned to xa)"]
+
+    # THE LOWER PANE'S ROUTE: the cell of the terminal current itself
+    bv_ctx_to $bv_dwin0
+    bv_home
+    pcall ::wviewer::hier_walk xa
+    pcall $BVTV selection set [list {g:rt}]
+    update
+    set bv_cell [pcall ::wviewer::browser_sea_names $bv_tok]
+    set bv_r6 [pcall ::wviewer::browser_sea_descend_to $bv_tok {0}]
+    update
+    check {BV26 the lower pane's own Descend on the cell of a terminal current goes the same way: the resistor is selected on its sheet} \
+      [list $bv_cell $bv_r6 [bv_design $bv_dwin0]] \
+      [list {i(rt.n1)} 1 [list 1 {} 0 RT]]
+
+    bv_ctx_to $bv_dwin0
+    bv_home
+    check {BV27 (HYGIENE) the design is unmodified at its top, and closing the viewer returns 1} \
+      [list [bv_design $bv_dwin0] [pcall xschem get modified] [pcall ::wviewer::close $bv_tok]] \
+      [list [list 1 {} 0 {}] 0 1]
+  }
+  if {$bv_had_defs} { set XSCHEM_LIBRARY_DEFS $bv_defs0 } else { catch {unset XSCHEM_LIBRARY_DEFS} }
+} else {
+  puts "SKIPPED: BV2x group (Tk/X arm only)"
+}
+bv_home
+set XSCHEM_LIBRARY_PATH $bv_path0
+set ::spiceprefix $bv_pfx0
 
 } bigerr]} {
   puts "UNEXPECTED ERROR: $bigerr"

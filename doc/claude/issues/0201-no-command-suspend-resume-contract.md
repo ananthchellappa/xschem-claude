@@ -218,6 +218,8 @@ child would have inherited a **copy** of it with the parent's key already substi
 clicks there would queue, but the child's ESC would call a `sod_end` that restores bindings
 on the *parent* only, leaving the child permanently seized with dead scripts. Suspending
 first means the clone always copies pristine bindings. `DS6d` is the leg that pins this.
+(True for ONE mode. With two modes stacked it also takes the right release order, which
+this file did not have until 2026-11-19: "the release order of a stack" at the end.)
 
 ## Measured
 
@@ -309,3 +311,121 @@ Regressions, all still green: `test_cmdmode_0201`, `test_hi_descend`,
   walking the stack; the same ancestor logic a resumed mode leans on.
 * `doc/claude/specs/hi_descend.md` §6 — the destination arms whose new-canvas behaviour is
   the hard case here.
+
+## Added 2026-11-19 (issue 1724): a mode can say what it holds
+
+The contract gained one optional argument and one question. Nothing above changes:
+`suspend_all`, `resume_all` and `rehome` call the callbacks they called before and never
+ask the new one, and `src/cmdmode.tcl` still has no Tk and knows nothing about ASE (D1).
+(Superseded the same day for `suspend_all`, which now asks every `<held_cb>` once to work
+out its release order: next section. `resume_all` still asks none.)
+
+- `cmdmode::register <key> <suspend_cb> <resume_cb> ?<held_cb>?`. `<held_cb>` takes no
+  arguments and answers a flat list `canvas sequence script predecessor …`, one group of
+  four per canvas binding the mode holds now; empty when the mode is not up or is
+  suspended.
+- `cmdmode::pristine <canvas> <sequence> <script> ?<canon>?` answers the script that slot
+  would hold with no mode up, stepping down through every mode that holds exactly `script`
+  there. `<canon>` is a command prefix that answers Tk's own spelling of a sequence; the
+  caller that has Tk passes it, so a mode may declare `<ButtonPress-1>` although `bind`
+  lists `<Button-1>`. Without it the spellings must be equal.
+- Its one caller is `clone_canvas_bindings` (`src/xschem.tcl`). The second payoff of the
+  ordering noted above ("the clone always copies pristine bindings") therefore holds for a
+  window made by a door that does NOT suspend first as well: `xschem new_schematic
+  create_window`, a profile's new-window key. Issue 1307 is that hazard's own file and has
+  the measurements and the limits.
+- The three registered modes declare one each: `ase::ui::sod_held`, `calc::pick_held`,
+  `rdw::pick_held`.
+
+"Three seized Tk bindings" near the top of this file is the record of 2026-08-01. Select
+On Design now takes the six slots of `ase::ui::sod_slots` (the press, the double click, the
+release, the motion with the button held, Escape and the canvas's `<Destroy>`), and
+`ase::ui::sod_release` hands the same six back on a suspend, verbatim.
+
+**Tests.** `tests/headless/test_cmdmode_0201.tcl` gained legs CR4 (register with three and
+with four arguments), CR5 (`cmdmode::pristine`: no mode, one, two stacked, a callback that
+raises, a malformed answer, a self-predecessor, a ring, the two spellings), CR6 (the three
+verbs above still read what they read; since the same day the band is the release order,
+next section), CR7 and CR9, all without Tk, and leg CR8, which
+needs Tk and announces itself as skipped without it: `clone_canvas_bindings` between two
+real canvases and through the real new-window door. It still runs under bare `tclsh`; it
+now sources `tests/headless/scratch.tcl` for the stall watchdog.
+`tests/headless/test_cmdmode_descend_0201.tcl` gained rows for the held motion across a
+suspend and a resume and for the held list on a real canvas (CS1e, CS1f, CS2b, CS3g, CS7d,
+DS6j, DS6k).
+
+## Added 2026-11-19 (issue 1724, its fourth repair): the release order of a stack
+
+D6 permits one suspended set, and the contract was written with one live mode in mind.
+Three modes are registered now, and two of them can hold one canvas at once, one seized
+over the other (issue 0202). `suspend_all` released them in registration order, which is
+right only when the upper mode happens to be registered first.
+
+**Measured** with real modes (the third review of issue 1724, then the repair): with the
+Results Display Window's mode on top of Select On Design or of a Calculator pick, the
+lower mode was released first and the Results window's release then handed the lower
+mode's scripts back to the canvas. Everything the suspend exists for then went wrong at
+once: the clone for a new window copied those scripts (a paused mode reports nothing
+held, so `cmdmode::pristine` cannot step past them), the descend's own pick never got its
+click, the resumes kept the scripts as what the canvas had before and stacked the two
+modes upside down, and after both were ended the canvas took no left click. Issue 0202
+has the table.
+
+**What changed.**
+
+- `cmdmode::release_order` answers the registered modes in the order `suspend_all`
+  releases them: the top of a stack first. It asks each mode's `<held_cb>` once, before
+  anything is released, and then emits, step by step, the earliest-registered mode that
+  no mode still to come is seized over.
+- `cmdmode::holds_over {upper lower}` is the one test: a group of `upper` names, as what
+  its slot held before, a script that `lower` holds on the same canvas. Only the canvas
+  names and the scripts are compared, as strings. The sequences are not: two modes may
+  spell one slot differently, and this file has no Tk to ask. A script the upper mode
+  binds on that canvas itself (a bare `break`, which all three modes bind) is not
+  evidence, and neither is an empty predecessor.
+- A mode nothing can be read about (one with no `<held_cb>`, one whose `<held_cb>`
+  raises or answers a list that is not groups of four, one that holds nothing now, one
+  on a canvas of its own) is neither over nor under any other. It goes as soon as it is
+  the earliest-registered mode not known to be under another, which can be ahead of an
+  earlier-registered mode that is waiting for the mode over it (registered low, plain,
+  top with top over low: plain, top, low). Two such modes go in registration order, and
+  so do two modes that each name the other's script. (Reworded 2026-11-19 by the closing
+  pass of issue 1724: this bullet used to say "registration order is kept wherever
+  nothing can be read", which holds between two modes and not among three. The proc did
+  not change; its comments in `src/cmdmode.tcl` were reworded the same way.)
+- `resume_all` is unchanged. It resumes last-released first, which is now bottom first,
+  so the mode that was on top is on top again. `rehome` is that pair, so a stack moves as
+  a stack.
+- The ordering note at the head of `src/cmdmode.tcl` says both halves now: WHEN the
+  suspend comes (before the window is made) and IN WHICH ORDER the modes are released.
+
+`src/cmdmode.tcl` still has no Tk and knows nothing about the modes (D1): the order is
+read from the lists the modes hand it.
+
+**Tests.** Band CR6 of `tests/headless/test_cmdmode_0201.tcl`, against stub modes, under
+bare `tclsh`: the three verbs still call what they called; `suspend_all` asks each mode
+once what it holds, before the first release, and `resume_all` asks none; a mode seized
+over one registered before it and the same stack registered the other way round; three
+modes stacked; a mode on another canvas between the two of a stack; two spellings of one
+slot; the shared `break`; a ring; a `<held_cb>` that raises or answers junk; a paused
+mode; a mode with no `<held_cb>` registered between the two of a stack (it goes ahead of
+the lower mode; a leg of row CR6i); one mode registered and unregistered again (row
+CR6s). Row CR7c beside it is `clone_canvas_bindings` with no Tk, which must answer nothing
+and not raise. Leg DS8 of `tests/headless/test_cmdmode_descend_0201.tcl`, on a display:
+Select On Design, the Results window's mode on top by the command its key runs, a
+descend into a new window, two real ESC there, the binding tables of both canvases
+against a baseline and a control window, and a real click on a device in each window;
+and a second pass through a descend in the same window (rows DS8j to DS8q): the stack
+order on the canvas, two real ESC, the unseized binding table and a real click on a
+device of the sheet landed on. The CR6i and CR6s legs and the second pass were added by
+the closing pass of issue 1724.
+
+The check counts near the top of this file ("37 checks", "70 checks") are the record of
+2026-08-01. Both suites have grown since; each prints its own count.
+
+**Not driven with real modes on a display:** the descend into a new tab and the
+descend's own pick under a stack. They were measured by scratch probes and are held by
+the stub-mode rows. The descend in the same window is driven since the closing pass, by
+leg DS8's second pass and, for a Calculator pick under the Results window's mode, by a
+row of band PG27 of `tests/headless/test_calc_pick.tcl`. A ring and a mode with no
+`<held_cb>` do not occur among the three real modes.

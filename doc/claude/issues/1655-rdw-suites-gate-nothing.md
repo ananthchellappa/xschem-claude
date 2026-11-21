@@ -54,3 +54,42 @@ One additive `puts "OVERALL: ok ($npass checks)"` per suite, with the `RESULT:` 
 actually support — measured with `tests/banner_rule.tcl` on both arms first, never predicted, which
 is the method issues 1625/1626 settled on. Expect the trailer's `cases`/`blocks` to move and derive
 the delta before launching.
+
+## Note, 2026-11-19 (issue 1724): one of the three is registered now, and what it needed
+
+The stamp line above is left as it was. What changed, for the record:
+
+- `tests/headless/test_rdw_keys_1245.tcl` prints the `OVERALL: ok` sentinel and is in
+  `dcases` (the comment at its entry in `tests/run_regression.tcl` says why that list
+  alone). `test_rdw_seam_1245` and `test_rdw_window_1245` still print no sentinel and are
+  in no list, so the `FZ` band is still run by no gate.
+- **Registered, it stalled on a display with no window manager** (found by the third
+  review of issue 1724, in the gate's own command shape). Two causes, both in the suite:
+  it renamed the product's `ciw_echo` away, installed a recorder, and deleted the recorder
+  without putting the product's proc back, so the next `.ciw <FocusIn>` raised `invalid
+  command name "ciw_echo"` as a background error, whose dialog is modal; and rows F3 and
+  RA4 are about something only a window manager gives. Now the product's proc is put back
+  directly after the recorder goes (row S1b), row WM0 names the window manager from the
+  root window's own record of it and checks that against `wm frame`, and F3 and RA4 are
+  left out, under an upper-case `SKIPPED:` line each, on a display that has none. There
+  the suite reaches its `RESULT:` line instead of stalling.
+- A lower-case `skip:` line was deliberately not used: the regression driver's trailer
+  counts those.
+- **A window manager that has died** (found by the fourth repair's verifier of the same
+  issue, built by its closing pass the same day). When the manager of a live display is
+  ended, the root window still names it, so the suite took the display for one with a
+  manager: row WM0 went red, and F3 and RA4 ran and went red too (no stall). This tree's
+  notes record that state twice, an `openbox` killed on a live display. The suite now
+  takes such a record as no manager when the main window has no frame: row WM0 reads
+  `unnamed` and passes, F3 and RA4 are left out under their upper-case `SKIPPED:` lines,
+  and the run reaches its `RESULT:` line with no red. Measured on a private display
+  whose `openbox` had been ended by pid before the suite, and with no manager started
+  at all.
+- Not measured: a window manager that puts no frame round its windows, where row WM0's
+  two readings would disagree; a manager that dies while the suite is running; a root
+  window that names no manager while the main window has a frame (rows F3 and RA4 run
+  there since this change, and WM0 is red in that state either way); a root record that
+  cannot be read.
+- `test_rdw_window_1245`'s tooltip rows (`HT9`, `HT12`, `HT15`) are still not stable,
+  which is why that suite stays out of the lists; its row `HT14` was restated the same day
+  (issue 1387: the mode arms in a tab).

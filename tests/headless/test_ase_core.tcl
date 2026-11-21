@@ -9693,10 +9693,13 @@ proc rc_run {dir rows {opts {}}} {
                                           [file join $dir rc_ase.plotmap]]
 }
 set RCROWS {{type op enabled 1} {type tran enabled 1 step 1n stop 1u}}
-## ⚠ THE FIXTURES ARE IN `ase::analysis_emit_order`'s ORDER, WHICH IS `op`
-## FIRST, and that is not cosmetic: the sidecar's 1:1 claim is POSITIONAL, so a
+## ⚠ EVERY FIXTURE'S RESULTS FILE IS IN ITS RECORDS' ORDER, and that is not
+## cosmetic: the sidecar's 1:1 claim against the FILE is POSITIONAL, so a
 ## fixture whose raw and whose records were in different orders would red every
-## row here for a reason that has nothing to do with the code.
+## row here for a reason that has nothing to do with the code. (The fixtures of
+## this section record `op` first. The order a deck that runs its operating
+## point last records in, and what the registry leg makes of it, is section RO
+## at the foot of this file -- issue 1657.)
 ## Run `analysis_captures` with a fixed answer -- the RS3 idiom of issue 1429,
 ## used here to build the ONE shape the shipped registry cannot: an analysis
 ## whose walk captures two plots.
@@ -10023,8 +10026,9 @@ check "MP3 a `hook` answers 1 or 0, and a hook that raises, answers a non-boolea
 ## ⚠ THE ORDER IS WRITE ORDER, WHICH IS REVERSE CREATION ORDER, AND THAT REFUTES
 ## `ase::analysis_plots`' OWN HEADER as issue 1430 left it ("in the registry's
 ## own order, which is creation order"). The walk runs BACKWARDS, and
-## `ase::reconcile_plots` compares its prediction POSITIONALLY against a sidecar
-## written in write order -- so a registry listing `noise`'s plots in creation
+## `ase::reconcile_plots` compares a row's declared plots, in the registry's
+## order, against that row's records, which are in write order -- so a registry
+## listing `noise`'s plots in creation
 ## order would make every two-plot noise run report `mislabel`. Measured end to
 ## end: the sidecar reads `Integrated Noise` then `Noise Spectral Density
 ## Curves`, and reconciliation answers `ok` 5/5/5 only with the registry in this
@@ -10492,8 +10496,9 @@ check "MP18b the over-walk is invisible to every counter and visible only to the
 
 ## --- MP19: THE WRITE-ORDER CLAIM, STATED WHERE A REORDER WOULD REDDEN IT ----
 ## ⚠ A REGISTRY THAT LISTED NOISE'S PLOTS IN CREATION ORDER WOULD PASS EVERY
-## ROW ABOVE AND MISLABEL EVERY REAL RUN. Reconciliation compares its prediction
-## positionally against a sidecar written in WRITE order, and the walk runs
+## ROW ABOVE AND MISLABEL EVERY REAL RUN. Reconciliation compares a row's
+## declared plots, in order, against that row's records, which are in WRITE
+## order, and the walk runs
 ## backwards -- so the prediction must be reversed relative to creation. This row
 ## is the reverse fixture: the same two plots in the other order.
 set MPD4 [mp_fix rev {{Noise Spectral Density Curves} {Integrated Noise}} \
@@ -11068,6 +11073,38 @@ check "CK23c a run that checkpoints nothing says nothing either, whatever the\
 check "CK23d an abort before the first checkpoint says the analysis kept\
  nothing, rather than reporting a file that is not there" \
   [lmap s [ase::ckpt_report ngspice $CKRST $CKLOGNO] {rg_has $s {kept nothing}}] {1}
+## --- CK23e: THE CHECKPOINTED ANALYSIS HAD FINISHED (issue 1657) -------------
+## A deck that runs its operating point last runs it behind the transient, and
+## a run stopped there has written the whole transient: the checkpoint on disk
+## is an earlier part of a plot the results file holds complete.  The fixture
+## is what such a run leaves -- the transient's record in the sidecar, its plot
+## at that place in the results file, a checkpoint, no completion marker -- and
+## beside it the same artefacts with the results file NOT holding the plot,
+## which is a run stopped while that write was still to be made.
+set CK23RAW [[ase::backend_hook ngspice raw_file] $CKRST]
+set CK23MAP [ase::plotmap_path $CKRST]
+set CK23HDR "Title: ck\nDate: now\nPlotname: %s\nFlags: real\nNo. Variables: 4\nNo. Points: %s\nVariables:\n\t0\ttime\ttime\nBinary:\n"
+rg_wr [ase::ckpt_path $CKRST] [format $CK23HDR {Transient Analysis} 4800000]
+rg_wr $CK23MAP "[ase::plotmap_record tran 1 {Transient Analysis}]\n"
+rg_wr $CK23RAW [format $CK23HDR {Transient Analysis} 4800123]
+set CK23E1 [ase::ckpt_report ngspice $CKRST $CKLOGNO]
+rg_wr $CK23RAW [format $CK23HDR {Operating Point} 1]
+set CK23E2 [ase::ckpt_report ngspice $CKRST $CKLOGNO]
+file delete -force $CK23RAW
+set CK23E3 [ase::ckpt_report ngspice $CKRST $CKLOGNO]
+file delete -force $CK23MAP [ase::ckpt_path $CKRST]
+check "CK23e a run stopped AFTER its checkpointed analysis was written is told\
+ so, with the points the results file holds and the analysis that did not\
+ finish by its row -- not that the plot was still filling and kept at the\
+ checkpoint's count; with the record there and the plot not at its place in\
+ the results file, or no results file, the checkpoint is still what is\
+ reported (the sentence whole; then the two others name the checkpoint)" \
+  [list $CK23E1 \
+        [lmap s $CK23E2 {rg_has $s {still filling was kept at 4800000 points}}] \
+        [lmap s $CK23E3 {rg_has $s {still filling was kept at 4800000 points}}]] \
+  [list [list "this run was stopped after its 'Transient Analysis' plot was\
+ written: the results file holds it at 4800123 points, with every analysis that\
+ finished before it. The op analysis in row 0 did not finish."] {1} {1}]
 
 ## --- CK24: RECONCILIATION IS TOLD ------------------------------------------
 ## ⚠ PLAN.md §6f: "6c's reconciliation must be told the run was aborted BEFORE it
@@ -12327,6 +12364,401 @@ check "MT10 a backend that declares no meas_templates hook offers none, and\
 
 } mt_err]} {
   check "MT0 section MT ran to the end" "RAISED:$mt_err" {}
+}
+
+# ===========================================================================
+# RO — THE ORDER A DECK RUNS ITS ANALYSES IN, AND WHO ELSE WALKS THE ROWS
+# (issue 1657)
+# ===========================================================================
+#
+# A deck that asks for the per-device operating-point numbers inside `.control`
+# runs the operating point LAST (issue 0964, the renderer's own `op_last`).
+# Everything else that walks the enabled rows asks ase::analysis_emit_order
+# for the operating-point-FIRST order.  Row RO1 derives who that is from the
+# source, so a new one arrives red and its author has to answer the question
+# this section answers for each of today's:
+#
+#   ase::reconcile_plots         paired a run's sidecar records with the walk
+#                                position by position, so every such run was
+#                                told its rows had recorded each other's plots.
+#                                It now pairs a record with what the record's
+#                                OWN row declares.  Rows RO3 to RO8.
+#   ase::meas_counter_index      counts a measurement's run-wide call number
+#                                along the walk.  Not crossed: the kinds that
+#                                carry such a number are refused on an
+#                                operating-point row, and the operating point
+#                                is the only row the deck moves.  Rows RO9a
+#                                and RO9b.
+#   ase::ckpt_rows               lists the rows that get a checkpoint block.
+#                                Not crossed: an operating point is never one
+#                                of them.  Row RO10.
+#   ase::preview_analysis_types  orders the per-analysis lines of the Options
+#                                preview.  It lists the operating point's lines
+#                                first whatever the deck will do; that is open
+#                                in the issue file and has no row here.
+#
+# ⚠ THE DECKS BELOW ARE RENDERED, NOT TYPED.  Each fixture takes its record
+# order from the `echo "PLOT ..."` lines of a deck ase::backend::ngspice's own
+# render_deck wrote for the bench, so a change to what the deck does moves the
+# fixture with it; RO2 is the leg that says the order really is the crossed one.
+# The plot NAMES are typed here (ngspice's own, as a run writes them) and are
+# not read from the registry, which is the thing being compared against.
+if {[catch {
+
+set RO_SLOT $::ase::op_cards
+set RO_RENDER [ase::backend_hook ngspice render_deck]
+set RO_OP     {type op enabled 1}
+set RO_AC     {type ac enabled 1 sweep dec points 10 start 1 stop 1meg}
+set RO_ACOFF  {type ac enabled 0}
+set RO_TRAN   {type tran enabled 1 step 1n stop 1u}
+set RO_TRANOFF {type tran enabled 0}
+set RO_NOISE  {type noise enabled 1 out v(D) insrc V1 sweep dec points 4 start 1k stop 100k}
+array set RO_NAME {op {{Operating Point}} ac {{AC Analysis}} tran {{Transient Analysis}}
+                   noise {{Integrated Noise} {Noise Spectral Density Curves}}}
+proc ro_state {rows {gate {}}} {
+  set st [nfet_state /models/sky130.lib.spice {}]
+  dict set st save_all_v 1
+  dict set st analyses $rows
+  dict set st save_op_params $gate
+  return $st
+}
+## The bench's deck with device requests held for its netlist -- the shape that
+## moves them inside `.control` once a second analysis is enabled.
+proc ro_deck {st} {
+  ase::op_cards_put $::netlist_text ".save all\n.save @m.x1\[id\]\n"
+  set rc [catch {$::RO_RENDER $st $::netlist_text} d]
+  if {$rc} { return "RAISED:$d" }
+  return $d
+}
+## The rows a deck records, in the order it writes them.
+proc ro_recs {deck} {
+  set out {}
+  foreach l [split $deck "\n"] {
+    if {[regexp {^echo "PLOT ([^ |]+) (-?[0-9]+) \|} $l -> t i]} { lappend out [list $t $i] }
+  }
+  return $out
+}
+## The rows in the order ase::reconcile_plots walks them.
+proc ro_walk {st} {
+  set out {}
+  foreach e [ase::analysis_emit_order $st 0 ngspice] {
+    lappend out [list [lindex $e 2] [lindex $e 1]]
+  }
+  return $out
+}
+## A deck's record order with each row's own plot names put on: the first
+## record of a row gets the row's first name, the second its second.
+proc ro_named {recs} {
+  set out {} ; set nth [dict create]
+  foreach r $recs {
+    set k 0
+    if {[dict exists $nth $r]} { set k [dict get $nth $r] }
+    dict set nth $r [expr {$k + 1}]
+    lappend out [list [lindex $r 0] [lindex $r 1] [lindex $::RO_NAME([lindex $r 0]) $k]]
+  }
+  return $out
+}
+## One run's two artefacts: the sidecar, and a results file holding `rawnames`
+## in that order (by default the plots the records name, in record order).
+proc ro_fix {tag maprecs {rawnames -}} {
+  set d [file join $::scratch ro_$tag]
+  file mkdir $d
+  if {$rawnames eq {-}} {
+    set rawnames {}
+    foreach r $maprecs { lappend rawnames [lindex $r 2] }
+  }
+  set body {}
+  foreach n $rawnames {
+    append body "Title: * ro fixture\nDate: Fri Nov 20 00:00:00  2026\n"
+    append body "Plotname: $n\nFlags: real\nNo. Variables: 1\nNo. Points: 1\n"
+    append body "Variables:\n\t0\tv(mid)\tvoltage\nValues:\n 0\t1.0\n\n"
+  }
+  rg_wr [file join $d ro_ase.raw] $body
+  set m {}
+  foreach r $maprecs { append m "[ase::plotmap_record [lindex $r 0] [lindex $r 1] [lindex $r 2]]\n" }
+  rg_wr [file join $d ro_ase.plotmap] $m
+  return $d
+}
+proc ro_run {dir st {runstate {}}} {
+  return [ase::reconcile_plots ngspice $st [file join $dir ro_ase.raw] \
+            [file join $dir ro_ase.plotmap] $runstate]
+}
+## verdict, the three counts, and how many sentences
+proc ro_sum {v} {
+  return [list [dict get $v verdict] [dict get $v predicted] [dict get $v mapped] \
+               [dict get $v actual] [llength [dict get $v why]]]
+}
+
+## --- RO1: WHO WALKS THE ROWS -------------------------------------------------
+## Every proc under ::ase whose code (comment lines dropped) calls
+## ase::analysis_emit_order.  The deck is the one that passes its own
+## `op_last`; the other four take the operating-point-first order.
+proc ro_procs {ns} {
+  set out [info procs ${ns}::*]
+  foreach c [namespace children $ns] { set out [concat $out [ro_procs $c]] }
+  return $out
+}
+set RO1 {} ; set RO1FIRST {}
+foreach rop [lsort [ro_procs ::ase]] {
+  if {$rop eq {::ase::analysis_emit_order}} { continue }
+  set rob [rg_body $rop]
+  if {![regexp {analysis_emit_order\M} $rob]} { continue }
+  lappend RO1 $rop
+  if {[regexp {analysis_emit_order \$state 0\M} $rob]} { lappend RO1FIRST $rop }
+}
+check "RO1 the procs that walk the enabled rows through ase::analysis_emit_order\
+ are the deck and four others, and the four take the operating-point-first\
+ order -- a fifth has to answer what an operating point run last does to it" \
+  [list $RO1 $RO1FIRST] \
+  [list {::ase::backend::ngspice::render_deck ::ase::ckpt_rows\
+ ::ase::meas_counter_index ::ase::preview_analysis_types ::ase::reconcile_plots} \
+        {::ase::ckpt_rows ::ase::meas_counter_index ::ase::preview_analysis_types\
+ ::ase::reconcile_plots}]
+
+## --- RO2: THE FIXTURE IS THE CROSSED ORDER, AND IT COMES FROM A DECK ---------
+set RO_ST2  [ro_state [list $RO_OP {type dc enabled 0} $RO_ACOFF $RO_TRAN]]
+set RO_ST3  [ro_state [list $RO_OP {type dc enabled 0} $RO_AC $RO_TRAN]]
+set RO_ST2G [ro_state [list $RO_OP {type dc enabled 0} $RO_ACOFF $RO_TRAN] 0]
+set RO_ST3G [ro_state [list $RO_OP {type dc enabled 0} $RO_AC $RO_TRAN] 0]
+set RO_R2  [ro_recs [ro_deck $RO_ST2]]
+set RO_R3  [ro_recs [ro_deck $RO_ST3]]
+set RO_R2G [ro_recs [ro_deck $RO_ST2G]]
+set RO_R3G [ro_recs [ro_deck $RO_ST3G]]
+check "RO2 with device operating-point requests held for the netlist, the deck\
+ records its operating point LAST where the walk has it first; with the\
+ requests switched off the deck and the walk agree" \
+  [list $RO_R2 [ro_walk $RO_ST2] $RO_R3 [ro_walk $RO_ST3] \
+        [expr {$RO_R2G eq [ro_walk $RO_ST2G]}] [expr {$RO_R3G eq [ro_walk $RO_ST3G]}]] \
+  [list {{tran 3} {op 0}} {{op 0} {tran 3}} \
+        {{ac 2} {tran 3} {op 0}} {{op 0} {ac 2} {tran 3}} 1 1]
+
+## --- RO3: THE ISSUE -- THAT ORDER RECONCILES CLEAN ---------------------------
+## The user's own two sentences came from exactly RO_R2's order: row 3 (`tran`)
+## held to the plot declared for row 0 and row 0 (`op`) to row 3's.  Each row
+## wrote its own plot; nothing is to be said.
+set RO3 {}
+foreach {rotag rost rorecs} [list c2 $RO_ST2 $RO_R2 c3 $RO_ST3 $RO_R3 \
+                                  g2 $RO_ST2G $RO_R2G g3 $RO_ST3G $RO_R3G] {
+  set rov [ro_run [ro_fix $rotag [ro_named $rorecs]] $rost]
+  lappend RO3 [ro_sum $rov] [dict get $rov mislabelled]
+}
+check "RO3 a run whose deck ran the operating point last reconciles `ok` and\
+ says nothing, with op and tran and with op, ac and tran -- and so does the\
+ same bench with the operating point first" \
+  $RO3 [list {ok 2 2 2 0} {} {ok 3 3 3 0} {} {ok 2 2 2 0} {} {ok 3 3 3 0} {}]
+
+## --- RO4: A RECORD THAT NAMES THE WRONG PLOT FOR ITS OWN ROW IS STILL TOLD ---
+## The file agrees with the record in every fixture here (it holds what the
+## record names), so only the registry leg can speak.
+set RO4A [ro_run [ro_fix w2 {{tran 3 {Transient Analysis}} {op 0 constants}}] $RO_ST2]
+set RO4B [ro_run [ro_fix w3 {{ac 2 {Transient Analysis}} {tran 3 {AC Analysis}} \
+                             {op 0 {Operating Point}}}] $RO_ST3]
+## ...and it is the ROW a record carries that it is held to, not its type: two
+## records that carry each other's row index, each naming the plot its own TYPE
+## declares, are both told.
+set RO4C [ro_run [ro_fix swapped {{tran 2 {Transient Analysis}} {ac 3 {AC Analysis}} \
+                                  {op 0 {Operating Point}}}] $RO_ST3]
+check "RO4 in the operating-point-last order a row that recorded another plot is\
+ reported once, against what that row declares, and the rows that recorded\
+ their own are not; and two records that carry each other's row are both told,\
+ each against the row it carries, whatever type it names" \
+  [list [dict get $RO4A verdict] [dict get $RO4A mislabelled] \
+        [rg_has [lindex [dict get $RO4A why] 0] \
+           {the op analysis in row 0 recorded 'constants' where the registry declares 'Operating Point'}] \
+        [dict get $RO4B verdict] [dict get $RO4B mislabelled] \
+        [dict get $RO4C verdict] [dict get $RO4C mislabelled]] \
+  [list mislabel {{op 0 constants {Operating Point} registry}} 1 \
+        mislabel [list {ac 2 {Transient Analysis} {AC Analysis} registry} \
+                       {tran 3 {AC Analysis} {Transient Analysis} registry}] \
+        mislabel [list {tran 2 {Transient Analysis} {AC Analysis} registry} \
+                       {ac 3 {AC Analysis} {Transient Analysis} registry}]]
+
+## --- RO5: THE OVER-WALK, ON A ROW THAT WRITES TWO PLOTS ----------------------
+## The shipped registry's `noise` row, beside an operating point that runs
+## last.  A walk one plot too long records `constants` as the row's second
+## plot; every count agrees and only the name is wrong (row RC5's defect).
+set RO_STN [ro_state [list $RO_OP $RO_NOISE]]
+set RO_RN  [ro_recs [ro_deck $RO_STN]]
+set RO5OK [ro_run [ro_fix n_ok [ro_named $RO_RN]] $RO_STN]
+set RO5 [ro_run [ro_fix n_over {{noise 1 {Integrated Noise}} {noise 1 constants} \
+                                {op 0 {Operating Point}}}] $RO_STN]
+set RO5REV [ro_run [ro_fix n_rev {{noise 1 {Noise Spectral Density Curves}} \
+                                  {noise 1 {Integrated Noise}} \
+                                  {op 0 {Operating Point}}}] $RO_STN]
+check "RO5 a two-plot row ahead of the operating point: its deck order\
+ reconciles `ok`, `constants` as its second plot is the one mislabel with every\
+ count agreeing, and its two plots in the other order are both told" \
+  [list $RO_RN [ro_sum $RO5OK] [ro_sum $RO5] [dict get $RO5 mislabelled] \
+        [dict get $RO5REV verdict] [llength [dict get $RO5REV mislabelled]]] \
+  [list {{noise 1} {noise 1} {op 0}} {ok 3 3 3 0} {mislabel 3 3 3 1} \
+        {{noise 1 constants {Noise Spectral Density Curves*} registry}} mislabel 2]
+
+## --- RO6: THE COUNTS, IN THAT ORDER ------------------------------------------
+## Three shapes a count sees.  Before the pairing went by row each of these was
+## `mislabel`, because the first record of the run was held to the operating
+## point's plot.
+set RO6ST [ro_run [ro_fix stop [lrange [ro_named $RO_R2] 0 0]] $RO_ST2]
+set RO6AB [ro_run [ro_fix stop [lrange [ro_named $RO_R2] 0 0]] $RO_ST2 aborted]
+set RO6UN [ro_run [ro_fix under [ro_named $RO_R2] {{Transient Analysis}}] $RO_ST2]
+set RO6OV [ro_run [ro_fix over [ro_named $RO_R2] \
+                     {{Transient Analysis} {Operating Point} constants}] $RO_ST2]
+check "RO6 with the operating point last, a run that ended before it is\
+ `predmismatch` (and `aborted` when it was stopped), a write that did not land\
+ is `under` naming op, an extra plot is `over` -- and none of them a mislabel" \
+  [list [ro_sum $RO6ST] [dict get $RO6ST mislabelled] \
+        [rg_has [lindex [dict get $RO6ST why] 0] {predict 2 plot(s) and this run recorded 1}] \
+        [dict get $RO6AB verdict] \
+        [rg_has [lindex [dict get $RO6AB why] 0] {was STOPPED before the rest}] \
+        [dict get $RO6UN verdict] [dict get $RO6UN missing] [dict get $RO6UN mislabelled] \
+        [dict get $RO6OV verdict] [dict get $RO6OV extra] [dict get $RO6OV mislabelled]] \
+  [list {predmismatch 2 1 1 1} {} 1 aborted 1 under op {} over constants {}]
+
+## --- RO7: A RECORD WITH NO ROW TO BE HELD TO ---------------------------------
+## The bench edited between rendering the deck and reading it back: the records
+## are RO_R2's, and the rows now have `tran` switched off and `ac` on.  The tran
+## record's row declares nothing any more, so it is compared with the declared
+## plot no record claimed -- the way every record used to be compared.
+set RO_STED [ro_state [list $RO_OP {type dc enabled 0} $RO_AC $RO_TRANOFF]]
+set RO7 [ro_run [ro_fix edited [ro_named $RO_R2]] $RO_STED]
+## ...and one record more than its row declares is NOT held to anything: with
+## nothing unclaimed, the count is what speaks (row RC5b's shape, op last).
+set RO7B [ro_run [ro_fix extra {{tran 3 {Transient Analysis}} {tran 3 constants} \
+                                {op 0 {Operating Point}}}] $RO_ST2]
+## ...unless a declared plot IS unclaimed.  The same walk one plot too long, in
+## a run that then ended before its operating point: two plots predicted, two
+## recorded, two on file -- every count agrees -- and the second is `constants`.
+## Held to nothing, that record would pass in silence.
+set RO7C [ro_run [ro_fix extrastop {{tran 3 {Transient Analysis}} {tran 3 constants}}] $RO_ST2]
+check "RO7 a record whose row is no longer an enabled row is held to\
+ the declared plot nothing claimed and told when it differs, while the row that\
+ still stands is not; a record beyond what its row declares is left to the count\
+ when nothing is unclaimed, and told when the counts agree and something is" \
+  [list [dict get $RO7 verdict] [dict get $RO7 mislabelled] \
+        [ro_sum $RO7B] [dict get $RO7B mislabelled] \
+        [ro_sum $RO7C] [dict get $RO7C mislabelled]] \
+  [list mislabel {{tran 3 {Transient Analysis} {AC Analysis} registry}} \
+        {predmismatch 2 3 3 1} {} \
+        {mislabel 2 2 2 1} {{tran 3 constants {Operating Point} registry}}]
+
+## --- RO8: THE FILE LEG IS STILL POSITION BY POSITION -------------------------
+## The records in the deck's order over a results file in the OTHER order: each
+## record disagrees with the plot at its own position, whatever its row declares.
+set RO8 [ro_run [ro_fix fileleg [ro_named $RO_R2] \
+                   {{Operating Point} {Transient Analysis}}] $RO_ST2]
+check "RO8 a results file whose plots are not in the records' order is told\
+ position by position, as two disagreements with the file" \
+  [list [dict get $RO8 verdict] [dict get $RO8 mislabelled]] \
+  [list mislabel [list {tran 3 {Transient Analysis} {Operating Point} file} \
+                       {op 0 {Operating Point} {Transient Analysis} file}]]
+
+## --- RO9: ase::meas_counter_index IS NOT CROSSED, AND WHY --------------------
+## Its number is the run-wide call number the simulator names a result after,
+## counted along the operating-point-first walk.  The deck moves only the
+## operating point, so the count can differ from the deck's only if a row that
+## carries such a number is emitted for an operating point.  The kinds are
+## DERIVED from the adapter's catalogue (`counter`), each with a row built from
+## its own required fields; the twin on a transient is the leg that says the
+## row was refused for being on an operating point and not for being malformed.
+proc ro_meas {kind name analysis {row {}}} {
+  set r [dict create name $name analysis $analysis kind $kind]
+  if {$row ne {}} { dict set r row $row }
+  foreach f [ase::meas_kind_fields ngspice $kind] {
+    if {![dict exists $f required] || [dict get $f required] ne {1}} { continue }
+    switch -exact -- [dict get $f kind] {
+      freq    { dict set r [dict get $f name] 1k }
+      vecexpr { dict set r [dict get $f name] v(D) }
+      default { dict set r [dict get $f name] 1 }
+    }
+  }
+  return $r
+}
+set RO_TR2 {type tran enabled 1 step 1u stop 5m}
+set RO_STM [ro_state [list $RO_OP $RO_TR2 $RO_ACOFF $RO_TR2]]
+set RO9K {} ; set RO9ROWS {}
+dict for {rok roe} [ase::meas_kinds ngspice] {
+  if {![dict exists $roe counter]} { continue }
+  lappend RO9K $rok
+  lappend RO9ROWS [ro_meas $rok ${rok}_op op] [ro_meas $rok ${rok}_a tran 1] \
+                  [ro_meas $rok ${rok}_b tran 3] [ro_meas $rok ${rok}_c tran 1]
+}
+dict set RO_STM measurements $RO9ROWS
+set RO9V {}
+foreach rok $RO9K {
+  set roop 0 ; set rotw 0
+  foreach ror [ase::meas_for ngspice $RO_STM op 0] {
+    if {[dict get $ror kind] eq $rok} { incr roop }
+  }
+  foreach ror [ase::meas_for ngspice $RO_STM tran 1] {
+    if {[dict get $ror kind] eq $rok} { incr rotw }
+  }
+  lappend RO9V [list $roop [expr {$rotw > 0}]]
+}
+check "RO9a every measurement kind named after a run-wide call number is\
+ emitted for a transient row and for no operating-point row, so the one row\
+ the deck moves never carries such a number" \
+  [list [expr {[llength $RO9K] > 0}] [lsort -unique $RO9V]] {1 {{0 1}}}
+## ...and the deck agrees: with the operating point last, the call number each
+## result is named after is its position among the deck's own `fourier` lines.
+set RO9D [ro_deck $RO_STM]
+set RO9SEQ {} ; set RO9N 0 ; set RO9BAD {}
+foreach rol [split $RO9D "\n"] {
+  if {[regexp {^fourier } $rol]} { incr RO9N }
+  if {[regexp {^let (\S+) = thd(\d+)1$} $rol -> ron rom]} {
+    lappend RO9SEQ $ron
+    if {$rom != $RO9N} { lappend RO9BAD [list $ron named $rom call $RO9N] }
+    foreach ror $RO9ROWS {
+      if {[dict get $ror name] eq $ron &&
+          [ase::meas_counter_index ngspice $RO_STM $ror] != $RO9N} {
+        lappend RO9BAD [list $ron predicted \
+                          [ase::meas_counter_index ngspice $RO_STM $ror] call $RO9N]
+      }
+    }
+  }
+}
+check "RO9b in a deck that runs its operating point last, each Fourier result is\
+ named after the call number its own line has in that deck, which is the\
+ number ASE-L predicted for it" \
+  [list [lindex [ro_recs $RO9D] end] $RO9SEQ $RO9BAD] \
+  [list {op 0} {fourier_a fourier_c fourier_b} {}]
+
+## --- RO10: ase::ckpt_rows IS NOT CROSSED, AND WHY ----------------------------
+## Membership is all its readers take from it but one, which takes the last
+## member's estimate.  An operating point declares no `salvage`, so it is never
+## a member, and the deck arms the members in the order this proc lists them
+## whether or not the operating point ran first.
+set RO10SV {}
+foreach roty [dict keys [ase::analysis_types ngspice]] {
+  if {[ase::analysis_salvage ngspice $roty] ne {}} { lappend RO10SV $roty }
+}
+set RO_STK [ro_state [list $RO_OP {type tran enabled 1 step 10n stop 8m} $RO_ACOFF \
+                           {type tran enabled 1 step 10n stop 4m}]]
+set RO10ROWS {}
+foreach roe [ase::ckpt_rows ngspice $RO_STK] { lappend RO10ROWS [list [lindex $roe 2] [lindex $roe 1]] }
+set RO10D [ro_deck $RO_STK]
+set RO10ARM {}
+foreach rol [split $RO10D "\n"] {
+  if {[regexp "^echo [ase::ckpt_marker armed] (\\S+) (\\d+) " $rol -> rot roi]} {
+    lappend RO10ARM [list $rot $roi]
+  }
+}
+check "RO10 no analysis type that can be checkpointed is the operating point,\
+ and a deck that runs its operating point last arms its checkpoints in the\
+ order ase::ckpt_rows lists them" \
+  [list [expr {[llength $RO10SV] > 0}] [lsearch -exact $RO10SV op] \
+        [lindex [ro_recs $RO10D] end] $RO10ROWS $RO10ARM] \
+  [list 1 -1 {op 0} {{tran 1} {tran 3}} {{tran 1} {tran 3}}]
+
+## The decks above were rendered with device requests held for the netlist, in
+## the one slot every section shares.  It goes back as it was found.
+set RO_USED [expr {[ase::op_cards_block] ne {} && $::ase::op_cards ne $RO_SLOT}]
+set ::ase::op_cards $RO_SLOT
+check "RO11 this section did hold device requests in the op-cards slot, and\
+ hands the slot back as it found it" \
+  [list $RO_USED [expr {$::ase::op_cards eq $RO_SLOT}]] {1 1}
+
+} ro_err]} {
+  catch {set ::ase::op_cards $RO_SLOT}
+  check "RO0 section RO ran to the end" "RAISED:$ro_err" {}
 }
 
 # --- verdict -----------------------------------------------------------------

@@ -407,6 +407,30 @@ model (`msky130_fd_pr__nfet_01v8`), so there the wrapper `xm1` is the instance t
 drew. A discrete `c1`/`r1`/`q1` has no wrapper and **is** its own instance. One rule, two
 shapes, because the corpus genuinely has two shapes.
 
+⚖ **One exception (issue 1724, 2026-11-19): the model-shaped rule does not apply to a plain
+current of class `net`.** "Plain" is a leaf with neither a `[param]` nor a `#node`. Under a
+path such a name is a TERMINAL current: ngspice's `.probe` vector `i(x2:in_p)`, whose `:` the
+raw reader stores as `.`. Its leaf is a terminal or a port name, and a port is named by
+whoever drew the block, so an underscore there says nothing about a model. Read as
+model-shaped, the two pins `in_p` and `in_n` of one block both rendered `x2:i`, and a
+transistor's bulk `b_tj` rendered as the transistor (`m1:i`). The leaf is the label:
+
+| raw name | rendered | class |
+|---|---|---|
+| `i(x1.xm1.d)` | `d:i` | net |
+| `i(x2.in_p)`, `i(x2.in_n)` | `in_p:i`, `in_n:i` | net |
+| `i(x2.m1.b_tj)` | `b_tj:i` | net |
+
+A class-net current that does carry a param or a `#node`, and
+every other class, keeps the rule above. Rows BL01–BL06 of
+`tests/headless/test_wave_sigbrowser.tcl` derive, over the raw fixtures under
+`tests/headless/data` and the committed name lists, that the labels this exception changes
+are exactly that shape and that no other label moved.
+
+What it costs, declared: such a signal is labelled by its terminal alone, so the bars (which
+match the label, item 20) find it by `d:i` or `*in_p*` and not by its device's name. The
+device is the tree node the signal files under.
+
 The param half is the content of the **trailing** bracket (M9), or `i` when there is none.
 
 ⚠ **Strip one leading `@` from the instance half.** 25 of 2656 corpus names are untagged
@@ -432,6 +456,18 @@ was made by re-running the measurement rather than by trusting it. Four is accep
 because the label is a *display*, never an identity: every gesture resolves through the row
 index into `browser_label_full`, the tooltip shows the raw name, and the status line counts
 names rather than labels, so a collision stays visible.
+
+⚠ **A fifth shape, which the corpus does not hold and terminal currents make possible**
+(issue 1724, measured 2026-11-19 on a synthetic name set). A block PORT's terminal current
+and the branch current of a SOURCE of the same name inside that block: `i(x3.vin)` (class
+`net`, the probe's `i(x3:vin)` as the reader stores it) and `i(v.x3.vin)` (class
+`srcbranch`) both file under node `x3` and both render `vin:i`. Ports called `vin`, `vref`
+or `vbias` beside an ideal source of that name are ordinary in a behavioural block, and the
+two currents can differ in sign and in value. It is declared, not fixed, on the same ground
+as the four above: the tooltip shows the raw name, every gesture resolves the row and not
+the label, and un-ticking the source-currents box removes the second row. The exception
+above did not cause it: the rule gave the same two labels before terminal currents were
+labelled by their terminal. No row pins it.
 
 ⚠ **Cadence's exact spelling, for the record.** The prompt's `/I0/M1:d` exists in neither
 Cadence namespace. The real forms are `/I0/M1/D` (schematic/OSS: leading slash, all slash)
@@ -926,14 +962,22 @@ site" check is what proves it did not grow a second one.
 
 1. **A raw loaded after the sidebar was shown needs a re-show** (D6, inherited). Any new
    path that loads a raw must call `browser_refresh $token 1`.
-2. **Two signals can render to the same label** (§5.4). Display, not identity.
+2. **Two signals can render to the same label** (§5.4). Display, not identity. Besides the
+   four corpus collisions there is a fifth shape: a block port's terminal current and the
+   branch current of a same-named source inside the block (`vin:i` twice under `x3`).
 3. **The sweep variable is an ordinary row** (M8). It sorts and filters like any other.
 4. **Vector instance slices are not addressable by `Descend to here`** — issue 0212,
    unchanged. They *are* ten distinct, selectable tree nodes (M9).
-5. **`Descend to here` on a device node** walks toward an instance that has a schematic
-   only if the pcell wrapper has one. sky130's do; a bare primitive would not. It fails
-   loudly through `hier_walk`'s readback, which is the correct behaviour, and is not
-   specially handled.
+5. **`Descend to here` on a device node** is handled since issue 1724 (2026-11-19): when the
+   last segment of the row's path is a device with no sheet of its own, the design window
+   goes to the device's PARENT sheet and the device is selected there, and the status line
+   says so; when several instances could be the segment none is selected and all are named
+   (`doc/claude/specs/waveform_viewer.md`, "A path that ends in a device"). A pcell wrapper
+   that has a schematic is still descended into, as before. What still fails through
+   `hier_walk`'s readback, with the window put back: a segment nothing on the sheet answers
+   to (among them a format that writes a literal letter in front of `@name`, and the second
+   element of a two-line format), a block whose symbol has no schematic file, and a device
+   in the middle of a path.
 6. **The lower pane renders empty for a pure ancestor** — 18 of 128 nodes in `tb_bandgap`.
    Correct, and §7.2 makes it legible.
 7. **`Replace` appends under multi-plot** (ruling 24, inherited, surfaced not fixed).

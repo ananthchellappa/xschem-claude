@@ -57,3 +57,8 @@ instance **terminal** (R203, a different hit test) and need a new read-only
 `scheduler.c` verb, because `find_closest_pin` — the tree's only zoom-scaled pin
 hit test — has no Tcl door. That is a separate unit, already named in the
 refusal the other ten selectors give.
+
+*Note added 2026-11-19 (issue 1724), not a re-check of this file:* that paragraph was true
+when it was written and is not any more. `xschem pin_at` is the read-only door over
+`find_closest_pin`'s rule, and `it`/`if`/`idc`/`is` now take a click on a device pin
+(`doc/claude/specs/calculator.md` R208f). The question this file asks is unaffected.

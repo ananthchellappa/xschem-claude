@@ -1821,6 +1821,22 @@ typedef struct {
   int mode;                    /* LABEL_RIDE_LEASH | LABEL_RIDE_RIDE */
 } Label_ride;
 
+/* One PIN MARKER (issue 1724): the cue on an instance pin a caller has chosen -- a
+ * thin upright ellipse centred on the pin, stroked in `layer`'s colour. See the
+ * block above pin_marker_add() in draw.c.
+ * KEYED BY (path, instname, pin) and never by instance index or id: an index
+ * moves when another instance is deleted or put back, an id when the sheet is
+ * loaded again, which descend and go_back do, and a marker must still be on its
+ * pin when the user comes back up. It is resolved by name at the moment of use
+ * (pin_marker_resolve()). */
+typedef struct {
+  char *path;      /* xctx->sch_path[] of the sheet the pin is on: "." at the top */
+  char *instname;  /* the instance's name on that sheet */
+  int pin;         /* pin index: position among the symbol's PINLAYER rects */
+  int layer;       /* colour, as a layer number */
+  char *tag;       /* the owner's word, for a clear of its own markers; "" when none */
+} Pin_marker;
+
 typedef struct {
   xWire *wire;
   xText *text;
@@ -2099,6 +2115,13 @@ typedef struct {
   unsigned int *scope_hi_id; /* per-entry STABLE id (resolved to index at draw time) */
   int scope_hi_n;       /* number of objects in the overlay (0 = inactive) */
   int scope_hi_alloc;   /* allocated capacity of the two arrays above */
+  /* pin markers (issue 1724, draw.c): THIS context's list, in insertion order.
+   * Allocated on the first add and freed by pin_marker_clear(NULL), which
+   * free_xschem_data() calls. Not in the file, not in undo, not in the selection,
+   * and no write to it sets the modified flag. */
+  Pin_marker *pin_marker;
+  int pin_markers;      /* number of markers (0 = nothing to draw, nothing to walk) */
+  int pin_marker_alloc; /* allocated capacity of the array above */
   GC gc_hover;          /* hover (awareness) highlight: dashed thin colored GC */
   GC gc_sel;            /* selection overlay (selection_style not classic): strokes, pin marks */
   GC gc_selhalo;        /* selection_style halo: the wide band under the selected strokes */
@@ -3153,6 +3176,14 @@ extern void overlay_paint_snapc(void);      /* re-stamp the shown snap cursor (c
 extern void draw_scope_highlight(void);     /* apply-scope white-outline overlay */
 extern void clear_scope_highlight(void);
 extern void add_scope_highlight(int type, unsigned int id);
+/* pin markers (issue 1724): see the block above pin_marker_add() in draw.c */
+extern int pin_marker_add(const char *path, const char *instname, int pin, int layer, const char *tag);
+extern int pin_marker_remove(const char *path, const char *instname, int pin);
+extern int pin_marker_clear_in(Xschem_ctx *ctx, const char *tag);
+extern int pin_marker_clear(const char *tag);
+extern int pin_marker_clear_linked_windows(void); /* hilight.c, beside the link test */
+extern int pin_marker_resolve(const Pin_marker *m, double *x, double *y);
+extern void draw_pin_markers(void);
 extern void draw_hover_shape(GC g, int type, int n, int c); /* hover outline for one object */
 extern int hover_inst_rect(int n, short rot_add, short flip_xor,
                            double *x1, double *y1, double *x2, double *y2); /* its instance box */
@@ -3354,6 +3385,10 @@ extern void flyline_result_free(FlyResult *res);
 /* find the instance pin within a tight radius of (mx,my); returns 1 and fills *r
  * (type=INST_PIN, n=instance, col=pin) on hit, 0 otherwise. See pin_selection.md */
 extern int find_closest_pin(double mx, double my, Selected *r);
+/* every instance pin find_closest_pin() could have answered for (mx,my), nearest
+ * first; returns the count and a my_malloc'd Selected array in *hits (NULL when 0)
+ * for the caller to my_free. Read-only. See findnet.c */
+extern int find_pins_at(double mx, double my, Selected **hits);
 /*extern void find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);*/
 extern int find_closest_net_or_symbol_pin(double mx,double my, double *x, double *y);
 

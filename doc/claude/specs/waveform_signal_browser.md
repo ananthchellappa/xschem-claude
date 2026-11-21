@@ -756,6 +756,13 @@ level carrying both `x1` and `X1` resolves each to itself.
 numeric segment would silently answer with some other instance. Declared limit, unguarded:
 a raw's path segments are SPICE instance names, which cannot be all digits.
 
+⚖ **A third tier since issue 1724 (2026-11-19).** When no instance is called the segment in
+any case, `hier_resolve` takes the ONE instance that NETLISTS under that name
+(`ase::inst_path_segment`, the reader item 12 uses in the other direction): a FET drawn `M9`
+with a `spiceprefix` is the deck's `XM9` and the raw's `xm9`. Two instances that could both be
+the segment resolve to nothing. Detail: `doc/claude/specs/waveform_viewer.md`, "A path that
+ends in a device".
+
 ### 10.4 ⚠ Confirm every step by READBACK, never by `catch`
 
 Both primitives lie by omission:
@@ -789,6 +796,15 @@ deep while returning 0.
 Returns `{ok <landed>}` | `{ok already <path>}` | `{err <reason> <where we are>}`, and
 **never throws** — it rides a menu entry and a key binding, and a throw in either pops
 bgerror, which is modal under X.
+
+⚖ **A fourth answer since issue 1724 (2026-11-19), and only for a caller that asks for it.**
+With its optional third argument `leaf` on, which `browser_descend_to` passes, a walk whose
+LAST segment is a device — an instance the engine refuses to descend into as not a block, or
+a segment several instances could be — does not roll back: it stays on the device's parent
+sheet, selects the device when there is exactly one, and answers
+`{device <parent path> <instance names> <selected 0|1>}`. Without `leaf` everything above
+is unchanged. Detail and limits: `doc/claude/specs/waveform_viewer.md`, "A path that ends in
+a device".
 
 **Step 5 is decision 11: a failed sync ROLLS BACK**, in both directions. The rollback is
 the same primitive as the walk (the walk is idempotent), so there is no second code path

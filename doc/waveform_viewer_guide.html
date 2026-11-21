@@ -98,9 +98,21 @@ it always mirrors the current Plot column. With no Plot rows ticked, no viewer i
 opened.</td></tr>
 <tr><td><b>Direct Plot</b> — <span class="menu">Results &gt; Direct Plot</span>,
 or <kbd>Ctrl-4</kbd> on the schematic</td>
-<td>A click-on-the-design mode: click wires and net labels for voltages, sources
-and ammeters for currents, then press <kbd>ESC</kbd> to plot the queue. Opens the
-viewer if it is not up.</td></tr>
+<td>A click-on-the-design mode: click wires and net labels for voltages, the
+body of a source or an ammeter for its current, or a pin of a device for the
+current into that pin, then press <kbd>ESC</kbd> to plot the queue. A pin's
+current is plotted only if the last run saved it (on the pin of a voltage
+source or an ammeter the source's own current is plotted instead; on the
+source's second pin that is the negative of the pin's own current, and the
+CIW says so); see
+<i>Terminal currents</i> in the <a href="ase_l_tutorial.html">ASE-L
+tutorial</a>. A pin whose current is plotted gets an ellipse in the colour of
+its trace, as a picked wire gets the colour of its trace. The ellipse and the
+wire's colour stay until you clear the highlights, so after a later run has
+replaced the traces they still show the old colours. If you close that
+schematic window instead of pressing <kbd>ESC</kbd>, nothing is plotted and
+the CIW says how many queued traces were dropped. Opens the viewer if
+it is not up.</td></tr>
 </table>
 
 <p><kbd>Ctrl-4</kbd> is a binding from <code>cadence_style_rc</code>, so it exists
@@ -554,7 +566,12 @@ activating that window. The path is read from the row, so a group row
 <code>x1.x2</code> and any signal under it both go to the same place; a
 top-level signal goes back to the top. Instance names are matched
 case-insensitively (an exact match always wins first), because ngspice
-lowercases the names the raw file carries. <b>If any step fails the window is
+lowercases the names the raw file carries; a device drawn with a
+<code>spiceprefix</code> is found under the name it netlists as
+(<code>xm9</code> is the sheet's <code>M9</code>). A row that names a
+<b>device</b> rather than a block, such as the node a pin's current is listed
+under, takes the window to the sheet the device is on and selects the device;
+the status line says so. Otherwise, <b>if any step fails the window is
 returned to exactly where it started</b> and the reason is reported in the
 browser's status line — you are never left part-way down a hierarchy you did not
 ask for. Rows in different parts of the hierarchy leave the command disabled
@@ -1142,7 +1159,12 @@ only</b>; there is deliberately no vertical scrollbar.</p>
 
 <p>Names here are written the way Cadence writes them, not the way ngspice does:
 <code>xm1:id</code> for a device measurement, <code>v1:i</code> for a source's
-branch current, and a plain design net as its own bare name. Hover a name to see
+branch current, and a plain design net as its own bare name. The current into
+a pin (a terminal current saved from ASE-L) is listed under a node named after
+its device and written as the pin: <code>d:i</code>, <code>n1:i</code>, or
+<code>in_p:i</code> for a block's port. (If a block has a port and a voltage
+source inside it of the same name, the port's current and the source's
+current are both listed under that block with the same label.) Hover a name to see
 the full raw name behind it — <code>i(v.x1.v1)</code> for a row drawn
 <code>v1:i</code> — which is also what <b>Copy names</b> puts on the
 clipboard.</p>
@@ -1262,7 +1284,11 @@ the design.</p>
 <p><b>Descend to here</b> takes the browser to the schematic: select a row and
 press <kbd>E</kbd> (see <a href="#ref-viewer-keys">§9.1</a>), or use <span
 class="menu">View &gt; Descend to here</span> or the right-click menu. The design
-window descends to the instance that row lives in. Selecting several rows works
+window descends to the instance that row lives in. If that instance is a device
+with no sheet of its own (a transistor, a resistor: the node a pin's current is
+listed under), the window goes to the sheet the device is on and the device is
+selected there; when two instances could be the one meant, neither is selected
+and the status line names both. Selecting several rows works
 only if they all live in the same place; rows from different parts of the
 hierarchy leave the entry disabled.</p>
 

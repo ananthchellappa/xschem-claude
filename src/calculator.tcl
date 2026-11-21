@@ -9809,8 +9809,8 @@ proc calc::build_sel {} {
 }
 
 # An enabled selector.  The four VOLTAGE ids arm the net pick and the four
-# CURRENT ids the source pick (R201/R203/R208e, the block above); the other six
-# still name themselves and their phase.
+# CURRENT ids the pick of a device pin or of a source (R201/R203/R208e/R208f,
+# the block below); the other six still name themselves and their phase.
 #
 # ⚠ THIS PROC MUST NEVER WRITE `::calc::selmode` ON A REFUSAL PATH.  Tk writes a
 # radiobutton's -variable BEFORE firing -command and that write STANDS -- four
@@ -9864,9 +9864,14 @@ proc calc::sel_refuse {id why} {
 # (`vt` `vf` `vdc` `vs`).  R208e (2026-10-12) added the FOUR CURRENT selectors
 # (`it` `if` `idc` `is`), which pick a voltage source or ammeter by its BODY --
 # Select-On-Design's rule, `ase::ui::sod_source_at` -- and insert `it(<inst>)`.
-# Device TERMINAL currents stay out: the only zoom-scaled pin hit test in the
-# tree (`find_closest_pin`, findnet.c) has NO Tcl door, so they are named as not
-# supported in the current selectors' refusal.
+# R208f (issue 1724) added the device PIN: a current selector's click on an
+# instance pin is that TERMINAL's current, by Select-On-Design's own pin rule
+# (`ase::ui::sod_terminal_at`) and naming rule (`ase::ui::sod_terminal_resolve`).
+# The Calculator writes no deck, so it cannot ask the simulator for a terminal
+# the run did not save: the pick resolves when the loaded result holds the
+# vector, and otherwise says where to ask for it.  The steps are
+# `calc::pick_imeasure`, `calc::pick_iplan` and `calc::pick_iresolve`, below
+# `calc::pick_iclassify`.
 #
 # ⚠ R301 IS WHY `pick_decide` ASKS `calc::pickscope`.  The mode strip's own
 # -command is still `calc::inert ... 6`, but Tk writes a radiobutton's -variable
@@ -9883,6 +9888,20 @@ proc calc::sel_refuse {id why} {
 #                             test runs once -- the coordinate form would run a
 #                             second, independent `find_closest_obj` and could
 #                             hand the pick to a different object (issue 0204).
+#   `ase::ui::sod_source_at`  the source rule: is this object a voltage source
+#                             or an ammeter (R208e).
+#   `ase::ui::sod_terminal_at`      the pin rule: is the cursor on a device
+#                             pin, and on which one (R208f).
+#   `ase::ui::sod_terminal_resolve` the naming rule: may that terminal be
+#                             named here, and what the simulator calls its
+#                             current (R208f).
+#   `ase::ui::sod_term_pin_place`   which node of a source its pin is --
+#                             the first, the second or neither -- for what a
+#                             source's current that stands in for that pin is
+#                             to the pin's own (R208f; `calc::pick_iplace`).
+#   `ase::ui::sod_end`        ends a live Select On Design before this pick
+#                             seizes the canvas that mode holds
+#                             (`calc::pick_end_sod`).
 #   `ase::ui::sod_bits`       the bus guard, through `xschem expandlabel`.
 #   `ase::ui::sod_qualify`    the hierarchical name, through `xschem
 #                             resolved_net` -- R207's "read them back, do not
@@ -9978,20 +9997,23 @@ proc calc::sel_refuse {id why} {
 # away, a navigation that takes the design out of this window's stack, and closing
 # the Calculator (R307) -- which has TWO doors, because `calc::close` is only the
 # `WM_DELETE_WINDOW` handler and `destroy .calc` cannot remove a binding on
-# `.drw`, which is not a descendant of `.calc`.
+# `.drw`, which is not a descendant of `.calc`.  One more exit is not this
+# file's: entering Select On Design in ASE-L ends a pick that is up
+# (`ase::ui::select_on_design`), as an arm here ends that mode
+# (`calc::pick_end_sod`) -- the two take the same canvas slots.
 
 # The eight ids the pick serves, DERIVED from the grid's own table rather than
 # listed: row 0's first group IS the voltage group and row 1's first group the
 # current group (spec 5).  A second table here would be a second place for the
 # scope to drift.  R208e (2026-10-12) added the current group: a current
-# selector picks a voltage source or ammeter instance, not a net.
+# selector picks a device pin, a voltage source or an ammeter (R208f), not a net.
 proc calc::pick_ids {} {
     set r [calc::sel_rows]
     return [concat [lindex [lindex $r 0] 0] [lindex [lindex $r 1] 0]]
 }
 
 # WHAT an id's pick picks: `voltage` (a net) for row 0's first group, `current`
-# (a voltage source or ammeter instance) for row 1's, empty otherwise.
+# (a device pin, a voltage source or an ammeter) for row 1's, empty otherwise.
 proc calc::pick_kind {id} {
     set r [calc::sel_rows]
     if {[lsearch -exact [lindex [lindex $r 0] 0] $id] >= 0} { return voltage }
@@ -10131,16 +10153,320 @@ proc calc::pick_classify {hit net at} {
     return body
 }
 
-# R208e: WHAT A CURRENT SELECTOR'S CLICK LANDED ON, as one of three words, from
-# two values already measured: `$hit` (`xschem object_at` at the un-snapped
-# point) and `$src` (`ase::ui::sod_source_at $hit`, the source rule ASE-L's
-# Select-On-Design uses).  `source` when the rule named an instance, `nothing`
-# for an empty hit (whatever `$src` says), `other` for anything else -- a device
-# body, a wire, a terminal.  Pure, so every refusal is drivable with no canvas.
+# R208e: WHAT A CURRENT SELECTOR'S CLICK LANDED ON WHEN IT IS NOT ON A DEVICE
+# PIN, as one of three words, from two values already measured: `$hit` (`xschem
+# object_at` at the un-snapped point) and `$src` (`ase::ui::sod_source_at $hit`,
+# the source rule ASE-L's Select-On-Design uses).  `source` when the rule named
+# an instance, `nothing` for an empty hit (whatever `$src` says), `other` for
+# anything else -- a device body, a wire.  Pure, so every refusal is drivable
+# with no canvas.  The pin comes first and is `calc::pick_iplan`'s (R208f).
 proc calc::pick_iclassify {hit src} {
     if {[string trim $hit] eq {}} { return nothing }
     if {[string trim $src] ne {}} { return source }
     return other
+}
+
+# R208f (issue 1724): WHAT A CURRENT SELECTOR'S CLICK IS ON, measured once.
+# `$key` is the ASE-L session the pick was armed for, `$x $y` the UN-SNAPPED
+# cursor and `$hit` the `xschem object_at` answer there.  Answers a dict:
+#   hit   as given
+#   src   `ase::ui::sod_source_at $hit`: the source rule on the object under
+#         the cursor
+#   term  `ase::ui::sod_terminal_at $key $x $y`: the pin rule, a dict or empty
+#   res   `ase::ui::sod_terminal_resolve $key $term`: the naming rule, asked
+#         only when there is a pin
+#   tsrc  the source rule asked of the PIN's instance: its name when that
+#         instance is a voltage source or an ammeter, else empty
+#   err   the text of a pin test that raised, else empty
+#
+# ⚠ THIS IS THE ONLY PLACE THE CURRENT PICK ASKS WHAT A PIN OR A SOURCE IS, AND
+# IT ASKS ASE-L'S THREE PROCS.  Nothing in this file probes for a pin, reads a
+# cell type or composes a terminal's name, so a click on a pin under Select On
+# Design and the same click here cannot disagree about which pin is under the
+# cursor, which pins are refused, or what the simulator calls the current.  Band
+# PK13 of tests/headless/test_calc_selector_names.tcl stubs the three and reads
+# the calls back.  (The plan asks ASE-L one thing more, of the answers taken
+# here and of nothing on the sheet: which node of a source its pin is,
+# `calc::pick_iplace`.)
+#
+# ⚠ `$key` IS ALWAYS A SESSION.  `calc::pick_decide` arms only on a token whose
+# design `ase::ui::design_path` resolves, and that proc reads the SESSION's own
+# state, so a result with no ASE-L session behind it (a viewer opened on a file)
+# refuses at the arm with `nodesign` and never reaches a click.  The key handed
+# to the two rules is that session's, unchanged.
+#
+# ⚠ EVERY CALL IS CAUGHT.  `calc::pick_click` is a canvas binding followed by
+# `break`, so an error escaping it lets the same press through to the editor as
+# an ordinary click, which selects.  A pin test that raises is kept in `err` and
+# the click goes on as one off any pin.
+proc calc::pick_imeasure {key x y hit} {
+    set term {}
+    set err {}
+    if {[catch {ase::ui::sod_terminal_at $key $x $y} term]} {
+        set err $term
+        set term {}
+    }
+    set res {}
+    set tsrc {}
+    if {[calc::pick_llen $term]} {
+        catch {set res [ase::ui::sod_terminal_resolve $key $term]}
+        catch {set tsrc [ase::ui::sod_source_at [list instance [dict get $term inst]]]}
+    }
+    set src {}
+    catch {set src [ase::ui::sod_source_at $hit]}
+    return [dict create hit $hit src $src term $term res $res tsrc $tsrc err $err]
+}
+
+# One key of a dict that came from somewhere else, or `$dflt`: a value that is
+# not a dict, or lacks the key, must not raise out of a canvas binding.
+proc calc::pick_dget {d k {dflt {}}} {
+    set v $dflt
+    catch {set v [dict get $d $k]}
+    return $v
+}
+
+# ...and the length of a list that came from somewhere else, 0 for a text that
+# is not a list at all, for the same reason.
+proc calc::pick_llen {l} {
+    set n 0
+    catch {set n [llength $l]}
+    return $n
+}
+
+# WHICH NODE OF ITS ELEMENT THE PIN OF `term` IS, as one word: `first`, `second`
+# or `other`.  `term` is the pin rule's answer and `res` the naming rule's, both
+# as `calc::pick_imeasure` holds them; nothing on the sheet is probed.
+#
+# The rule is ASE-L's, `ase::ui::sod_term_pin_place` -- the one Direct Plot's
+# stand-in asks, so the two gestures cannot disagree about a pin.  It goes by
+# the pin's place on the element: the position in the naming rule's token when
+# that ends in `:n<position>`, else the position the pin has on the instance's
+# netlist line.  `other` is every pin that is neither of the first two nodes:
+# a controlling pin of a controlled source, a pin the netlist line does not
+# carry, a pin behind a token that may not be a node.
+#
+# Without that rule the older one is asked, `ase::ui::sod_term_first_pin`,
+# which knows the first pin from the rest: every other pin is then `second`.
+# A rule that raises, or answers a word that is none of the three, leaves the
+# pin taken for the first, and the click then says nothing about a sign.
+proc calc::pick_iplace {term res} {
+    set place first
+    if {[llength [info commands ::ase::ui::sod_term_pin_place]]} {
+        catch {set place [ase::ui::sod_term_pin_place $term $res]}
+    } else {
+        catch {set place [expr {[ase::ui::sod_term_first_pin $term $res] ? {first} : {second}}]}
+    }
+    if {$place ne {second} && $place ne {other}} { set place first }
+    return $place
+}
+
+# R208f: WHAT TO DO WITH THAT CLICK, as data, from `calc::pick_imeasure`'s dict.
+# Pure, so every refusal and the order of the candidates are drivable with a
+# synthetic dict and no schematic.  Answers one of
+#   {act refuse kind <a `calc::pick_msg` arm> detail <text>}
+#   {act try steps <list>}
+# where `steps` are the candidates to look up, in order, each one of
+#   {kind terminal token <path:tname> inst <name> pin <name> also <text> caution <text>}
+#   {kind source name <instance name>}
+#   {kind source name <instance name> inst <name> pin <name> place <word> ?also <text>?}
+# The last is a source standing in for one of its own PINS: it carries the pin
+# the click was on, which node of the source that pin is (`place`: `first`,
+# `second` or `other`), and -- when other device pins share the point -- which
+# ones, and that the click took the source's current and none of theirs.
+#
+# THE ORDER IS Select-On-Design's (`ase::ui::sod_click`): a device pin first,
+# then the source rule.  So the PIN of a voltage source is its terminal and its
+# BODY the branch current.
+#
+# A PIN (`term` is not empty):
+#   - its terminal cannot be named (`res` is not `ok 1`): refused with the
+#     naming rule's own reason -- unless the pin's instance is a source (`tsrc`),
+#     which is then the source pick it was before pins were picked;
+#   - it is several vectors (a bus instance, a bus pin): refused listing them,
+#     as a bus net is.  The buffer takes one token per click and there is no bit
+#     dialog in a pick;
+#   - else its one terminal is the first candidate and, on a source's pin, the
+#     source's branch current the second.  The Calculator cannot add a probe, so
+#     a terminal the run did not save falls back to the current every run
+#     holds; Direct Plot does the same (`ase::ui::sod_terminal_as_source`).
+# NO PIN: the source rule on the object under the cursor
+# (`calc::pick_iclassify`), exactly as before R208f.
+#
+# THE SIGN OF THE STAND-IN.  A source's branch current is the current INTO ITS
+# FIRST NODE: the simulator's `i(v1)` equals `i(v1:n1)` and is the negative of
+# `i(v1:n2)`.  On the source's second node the stand-in therefore has the
+# opposite sign to the pin's own current.  On any other pin it says nothing
+# about that pin at all: the current into a controlling node of a controlled
+# source is zero, and a pin the netlist line does not carry is no node of the
+# element.  So the step says which node the pin is (`place`), and the click
+# says what that means for the token it inserted (`calc::pick_inotes`).  The
+# place is `calc::pick_iplace`'s word.
+proc calc::pick_iplan {m} {
+    set term [calc::pick_dget $m term]
+    if {[calc::pick_llen $term]} {
+        set iname [calc::pick_dget $term instname {that device}]
+        set pname [calc::pick_dget $term pinname ?]
+        set res [calc::pick_dget $m res]
+        set tsrc [string trim [calc::pick_dget $m tsrc]]
+        set sharers {}
+        catch {
+            foreach o [calc::pick_dget $term others] {
+                lappend sharers "[lindex $o 0] pin [lindex $o 1]"
+            }
+        }
+        set fallback {}
+        if {$tsrc ne {}} {
+            set step [dict create kind source name $tsrc inst $iname pin $pname \
+                          place [calc::pick_iplace $term $res]]
+            if {[llength $sharers]} {
+                dict set step also "[join $sharers {, }]; the click took the current of $tsrc"
+            }
+            set fallback [list $step]
+        }
+        if {[calc::pick_dget $res ok 0] ne {1}} {
+            if {[llength $fallback]} { return [dict create act try steps $fallback] }
+            set why [calc::pick_dget $res why {its name could not be worked out}]
+            return [dict create act refuse kind noterm detail "$iname pin $pname: $why"]
+        }
+        set toks [calc::pick_dget $res tokens]
+        if {[calc::pick_llen $toks] > 1} {
+            return [dict create act refuse kind bus detail [join $toks {, }]]
+        }
+        if {[calc::pick_llen $toks] < 1 || [string trim [lindex $toks 0]] eq {}} {
+            if {[llength $fallback]} { return [dict create act try steps $fallback] }
+            return [dict create act refuse kind noterm \
+                        detail "$iname pin $pname: its name could not be worked out"]
+        }
+        set also {}
+        if {[llength $sharers]} {
+            set also "[join $sharers {, }]; the click took $iname pin $pname"
+        }
+        set caution [string trim [calc::pick_dget $res caution]]
+        if {$caution ne {}} { set caution "$iname pin $pname: $caution" }
+        set steps [list [dict create kind terminal token [lindex $toks 0] \
+                             inst $iname pin $pname also $also caution $caution]]
+        return [dict create act try steps [concat $steps $fallback]]
+    }
+    set cls [calc::pick_iclassify [calc::pick_dget $m hit] [calc::pick_dget $m src]]
+    if {$cls eq {nothing}} { return [dict create act refuse kind inothing detail {}] }
+    if {$cls ne {source}} { return [dict create act refuse kind notsource detail {}] }
+    return [dict create act try \
+                steps [list [dict create kind source name [string trim [calc::pick_dget $m src]]]]]
+}
+
+# R208f: LOOK THE CANDIDATES UP, in order, and answer the first one the result
+# holds.  `$lookup` is a command prefix called as `{*}$lookup <candidate> <an>`
+# and answering `calc::pick_lookup`'s dict: the click passes the viewer's
+# context loan (`calc::pick_in_token <token>`), a test passes
+# `calc::pick_lookup_in` with a raw read into the current context.  Answers
+#   {ok 1 name <the raw's own spelling> path <Cadence path> step <the step taken>}
+#   {ok 0 why <a `calc::pick_msg` arm> detail <text> step <the last step tried>}
+#
+# A candidate the result does not hold (`unresolved`) hands over to the next
+# step.  Any other failure of a lookup -- no data loaded, a busy viewer, a name
+# the engine cannot read -- ends the click with its own sentence, because it
+# says nothing about the name.  When no step is held the sentence is the LAST
+# step's: `absent` for a terminal, which says where to ask for it, and
+# `unresolved` for a source, as before R208f.
+#
+# THE CANDIDATE of a terminal is `i(<token>)` with the token's case kept
+# (`ase::ui::sod_expr terminal ... preserve`).  The token is already the
+# simulator's hierarchical name, so it does not go through `sod_qualify`, whose
+# current arm builds the branch form of a SOURCE.  A source's candidate is
+# `calc::pick_iname`'s.  The read-back decides the spelling, as for every other
+# pick (R204/R207).
+#
+# THE PATH of a terminal, for the status line only, is the instance's Cadence
+# path, a colon and the pin's name as the symbol spells it.
+#
+# ⚠ EVERY CANDIDATE IS COMPOSED BEFORE THE FIRST LOOKUP.  A lookup borrows the
+# viewer's context and hands the design's back; the names and the paths are
+# read from the DESIGN window's hierarchy, so they are all taken while nothing
+# has moved.  A step that names nothing -- an empty token, an empty source name,
+# a kind this proc does not know -- is passed over and never looked up as an
+# empty wrapper; with none left the answer is `noname`.
+proc calc::pick_iresolve {steps base lookup {an {}}} {
+    set todo {}
+    foreach st $steps {
+        set kind [calc::pick_dget $st kind]
+        set cand {}
+        set path {}
+        if {$kind eq {terminal}} {
+            set tk [string trim [calc::pick_dget $st token]]
+            if {$tk ne {}} { catch {set cand [ase::ui::sod_expr terminal $tk preserve]} }
+            set path "[calc::pick_cadence [calc::pick_dget $st inst] $base]:[calc::pick_dget $st pin]"
+        } elseif {$kind eq {source}} {
+            set nm [calc::pick_iname [calc::pick_dget $st name] $base]
+            if {[calc::pick_dget $nm ok 0] eq {1}} { set cand [calc::pick_dget $nm cand] }
+            set path [calc::pick_cadence [calc::pick_dget $st name] $base]
+        }
+        if {[string trim $cand] eq {}} continue
+        lappend todo [list $st $kind $cand $path]
+    }
+    set last {}
+    foreach t $todo {
+        lassign $t st kind cand path
+        set lk {}
+        if {[catch {{*}$lookup $cand $an} lk]} {
+            return [dict create ok 0 why busyview detail $cand step $st]
+        }
+        if {[calc::pick_dget $lk ok 0] eq {1}} {
+            return [dict create ok 1 name [calc::pick_dget $lk name] path $path step $st]
+        }
+        set why [calc::pick_dget $lk why busyview]
+        if {$why ne {unresolved}} {
+            set det $cand
+            if {$why eq {unlexable}} { set det [calc::pick_dget $lk name] }
+            return [dict create ok 0 why $why detail $det step $st]
+        }
+        set last $t
+    }
+    if {![llength $last]} { return [dict create ok 0 why noname detail {} step {}] }
+    lassign $last st kind cand path
+    return [dict create ok 0 why [expr {$kind eq {terminal} ? {absent} : {unresolved}}] \
+                detail $cand step $st]
+}
+
+# R208f: THE SENTENCES A CLICK SAYS BEFORE ITS LAST ONE, oldest first, from
+# `calc::pick_imeasure`'s dict and `calc::pick_iresolve`'s answer: a pin test
+# that raised; and what the step that decided the click carries.
+#   - A TERMINAL step: the other device pins on the same point and the naming
+#     rule's caution.
+#   - A SOURCE step that stood in for one of the source's pins and was
+#     INSERTED: the other device pins on the same point, and that the click
+#     took the source's current; and what the token is to the pin that was
+#     clicked (`calc::pick_iplan` has why).  On the source's SECOND node: the
+#     token is the source's current and is the negative of the pin's own.  On
+#     a pin that is NEITHER of the first two nodes: the token is the source's
+#     current and is not that pin's.  On the first node the two are the same
+#     number and nothing is said; a click on the source's BODY carries no pin
+#     and says nothing.
+# Nothing is said for a lookup that failed for a reason that is not the name.
+# The click says them through `calc::pick_echo` like every other sentence of
+# its own, so they are in the status history and the CIW, and the last word
+# stays what was inserted, or why nothing was.
+proc calc::pick_inotes {id m lk} {
+    set out {}
+    set err [string trim [calc::pick_dget $m err]]
+    if {$err ne {}} { lappend out [calc::pick_msg pinerr $id $err] }
+    set st [calc::pick_dget $lk step]
+    set why [calc::pick_dget $lk why]
+    set ok [calc::pick_dget $lk ok 0]
+    if {$ok ne {1} && $why ne {absent}} { return $out }
+    foreach k {also caution} {
+        set v [string trim [calc::pick_dget $st $k]]
+        if {$v ne {}} { lappend out [calc::pick_msg $k $id $v] }
+    }
+    if {$ok eq {1} && [calc::pick_dget $st kind] eq {source}
+        && [string trim [calc::pick_dget $st pin]] ne {}} {
+        set place [calc::pick_dget $st place first]
+        set arm [expr {$place eq {second} ? {srcneg} : ($place eq {other} ? {srcother} : {})}]
+        if {$arm ne {}} {
+            lappend out [calc::pick_msg $arm $id \
+                             "[calc::pick_dget $st inst {that source}] pin [calc::pick_dget $st pin]"]
+        }
+    }
+    return $out
 }
 
 # A short word for what a `body` click landed on, for the sentence.  An instance
@@ -10332,6 +10658,16 @@ proc calc::pick_base {dpath} {
 # safety.  Measured symptom on the display arm: a 200 s TIMEOUT with zero `FAIL:`
 # lines.  All prose lives here, above the proc.
 #
+# ⚠ `absent` NAMES THE PATH AFTER WHICH THE SAME CLICK RESOLVES.  This window
+# reads the database the session's waveform viewer has LOADED
+# (`calc::require_result`), and a finished run puts its results there only when
+# it plots a row (`ase::ui::auto_plot`).  So a pin picked in ASE-L under
+# Outputs > To Be Saved is in the next run's results file and still not in the
+# loaded database, while one picked under Outputs > To Be Plotted is saved AND
+# plotted: that run loads it here.  The sentence therefore sends the user to
+# To Be Plotted, in the menu's own words; the whole menu path does not fit the
+# room, so it stops at the cascade that holds Select On Design.
+#
 # ⚠ THE SUCCESS SENTENCE IS NOT AN ARM.  It needs the id, the name AND the path,
 # which is three values in two detail slots, and it needs FITTING rather than
 # composing -- so it is `calc::pick_fit`, exactly as `calc::prov_fit` is.
@@ -10347,10 +10683,17 @@ proc calc::pick_msg {kind {a {}} {b {}}} {
     switch -exact -- $kind {
         armed { return "selector $a: click a net on the schematic; ESC cancels" }
         prompt { return "Calculator $a: click a net to insert its name; ESC cancels" }
-        iarmed { return "selector $a: click a voltage source or ammeter; ESC cancels" }
-        iprompt { return "Calculator $a: click a voltage source or ammeter for its current; ESC cancels" }
-        inothing { return "selector $a: nothing under the click; click a voltage source or ammeter" }
-        notsource { return "selector $a: pick a voltage source or ammeter; terminal currents not supported" }
+        iarmed { return "selector $a: click a device pin, voltage source or ammeter; ESC cancels" }
+        iprompt { return "Calculator $a: click a device pin, voltage source or ammeter; ESC cancels" }
+        inothing { return "selector $a: nothing there; click a device pin, voltage source or ammeter" }
+        notsource { return "selector $a: no current there; click a device pin, voltage source or ammeter" }
+        noterm { return "selector $a: cannot name the current of $b; use an ammeter in series" }
+        absent { return "selector $a: $b is not in this result; ASE-L Outputs: To Be Plotted, rerun" }
+        also { return "selector $a: that point is also $b" }
+        caution { return "selector $a: caution, $b" }
+        srcneg { return "selector $a: $b: inserted the source's current, the negative of this pin's" }
+        srcother { return "selector $a: $b: inserted the source's current, which is not this pin's" }
+        pinerr { return "selector $a: the pin test failed ($b); read as a click off any pin" }
         terminal { return "selector $a: that is a device terminal, not a net" }
         body { return "selector $a: $b is not a net" }
         nothing { return "selector $a: nothing under the click; click a wire or a net label" }
@@ -10495,8 +10838,9 @@ proc calc::pick_decide {id g} {
 }
 
 # ---------------------------------------------------------------------------
-# THE SEIZE.  `rdw::_pick_seize`'s shape, which is `ase::ui::select_on_design`'s
-# with issue 1304's fourth sequence added -- and the fourth one is not optional.
+# THE SEIZE.  `rdw::_pick_seize`'s shape: press, release, Escape and issue
+# 1304's fourth sequence, the held motion (Select On Design holds it too since
+# issue 1724) -- and the fourth one is not optional.
 #
 # ⚠ WITHOUT <B1-Motion> C's RUBBER BAND GETS A START AND NO END.  A motion with
 # Button1Mask calls select_rect(START,1) + unselect_all(1) and sets STARTSELECT
@@ -10513,16 +10857,47 @@ proc calc::pick_decide {id g} {
 # its own prompt names (issue 0204's own note).
 #
 # ⚠ MEASURED ON THIS TREE: `.drw` is a FRAME whose shipped bindings are the
-# GENERIC <Button>/<Key>, so all four predecessors are the EMPTY STRING, and
-# `bind w seq {}` DESTROYS a binding rather than setting an empty one.  That is
-# what makes the restore byte-identical, and it is why a restore written as
-# `bind $cv <X> {}` would pass a string comparison and fail a sequence-list one.
+# GENERIC <Button>/<Key>, so the predecessors of the first four slots are the
+# EMPTY STRING, and `bind w seq {}` DESTROYS a binding rather than setting an
+# empty one.  That is what makes the restore byte-identical, and it is why a
+# restore written as `bind $cv <X> {}` would pass a string comparison and fail a
+# sequence-list one.
+#
+# ⚠ THE FIFTH SLOT IS THE DOUBLE CLICK, AND ITS PREDECESSOR IS NOT EMPTY.  Tk
+# gives the SECOND press of a double click to the most specific binding that
+# matches, and the editor binds the double click on every design canvas
+# (`set_bindings`) -- so with only the press seized, that second press went past
+# the mode to the editor: its property dialog in the stock profile, its
+# connected-select in the Cadence one, on whatever was under the cursor.  A pick
+# must not change the selection (issue 0204) and a miss leaves the mode armed,
+# so every left press while the mode is up is the mode's: the slot takes the
+# press's own script.  The release hands the editor's script back verbatim.
+# What this does not reach is the second press AFTER a pick that resolved: that
+# pick ended on the first release (`calc::pick_done`), so by then the canvas is
+# the editor's again.
+#
+# THE PRESS HANDS ITS OWN POSITION TO THE ENGINE BEFORE THE CLICK IS RESOLVED.
+# The click reads the engine's un-snapped pointer pair, and the engine writes
+# that pair on every event it is handed, whatever the event is.  The editor
+# binds `<Configure>` on every design canvas, and that event carries the
+# canvas's position inside its window, not a pointer position: each time the
+# canvas is laid out again, that position goes into the pair (issue 1659).
+# One of those between the last pointer motion and the press, and the click
+# would be resolved at a point nobody clicked -- as between the two presses of
+# a double click, where no motion comes in between at all.  So the press's
+# script first passes the press's own pixel on as a pointer motion, which is
+# what a hand moving onto that pixel would have sent, and then runs the click.
+# The double click's slot holds the same script, so its second press does the
+# same.
+#
+# WHAT WAS BOUND IS KEPT in `pick(own)`, in the order of the slots, for
+# `calc::pick_held`, which tells `cmdmode` what this mode holds on the canvas.
 proc calc::_pick_seize {cv} {
     variable pick
-    set press "[list calc::pick_click]; break"
+    set press "xschem callback %W 6 %x %y 0 0 0 %s; [list calc::pick_click]; break"
     set esc   "[list calc::pick_end cancel]; break"
     # ⚠⚠ ISSUE 1305's GUARD: NEVER LATCH OUR OWN SCRIPTS AS THE PREDECESSORS.
-    # A seize of an ALREADY-SEIZED canvas records `calc::pick_click; break` as the
+    # A seize of an ALREADY-SEIZED canvas records the press's own script as the
     # thing to put back, and the restore then re-installs the seize -- a PERMANENT
     # seize, unrecoverable inside the session, in which every click dumps into a
     # dead mode and nothing can be selected again.  That is measured, in the RDW,
@@ -10537,20 +10912,29 @@ proc calc::_pick_seize {cv} {
     # are and only the bindings are re-asserted.  Caught by band PG7 of
     # tests/headless/test_calc_pick.tcl, which found three of the four slots
     # restored to `break` after a mode whose record had been falsified.
+    #
+    # One guard covers every slot, the double click included: they are taken
+    # together and handed back together.  With no record left at all the first
+    # four fall back to empty, which is what a design canvas holds there, and
+    # the double click to the editor's own script (`calc::pick_dbl_editor`).
     if {[bind $cv <ButtonPress-1>] ne $press} {
         set pick(prevpress)  [bind $cv <ButtonPress-1>]
         set pick(prevrel)    [bind $cv <ButtonRelease-1>]
         set pick(prevesc)    [bind $cv <Key-Escape>]
         set pick(prevmotion) [bind $cv <B1-Motion>]
+        set pick(prevdbl)    [bind $cv <Double-Button-1>]
     }
     foreach k {prevpress prevrel prevesc prevmotion} {
         if {![info exists pick($k)]} { set pick($k) {} }
     }
+    if {![info exists pick(prevdbl)]} { set pick(prevdbl) [calc::pick_dbl_editor $cv] }
     set pick(canvas) $cv
     bind $cv <ButtonPress-1>   $press
     bind $cv <ButtonRelease-1> {break}
     bind $cv <Key-Escape>      $esc
     bind $cv <B1-Motion>       {break}
+    bind $cv <Double-Button-1> $press
+    set pick(own) [list $press {break} $esc {break} $press]
     catch {focus -force $cv}
     # ⚠ AND AGAIN AT IDLE, which is the half `libmgr::raise_to_front` has and this
     # did not.  `ase::ui::design_window`'s raise ends in `after 150
@@ -10562,6 +10946,20 @@ proc calc::_pick_seize {cv} {
     # the same parity for free.
     catch {after idle calc::pick_refocus}
     return $cv
+}
+
+# THE EDITOR'S OWN DOUBLE-CLICK SCRIPT ON A DESIGN CANVAS, for a seize that has
+# no predecessor on record for that slot (the record was lost while the canvas
+# stayed seized).  For the other slots "nothing on record" and "nothing was
+# there" hand back the same thing; for this one they do not, and handing back
+# nothing would take the editor's double click away from that window for the
+# rest of the session.  `set_bindings` binds the double click of all three
+# buttons with one script, and no click mode takes the middle button's, so that
+# slot still holds it.
+proc calc::pick_dbl_editor {cv} {
+    set s {}
+    catch {set s [bind $cv <Double-Button-2>]}
+    return $s
 }
 
 # Put the keyboard back on the seized canvas.  Guarded on the mode still being
@@ -10577,23 +10975,72 @@ proc calc::pick_refocus {} {
     return 1
 }
 
-# Hand all four bindings back, verbatim and under catch (the canvas may be
+# Hand every seized binding back, verbatim and under catch (the canvas may be
 # dead), stop the pump and clear the design window's prompt.  ONE proc shared by
 # the end path AND the suspend path, exactly as `ase::ui::sod_release` and
 # `rdw::pick_release` are, so the seize and the restore cannot drift -- which is
-# the whole reason issue 1304's fourth sequence is added in two places and not
-# three.  Returns 1 only if it released a live mode.
+# the whole reason a sequence is added in two places and not three.
+#
+# A PAUSED PICK'S RELEASE WRITES NOTHING.  A pick that a descend has paused
+# (`calc::pick_suspend`) handed every slot back when it was paused, with its
+# timer stopped and its prompt cleared, and what the canvas and the status
+# slot hold since then is not this pick's to overwrite.  Its record still
+# names what the slots held when it took them, and for a pick that was armed
+# over the results window's pick mode those are that mode's scripts.  That
+# mode is paused by the same descend, so writing them back would put the
+# scripts of a paused mode on the canvas: it would take the click the descend
+# is waiting for, and nothing would descend.  So when a paused pick is ended
+# -- its selector pressed again, the Calculator window closed -- the canvas
+# and the status slot are left as they are, and `calc::pick_end` drops the
+# record as for any other end.
+#
+# Answers 1 when a pick was on record, armed or paused, and 0 when none was.
 proc calc::pick_release {} {
     variable pick
     if {![info exists pick(canvas)]} { return 0 }
+    if {[info exists pick(suspended)]} { return 1 }
     set cv $pick(canvas)
     catch {bind $cv <ButtonPress-1>   $pick(prevpress)}
     catch {bind $cv <ButtonRelease-1> $pick(prevrel)}
     catch {bind $cv <Key-Escape>      $pick(prevesc)}
     catch {bind $cv <B1-Motion>       $pick(prevmotion)}
+    catch {bind $cv <Double-Button-1> $pick(prevdbl)}
     if {[info exists pick(pump)]} { catch {after cancel $pick(pump)} }
     catch {ase::ui::sod_prompt_clear $cv}
     return 1
+}
+
+# WHAT THIS MODE HOLDS ON THE CANVAS NOW, for `cmdmode` (the fourth argument of
+# the `cmdmode::register` call below): a flat list
+#   canvas sequence script predecessor   canvas sequence script predecessor ...
+# with one group for every slot of the seize -- the script the mode bound there
+# (`pick(own)`, which `calc::_pick_seize` writes and `calc::pick_done` keeps up
+# to date for the release) and the script the slot held before the mode took
+# it.  Empty when no pick is armed and while one is suspended: a suspended pick
+# has handed every slot back.
+#
+# `cmdmode::pristine` reads it for `clone_canvas_bindings`: a window created
+# while the pick is armed, by a door that does not suspend the modes first,
+# copies the bindings of the main canvas, and with this list it copies what the
+# canvas holds UNDERNEATH the pick instead of the pick's own scripts.  Without
+# it the new window's canvas would carry the scripts of a pick that is armed on
+# another canvas: no click there would select, and the pick's end hands back
+# only the canvas the pick is on, so nothing would take them off that one again.
+#
+# No Tk is asked: the answer is the record alone, so it is the same list with
+# no display.
+proc calc::pick_held {} {
+    variable pick
+    if {![info exists pick(canvas)] || [info exists pick(suspended)]} { return {} }
+    if {![info exists pick(own)]} { return {} }
+    set out {}
+    foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} \
+            rec {prevpress prevrel prevesc prevmotion prevdbl} own $pick(own) {
+        set prev {}
+        catch {set prev $pick($rec)}
+        lappend out $pick(canvas) $seq $own $prev
+    }
+    return $out
 }
 
 # LEAVE THE MODE.  Safe on every arm and with nothing live.  `$why` selects two
@@ -10618,6 +11065,24 @@ proc calc::pick_release {} {
 # the next canvas event, which is the right lifetime for a confirmation.  An
 # ESC (or any `cancel`) that lands between the resolving press and its release
 # is the same end: the name is already in the buffer, so `cancelled` would lie.
+#
+# THE RESULTS WINDOW'S PICK MODE MAY BE SITTING ON TOP OF THIS PICK.  It nests:
+# entered while this pick is armed (its key, with nothing selected) it keeps
+# this pick's scripts as what the canvas held before it.  Every door that ends
+# this pick comes through here -- the armed selector pressed again, another
+# selector pressed, the Calculator window closed or destroyed, Select On Design
+# entered -- and the release below hands the canvas what THIS pick took it
+# with, the editor's scripts, over that mode's live ones.  That mode would stay
+# recorded as up with nothing bound: its sentence on the status bar, clicks
+# selecting, its key taking nothing.  So straight after a release it is asked
+# to take the canvas again (`rdw::pick_reseat`), and one Escape then ends it.
+# The call changes nothing in every other state: that mode not up, or up
+# underneath this pick and handed its own scripts back by the release.  It is
+# made only when there was a pick to end (the release answered 1), and under
+# catch: this file also loads where the results window's file is not.  When
+# this pick was ended while a descend had it paused, the release wrote
+# nothing, and that mode is paused as well, or holds the canvas itself: it
+# does nothing.
 proc calc::pick_end {{why cancel}} {
     variable pick
     variable selmode
@@ -10628,6 +11093,7 @@ proc calc::pick_end {{why cancel}} {
     catch {set cv $pick(canvas)}
     catch {set said $pick(prompt)}
     set r [calc::pick_release]
+    if {$r} { catch {rdw::pick_reseat} }
     array unset pick
     if {$why eq {switch} || $why eq {close}} { return $r }
     if {$id eq {}} { return $r }
@@ -10697,6 +11163,9 @@ proc calc::aq_qualify {id name} {
 # light 80 ms re-assert is immune to that and to the focus/creation churn that
 # re-establishes the generic bindings.
 #
+# With a current selector armed the prompt also names the pin a click would
+# take while the pointer is on one (`calc::pick_hover`, below).
+#
 # ⚠ THE SECOND JOB IS THE WHOLE ANSWER TO R307's MISSING CLOSE HOOK.  There is
 # no `<Destroy>` to hang on `.drw` that survives the window's own teardown order
 # and no C hook for "a schematic window closed", so a pick armed on a window the
@@ -10712,14 +11181,156 @@ proc calc::pick_pump {} {
         calc::pick_end dropped
         return 0
     }
-    if {[info exists pick(prompt)]} {
-        catch {ase::ui::sod_prompt_set $pick(canvas) $pick(prompt)}
+    if {[info exists pick(prompt)] && ![calc::pick_covered $pick(canvas)]} {
+        catch {ase::ui::sod_prompt_set $pick(canvas) "$pick(prompt)[calc::pick_hover]"}
     }
     set pick(pump) [after 80 calc::pick_pump]
     return 1
 }
 
-# THE CANVAS WIDGET FOR THE CURRENT CONTEXT, or empty.
+# IS ONE OF THIS PICK'S OWN SCRIPTS IN A SLOT: the press, which the double
+# click's slot holds as well, or one of its two ends (Escape's, and the one the
+# release holds once a click has resolved)?  The press is known by its tail, so
+# it is this pick's with or without the pointer motion in front of the click.
+proc calc::pick_own_script {script} {
+    if {[string match "*[list calc::pick_click]; break" $script]} { return 1 }
+    return [expr {[string match {calc::pick_end *; break} $script] ? 1 : 0}]
+}
+
+# DOES A CLICK MODE THAT IS UP HOLD `script` IN THE PRESS SLOT OF `cv`?  Every
+# click mode tells `cmdmode` what it holds on a canvas and what each slot held
+# before it (`calc::pick_held` is this pick's answer), and `cmdmode::pristine`
+# reads those lists: handed a slot and the script it holds now, it answers what
+# the slot would hold with no mode up.  A script no mode holds comes back
+# unchanged, so an answer that is not the script itself means a mode holds it.
+# 0 where `cmdmode` cannot be asked.
+proc calc::pick_overlaid {cv script} {
+    if {![llength [info commands ::cmdmode::pristine]]} { return 0 }
+    set under $script
+    catch {set under [::cmdmode::pristine $cv <ButtonPress-1> $script]}
+    return [expr {$under ne $script ? 1 : 0}]
+}
+
+# IS ANOTHER CLICK MODE THAT IS UP SEIZED OVER THIS PICK ON `cv`?  1 when the
+# press slot of `cv` holds a script that is not one of this pick's own
+# (`calc::pick_own_script`) and that a mode that is up holds there
+# (`calc::pick_overlaid`): the results window's pick mode entered while this
+# pick is armed.  0 in every other state -- this pick's own script in the slot,
+# the editor's, a script no mode says it holds, a canvas that is no widget, no
+# Tk, `cmdmode` not there to ask.
+#
+# `calc::pick_pump` asks it before it writes the prompt.  The mode on top keeps
+# its own sentence on the same slot with a timer of its own, and the clicks are
+# that mode's: two writers would make the slot change text on every tick.  The
+# pump keeps running while it writes nothing, so this pick's prompt is back
+# within one tick of the mode on top ending.
+proc calc::pick_covered {cv} {
+    if {$cv eq {} || ![calc::has_win $cv]} { return 0 }
+    set now {}
+    if {[catch {set now [bind $cv <ButtonPress-1>]}]} { return 0 }
+    if {[calc::pick_own_script $now]} { return 0 }
+    return [calc::pick_overlaid $cv $now]
+}
+
+# TAKE THE CANVAS AGAIN AFTER THE RESULTS WINDOW'S PICK MODE WAS ENDED
+# UNDERNEATH THIS PICK.  That mode nests with this pick: a selector pressed
+# while it is up arms the pick on top of it, with that mode's scripts as what
+# the canvas held before.  Ended first -- by Escape pressed in the results
+# window -- it writes what IT took the canvas with, the editor's scripts, over
+# this pick's live ones.  The pick would stay armed in the grid with nothing
+# bound: its prompt on the design window, a click selecting, Escape doing
+# nothing; and ended later it would hand the canvas the scripts of a mode that
+# is gone, on which no click selects again.  So the end of that mode
+# (`rdw::pick_end`) calls this proc straight after it.  It is the counterpart
+# of `rdw::pick_reseat`, which that mode is asked when this pick is ended
+# underneath it.
+#
+# It seizes again on the canvas the pick is on (`calc::_pick_seize`), so the
+# predecessors on record are what the canvas holds NOW, and the pick's end
+# then leaves an unseized canvas.  Nothing else of the pick moves: the
+# selector it was armed for, its result, its prompt and the prompt's one timer
+# are as they were.  A pick whose click has resolved and that is waiting for
+# the release (`calc::pick_done`) keeps its end on the release slot.  The seize
+# puts the keyboard on the canvas, as every seize of this pick does: the
+# pick's Escape is bound there.
+#
+# IT DOES NOTHING unless a pick is armed, is not suspended, its canvas is a
+# live widget, and the press slot of that canvas holds neither one of this
+# pick's own scripts (`calc::pick_own_script`) nor the script of another mode
+# that is up (`calc::pick_overlaid`).  The last test is what makes it safe to
+# call when nothing was ended underneath: with this pick at the BOTTOM of a
+# stack the press slot holds the script of the mode on top of it, and seizing
+# then would put the pick over a mode that is up, with that mode's scripts as
+# the predecessors.  That test asks `cmdmode`; the test on this pick's own
+# scripts stands in front of it because this file loads without `cmdmode` too,
+# and there it is the only thing that says the canvas is already this pick's.
+# Answers 1 when it seized, else 0.
+proc calc::pick_reseat {} {
+    variable pick
+    if {![info exists pick(canvas)] || [info exists pick(suspended)]} { return 0 }
+    set cv $pick(canvas)
+    if {$cv eq {} || ![calc::has_win $cv]} { return 0 }
+    set now [bind $cv <ButtonPress-1>]
+    if {[calc::pick_own_script $now]} { return 0 }
+    if {[calc::pick_overlaid $cv $now]} { return 0 }
+    calc::_pick_seize $cv
+    if {[info exists pick(done)]} { calc::pick_done }
+    return 1
+}
+
+# WHICH PIN THE NEXT CLICK WOULD TAKE, as the words the design window's prompt
+# ends with while a CURRENT selector is armed and the pointer is on a device
+# pin: ` — pin R9:P`.  Empty for a voltage selector, with the pointer off every
+# pin, on another window's sheet, and whenever it cannot be worked out.
+#
+# The editor's hover outline cannot say this: on a pin with a wire ending on it
+# the outline is the wire, and the click takes the terminal.  The question is
+# put to the rule the click itself asks (`ase::ui::sod_terminal_at` at the
+# un-snapped pointer, for the session the pick was armed for, behind the
+# click's own `calc::pick_base` test), so the prompt and the click cannot
+# disagree about where a pin is.  Select On Design's prompt says the same for
+# its own mode (`ase::ui::sod_prompt_text`).
+#
+# THE PUMP ASKS THIS EVERY TICK, SO IT NEVER RAISES AND IS CHEAP.  Every call
+# is caught, and what cannot be asked is the plain prompt.  The pin rule walks
+# the sheet's wires when the pointer is near a device pin and off its square,
+# so the answer is kept with what it was worked out from -- the pointer, the
+# zoom (the pin radius follows it), the window and sheet shown and the number
+# of instances and wires on it -- and worked out again only when one of those
+# has changed.
+proc calc::pick_hover {} {
+    variable pick
+    if {![info exists pick(id)] || [calc::pick_kind $pick(id)] ne {current}} { return {} }
+    if {[catch {
+        set at [list [xschem get mousex] [xschem get mousey] [xschem get zoom] \
+                    [xschem get current_win_path] [xschem get sch_path] \
+                    [xschem get instances] [xschem get wires]]
+    }]} { return {} }
+    if {[info exists pick(hoverat)] && $pick(hoverat) eq $at
+        && [info exists pick(hover)]} { return $pick(hover) }
+    set s {}
+    catch {
+        if {[calc::pick_canvas] eq $pick(canvas) && [calc::pick_base $pick(design)] >= 0} {
+            set s [calc::pick_hover_text \
+                       [ase::ui::sod_terminal_at $pick(token) [lindex $at 0] [lindex $at 1]]]
+        }
+    }
+    set pick(hoverat) $at
+    set pick(hover) $s
+    return $s
+}
+
+# ...and its words, from the pin rule's answer (a dict, or empty).  Pure.
+proc calc::pick_hover_text {term} {
+    if {![calc::pick_llen $term]} { return {} }
+    set inst [string trim [calc::pick_dget $term instname]]
+    set pin [string trim [calc::pick_dget $term pinname]]
+    if {$inst eq {} || $pin eq {}} { return {} }
+    return " — pin $inst:$pin"
+}
+
+# THE CANVAS WIDGET FOR THE WINDOW CONTEXT `ctx` (default: the current one), or
+# empty.
 #
 # ⚠⚠ `xschem get current_win_path` IS A CONTEXT IDENTIFIER AND IS NOT ALWAYS A
 # LIVE Tk WIDGET PATH.  Under the TABBED interface it answers `.x2.drw` for a
@@ -10729,22 +11340,27 @@ proc calc::pick_pump {} {
 # PG2 of tests/headless/test_calc_pick.tcl refused a perfectly good arm with `the
 # design window is busy`, and the cause was this and not a race.
 #
-# Binding on the C path would have been WORSE THAN REFUSING: `bind .x2.drw <...>`
-# creates bindings for a widget that does not exist, so no gesture would ever
-# arrive, the prompt would sit on the design window saying click a net, and
-# nothing would happen -- a mode that looks armed and is not.  So the widget is
-# resolved out of `xschem windows`' own table: field 0 is the context path, field
-# 1 is the TOPLEVEL, and the canvas is that toplevel's `.drw` (the main window's
-# toplevel is `.`, so its canvas is `.drw` and not `..drw`).
+# Binding on the C path would have been WORSE THAN REFUSING.  On this Tk `bind`
+# on a context name that is no widget raises `bad window path name`, and a
+# caller that catches the raise binds nothing: no gesture would ever arrive,
+# the prompt would sit on the design window saying click a net, and nothing
+# would happen -- which is why the mode looked armed and was not.  So the widget
+# is resolved out of `xschem windows`' own table: field 0 is the context path,
+# field 1 is the TOPLEVEL, and the canvas is that toplevel's `.drw` (the main
+# window's toplevel is `.`, so its canvas is `.drw` and not `..drw`).
 #
 # ⚠ The tab case also means the seize can outlive the CONTEXT while the WIDGET
 # stays alive -- the user switches tabs and the same `.drw` is now showing another
 # schematic.  That is what `calc::pick_click`'s own `calc::pick_base` guard is
 # for: it answers -1 and the mode ends with the `moved` sentence rather than
 # resolving a net on the wrong sheet.
-proc calc::pick_canvas {} {
-    set cv {}
-    catch {set cv [xschem get current_win_path]}
+#
+# `ctx` is for a caller that was HANDED a context's name and must not read the
+# current one in its place: `calc::pick_resume`, which `cmdmode` hands the
+# context a descend or a return landed on.
+proc calc::pick_canvas {{ctx {}}} {
+    set cv $ctx
+    if {$cv eq {}} { catch {set cv [xschem get current_win_path]} }
     if {$cv eq {}} { return {} }
     if {[calc::has_win $cv]} { return $cv }
     set rows {}
@@ -10794,6 +11410,38 @@ proc calc::pick_settle {dpath} {
     return {}
 }
 
+# ONE CLICK MODE ON THE CANVAS AT A TIME.  ASE-L's Select On Design (Outputs >
+# To Be Saved / To Be Plotted > Select On Design, From Design, Results > Direct
+# Plot) seizes the same canvas slots this pick seizes, and each of the two
+# keeps ONE set of predecessors.  Left up underneath, its scripts would be
+# latched as this pick's predecessors, and whichever of the two ended first
+# would hand the other's dead scripts back to the canvas: a schematic window
+# that takes no left click, with nothing saying why.  So an arm that is going
+# ahead ends a live Select On Design first, the way its own ESC ends it: the
+# outputs it queued stay queued, its pin markers go, and a Direct Plot plots
+# what it had queued.  `ase::ui::select_on_design` ends a live pick of this
+# window in the same way, so the two never stack in either order.
+#
+# It is called BEFORE the design window is raised, because ending that mode
+# raises ASE-L's own window (or the viewer), and the pick needs the design
+# window on top and the keyboard on its canvas.  Under catch: a pick must still
+# arm when that mode's end fails with an error.  Answers 1 when it ended one.
+#
+# The results window's own pick mode (`rdw::pick_start`) is NOT ended here: it
+# nests, by its own rulings, and open issue 0202 has what that costs.  When it
+# was entered ON TOP of the Select On Design that is ended here, that mode's
+# end has just written the editor's scripts over the results window's live
+# ones, so it is asked to take the canvas again (`rdw::pick_reseat`, which does
+# nothing in every other case).  This pick then stacks on it, and Escape,
+# Escape unwinds the two to a free canvas.  Under catch, for the reason the
+# end itself is.
+proc calc::pick_end_sod {} {
+    if {![info exists ::ase::ui::sod(active)]} { return 0 }
+    catch {ase::ui::sod_end $::ase::ui::sod(active)}
+    catch {rdw::pick_reseat}
+    return [expr {[info exists ::ase::ui::sod(active)] ? 0 : 1}]
+}
+
 # ARM THE MODE.  Returns the status sentence it wrote, so a caller can be a
 # one-liner and a test can read the answer without the widget.
 proc calc::pick_arm {id} {
@@ -10809,6 +11457,7 @@ proc calc::pick_arm {id} {
     }
     set tok [dict get $d token]
     set dpath [dict get $d design]
+    calc::pick_end_sod
     set opened 0
     catch {set opened [ase::ui::design_window $tok]}
     if {!$opened} {
@@ -10833,11 +11482,13 @@ proc calc::pick_arm {id} {
 # is the test seam -- and issue 1303's acceptance is that the DEFAULT path is the
 # one exercised, because that is where its defect lived.
 #
-# ⚠ THE PAIR READ HERE IS THE LAST MOTION'S POINT, NOT THE PRESS'S.  The seize
-# `break`s the press before C sees it, and C updates both mouse pairs only on
-# events it does see.  A real hand always moves the pointer onto the net before
-# pressing; a caller that presses with no preceding motion reads a stale pair,
-# which is why the suite generates the motion first.
+# ⚠ THE PAIR READ HERE IS THE ENGINE'S, AND A REAL PRESS HAS JUST WRITTEN IT.
+# The seize `break`s the press before the engine sees it, so the press's script
+# hands the press's own position to the engine first (`calc::_pick_seize`) and
+# the pair read here is the pixel that was pressed.  A caller that runs this
+# proc by itself, with no coordinates, reads whatever the engine was last
+# handed: the last pointer motion, or a later layout event's position (issue
+# 1659).  Such a caller passes the point.
 #
 # ⚠ THE BASE LEVEL IS RE-READ ON EVERY CLICK, not latched at arm time, and that
 # is deliberate: it serves as the navigation guard AND as the level the name is
@@ -10845,6 +11496,12 @@ proc calc::pick_arm {id} {
 # cell must match THAT session's deck).  A descend inside the design window is
 # therefore fine and the name follows it; the design leaving this window's stack
 # is what ends the mode.
+#
+# A CURRENT id's click is three steps, each its own proc above:
+# `calc::pick_imeasure` (what the cursor is on), `calc::pick_iplan` (a refusal,
+# or the candidates in order) and `calc::pick_iresolve` (the lookups).  What
+# they have to say beside the last sentence is `calc::pick_inotes`'s.
+#
 # SAY IT WHERE THE USER IS LOOKING.  `calc::status` writes to `.calc.status.msg`
 # -- and the pick now RAISES the schematic over the Calculator, which is what the
 # user asked for, so that widget is behind another window for the whole gesture.
@@ -10860,6 +11517,11 @@ proc calc::pick_arm {id} {
 #
 # Both channels are written: the status line is the durable record
 # `calc::status_history` keeps, and R509 keeps the history.
+#
+# On the design window's slot the sentence is followed by the pin the pointer
+# is on, exactly as the pump writes it (`calc::pick_hover`), so the two writers
+# of that slot put the same text there.  The status line and the history get
+# the sentence alone.
 proc calc::pick_echo {s} {
     variable pick
     if {[info exists pick(canvas)]} {
@@ -10870,7 +11532,7 @@ proc calc::pick_echo {s} {
         # prompt left the slot BLANK for up to one pump period after the click --
         # measured, by a row that read it immediately.
         set pick(prompt) $s
-        catch {ase::ui::sod_prompt_set $pick(canvas) $s}
+        catch {ase::ui::sod_prompt_set $pick(canvas) "$s[calc::pick_hover]"}
     }
     return [calc::status $s]
 }
@@ -10889,18 +11551,25 @@ proc calc::pick_click {{x {}} {y {}}} {
     }
     set hit {}
     catch {set hit [xschem object_at $x $y]}
+    set an [calc::pick_analysis $id]
     if {[calc::pick_kind $id] eq {current}} {
-        set src {}
-        catch {set src [ase::ui::sod_source_at $hit]}
-        set cls [calc::pick_iclassify $hit $src]
-        if {$cls eq {nothing}} { return [calc::pick_echo [calc::pick_msg inothing $id]] }
-        if {$cls ne {source}} { return [calc::pick_echo [calc::pick_msg notsource $id]] }
-        set nm [calc::pick_iname $src $base]
-        if {![dict get $nm ok]} {
-            return [calc::pick_echo [calc::pick_msg noname $id]]
+        set m [calc::pick_imeasure $pick(token) $x $y $hit]
+        set plan [calc::pick_iplan $m]
+        set lk {}
+        if {[dict get $plan act] eq {try}} {
+            set lk [calc::pick_iresolve [dict get $plan steps] $base \
+                        [list calc::pick_in_token $pick(token)] $an]
         }
-        set cand [dict get $nm cand]
-        set path [calc::pick_cadence $src $base]
+        foreach n [calc::pick_inotes $id $m $lk] { catch {calc::pick_echo $n} }
+        if {[dict get $plan act] ne {try}} {
+            return [calc::pick_echo \
+                        [calc::pick_msg [dict get $plan kind] $id [dict get $plan detail]]]
+        }
+        if {![dict get $lk ok]} {
+            return [calc::pick_echo \
+                        [calc::pick_msg [dict get $lk why] $id [dict get $lk detail]]]
+        }
+        set path [dict get $lk path]
     } else {
         set net {}
         catch {set net [ase::ui::sod_net_at $x $y $hit]}
@@ -10920,13 +11589,12 @@ proc calc::pick_click {{x {}} {y {}}} {
         }
         set cand [dict get $nm cand]
         set path [calc::pick_cadence $net $base]
-    }
-    set an [calc::pick_analysis $id]
-    set lk [calc::pick_in_token $pick(token) $cand $an]
-    if {![dict get $lk ok]} {
-        set det $cand
-        if {[dict get $lk why] eq {unlexable}} { set det [dict get $lk name] }
-        return [calc::pick_echo [calc::pick_msg [dict get $lk why] $id $det]]
+        set lk [calc::pick_in_token $pick(token) $cand $an]
+        if {![dict get $lk ok]} {
+            set det $cand
+            if {[dict get $lk why] eq {unlexable}} { set det [dict get $lk name] }
+            return [calc::pick_echo [calc::pick_msg [dict get $lk why] $id $det]]
+        }
     }
     set name [calc::aq_qualify $id [dict get $lk name]]
     calc::buf_insert_token $name
@@ -10942,7 +11610,7 @@ proc calc::pick_click {{x {}} {y {}}} {
 # to exit that mode"*.  A MISS still leaves the mode armed with its sentence.
 #
 # ⚠ WHY NOT END INSIDE THE PRESS.  The press is `break`ed before C sees it, so C
-# has no button down.  Hand the four slots back mid-click and the rest of the
+# has no button down.  Hand the slots back mid-click and the rest of the
 # SAME click reaches C: a one-pixel drift with Button1 held is a <B1-Motion>
 # that runs select_rect(START) + unselect_all (the hazard `calc::_pick_seize`'s
 # fourth slot exists for), and the release lands on C with no press behind it.
@@ -10958,7 +11626,9 @@ proc calc::pick_done {} {
     variable pick
     if {![info exists pick(canvas)]} { return 0 }
     set pick(done) 1
-    catch {bind $pick(canvas) <ButtonRelease-1> "[list calc::pick_end picked]; break"}
+    set rel "[list calc::pick_end picked]; break"
+    catch {bind $pick(canvas) <ButtonRelease-1> $rel}
+    catch {lset pick(own) 1 $rel}
     return 1
 }
 
@@ -10978,16 +11648,27 @@ proc calc::pick_suspend {} {
     return 1
 }
 
-# ⚠ ALL FOUR PREDECESSORS ARE RE-LATCHED FROM THE CANVAS BEING LANDED ON, not
+# ⚠ EVERY PREDECESSOR IS RE-LATCHED FROM THE CANVAS BEING LANDED ON, not
 # carried over from the one the mode was seized on: a new window or tab has its
 # own binding set (`set_bindings` + `clone_canvas_bindings`) and the predecessors
 # latched on the parent do not describe it.  Ruling D2 of issue 0201, and
 # `ase::ui::sod_resume` records the same.  It re-latches by CALLING
 # `calc::_pick_seize`, so the sequence count follows that proc and cannot drift.
+#
+# `canvas` IS THE NAME OF A WINDOW CONTEXT, as `cmdmode::resume_all` and
+# `cmdmode::rehome` hand it over, and it is resolved to the canvas that shows
+# that context (`calc::pick_canvas`) before anything is asked of it.  In a tab
+# that is not the first the name is no widget; taken as it stands the resume
+# would fall back to the canvas the pick was on, and a return from a block
+# opened in its own window to a parent that lives in such a tab would leave
+# the pick armed on the window the user has just left, where a click on the
+# parent's sheet is no pick at all.  A name that resolves to nothing still
+# falls back to the canvas the pick was on.
 proc calc::pick_resume {{canvas {}}} {
     variable pick
     variable selmode
     if {![info exists pick(suspended)]} { return 0 }
+    if {$canvas ne {}} { set canvas [calc::pick_canvas $canvas] }
     if {$canvas eq {} || ![calc::has_win $canvas]} {
         set canvas {}
         catch {set canvas $pick(canvas)}
@@ -11016,7 +11697,7 @@ proc calc::pick_resume {{canvas {}}} {
 # always there.
 proc calc::_register_cmdmode {} {
     if {![llength [info commands ::cmdmode::register]]} { return 0 }
-    ::cmdmode::register calc_pick calc::pick_suspend calc::pick_resume
+    ::cmdmode::register calc_pick calc::pick_suspend calc::pick_resume calc::pick_held
     return 1
 }
 calc::_register_cmdmode

@@ -1354,6 +1354,87 @@ proc ase::sim_why {kind name path {extra {}}} {
       append s " Press Detect in the Simulators window to try again."
       return $s
     }
+    probe_hier {
+      ## ISSUE 1724 -- A PROGRAM THAT SAVES NO TERMINAL CURRENT BELOW THE TOP
+      ## LEVEL, SAID WHERE THE USER IS LOOKING AND WITH WHAT TO DO ABOUT IT.
+      ## One sentence with three openings, so the three places that say it
+      ## cannot drift: a run about to start (`role start`,
+      ## ase::probe_start_report), the run's own report (`role run`,
+      ## ase::probe_report) and a pick on the sheet (`role pick`,
+      ## ase::probe_pick_report).
+      ##
+      ## WHAT THE USER READ BEFORE.  A pin of a subcircuit instance picked
+      ## under Select On Design, a run on a build that probes top-level devices
+      ## only, and then: the simulator's own "Could not find the instance
+      ## line", a note that "this simulator probes only top-level devices", and
+      ## -- in Direct Plot -- the advice to pick the pin and run again, which is
+      ## what had just been done.  Nothing said that the simulator was the
+      ## cause, which registered one can, or where to pick it.
+      ##
+      ## `name` IS HOW A RUN NAMES ITS PROGRAM (ase::sim_run_name): the file
+      ## when nothing is picked, `<entry> (<file>)` when an entry is.  `path`
+      ## is not used.  `extra` is a dict: `role`, `terms` (the rows the
+      ## sentence is about) and `cure`, the words of ase::probe_cure -- which
+      ## registered program can, and where it is picked.
+      ##
+      ## THE LIMIT IS A MEASUREMENT, the one behind the `hier_probes` key
+      ## (ase::backend::ngspice::cap_hier_lines): such a build probes a
+      ## top-level device that is no subcircuit instance and refuses every
+      ## other terminal.
+      ##
+      ## IT OPENS WITH `ase:`, WHICH NO OTHER KIND HERE DOES.  It is said among
+      ## the lines of the probe report and of a pick, every one of which
+      ## opens that way, and it is the line the user has to find among them.
+      set role [ase::state_get $extra role run]
+      set terms [ase::state_get $extra terms {}]
+      set n [llength $terms]
+      switch -- $role {
+        start { set who {the simulator this run is starting} }
+        pick  { set who {the simulator this session starts} }
+        default { set who {the simulator this run started} }
+      }
+      if {$role eq {pick}} {
+        set what [ase::sim_plural $n {that current} {those currents}]
+      } else {
+        set what "[ase::sim_plural $n {the terminal current} {the terminal currents}] [ase::variant_join $terms]"
+      }
+      set s "ase: $name, $who, cannot save $what: it saves terminal currents only on top-level devices that are not subcircuit instances. [ase::state_get $extra cure]"
+      if {$role eq {start}} {
+        append s " This run goes on without [ase::sim_plural $n {that current} {those currents}]."
+      }
+      return $s
+    }
+    probe_hier_plot {
+      ## ISSUE 1724 -- the same fact as Direct Plot's reason for a terminal the
+      ## results do not hold: the clause behind "... is not in this session's
+      ## results:" (ase::probe_absent_groups).  `extra` is a dict:
+      ##   terms   the rows the sentence is about
+      ##   cure    the words of ase::probe_cure, which end it
+      ##   role    `last` (the default): `name` is the program the last run
+      ##           named itself by, and that run's report said it cannot;
+      ##           `now`: `name` is the program the clicking session starts,
+      ##           already known unable -- said of a row that is set to be
+      ##           saved, where "run again" alone would send the user into a
+      ##           run that cannot save it either
+      ##   picked  (role `last` only) the registered entry the clicking
+      ##           session starts NOW, when that one is already known able:
+      ##           the cure is then done, and the sentence ends by saying so
+      ##           in place of telling the user to pick what is picked
+      ##   starts  the same for a session that starts no registered entry:
+      ##           the program's file
+      set n [llength [ase::state_get $extra terms {}]]
+      set it [ase::sim_plural $n it them]
+      if {[ase::state_get $extra role last] eq {now}} {
+        return "$name, the simulator this session starts, cannot save $it. [ase::state_get $extra cure]"
+      }
+      set end [ase::state_get $extra cure]
+      if {[ase::state_get $extra picked {}] ne {}} {
+        set end "[ase::state_get $extra picked] is picked now — run again."
+      } elseif {[ase::state_get $extra starts {}] ne {}} {
+        set end "[ase::state_get $extra starts], which this session starts now, can — run again."
+      }
+      return "$name, the simulator of the last run, cannot save $it. $end"
+    }
     cosim_install {
       ## STAGE 16c (issue 1472) -- THE FRAME AROUND ONE CO-SIMULATION
       ## INSTALLATION DEFECT. ASE-L owns these words; the clause, the remedy and
@@ -1941,7 +2022,14 @@ proc ase::sim_register {name path args} {
   # broken and would breach src/ase_window.tcl's own rule that no logic is
   # re-implemented there. Row D12 of tests/headless/test_ase_simcaps_0948.tcl
   # reddens on that placement, which no behavioural row can see.
+  #
+  # WHAT THE CURE FOR A TERMINAL CURRENT KNOWS ABOUT WHICH PROGRAM CAN SAVE ONE
+  # IS CARRIED OVER THE EDIT (issue 1724; ase::probe_cure_carry has the
+  # measurement and what is not carried).  The store itself is emptied as
+  # before: what a run reads is measured afresh.
+  set _cure [ase::probe_cure_carry]
   ase::sim_caps_clear
+  ase::probe_cure_restore $_cure
   ## 1370's repair: and every open bottom bar follows, because this proc is the
   ## OTHER door onto the registry -- the Command window one, which the dialog's
   ## own refresh cannot see.
@@ -2035,8 +2123,11 @@ proc ase::sim_unregister {name} {
   }
   # The removal half of the look-again above (issue 0950). Taking an entry off
   # the list can change which program will start, so what was remembered about
-  # the old one must not be served about the new one.
+  # the old one must not be served about the new one.  What the cure for a
+  # terminal current knows is carried over, as in ase::sim_register.
+  set _cure [ase::probe_cure_carry]
   ase::sim_caps_clear
+  ase::probe_cure_restore $_cure
   ase::sim_notify_fire
   ## Removing an entry is a mutation the user made on purpose, so it persists
   # at once, exactly like adding one. Last, for ase::sim_register's reason.
@@ -2175,7 +2266,12 @@ proc ase::sim_choice_set {state kind {name {}}} {
 # exactly as it was (so the run goes ahead on whatever is in force) and says
 # the ONE sentence that already exists for this, ase::sim_why's `noentry`,
 # which names the entry and lists what there is to choose from.
-proc ase::sim_apply_choice {state} {
+#
+# `say 0` LEAVES THAT SENTENCE OUT.  It is for the one caller that puts a
+# session's choice in force only to read what a run of it would start, and
+# puts the old choice back (ase::sim_session_view, for a click): a click is
+# not a run and must not repeat the run's sentence about a stale entry.
+proc ase::sim_apply_choice {state {say 1}} {
   variable simulators
   variable sim_use
   variable sim_default
@@ -2191,7 +2287,7 @@ proc ase::sim_apply_choice {state} {
     entry {
       set nm [lindex $choice 1]
       if {![dict exists $simulators $nm]} {
-        ase::sim_say noentry $nm {} [dict keys $simulators] error
+        if {$say} { ase::sim_say noentry $nm {} [dict keys $simulators] error }
         return [ase::sim_in_force_choice]
       }
       set sim_use $nm
@@ -2531,6 +2627,10 @@ proc ase::cap_stale {stored live} {
 # route could write the cache, so no two argument lists could meet.
 proc ase::cap_key {resolved eargs} { return [list $resolved $eargs] }
 
+# The words of a key ase::cap_key made, for the one reader that walks the
+# store without knowing which entry a key came from (ase::probe_cure_carry).
+proc ase::cap_key_args {ckey} { return [lindex $ckey 1] }
+
 # Forget every measured answer, so the next ask measures again. The lever for
 # a user who knows something changed that a file stamp cannot see -- a rebuild
 # inside the same second that leaves the file byte-for-byte the same size. The
@@ -2539,7 +2639,14 @@ proc ase::sim_caps_clear {} {
   variable sim_caps
   variable cap_noplace_said
   variable variant_said
+  variable probe_cure_seen
   set sim_caps [dict create]
+  # AND WHAT ase::probe_cure_entries KEPT BESIDE THE STORE (issue 1724): its
+  # verdicts are measurements too, and "did not answer" is one a user who has
+  # just repaired a program wants forgotten.  The two registry writers put
+  # `can` and `cannot` back afterwards (ase::probe_cure_carry); this proc
+  # forgets all of it.
+  set probe_cure_seen [dict create]
   # THE NOTICE ABOUT A PLACE IS FORGOTTEN WITH THE MEASUREMENTS (issue 0960).
   # This is the lever for a user who knows something changed, and a folder
   # they have just fixed -- or just broken -- is exactly such a change.
@@ -3388,7 +3495,7 @@ proc ase::caps_keys {{band {}}} {
   set k [dict create \
     identity   {version_line build_date scripts_dir} \
     capability {usable appendwrite hier_op_names blanket_op_save altshow_op_dump
-                casemode_detected analyses_available analyses_probed
+                hier_probes casemode_detected analyses_available analyses_probed
                 devices_available} \
     defect     {one_vector_write keyword_case gnd_literal} \
     provenance {unmeasured unmeasured_keys secs noplace_at noplace_why}]
@@ -4271,6 +4378,507 @@ proc ase::variant_detected {backend path caps} {
   set p $path
   if {![catch {ase::expand_path $p} out]} { set p $out }
   return [ase::variant_sentence $backend $p $caps]
+}
+
+# ─── ISSUE 1724: A TERMINAL CURRENT BELOW THE TOP LEVEL -- WHO CAN SAVE IT ────
+#
+# A build without the terminal-probe extension probes a top-level device that
+# is no subcircuit instance and refuses every other terminal (`hier_probes`,
+# measured by ase::backend::ngspice::capabilities).  The procs below are
+# what the sentences about that are made of, so that the places that say it --
+# a run about to start, the run's report, a pick on the sheet, Direct Plot's
+# refusal -- name the program one way and give one cure.
+
+# HOW A SENTENCE NAMES THE PROGRAM A RUN OF `backend` STARTS: the file when no
+# registered entry is in force (`/usr/bin/ngspice`), `<entry> (<file>)` when one
+# is (`v_52 (/home/me/ngspice/src/ngspice)`).  The entry's name is what the
+# user picks by; the file is what the capability sentence and the Simulators
+# window show.  Both come from the resolver's ONE answer (ase::sim_status),
+# through ase::sim_named_path for the file, so this is no second resolution.
+#
+# A backend whose run command does not compose from the registry
+# (ase::run_composes_registry) starts its own program whatever is in force
+# there, so it is named by its own word -- ase::sim_label's rule.
+#
+# NEVER RAISES, and never answers empty: it feeds a sentence.
+proc ase::sim_run_name {backend} {
+  set composes 0
+  catch {set composes [ase::run_composes_registry $backend]}
+  if {!$composes} { return $backend }
+  set file [ase::sim_named_path $backend]
+  set who {}
+  catch {set who [dict get [ase::sim_status $backend] entry]}
+  if {[string trim $who] eq {} || $who eq $file} { return $file }
+  return "$who ($file)"
+}
+
+# WHAT A RUN OF SESSION STATE `st` WOULD START, AND WHAT IS ALREADY KNOWN
+# ABOUT THAT PROGRAM -- for a click, which belongs to one session, while the
+# choice in force (`ase::sim_use`) is the whole process's and is whatever the
+# last run of ANY session left there.  MEASURED 2026-11-20 with two state
+# views of one bench open, one with nothing picked and one with an entry
+# picked: after a run of the first, a pick in the second was told that the
+# first one's program cannot save its current, and the run of the second then
+# started the entry that can.
+#
+# The session's choice is put in force exactly as a run of it puts it
+# (ase::sim_apply_choice, without its sentence), the answers are read, and the
+# choice that was in force is put back: a click neither answers about another
+# session's program nor changes which program is in force.  STARTS NOTHING
+# and never raises.  -> a dict:
+#   name   how a run of the session names its program (ase::sim_run_name)
+#   entry  the registered entry that run starts; {} when it starts none
+#   file   the program's file as the resolver gives it; {} when it finds none
+#   args   the words the program is started with
+#   caps   what the capability store holds about it (ase::sim_caps_cached);
+#          {} when it holds nothing
+proc ase::sim_session_view {st} {
+  variable sim_use
+  set sim [ase::state_get $st simulator ngspice]
+  set out [dict create name $sim entry {} file {} args {} caps {}]
+  set keep $sim_use
+  catch {
+    ase::sim_apply_choice $st 0
+    dict set out name [ase::sim_run_name $sim]
+    dict set out caps [ase::sim_caps_cached $sim]
+    set s [ase::sim_status $sim]
+    if {[dict get $s ok] && [ase::run_composes_registry $sim]} {
+      dict set out entry [dict get $s entry]
+      dict set out file [dict get $s resolved]
+      dict set out args [dict get $s args]
+    }
+  }
+  set sim_use $keep
+  return $out
+}
+
+namespace eval ase {
+  # How long ONE call of ase::probe_cure_entries may spend starting registered
+  # programs (its `ask` mode), in milliseconds.
+  variable probe_cure_ms 5000
+  # How much of that a program is NOT given for each entry still to be asked
+  # behind it, and the shortest time a program is started with.
+  variable probe_cure_each_ms 1000
+  variable probe_cure_min_ms 200
+  # What the cure knows about a PROGRAM that the capability store does not
+  # hold: {<program stamp> <the words it is started with>} -> can | cannot |
+  # slow (ase::probe_cure_key).  Emptied with the store by ase::sim_caps_clear;
+  # across an edit of the registry `can` and `cannot` are carried
+  # (ase::probe_cure_carry).
+  variable probe_cure_seen [dict create]
+}
+
+# The share of one call's time after which a program that did not answer is
+# held to be slow, in milliseconds: two fifths of the call.
+proc ase::probe_cure_fair {} {
+  variable probe_cure_ms
+  return [expr {2 * $probe_cure_ms / 5}]
+}
+
+# The key of ase::probe_cure_seen for the program at `file` started with
+# `eargs`: the file's stamp (ase::cap_stamp -- path, time and size, so a
+# program rebuilt in place is another program) and those words.  {} when
+# there is no file to stamp.
+proc ase::probe_cure_key {file eargs} {
+  set stamp [ase::cap_stamp $file]
+  if {$stamp eq {}} { return {} }
+  return [list $stamp $eargs]
+}
+
+# can | cannot | {}: what that record holds about the program at `file`
+# started with `eargs`.  `slow` is no answer to the question and reads {}.
+proc ase::probe_cure_kept {file eargs} {
+  variable probe_cure_seen
+  set k [ase::probe_cure_key $file $eargs]
+  if {$k eq {} || ![dict exists $probe_cure_seen $k]} { return {} }
+  set v [dict get $probe_cure_seen $k]
+  return [expr {$v in {can cannot} ? $v : {}}]
+}
+
+# WHAT AN EDIT OF THE REGISTRY KEEPS.  ase::sim_register and
+# ase::sim_unregister empty the capability store (issue 0950: an edit means
+# look at the programs again, and what a RUN reads must be measured afresh).
+# The cure only NAMES entries in a sentence, and it had lost every name with
+# the store: MEASURED 2026-11-20 on the user's own next step, re-enacted with
+# her registry -- told "ng_w_stb can -- pick it", one more entry was
+# registered, and a click on the same pin then said that none of the
+# registered simulators is known to and that a build should be registered.
+# So the answers `can` and `cannot` -- the cure's own and the ones the
+# store is about to lose -- are carried over the edit under the program's
+# stamp, where a changed file still makes them unreadable.  `slow` is not
+# carried: an edit is how a user says a program was repaired.
+# -> the dict to hand ase::probe_cure_restore once the store is emptied.
+proc ase::probe_cure_carry {} {
+  variable sim_caps
+  variable probe_cure_seen
+  set keep [dict create]
+  dict for {k v} $probe_cure_seen {
+    if {$v in {can cannot}} { dict set keep $k $v }
+  }
+  dict for {ckey stored} $sim_caps {
+    set v [ase::probe_cure_verdict [ase::state_get $stored caps]]
+    set stamp [ase::state_get $stored stamp]
+    if {$v in {can cannot} && $stamp ne {}} {
+      dict set keep [list $stamp [ase::cap_key_args $ckey]] $v
+    }
+  }
+  return $keep
+}
+
+proc ase::probe_cure_restore {keep} {
+  variable probe_cure_seen
+  set probe_cure_seen $keep
+  return {}
+}
+
+# The file a registered entry names, expanded and normalized as the capability
+# store keys it (ase::sim_capabilities_path); {} for an entry with no path.
+proc ase::sim_entry_file {entry} {
+  set p [ase::state_get $entry path {}]
+  if {$p eq {}} { return {} }
+  if {![catch {ase::expand_path $p} out]} { set p $out }
+  return [file normalize $p]
+}
+
+# can | cannot | unknown: what ONE capability answer says about `hier_probes`.
+# `unknown` is every answer that did not measure the key -- a program that is
+# not there, one that did not answer, a backend with no probe -- and an answer
+# of 1 from a program that was NOT measured to simulate (`usable`): a program
+# that produced no results on the probe's own small circuit is not one to
+# send the user to, whatever it wrote about its probes.
+proc ase::probe_cure_verdict {caps} {
+  if {[ase::caps_measured_as $caps hier_probes 0]} { return cannot }
+  if {[ase::caps_measured_as $caps hier_probes 1]
+      && [ase::caps_measured_as $caps usable 1]} { return can }
+  return unknown
+}
+
+# WHAT IS ALREADY KNOWN ABOUT ONE REGISTERED ENTRY, STARTING NOTHING:
+#   can | cannot  the capability store holds an answer for its program
+#                 (ase::sim_caps_have), or the cure's own record does;
+#   unknown       it was asked and no answer to the question came of it -- the
+#                 store holds an answer without the key, or the cure held the
+#                 program to be slow -- or the cure does not ask it: the
+#                 entry was registered as not runnable, there is no program
+#                 at its file now (ase::sim_check), or its backend has no
+#                 probe. The first of the three reads the flag registering
+#                 recorded and not the file as it is now: an entry whose file
+#                 was repaired afterwards stays `unknown` until it is
+#                 registered again, although Detect in the row editor
+#                 measures it and a run on it starts it (issue 1724, Limits);
+#   untried       none of that: a program that the cure can ask and has not.
+# `untried` is what keeps "nobody has asked yet" apart from "it gave no
+# answer": the first is news the next run mends, and a user told to register
+# another build because of it is sent the wrong way.
+proc ase::probe_cure_peek {entry backend} {
+  variable probe_cure_seen
+  set nm [dict get $entry name]
+  if {[ase::sim_caps_have $nm $backend]} {
+    return [ase::probe_cure_verdict [ase::sim_capabilities_for $nm $backend]]
+  }
+  set file [ase::sim_entry_file $entry]
+  set k [ase::probe_cure_key $file [ase::state_get $entry args {}]]
+  if {$k ne {} && [dict exists $probe_cure_seen $k]} {
+    set v [dict get $probe_cure_seen $k]
+    return [expr {$v eq {slow} ? {unknown} : $v}]
+  }
+  if {![ase::state_get $entry ok 0]} { return unknown }
+  set eb [ase::state_get $entry backend {}]
+  if {$eb eq {}} { set eb $backend }
+  if {![ase::sim_has_probe $eb]} { return unknown }
+  if {[ase::sim_check $file] ne {}} { return unknown }
+  return untried
+}
+
+# EVERY REGISTERED ENTRY THAT CAN SERVE `backend` (ase::sim_list), IN REGISTRY
+# ORDER, WITH ITS VERDICT: {{<name> can|cannot|unknown|untried} ...}.  None is
+# left out: an entry naming the program in force simply answers what that one
+# does, and two entries naming one program started with the same words share
+# one answer.
+#
+# `mode peek` STARTS NOTHING: every entry gets ase::probe_cure_peek's answer.
+# It is what a pick on the sheet and Direct Plot's refusal use: a click must
+# not start the user's simulators.
+#
+# `mode ask` MAY START A PROGRAM, for an entry that is `untried`, and is what
+# a run uses (before it starts and in its report).  It is bounded:
+#   * ONE call spends at most ase::probe_cure_ms starting programs;
+#   * a program with entries still to be asked behind it is not given all of
+#     what is left: ase::probe_cure_each_ms is kept back for each of those, up
+#     to half of what is left.  So a registered program that never answers
+#     does not cost the entries behind it their turn, and the one a call
+#     starts first still gets at least half of the call.  The probe's own
+#     budget (ase::cap_budget_ms) is lowered to the share for the call and put
+#     back;
+#   * an entry whose share would be under ase::probe_cure_min_ms is not
+#     started: it stays `untried`, and the next call asks it;
+#   * an entry whose program did not answer in a fair share of the call
+#     (ase::probe_cure_fair) is recorded `slow` and is not started again by
+#     this proc until the capability store is cleared, the registry is edited
+#     or its file changes.  Detect in the Simulators window still measures
+#     it, with the whole budget.  One cut after less than that was not
+#     given its try: it is `untried` in this call too, and the next call asks
+#     it again, with more time;
+#   * an answer taken under the lowered budget with a leg cut by time is NOT
+#     left in the capability store: what the store holds is what a run reads,
+#     and a run must not inherit a measurement this proc cut short.  The
+#     verdict it gave is kept in the cure's own record instead.
+# A program asked in full that answers nothing a store keeps (no place to
+# work, for one) is `unknown` in this call and `untried` again afterwards.
+proc ase::probe_cure_entries {backend {mode ask}} {
+  variable probe_cure_ms
+  variable probe_cure_each_ms
+  variable probe_cure_min_ms
+  variable probe_cure_seen
+  variable cap_budget_ms
+  set t0 [clock milliseconds]
+  set entries [ase::sim_list $backend]
+  set known {}
+  set todo 0
+  foreach e $entries {
+    set v [ase::probe_cure_peek $e $backend]
+    if {$v eq {untried}} { incr todo }
+    lappend known $v
+  }
+  set out {}
+  foreach e $entries v $known {
+    set nm [dict get $e name]
+    if {$v ne {untried} || $mode ne {ask}} {
+      lappend out [list $nm $v]
+      continue
+    }
+    incr todo -1
+    ## an entry asked earlier in this call may have answered for this one
+    set v [ase::probe_cure_peek $e $backend]
+    if {$v ne {untried}} {
+      lappend out [list $nm $v]
+      continue
+    }
+    set left [expr {$probe_cure_ms - ([clock milliseconds] - $t0)}]
+    set share [expr {$left - min($probe_cure_each_ms * $todo, $left / 2)}]
+    if {$share < $probe_cure_min_ms} {
+      lappend out [list $nm untried]
+      continue
+    }
+    set sk [ase::probe_cure_key [ase::sim_entry_file $e] [ase::state_get $e args {}]]
+    set full $cap_budget_ms
+    if {$share < $full} { set cap_budget_ms $share }
+    set rc [catch {ase::sim_capabilities_for $nm $backend} caps]
+    set cap_budget_ms $full
+    if {$rc} { set caps [dict create known 0] }
+    set v [ase::probe_cure_verdict $caps]
+    set cut 0
+    foreach {k why} [ase::caps_unmeasured_keys $caps] {
+      if {$why eq {timeout}} { set cut 1 }
+    }
+    set slow 0
+    set g [ase::caps_get $caps hier_probes]
+    if {[dict exists $g why] && [dict get $g why] eq {timeout}} {
+      set cut 1
+      if {$share >= [ase::probe_cure_fair]} {
+        set slow 1
+        dict set probe_cure_seen $sk slow
+      }
+    }
+    if {$cut && $share < $full && [ase::sim_caps_forget $nm]} {
+      if {$v ne {unknown}} { dict set probe_cure_seen $sk $v }
+    }
+    if {$v eq {unknown} && $cut && !$slow} { set v untried }
+    lappend out [list $nm $v]
+  }
+  return $out
+}
+
+# Forget what the capability store holds about the program of the entry named
+# `name`, so the next ask measures it again; 1 when something was forgotten.
+# The store's key is asked for (ase::cap_key over ase::sim_entry_file), never
+# spelled.
+proc ase::sim_caps_forget {name} {
+  variable sim_caps
+  set e [ase::sim_entry $name]
+  if {$e eq {}} { return 0 }
+  set f [ase::sim_entry_file $e]
+  if {$f eq {}} { return 0 }
+  set ckey [ase::cap_key $f [ase::state_get $e args {}]]
+  if {![dict exists $sim_caps $ckey]} { return 0 }
+  dict unset sim_caps $ckey
+  return 1
+}
+
+# THE CURE: WHICH REGISTERED SIMULATOR CAN SAVE A TERMINAL CURRENT BELOW THE
+# TOP LEVEL, AND WHERE IT IS PICKED -- the words every sentence about a
+# program that cannot ends with (ase::sim_why `probe_hier`, `probe_hier_plot`).
+# `state` gives the backend; `mode` is ase::probe_cure_entries' (`ask` for a
+# run, `peek` for a click); `tail` is `again` after or beside a run ("and run
+# again") and `before` at a pick ("before you run").
+#
+#   one entry can        <A> can — pick it under Setup > Simulators… and run again.
+#   several can          <A> and <B> can — pick one under Setup > Simulators… ...
+#   none can, one or     <C> has not been tried yet — the next run finds out
+#     more not tried       whether it can, or select it under Setup >
+#                          Simulators…, press Edit… and then Detect.
+#                          (several: <C> and <D> have ... which of them can,
+#                          or select each under ...)
+#   none can, none       None of the simulators you have registered is known
+#     untried, one or      to.  Register an ngspice build that saves terminal
+#     more not known       currents inside subcircuits under Setup > Simulators…
+#                          and run again, or place an ammeter (ammeter.sym) in
+#                          series with the pin.
+#   none can, all        None of the simulators you have registered can.
+#     measured             Register ... (the same)
+#   nothing registered   Register ... (the same, alone)
+#
+# AN ENTRY WHOSE ANSWER IS NOT KNOWN IS NEVER CALLED ABLE AND NEVER CALLED
+# UNABLE.  It is left out of the names, and it turns "can" into "is known to".
+#
+# AN ENTRY NOBODY HAS ASKED YET IS NOT A REASON TO REGISTER ANOTHER BUILD
+# (`untried`, ase::probe_cure_peek).  MEASURED 2026-11-20 on a copy of the
+# user's registry and bench: a pick made after a run that had asked for no
+# such current read "None of the simulators you have registered is known to.
+# Register an ngspice build ..." and the run one gesture later read "ng_w_stb
+# and ver_53 can".  So where no entry is known able and some have not been
+# tried, the
+# sentence names THOSE and says what finds out: the next run -- a run on a
+# program measured unable asks every registered entry
+# (ase::probe_start_report) -- or Detect.  An entry the call's time did not
+# reach is one of them.
+#
+# THE DOOR IS THE REAL ONE: the Setup menu's `Simulators…` entry
+# (ase::ui::simulators_dialog), spelled as the menu spells it.
+#
+# AND SO IS THE WAY TO DETECT.  The window that entry opens lists the entries
+# and has no Detect button: Detect is a button of the row editor
+# (ase::ui::simdlg_editor), which the window's `Edit…` button opens for the
+# entry selected in its list.  So the sentence says the steps in the order
+# they are taken -- select the entry, press Edit…, then Detect -- each button
+# by its own label.
+proc ase::probe_cure {state {mode ask} {tail again}} {
+  set sim [ase::state_get $state simulator ngspice]
+  set can {}
+  set untried {}
+  set unknown 0
+  set n 0
+  foreach r [ase::probe_cure_entries $sim $mode] {
+    incr n
+    switch -- [lindex $r 1] {
+      can     { lappend can [lindex $r 0] }
+      untried { lappend untried [lindex $r 0] }
+      unknown { incr unknown }
+    }
+  }
+  set door "Setup > Simulators…"
+  set end [expr {$tail eq {before} ? {before you run} : {and run again}}]
+  if {[llength $can]} {
+    return "[ase::variant_join $can] can — pick\
+ [ase::sim_plural [llength $can] it one] under $door $end."
+  }
+  set m [llength $untried]
+  if {$m} {
+    return "[ase::variant_join $untried] [ase::sim_plural $m has have] not been\
+ tried yet — the next run finds out [ase::sim_plural $m {whether it}\
+ {which of them}] can, or select [ase::sim_plural $m it each] under $door,\
+ press Edit… and then Detect."
+  }
+  set s {}
+  if {$n > 0 && $unknown > 0} {
+    set s "None of the simulators you have registered is known to. "
+  } elseif {$n > 0} {
+    set s "None of the simulators you have registered can. "
+  }
+  append s "Register an ngspice build that saves terminal currents inside\
+ subcircuits under $door $end, or place an ammeter (ammeter.sym) in series\
+ with the pin."
+  return $s
+}
+
+# THE PROGRAM A RUN OF SESSION STATE `state` STARTS (ase::sim_session_view),
+# AND WHETHER IT IS ALREADY KNOWN TO SAVE A TERMINAL CURRENT BELOW THE TOP
+# LEVEL: that dict with one key more,
+#   verdict  can | cannot | unknown -- what the capability store holds about
+#            the program (ase::probe_cure_verdict) and, where the store holds
+#            nothing about it, what the cure's own record kept
+#            (ase::probe_cure_kept).  `unknown` is every other case.
+# Starts nothing: it is what a click asks.
+proc ase::probe_session_verdict {state} {
+  set view [ase::sim_session_view $state]
+  set v unknown
+  if {[dict get $view caps] ne {}} {
+    set v [ase::probe_cure_verdict [dict get $view caps]]
+  } elseif {[dict get $view file] ne {}} {
+    set k [ase::probe_cure_kept [dict get $view file] [dict get $view args]]
+    if {$k ne {}} { set v $k }
+  }
+  dict set view verdict $v
+  return $view
+}
+
+# BEFORE THE RUN (ase::run_deck): the program about to start was MEASURED to
+# save no terminal current below the top level, and this deck's plan asks for
+# one.  Says so, with the cure, and returns what it said; {} when there was
+# nothing to say:
+#   * no terminal of the plan needs such a program (ase::probe_plan_hier);
+#   * nothing is known about the program -- the answer is read from the peek
+#     (ase::sim_caps_cached), which ase::cap_report has just filled for the
+#     program in force, so nothing is started a second time;
+#   * the key was not measured, or was measured 1.  An unmeasured program is
+#     never told it cannot: the run's own log says which it is, and the report
+#     after the run speaks from that.
+# `simname` is the run's own name for its program (ase::sim_run_name), which
+# the run record carries on to that report.
+#
+# SAID ON EVERY SUCH RUN, as an error: it is about THIS run's outputs.  THE RUN
+# IS NOT REFUSED: the other analyses and outputs are the user's too, and the
+# terminal is reported again after the run.
+#
+# A RUN ON A PROGRAM MEASURED UNABLE WHOSE PLAN HOLDS NO SUCH TERMINAL SAYS
+# NOTHING AND ASKS THE REGISTERED ENTRIES ALL THE SAME (ase::probe_cure_entries
+# `ask`, bounded as that proc is, and starting nothing once each has been
+# asked).  A click starts no program, so it can name the entries that can only
+# if a run found out: without this, the first pin picked after such a run was
+# told that its entries have not been tried.
+proc ase::probe_start_report {sim state plan simname} {
+  set caps [ase::sim_caps_cached $sim]
+  if {$caps eq {}} { return {} }
+  if {[ase::caps_measured_as $caps hier_probes 0]} {
+    set terms [ase::probe_plan_hier $plan]
+    if {[llength $terms]} {
+      return [ase::sim_say probe_hier $simname {} \
+                [dict create role start terms $terms \
+                             cure [ase::probe_cure $state ask again]] error]
+    }
+    catch {ase::probe_cure_entries $sim ask}
+  }
+  return {}
+}
+
+# AT A PICK ON THE SHEET (Select On Design's row flavours): `signals` are the
+# rows one click queued.  When one of them needs a program that probes below
+# the top level and the program THIS SESSION starts is ALREADY KNOWN to be
+# unable, says so ONCE for the click, with the cure, and returns what it said;
+# {} otherwise.  A click starts no program: both the answer about the program
+# and the cure are read from what is already known.
+#
+# THE PROGRAM IS THE PICKING SESSION'S OWN (ase::probe_session_verdict), not
+# the one in force in the process, which is the last run's of any session.
+# Known unable is the capability store's measured answer for it, and where the
+# store holds nothing about that program, the cure's own record of it.
+proc ase::probe_pick_report {state signals} {
+  set terms {}
+  foreach sg $signals {
+    set sp [ase::probe_split $sg]
+    if {$sp ne {} && [ase::probe_needs_hier [lindex $sp 0]]} { lappend terms $sg }
+  }
+  if {![llength $terms]} { return {} }
+  set view [ase::probe_session_verdict $state]
+  set caps [dict get $view caps]
+  set unable [expr {[dict get $view verdict] eq {cannot}}]
+  if {$caps ne {}} { set unable [ase::caps_measured_as $caps hier_probes 0] }
+  if {$unable} {
+    return [ase::sim_say probe_hier [dict get $view name] {} \
+              [dict create role pick terms $terms \
+                           cure [ase::probe_cure $state peek before]] error]
+  }
+  return {}
 }
 
 # ─── STAGE 16c: THE TWO CO-SIMULATION INSTALLATION DEFECTS ───── issue 1472 ───
@@ -7688,12 +8296,25 @@ proc ase::opt_scoped_names {sim type} {
   return $out
 }
 
-# The enabled analysis types of a state, in deck order, de-duplicated -- for a
-# reader that wants the TYPES rather than the rows. ⚠ CAUGHT AND FALLING BACK
+# The enabled analysis types of a state, de-duplicated, in the order a deck
+# that runs its operating point FIRST writes them -- for a reader that wants
+# the TYPES rather than the rows. ⚠ CAUGHT AND FALLING BACK
 # TO THE PLAIN ROW ORDER: `ase::analysis_emit_order` raises by name on an
 # unrankable row (issue 1401), and a PREVIEW pane must not be the thing that
 # refuses -- `ase::preflight_gate` and `render_deck` already do, where a refusal
 # is an answer rather than a blank window.
+#
+# ⚠ DECLARED LIMIT (issue 1657, open there): A DECK THAT RUNS ITS OPERATING
+# POINT LAST WRITES THE `op` GROUP AFTER THE OTHERS, AND THIS PROC STILL LISTS
+# IT FIRST.  The deck moves the operating point when the per-device
+# operating-point requests go inside `.control` (issue 0964), and whether they
+# do is decided from the netlist the run writes: are device requests held for
+# that exact text.  The preview is handed a reduced copy of the netlist file,
+# or nothing before one exists, and may not netlist, so it cannot ask.
+# MEASURED 2026-11-20: with one per-analysis option on `op` and one on `tran`,
+# the Options preview lists the `op` lines above the `tran` lines while the
+# deck of the same bench, device requests held, writes them below.  The lines
+# are the same lines; only their order differs.
 proc ase::preview_analysis_types {state} {
   set out {}
   set sim [ase::state_get $state simulator [ase::default_simulator]]
@@ -8290,10 +8911,11 @@ proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
     dict set notes $rsn [list default \
       "added by ASE-L so this run repeats exactly; set $rsn yourself to choose another"]
   }
-  ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis, in the order the
-  ## deck writes them, each line tagged with the analysis it belongs to -- a
-  ## bare `option itl4=200` in a flat list would be unreadable the moment two
-  ## rows of the same type carry different values.
+  ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis, in the order a
+  ## deck that runs its operating point first writes them (the limit is stated
+  ## above ase::preview_analysis_types), each line tagged with the analysis it
+  ## belongs to -- a bare `option itl4=200` in a flat list would be unreadable
+  ## the moment two rows of the same type carry different values.
   ## ⚠ AND THE SUPPRESSION LINES ARE HERE TOO, BECAUSE THE DECK CONTAINS THEM.
   ## *"Nothing the deck contains may be unshowable in the window"* is the half
   ## of the non-negotiable that is easy to fail: §7g rule 1 writes two lines
@@ -8797,6 +9419,15 @@ proc ase::meas_armed {sim state} {
 # and the call number is run-wide rather than per-analysis. Core counts; which
 # kinds share a counter is the adapter's `counter` token, so core never learns
 # the naming rule itself.
+#
+# ⚠ IT COUNTS ALONG THE OPERATING-POINT-FIRST WALK, AND A DECK MAY RUN ITS
+# OPERATING POINT LAST (issue 0964).  The count is the deck's all the same,
+# for one reason that is the adapter's and not this proc's: the operating
+# point is the only row such a deck moves, and no row that carries a counter
+# is emitted for an operating point (the adapter's rule refuses it there).  A
+# kind that carried a counter and could be measured on an operating point
+# would be numbered wrongly here.  Rows RO9a and RO9b of
+# tests/headless/test_ase_core.tcl hold both halves (issue 1657).
 proc ase::meas_counter_index {sim state row} {
   set tok {}
   set e [ase::meas_kind_entry $sim [ase::state_get $row kind]]
@@ -9695,6 +10326,26 @@ proc ase::output_save_cards {state} {
 # the operating point and the transient both -- so the card is left in the deck,
 # harmless.  A text the Calculator refuses before any read
 # (`calc::eval_text_signals` answers {}) makes no card at all.
+#
+# NOR DOES A READ WHOSE NAME HOLDS AN EQUALS SIGN, A SINGLE QUOTE OR A BRACE.
+# Such a card is not harmless: MEASURED 2026-11-19 on ver_53 and on apt 45.2,
+# a `.save` of a name holding an equals sign (`.save v(a=b)`), a single quote
+# or an opening brace stops the simulator with a netlist error before any
+# analysis, so one such read in one expression costs the whole bench its run.
+# A closing brace was measured harmless and leaves with the opening one.
+# With no card the run goes on, and the row's Value says what it says for any
+# read the results lack.  A name holding a `;` or a dollar sign keeps its
+# card: both were measured harmless on a `.save` card.  Only the READ role is
+# held to this: a Save-ticked plain row of such a name is still a card, and
+# the pre-flight refuses it by name before the run.
+#
+# A TERMINAL CURRENT IS NEVER A CARD HERE, in either role (issue 1724;
+# ase::probe_split): `i(x1.xm1:d)` is a vector ngspice makes for a `.probe`
+# card and for nothing else, so ase::probe_plan asks for it.  Leaving it out of
+# this one body leaves it out of the deck's `.save` list and of the pre-flight,
+# whose netlist map holds no terminal and would refuse the run.  (The
+# save-everything leader is decided on ase::output_saves_any, which does count
+# a Save-ticked terminal row.)
 proc ase::output_card_sources {state} {
   if {$state eq {}} { return {} }
   set plain {}
@@ -9704,13 +10355,15 @@ proc ase::output_card_sources {state} {
     set ex [string trim [dict get $o expr]]
     if {$ex eq {}} { continue }
     if {[ase::output_is_plain $ex]} {
-      if {[ase::state_get $o save 0] eq {1}} {
+      if {[ase::state_get $o save 0] eq {1} && ![ase::output_is_probe $ex]} {
         lappend plain [list $ex [ase::output_signal $ex] plain]
       }
       continue
     }
     if {[info commands ::calc::eval_text_signals] eq {}} { continue }
     foreach sg [calc::eval_text_signals [ase::output_calc_text $ex]] {
+      if {[ase::probe_split $sg] ne {}} { continue }
+      if {[regexp {[='{}]} $sg]} { continue }
       if {[ase::output_is_signal $sg]} { lappend reads [list $ex $sg read] }
     }
   }
@@ -9769,6 +10422,1347 @@ proc ase::output_signal {ex} {
   set e [string trim $ex]
   if {[info commands ::calc::aq_strip] eq {}} { return $e }
   return [calc::rpn_unquote [calc::aq_strip $e]]
+}
+
+# ─── TERMINAL CURRENTS (issue 1724) ──────────────────────────────────────────
+#
+# The current into ONE TERMINAL of a device or of a subcircuit instance is a
+# row spelled as the simulator names the vector, `i(<path>:<tname>)`:
+# `i(x1.xm1:d)`, `i(r9:n1)`, `i(x1:in)`.  ngspice makes that vector for a
+# `.probe I(<path>,<pin>)` card at the deck's top level and for nothing else:
+# MEASURED 2026-11-19 on the fork's ver_53 build, `.save i(x1.xm1:g)` with no
+# probe behind it runs at rc 0 and writes no such vector and no message.  So
+# the row never becomes a `.save` card (ase::output_card_sources), the deck
+# carries a `.probe` term for it instead (ase::probe_plan), and what came of
+# each term is said after the run (ase::probe_report).
+#
+# THE ONE PREDICATE, asked of a SIGNAL and never of a row's text:
+# -> {<path> <tname>} for `i(<path>:<tname>)`, the wrapper in either case, the
+# name with or without the Cadence double quotes; {} for everything else.
+# Exactly one `:`, something on each side of it, and no whitespace, comma or
+# parenthesis inside -- so a source's branch current (`i(v1)`, `i(v.x1.vp)`)
+# and the deck's own `I(x1.xm1,d)` are not terminals here.
+#
+# AND NO `;` ON EITHER SIDE.  A `;` on a dot card starts a comment: MEASURED
+# 2026-11-19 on ver_53, the term `I(xa.xm1,d;x)` cuts its `.probe` card where
+# the `;` stands, so every term written behind it on that card is lost and four
+# vectors nobody asked for are written.  A row holding one is therefore not a
+# terminal: it is the `.save` card it was before this feature, and the
+# pre-flight names it before the run.
+#
+# NOR A DOLLAR SIGN, AN EQUALS SIGN, A SINGLE QUOTE OR A BRACE, for the same
+# reason and with the same outcome.  MEASURED 2026-11-19 on ver_53, each
+# between two good terms on one `.probe` card: a dollar sign opening the pin
+# (`I(rt,$n1)`) starts a comment too, and the term behind it is lost at rc 0;
+# an equals sign (`I(=rt,1)`, `I(rt,1=)`), a single quote (`I(rt,1')`) and an
+# opening brace stop the simulator with a netlist error before any analysis.
+# A closing brace was measured harmless and leaves with the opening one.
+proc ase::probe_split {signal} {
+  set s [string trim $signal]
+  if {![regexp {^[iI]\(("?)([^\s(),":;$='{}]+):([^\s(),":;$='{}]+)\1\)$} $s -> q path tname]} {
+    return {}
+  }
+  return [list $path $tname]
+}
+
+# The terminal currents ONE output row reads, each as `i(<path>:<tname>)` with
+# no quotes and no analysis qualifier.  A plain row is read as
+# ase::output_is_plain reads it -- one leading `-` taken off, then
+# ase::output_signal -- so `-i(x1.xm1:d)` and `it(x1.xm1:d)` are seen; an
+# expression row gives every such token the Calculator would read
+# (calc::eval_text_signals), so `db(if(a:d)/if(b:d))` gives two.  {} for a row
+# that reads none, and for a text the Calculator refuses before any read.
+proc ase::output_probes {ex} {
+  set e [string trim $ex]
+  set out {}
+  if {[ase::output_is_plain $e]} {
+    if {[string index $e 0] eq {-} && [string index $e 1] ne {-}} {
+      set e [string range $e 1 end]
+    }
+    set sp [ase::probe_split [ase::output_signal $e]]
+    if {$sp ne {}} { lappend out "i([lindex $sp 0]:[lindex $sp 1])" }
+    return $out
+  }
+  if {[info commands ::calc::eval_text_signals] eq {}} { return $out }
+  foreach sg [calc::eval_text_signals [ase::output_calc_text $e]] {
+    set sp [ase::probe_split $sg]
+    if {$sp ne {}} { lappend out "i([lindex $sp 0]:[lindex $sp 1])" }
+  }
+  return $out
+}
+
+# 1 for a PLAIN row whose one signal is a terminal current: the row that puts
+# no `.save` card in the deck.  ONE body for the two readers that must agree
+# about that, ase::output_card_sources and ase::saves_unresolved.
+proc ase::output_is_probe {ex} {
+  return [expr {[ase::output_is_plain $ex] && [llength [ase::output_probes $ex]] > 0}]
+}
+
+# DOES THE OUTPUTS PANE ASK THIS DECK TO SAVE SOMETHING BY NAME?  1 for a
+# bench with at least one `.save` card (ase::output_save_cards) and for one
+# with a Save-ticked terminal-current row, which is a save too although its
+# card is a `.probe` (ase::output_is_probe).  ONE body for the two places that
+# decide the save-everything leader (R-OUT8: a save adds to what the simulator
+# keeps and never narrows it), ase::saves_all_forced and the leader arm of
+# the ngspice deck writer.
+#
+# WHY A TERMINAL ROW COUNTS.  A netlist can carry a `.save` of its own -- every
+# stock ammeter writes `.save i(vmeas)` -- and that card narrows the results
+# to what it lists.  MEASURED 2026-11-19 on ver_53, a transient bench with one
+# ammeter and one picked terminal: `.save i(vmeas)` + `.probe I(rt,1)` keeps
+# the ammeter's current and the terminal and NO node voltage; with the leader
+# the voltages are back.  Any other Save-ticked row already brought the leader
+# there.  A PLOT-only terminal row brings none, like a plot-only voltage row.
+proc ase::output_saves_any {state} {
+  if {[llength [ase::output_save_cards $state]] > 0} { return 1 }
+  foreach o [ase::state_get $state outputs] {
+    if {![dict exists $o expr]} { continue }
+    if {[ase::state_get $o save 0] eq {1}
+        && [ase::output_is_probe [dict get $o expr]]} { return 1 }
+  }
+  return 0
+}
+
+# The case mode this state's run REQUESTS of its simulator
+# (ase::sim_casemode_requested: `fold` when it states none): what both callers
+# of ase::probe_plan hand it, so the plan the deck is written from and the plan
+# the run record carries are one answer.
+proc ase::probe_mode {state} {
+  return [ase::sim_casemode_requested [ase::state_get $state simulator ngspice]]
+}
+
+# The TOP-LEVEL card of `netlist_text` whose instance is `name` (compared
+# without case), its `+` continuation lines joined on with one space; {} when
+# the netlist has none.  A card between `.subckt` and `.ends` is not top-level.
+proc ase::probe_top_card {netlist_text name} {
+  set want [string tolower $name]
+  set depth 0
+  set card {}
+  set hit 0
+  foreach raw [split $netlist_text "\n"] {
+    set t [string trim $raw]
+    if {$t eq {} || [string index $t 0] eq {*}} { continue }
+    if {[string index $t 0] eq {+}} {
+      if {$hit} { append card " [string trim [string range $t 1 end]]" }
+      continue
+    }
+    if {$hit} { return $card }
+    set w [string tolower [lindex [regexp -inline {^\S+} $t] 0]]
+    if {$w eq {.subckt}} { incr depth ; continue }
+    if {$w eq {.ends}} {
+      if {$depth > 0} { incr depth -1 }
+      continue
+    }
+    if {$depth == 0 && $w eq $want} { set card $t ; set hit 1 }
+  }
+  return $card
+}
+
+# ─── `.subckt` HEADERS: FROM A TEXT, AND FROM THE MODEL FILES A DECK NAMES ───
+#
+# THE ONE HEADER READER.  What a subcircuit calls its ports is asked in two
+# places -- when a click on a pin has to be named (src/ase_window.tcl) and when
+# a `.probe` card has to carry a port's position (ase::probe_card) -- and the
+# answer has to be the same in both.
+#
+# The `.subckt` headers of one netlist or model text, and the files it pulls in:
+# {subckts cards}.
+#   subckts  dict <lower-case name> -> the DISTINCT port lists found under that
+#            name, each as spelled (ports end at the first `<k>=<v>` word or at
+#            `params:`)
+#   cards    {<file as written> <section or {}>} per `.include`/`.inc` and per
+#            three-word `.lib <file> <section>`
+# `section` selects what is read: empty takes the whole text (a deck, an
+# included file); a name takes only what stands between `.lib <name>` and its
+# `.endl`, which is how a corner file is laid out.
+proc ase::subckt_scan {text section} {
+  ## the dot cards only, each with its `+` continuation lines joined on; a
+  ## comment or a blank line between a card and its continuation is skipped
+  set logical {}
+  set card 0
+  foreach raw [split $text "\n"] {
+    set t [string trim $raw]
+    set c [string index $t 0]
+    if {$c eq {} || $c eq {*}} { continue }
+    if {$c eq {+}} {
+      if {$card} { lset logical end "[lindex $logical end] [string range $t 1 end]" }
+      continue
+    }
+    set card [expr {$c eq {.}}]
+    if {$card} { lappend logical $t }
+  }
+  set subckts [dict create]
+  set cards {}
+  set insec [expr {$section eq {} ? 1 : 0}]
+  foreach t $logical {
+    set w [regexp -all -inline {\S+} $t]
+    set kw [string tolower [lindex $w 0]]
+    if {$kw eq {.lib} && [llength $w] == 2} {
+      if {$section ne {}} { set insec [string equal -nocase [lindex $w 1] $section] }
+      continue
+    }
+    if {$kw eq {.endl}} {
+      if {$section ne {}} { set insec 0 }
+      continue
+    }
+    if {!$insec} { continue }
+    if {$kw eq {.lib} && [llength $w] >= 3} {
+      lappend cards [list [string trim [lindex $w 1] "\"'"] [lindex $w 2]]
+    } elseif {$kw eq {.include} || $kw eq {.inc}} {
+      if {[llength $w] >= 2} { lappend cards [list [string trim [lindex $w 1] "\"'"] {}] }
+    } elseif {$kw eq {.subckt} && [llength $w] >= 2} {
+      set ports {}
+      foreach p [lrange $w 2 end] {
+        if {[string first = $p] >= 0 || [string equal -nocase $p params:]} { break }
+        lappend ports $p
+      }
+      set nm [string tolower [lindex $w 1]]
+      if {![dict exists $subckts $nm]} {
+        dict set subckts $nm [list $ports]
+      } elseif {[lsearch -exact [dict get $subckts $nm] $ports] < 0} {
+        dict lappend subckts $nm $ports
+      }
+    }
+  }
+  return [list $subckts $cards]
+}
+
+# Every `.subckt` header reachable from `cards` ({<absolute file> <section>}
+# rows), following each file's own `.lib`/`.include` lines relative to the
+# directory of the file that wrote them: {subckts stamps}. `stamps` maps every
+# file looked at to its mtime (empty for one that could not be read), which is
+# what ase::subckt_lib's cache is checked against.
+#
+# `::open` AND `::close`, spelled with their namespace: the same body has to
+# read the same files from namespace ase::ui, where the bare words are the
+# session-window procs.
+proc ase::subckt_walk {cards} {
+  set subckts [dict create]
+  set stamps [dict create]
+  set seen [dict create]
+  set todo $cards
+  while {[llength $todo]} {
+    lassign [lindex $todo 0] f section
+    set todo [lrange $todo 1 end]
+    set f [file normalize $f]
+    if {[dict exists $seen [list $f $section]]} { continue }
+    dict set seen [list $f $section] 1
+    set text {}
+    set mt {}
+    if {![catch {::open $f r} fh]} {
+      if {[catch {set text [read $fh]}]} { set text {} }
+      ::close $fh
+      catch {set mt [file mtime $f]}
+    }
+    dict set stamps $f $mt
+    lassign [ase::subckt_scan $text $section] found more
+    dict for {nm lists} $found {
+      foreach ports $lists {
+        if {![dict exists $subckts $nm]} {
+          dict set subckts $nm [list $ports]
+        } elseif {[lsearch -exact [dict get $subckts $nm] $ports] < 0} {
+          dict lappend subckts $nm $ports
+        }
+      }
+    }
+    set dir [file dirname $f]
+    foreach m $more {
+      lassign $m p sec
+      if {$p eq {}} { continue }
+      if {[file pathtype $p] ne {absolute}} { set p [file join $dir $p] }
+      lappend todo [list $p $sec]
+    }
+  }
+  return [list $subckts $stamps]
+}
+
+# ase::subckt_walk, remembered. A corner library is a hundred and more files,
+# so the walk is done once per set of cards and kept until a file it read
+# changes: the cache holds the cards it was built for and each file's mtime,
+# and is rebuilt when either differs.
+namespace eval ase { variable subckt_cache [dict create] }
+proc ase::subckt_lib {cards} {
+  variable subckt_cache
+  if {[dict exists $subckt_cache cards] \
+      && [dict get $subckt_cache cards] eq $cards} {
+    set fresh 1
+    dict for {f mt} [dict get $subckt_cache stamps] {
+      set now {}
+      catch {set now [file mtime $f]}
+      if {$now ne $mt} { set fresh 0 ; break }
+    }
+    if {$fresh} { return [dict get $subckt_cache subckts] }
+  }
+  lassign [ase::subckt_walk $cards] subckts stamps
+  set subckt_cache [dict create cards $cards stamps $stamps subckts $subckts]
+  return $subckts
+}
+
+# THE MODEL FILES A STATE'S DECK WILL NAME over `netlist_text`, as the cards
+# ase::subckt_lib takes: {<absolute file> <section or {}>} for each `includes`
+# row, each `models` row with its section, and each `.include`/`.lib` card the
+# netlist text carries itself, in that order.  A path is expanded as the deck
+# writer expands it (ase::expand_path; one that does not expand is left out)
+# and a relative one is taken from the run directory, as the simulator takes
+# it.  Reads no file.
+proc ase::subckt_model_cards {state netlist_text} {
+  set rd {}
+  catch {set rd [ase::state_get $state rundir]}
+  if {$rd eq {}} { catch {set rd [ase::rundir_default_preview]} }
+  set cards {}
+  foreach inc [ase::state_get $state includes] {
+    if {[llength $inc] >= 2 && ![catch {dict get $inc file} f]} {
+      lappend cards [list $f {}]
+    } else {
+      lappend cards [list $inc {}]
+    }
+  }
+  foreach m [ase::state_get $state models] {
+    if {![catch {dict get $m file} f]} {
+      set sec {}
+      catch {set sec [dict get $m section]}
+      lappend cards [list $f $sec]
+    }
+  }
+  set abs {}
+  foreach c [concat $cards [lindex [ase::subckt_scan $netlist_text {}] 1]] {
+    lassign $c f sec
+    if {[catch {ase::expand_path $f} f] || [string trim $f] eq {}} { continue }
+    if {[file pathtype $f] ne {absolute}} { set f [file join $rd $f] }
+    lappend abs [list [file normalize $f] $sec]
+  }
+  return $abs
+}
+
+# The SUBCIRCUIT CALLS of a netlist text, by the scope each stands in:
+# -> dict <scope> -> dict <instance> -> <callee>, every name in lower case.
+# The scope is the empty string at the top level and the subcircuit's name
+# between its `.subckt` and its `.ends`.  A call is a card whose name starts
+# with `x`, its `+` continuation lines joined on (a comment or a blank line
+# between the two is skipped); its callee is the last word before the first
+# `<k>=<v>` word or `params:`.
+proc ase::probe_x_calls {netlist_text} {
+  set logical {}
+  set card 0
+  foreach raw [split $netlist_text "\n"] {
+    set t [string trim $raw]
+    set c [string tolower [string index $t 0]]
+    if {$c eq {} || $c eq {*}} { continue }
+    if {$c eq {+}} {
+      if {$card} { lset logical end "[lindex $logical end] [string range $t 1 end]" }
+      continue
+    }
+    set card [expr {$c eq {.} || $c eq {x}}]
+    if {$card} { lappend logical $t }
+  }
+  set calls [dict create]
+  set scopes {}
+  foreach t $logical {
+    set w [regexp -all -inline {\S+} $t]
+    set kw [string tolower [lindex $w 0]]
+    if {$kw eq {.subckt}} { lappend scopes [string tolower [lindex $w 1]] ; continue }
+    if {$kw eq {.ends}} { set scopes [lrange $scopes 0 end-1] ; continue }
+    if {[string index $kw 0] ne {x}} { continue }
+    set callee {}
+    foreach p [lrange $w 1 end] {
+      if {[string first = $p] >= 0 || [string equal -nocase $p params:]} { break }
+      set callee [string tolower $p]
+    }
+    dict set calls [lindex $scopes end] $kw $callee
+  }
+  return $calls
+}
+
+# THE PORTS OF THE SUBCIRCUIT BEHIND THE INSTANCE `path`, as its `.subckt`
+# header spells them:
+#   -> {1 <callee> <ports>}        the one header found for it
+#   -> {0 header <callee>}         the call was followed down to `<callee>`, and
+#                                  no header, or two different ones, were found
+#   -> {0 call <instance path>}    the netlist text holds no card for that
+#                                  instance where the walk looked for it
+# The path is walked through `netlist_text`: the top-level card of its first
+# component, the subcircuit that card calls, and for each further component
+# the card of that name inside that subcircuit's body.  The header of the LAST
+# subcircuit is taken from the netlist text, and only when the text has none
+# from the model files the deck names (ase::subckt_model_cards, read through
+# ase::subckt_lib) -- that is where a vendor model's header is.  A body is
+# only ever walked in the netlist text.  Names are compared without case.
+proc ase::probe_x_ports {path netlist_text state} {
+  set calls [ase::probe_x_calls $netlist_text]
+  set scope {}
+  set walked {}
+  set callee {}
+  foreach c [split [string tolower $path] .] {
+    lappend walked $c
+    if {![dict exists $calls $scope $c]} { return [list 0 call [join $walked .]] }
+    set callee [dict get $calls $scope $c]
+    set scope $callee
+  }
+  set hdrs [lindex [ase::subckt_scan $netlist_text {}] 0]
+  if {![dict exists $hdrs $callee]} {
+    set hdrs [ase::subckt_lib [ase::subckt_model_cards $state $netlist_text]]
+  }
+  if {![dict exists $hdrs $callee] || [llength [dict get $hdrs $callee]] != 1} {
+    return [list 0 header $callee]
+  }
+  return [list 1 $callee [lindex [dict get $hdrs $callee] 0]]
+}
+
+# ONE asked terminal as the `.probe` term that makes its vector, or the reason
+# ASE-L writes no card for it:
+#   -> {signal i(<path>:<tname>) path <card path> pin <card pin>
+#       card <I(<card path>,<card pin>), or {}> why <the reason, or {}>
+#       nohdr <{}, or {header <subcircuit>} / {call <instance path>}>}
+# `card` is empty exactly when `why` is not.  `nohdr` is set only for a
+# numbered port whose position could not be looked up (below).
+#
+# THE ROW's TEXT IS NOT THE CARD.  MEASURED 2026-11-19 on the fork's ver_53:
+#   * a subcircuit instance (leaf `x...`) takes its port BY NAME, which is the
+#     vector's own `<tname>` -- UNLESS THE NAME IS A NUMBER.  A word of digits
+#     in the card is a POSITION to the simulator, also where a port has that
+#     number as its name: over `.subckt blk 3 2 7`, `I(x1,3)` is the third
+#     port and comes back as `i(x1:7)`, and `I(x1,7)` is refused (`x1 has 3
+#     terminals`).  Vendor macro-models name their ports with numbers
+#     (`.SUBCKT LM741 1 2 99 50 28`), so the port's name is looked up in the
+#     subcircuit's header (ase::probe_x_ports) and the card carries its
+#     1-based POSITION, which is the one spelling that makes the row's vector.
+#     A number that is no port of that header is a position somebody typed
+#     and is written as it stands.  When no header can be found the number is
+#     written as it stands too -- it is right wherever a port's number is its
+#     own position -- and the record's `nohdr` says what was missing, so that
+#     ase::probe_report can explain a row that then gets no vector.
+#     A name that is not all digits needs none of this: no netlist is walked
+#     and no file is read for it;
+#   * every other device answers `n<k>` for a pin that has no letter of its
+#     own and refuses that word in the card (`I(r1,n1)`: `Node n1 is not
+#     available`); the position `<k>` is what it takes.  A MOS bulk comes back
+#     as `b_tj` and is refused under that name inside a subcircuit; `b` is
+#     taken at every depth.  A device's own letters (`d g s`, `a c`, `c b e`)
+#     are taken as they stand.
+#   * a TOP-LEVEL device that is not a subcircuit instance is mis-named when
+#     the card spells it in upper case and the simulator is not folding case:
+#     `.probe I(Rtop,1) I(Rtop,2)` comes back as two vectors both called
+#     `i(Rtop:nn)`.  The instance in lower case gives `i(Rtop:n1)` and
+#     `i(Rtop:n2)` under `preserve` and is the same card under `fold`, so the
+#     card is lower-cased whenever the run does not ask for `distinguish`.
+#     Under `distinguish` a lower-cased instance is refused ("differs only in
+#     case") and an upper-cased one is mis-named, so a device whose name has a
+#     capital gets no card.
+#
+# AND THREE CARDS STOP THE RUN BEFORE ANY ANALYSIS (rc 1, on ver_53 and on apt
+# 45.2 alike), so they are withheld rather than left for the simulator to
+# refuse:
+#   * a top-level `E` source whose joined card has fewer than six words
+#     (`E9 e9 0 vol='v(g)*2'`: `Error: Not enough tokens`, rc 1).  The
+#     six-word spelling xschem's own vsource_arith symbol netlists,
+#     `E5 TEMPERAT VSS VOL=' temper '`, is probed without harm;
+#   * pin 3 or 4 of a top-level `E` source written with `vol=` or `value=`,
+#     which has no such pins;
+#   * a `K` coupling (`coupling to non-existent inductor`), which has no
+#     terminals at any depth.
+# An `E` card the netlist text does not hold gets its term: the simulator then
+# answers `no instance named ...` at rc 0, and ase::probe_report says so.
+proc ase::probe_card {path tname netlist_text mode {state {}}} {
+  set leaf [lindex [split $path .] end]
+  set c [string tolower [string index $leaf 0]]
+  set top [expr {[string first . $path] < 0}]
+  set pin $tname
+  set nohdr {}
+  if {$c ne {x}} {
+    if {[regexp -nocase {^n([0-9]+)$} $tname -> k]} {
+      set pin $k
+    } elseif {[string equal -nocase $tname b_tj]} {
+      set pin b
+    }
+  } elseif {[string is digit -strict $tname]} {
+    lassign [ase::probe_x_ports $path $netlist_text $state] found a b
+    if {!$found} {
+      set nohdr [list $a $b]
+    } else {
+      set at [lsearch -all -exact $b $tname]
+      if {[llength $at] == 1} { set pin [expr {[lindex $at 0] + 1}] }
+    }
+  }
+  set cpath $path
+  set why {}
+  if {$c eq {k}} {
+    set why "$path is a coupling between inductors and has no terminal"
+  } elseif {$top && $c ne {x}} {
+    if {$mode ne {distinguish}} {
+      set cpath [string tolower $path]
+    } elseif {$path ne [string tolower $path]} {
+      set why "this run asks the simulator to distinguish case, and it then\
+ names the terminals of a top-level device wrongly unless the device is spelled\
+ in lower case, which $path is not"
+    }
+    if {$why eq {} && $c eq {e}} {
+      set card [ase::probe_top_card $netlist_text $path]
+      if {$card ne {}} {
+        if {[llength [regexp -all -inline {\S+} $card]] < 6} {
+          set why "$path is a source written as an expression on a card of\
+ fewer than six words, and a probe on it stops the simulator before any\
+ analysis runs"
+        } elseif {($pin eq {3} || $pin eq {4})
+                  && [regexp -nocase {(^|\s)(vol|value)\s*=} $card]} {
+          set why "$path is a source written as an expression, which has two\
+ terminals, and a probe on a third or fourth stops the simulator before any\
+ analysis runs"
+        }
+      }
+    }
+  }
+  set term {}
+  if {$why eq {}} { set term "I($cpath,$pin)" }
+  return [dict create signal "i($path:$tname)" path $cpath pin $pin \
+                      card $term why $why nohdr $nohdr]
+}
+
+# The terminal currents the ENABLED MEASUREMENT rows of a bench read, each as
+# `i(<path>:<tname>)`, in row order.  A row counts when it will be written into
+# the deck (ase::meas_verdict `ok` or `caution`); what it reads is every
+# `i(...)` token of its signal fields -- the fields its kind declares as
+# `vecexpr` (target, trigger, when ...), with the value each will carry -- that
+# ase::probe_split takes for a terminal.  MEASURED 2026-11-19 on ver_53: a
+# `meas ... avg i(xa.xm1:d)` with no `.probe` behind it logs `no such vector`,
+# and with the card it answers a number.
+proc ase::meas_probes {state} {
+  set sim [ase::state_get $state simulator ngspice]
+  set out {}
+  foreach r [ase::meas_rows $state] {
+    if {![ase::meas_enabled $r]} { continue }
+    if {[lindex [ase::meas_verdict $sim $state $r] 0] ni {ok caution}} { continue }
+    set kind [string trim [ase::state_get $r kind]]
+    foreach f [ase::meas_kind_fields $sim $kind] {
+      if {[ase::state_get $f kind] ne {vecexpr}} { continue }
+      set v [ase::meas_field_value $sim $kind $r [ase::state_get $f name]]
+      foreach {whole tok} [regexp -all -inline -nocase \
+                             {(?:^|[^a-z0-9_.#$])(i\([^()\s]*\))} $v] {
+        set sp [ase::probe_split $tok]
+        if {$sp ne {}} { lappend out "i([lindex $sp 0]:[lindex $sp 1])" }
+      }
+    }
+  }
+  return $out
+}
+
+# THE TERMINAL CURRENTS A BENCH ASKS FOR, as `i(<path>:<tname>)`, in asking
+# order and with duplicates kept: the Outputs rows' in pane order, then the
+# measurement rows'.  Asked means:
+#   * a SAVES-tab row (`i(<path>:<tname>)`, ase::output_is_save) with Save OR
+#     Plot ticked -- a plotted terminal has no vector unless it is probed, and
+#     no `.save` could give it one.  With neither box ticked such a row asks
+#     for nothing, like any other save that is switched off;
+#   * every terminal a MEASURES-tab row reads, ticked or not, whether the row
+#     is one signal (`idc(xm1:d)`, `-i(rt:n1)`, `it(xm1:d)`) or an expression:
+#     its Value is computed from the results whether or not it is saved, and
+#     a row typed into the Add Output dialog (ase::ui::output_editor) starts
+#     with both boxes off;
+#   * every terminal an enabled measurement row reads (ase::meas_probes).
+# `but` is a dict keyed on Outputs rows' texts, the blanks around them taken
+# off: a row whose text is a key is passed over.  ONE body for ase::probe_plan,
+# which hands no `but`, and for ase::probe_report, which has to know which
+# terminals are still asked for once the rows that another sentence already
+# speaks for are set aside.
+proc ase::probe_asked {state {but {}}} {
+  set asked {}
+  foreach o [ase::state_get $state outputs] {
+    if {![dict exists $o expr]} { continue }
+    set ex [dict get $o expr]
+    if {[dict exists $but [string trim $ex]]} { continue }
+    if {[ase::output_is_save $ex] && [ase::state_get $o save 0] ne {1}
+        && [ase::state_get $o plot 0] ne {1}} { continue }
+    foreach sg [ase::output_probes $ex] { lappend asked $sg }
+  }
+  foreach sg [ase::meas_probes $state] { lappend asked $sg }
+  return $asked
+}
+
+# THE PROBE PLAN: every terminal current this bench asks for
+# (ase::probe_asked), each once, as ase::probe_card's record.
+# Two spellings that differ only in case are one terminal unless the run
+# distinguishes case.  The plan keeps one record per asked NAME: two names for
+# one terminal (`i(x1.m2:b)` and `i(x1.m2:b_tj)`) are two records with the same
+# card, so that the report can speak about each row.
+#
+# A FUNCTION OF ITS THREE ARGUMENTS AND, FOR ONE KIND OF TERMINAL ONLY, OF THE
+# MODEL FILES THE DECK NAMES.  There is no Tk here, and no file is read unless
+# the bench asks for a NUMBERED port of a subcircuit instance whose `.subckt`
+# header the netlist text does not hold: then, and only then, the files of
+# ase::subckt_model_cards are read (ase::probe_card, ase::probe_x_ports).  ONE
+# body for the deck writer, which emits the terms, and for ase::run_deck, which
+# carries the plan to ase::probe_report -- so what the report compares the
+# results against is exactly what the deck asked.
+proc ase::probe_plan {state netlist_text {mode fold}} {
+  set out {}
+  set seen [dict create]
+  foreach sg [ase::probe_asked $state] {
+    set k $sg
+    if {$mode ne {distinguish}} { set k [string tolower $sg] }
+    if {[dict exists $seen $k]} { continue }
+    dict set seen $k 1
+    lassign [ase::probe_split $sg] path tname
+    lappend out [ase::probe_card $path $tname $netlist_text $mode $state]
+  }
+  return $out
+}
+
+# The plan's `.probe` terms, in plan order, each ONCE: the cards that are
+# written.  Two records can carry one term (two names for one terminal), and
+# the deck asks for it once.
+proc ase::probe_terms {plan} {
+  set out {}
+  foreach p $plan {
+    set c [ase::state_get $p card]
+    if {$c ne {} && [lsearch -exact $out $c] < 0} { lappend out $c }
+  }
+  return $out
+}
+
+# THE TERMINAL PROBES A NETLIST TEXT ASKS FOR ITSELF: every `I(<path>,<pin>)`
+# term on a `.probe` card of `netlist_text`, as `<path>,<pin>` in the text's
+# own spelling, each once.  A schematic written for this simulator by hand can
+# carry such a card in a code block.
+#
+# The card word is read without case; a card's `+` continuation lines are
+# joined on, a comment line between them skipped; and a card inside a
+# `.subckt` body counts like one at the top level, because the simulator does
+# not read a `.probe` relative to the subcircuit it stands in.  What stands
+# behind a `;`, or behind a dollar sign that follows a blank or a comma, is a
+# comment to the simulator and is not read here either: MEASURED 2026-11-19 on
+# ver_53, `.probe I(ra,1) $ I(rb,1)` and `.probe I(rt,1) ; I(rt,2)` each make
+# the first vector and not the second.  Only the spelling ASE-L itself writes
+# is recognised -- no blank inside the parentheses -- so a term this reader is
+# not sure of is taken as absent.
+proc ase::probe_netlist_terms {netlist_text} {
+  set out {}
+  if {![regexp -nocase {\.probe} $netlist_text]} { return $out }
+  set cards {}
+  set card {}
+  set on 0
+  foreach raw [split $netlist_text "\n"] {
+    set t [string trim $raw]
+    if {$t eq {} || [string index $t 0] eq {*}} { continue }
+    set cont [expr {[string index $t 0] eq {+}}]
+    if {!$cont} {
+      if {$on} { lappend cards $card }
+      set on [regexp -nocase {^\.probe(\s|$)} $t]
+      set card {}
+    }
+    if {!$on} { continue }
+    if {$cont} { set t [string range $t 1 end] }
+    regsub {;.*$} $t {} t
+    regsub {(^|[\s,])\$.*$} $t {\1} t
+    append card " $t"
+  }
+  if {$on} { lappend cards $card }
+  foreach c $cards {
+    foreach {whole path pin} [regexp -all -inline -nocase \
+                                {(?:^|\s)i\(([^\s(),]+),([^\s(),]+)\)(?=\s|$)} $c] {
+      if {[lsearch -exact $out "$path,$pin"] < 0} { lappend out "$path,$pin" }
+    }
+  }
+  return $out
+}
+
+# The terms of `terms` (ase::probe_terms) that the deck writer still has to
+# write: all of them but those the netlist text's own `.probe` cards already
+# hold (ase::probe_netlist_terms).  MEASURED 2026-11-19 on ver_53 and on apt
+# 45.2: the same term twice in a deck makes the vector of a top-level device
+# twice, under one name; on ver_53 a second internal probe node stands in
+# series with the first, and the vector is doubled in the operating point and
+# in the transient alike.  (For a device inside a subcircuit ver_53 was
+# measured to keep one vector all the same.)
+#
+# HOW TWO TERMS ARE COMPARED depends on the case mode the run requests, like
+# the plan's own "asked once" rule.  Under `fold` case is ignored: a netlist's
+# `.PROBE I(RTOP,1)` and ASE-L's `I(rtop,1)` were measured to make the one
+# vector twice.  Under `preserve` and `distinguish` a term is held only when
+# it is spelled the same: MEASURED on ver_53 run with casemode=preserve, a
+# netlist's `.probe I(Rtop,1)` makes a vector the simulator names `i(Rtop:nn)`
+# while ASE-L's lower-case `I(rtop,1)` makes `i(Rtop:n1)`, the row's own -- so
+# leaving ASE-L's term out for the other would cost the row its vector.
+#
+# A COMPARISON OF TEXT: `I(m1,d)` and `I(m1,1)` name one terminal and are not
+# seen to, so that pair is still written twice.
+proc ase::probe_terms_new {terms netlist_text mode} {
+  if {![llength $terms]} { return {} }
+  set own [ase::probe_netlist_terms $netlist_text]
+  if {![llength $own]} { return $terms }
+  set fold [expr {$mode eq {fold}}]
+  set held [dict create]
+  foreach t $own {
+    if {$fold} { set t [string tolower $t] }
+    dict set held $t 1
+  }
+  set out {}
+  foreach t $terms {
+    set k [string range $t 2 end-1]
+    if {$fold} { set k [string tolower $k] }
+    if {![dict exists $held $k]} { lappend out $t }
+  }
+  return $out
+}
+
+# The word a deck that carries a `.probe` card echoes, followed by the
+# simulator's own answer to "is the probe extension present" (1 or 0), before
+# its first analysis.  ONE spelling for the line the deck writes and the line
+# ase::probe_report looks for in the log.
+proc ase::probe_marker {} { return ASE-PROBE-VERSION }
+
+# WHAT A TEXT SAYS THE SIMULATOR ANSWERED TO THAT QUESTION: `0` when a line of
+# it is the marker's word followed by 0, else `1` when one is the word followed
+# by 1, else {} -- the text holds no answer.  ONE reader for the two texts that
+# carry the line: a run's log (ase::probe_report) and the file the capability
+# probe's deck writes (ase::backend::ngspice::cap_hier_lines).  A 0 anywhere
+# wins, as it did when ase::probe_report read the log itself: a deck that
+# reloads its circuit prints the line again, always with the same answer.
+proc ase::probe_marker_answer {text} {
+  set m [ase::probe_marker]
+  if {[regexp -line "^$m\[ \t\]+0\[ \t\r\]*\$" $text]} { return 0 }
+  if {[regexp -line "^$m\[ \t\]+1\[ \t\r\]*\$" $text]} { return 1 }
+  return {}
+}
+
+# DOES A TERMINAL NEED A SIMULATOR THAT PROBES BELOW THE TOP LEVEL?  `path` is
+# the instance path of a terminal row (the first word of ase::probe_split's
+# answer).  1 when the path holds a `.` -- a device inside a subcircuit -- or
+# its last word begins with `x` or `X` -- a pin of a subcircuit instance; 0 for
+# a top-level device that is no subcircuit instance, which every build
+# measured probes (ase::backend::ngspice::cap_hier_lines).  THE ONE PREDICATE
+# for the places that ask: the run about to start, its report, a pick on the
+# sheet, and Direct Plot's refusal of a row that is set to be saved.
+proc ase::probe_needs_hier {path} {
+  set p [string trim $path]
+  if {[string first . $p] >= 0} { return 1 }
+  return [expr {[string index $p 0] in {x X} ? 1 : 0}]
+}
+
+# THE TERMINALS OF A PROBE PLAN THAT NEED SUCH A SIMULATOR: the `signal` of
+# every record of `plan` (ase::probe_plan) whose card was written and whose
+# path ase::probe_needs_hier answers 1 for, in plan order.  A terminal ASE-L
+# wrote no card for is not one of them: its sentence is the withheld card's.
+proc ase::probe_plan_hier {plan} {
+  set out {}
+  foreach p $plan {
+    if {[ase::state_get $p card] eq {}} { continue }
+    if {![ase::probe_needs_hier [ase::state_get $p path]]} { continue }
+    lappend out [ase::state_get $p signal]
+  }
+  return $out
+}
+
+# THE PROBES A RUN LOG SAYS THE SIMULATOR REFUSED: a dict from
+# `<path>,<pin>` -- the CARD's path and pin, lower-cased -- to the simulator's
+# reason ({} when it gave none), each refusal once.
+#
+# TWO SHAPES, both MEASURED 2026-11-19, and both spell the card rather than the
+# row (`i(r5:n3)` is refused as `i(r5,3)`):
+#   ver_53, a path inside a subcircuit, a subcircuit instance or a missing one:
+#     probe: I(x1.nope:d) not inserted: no instance named x1.nope
+#   every build, a top-level device (and, before ver_53, every other probe):
+#     Warning: Node zz is not available for device r5,
+#        .probe i(r5,3) will be ignored
+# The separator is `,` or `:` as the simulator chose to print it, so both are
+# read.  The second shape's reason is the `Warning:` line directly above it.
+#
+# BY CONTENT, NEVER BY POSITION: the log is the simulator's two streams folded
+# into one, which does not keep their order, and a deck that reloads the
+# circuit (a design-variable sweep) prints every refusal again at each point.
+proc ase::probe_refusals {logtext} {
+  set out [dict create]
+  set prev {}
+  foreach raw [split $logtext "\n"] {
+    set l [string trim $raw]
+    set hit 0
+    if {[regexp -nocase {^probe:\s*I\((.*)[:,]([^:,()\s]+)\)\s+not inserted:(.*)$} \
+           $l -> p pin why]} {
+      set hit 1
+      set why [string trim $why]
+    } elseif {[regexp -nocase {^\.probe\s+i\((.*)[:,]([^:,()\s]+)\)\s+will be ignored} \
+                 $l -> p pin]} {
+      set hit 1
+      set why {}
+      if {[regexp -nocase {^Warning:(.*)$} $prev -> w]} {
+        set why [string trim $w " \t,"]
+      }
+    }
+    if {$hit} { dict set out [string tolower "[string trim $p],$pin"] $why }
+    set prev $l
+  }
+  return $out
+}
+
+# What ase::probe_report adds, behind a blank, to the sentence of a NUMBERED
+# PORT whose position could not be looked up (ase::probe_card's `nohdr`): why
+# the card carries the number as it stands, and what to do about it.  Empty
+# for every other record.
+proc ase::probe_nohdr_note {p} {
+  lassign [ase::state_get $p nohdr] what name
+  if {$what eq {}} { return {} }
+  set t [lindex [ase::probe_split [ase::state_get $p signal]] 1]
+  set lead " The simulator reads a number in a .probe card as a position, not\
+ as the port of that name, and ASE-L"
+  if {$what eq {header}} {
+    return "$lead did not find one .subckt header for $name, in this run's\
+ netlist or in the model files it names, to turn the port named $t into its\
+ position. Name the model file that holds that header under Setup > Model\
+ Files and run again."
+  }
+  return "$lead found no card for the instance $name in this run's netlist,\
+ so it could not turn the port named $t into its position. To measure it,\
+ place an ammeter (ammeter.sym) in series."
+}
+
+# IS ROW `idx` OF THE BENCH A SWEEP OF A DESIGN VARIABLE to its simulator's
+# adapter (the `dcvar_plan` hook)?  0 for every other row, and for a backend
+# that declares no such hook.  ONE body for the two questions
+# ase::probe_report asks of a row and that must have one answer: is its plot
+# one that can say a vector is missing, and is it an analysis that keeps no
+# probed vector.
+proc ase::probe_row_swept {state sim row idx} {
+  set dv {}
+  catch {
+    set h [ase::backend_hook $sim dcvar_plan]
+    if {$h ne {}} { set dv [$h $state $row $idx] }
+  }
+  return [expr {$dv ne {}}]
+}
+
+# AFTER THE RUN: WHAT CAME OF EACH TERMINAL CURRENT THE DECK ASKED FOR.
+# `meta` is ase::run_deck's record, whose `probes` is that deck's own
+# ase::probe_plan; `data` is the run's log text.  At most ONE sentence per asked
+# terminal, the first of these that applies:
+#   withheld   ASE-L wrote no card for it (ase::probe_card's reason);
+#   refused    the simulator said it would not make the vector
+#              (ase::probe_refusals), with the simulator's own reason -- unless
+#              the results hold a vector of the row's name all the same;
+#   missing    the card was written, nothing was said, and the vector is not
+#              in the results.  When the results hold other terminal currents
+#              of the SAME instance the sentence names them: the card was
+#              taken and the simulator called the vector something else
+#              (`I(x1.m2,b)` comes back as `i(x1.m2:b_tj)`, `I(x1.q3,1)` as
+#              `i(x1.q3:c)`), so the row is to be named after the one meant.
+# A refused or missing NUMBERED PORT whose position could not be looked up
+# says that instead (ase::probe_nohdr_note).
+#   hier       ONE record for ALL the terminals the run's simulator cannot
+#              save: the log shows it answered 0 to ase::probe_marker's
+#              question, the terminal needs a simulator that probes below the
+#              top level (ase::probe_needs_hier) and it was refused or is
+#              missing.  It stands in place of those terminals' `refused` and
+#              `missing` records, where the first of them would have stood,
+#              and its second word is the LIST of their signals.  The
+#              sentence names the program as the run named it, says what
+#              such a build saves, and ends with the cure -- which registered
+#              simulator can, and where it is picked (ase::sim_why
+#              `probe_hier`, ase::probe_cure).  It is said through
+#              ase::sim_say, as every sentence about a simulator is.  A
+#              terminal of a top-level device that is no subcircuit instance
+#              keeps its `refused` or `missing` sentence on such a build too,
+#              and nothing is added for it.
+# Returns {{<kind> <signal> <sentence>} ...} in plan order, {} when there was
+# nothing to say, and behind those at most one:
+#   {note {} <sentence>}  one of two sentences, which the exit code keeps
+#              apart.
+#              A NONZERO EXIT: the run FAILED TO CONVERGE and its deck carried
+#              at least one `.probe` term.  MEASURED 2026-11-19 on ver_53 and
+#              on apt 45.2 (sky130 tb_ft_test_2, one terminal row on M1's
+#              drain): a probe is a zero-volt source in series with its pin,
+#              and that alone turned an exit-0 transient into `Timestep too
+#              small`.  So the run is told how many such sources its deck
+#              asked for.  Only for a log that carries a convergence FAILURE,
+#              which is any of these lines:
+#                `operating point could not be simulated` -- the simulator's
+#                  last word on an operating point once every rung of its
+#                  ladder has failed, whichever analysis asked for that
+#                  operating point.  Every failed operating point prints it,
+#                  and it is the only line of this list in the log when the
+#                  Convergence form has switched the transient-op rung off
+#                  and the analysis is not `op` (MEASURED 2026-11-19 on
+#                  ver_53 and on apt 45.2, for ac, tran, a dc sweep, noise,
+#                  pz and sens);
+#                `timestep too small` -- a transient that stops converging,
+#                  and a failed operating point whose transient-op rung was
+#                  tried;
+#                `DC solution failed` -- the `op` analysis's own line for a
+#                  failed operating point, which no other analysis prints;
+#                `no convergence`.
+#              Any other failed run (a missing model, a syntax error, a run
+#              the user stopped) has another cause, and pointing it at the
+#              probes would send the user the wrong way.  LEFT OUT ARE THE
+#              LINES THAT LOOK LIKE A FAILURE AND THAT A RUN WHICH GOES ON
+#              PRINTS TOO.  The simulator's `singular matrix` line is a
+#              warning, printed on the way to a solution as well -- MEASURED
+#              on both binaries, a bench with a capacitively coupled node
+#              prints it and finishes at exit 0 -- so a healthy run that was
+#              stopped, or failed later for another reason, carries it.  And
+#              `iteration limit reached`, which stands under a failed
+#              operating point whose transient-op rung was not tried, in
+#              ver_53's log (not on a tf-only bench whose tf solve aborts)
+#              and in some of apt 45.2's (with the rung tried
+#              the line there is `Timestep too small`), is also what the
+#              pole-zero search says in a warning when it gives up and the
+#              run goes on to exit 0 (MEASURED 2026-11-19 on both binaries).
+#              EXIT 0: the run made only analyses that keep no probed vector
+#              (next paragraph), so the asked terminals are in no plot and
+#              nothing else speaks for them; the sentence names them and says
+#              which analyses do keep one.
+#
+# WHICH PLOTS CAN SAY A VECTOR IS MISSING.  MEASURED 2026-11-19 on ver_53: a
+# probed vector is in the op, dc, ac, tran, disto and sp plots and in NONE of
+# the noise, tf, pz and sens plots, and a design-variable sweep's plot holds
+# only what its loop copies (top-level nets and source currents).  So the
+# vector is looked for only in the plots of rows whose result vectors are
+# netlist names (ase::analysis_resultvecs; an `sp` row answers in vectors of
+# its own and is not asked, though its plot holds one too) and that are not
+# such a sweep, a plot being matched to its row through the plot sidecar,
+# position by position as ase::reconcile_plots matches them.  It is missing
+# when none of those holds it; a run that wrote no such plot is no evidence
+# either way and says nothing about a missing vector, and so does a run that
+# failed (every vector is then "missing") or left no results file.
+#
+# THE RUN THAT MADE ONLY NOISE, TF, PZ OR SENS ANALYSES wrote no plot that can
+# hold a probe, so none of its terminals can be called missing -- and without
+# a word here such a row would have an empty Value and no sentence anywhere:
+# the note about rows with no single-point value leaves out a terminal whose
+# vector is in no plot (ase::backend::ngspice::missing_spoken), on the ground
+# that this report speaks for it.  So at exit 0 (the plot sidecar and the
+# results file are read at no other), with both of them there and no plot
+# judged, when EVERY enabled analysis of the bench is one of those four, one
+# `note` names each terminal whose card was written and not refused and whose
+# vector no plot of the file holds under any wrapper -- the very rows that
+# other note leaves out, so each is spoken for once.  An `sp` analysis is not
+# one of the four (its plot holds the probed vector), and neither is a `dc`
+# sweep of a source: with either enabled nothing is added here.
+#
+# A SWEEP OF A DESIGN VARIABLE BESIDE THEM does not change that.  Its plot
+# holds only what the loop copies, so it keeps no terminal current either, and
+# the bench is still one whose every analysis keeps none: MEASURED 2026-11-19
+# on ver_53, with such a sweep beside a noise analysis an unqualified terminal
+# row is in no plot, and without a word here it has an empty Value and no
+# sentence anywhere.  So the note is said there too, in a sentence that names
+# the sweep.  The sweep's own advice
+# (ase::backend::ngspice::dcvar_output_refusals) speaks in such a bench only
+# for a row that reads the sweep by its qualifier (`is(r1:n1)`), before the
+# run and in that row's Value; a terminal that only such rows ask for is left
+# to that advice and is not named here, and one that any other row asks for is
+# (ase::probe_asked).  A sweep with NONE of the four beside it is not this
+# case: where it is the bench's only analysis its advice speaks for the
+# unqualified rows as well, and nothing is added here.
+#
+# CAUGHT BY ITS CALLER: everything here is advisory, and a defect in a report
+# must never break a run.
+proc ase::probe_report {state meta data {exitcode 0}} {
+  set plan [ase::state_get $meta probes {}]
+  if {![llength $plan]} {
+    ase::probe_said_keep $state $meta {} {} {} {}
+    return {}
+  }
+  set sim [ase::state_get $state simulator ngspice]
+  set refused [ase::probe_refusals $data]
+  ## `tails` keeps, for Direct Plot's refusal (ase::probe_absent_groups), the
+  ## reason each sentence below gives, by lower-cased signal, as the clause
+  ## Direct Plot says behind its own opening.  Each clause ends with the SAME
+  ## tail its sentence here ends with, so the two cannot drift.
+  set tails [dict create]
+  set out {}
+  foreach p $plan {
+    set sg [ase::state_get $p signal]
+    set card [ase::state_get $p card]
+    if {$card eq {}} {
+      set tail "[ase::state_get $p why]. To measure it, place an\
+ ammeter (ammeter.sym) in series."
+      dict set tails [string tolower $sg] "in the last run no probe was\
+ written for it: $tail"
+      lappend out [list withheld $sg "ase: no probe was written for the\
+ terminal current $sg: $tail"]
+      continue
+    }
+    set k [string tolower "[ase::state_get $p path],[ase::state_get $p pin]"]
+    if {[dict exists $refused $k]} {
+      set why [dict get $refused $k]
+      if {$why eq {}} { set why {it gave no reason} }
+      set tail "(.probe $card): $why.[ase::probe_nohdr_note $p]"
+      lappend out [list refused $sg "ase: the simulator refused the terminal\
+ current $sg $tail" "in the last run the simulator refused it $tail" \
+                    [ase::state_get $p path]]
+      continue
+    }
+    lappend out [list pending $sg $card [ase::probe_nohdr_note $p] \
+                   [ase::state_get $p path]]
+  }
+  ## The vectors of every plot that can hold a probe, folded as
+  ## ase::raw_vectors_present folds them; `judged` says there was such a plot.
+  ## `held` keeps the terminal currents among them by instance: lower-cased
+  ## path -> folded name -> the name as the file spells it.
+  set have [dict create]
+  set held [dict create]
+  set judged 0
+  set map {}
+  set plots {}
+  set rows [ase::state_get $state analyses]
+  if {$exitcode eq {0}} {
+    set raw {}
+    catch {set raw [[ase::backend_hook $sim raw_file] $state]}
+    catch {set map [ase::plotmap_read [ase::plotmap_path $state]]}
+    set plots [ase::cap_raw_plots $raw]
+    set i -1
+    foreach pl $plots {
+      incr i
+      lassign [lindex $map $i] type idx name
+      if {![string equal -nocase $name [lindex $pl 0]]} { continue }
+      if {[ase::analysis_resultvecs $sim $type] ne {netlist}} { continue }
+      if {[ase::probe_row_swept $state $sim [lindex $rows $idx] $idx]} { continue }
+      set judged 1
+      foreach v [lindex $pl 2] {
+        set fv [ase::raw_vectors_fold $v]
+        dict set have $fv 1
+        set sp [ase::probe_split $v]
+        if {$sp ne {}} { dict set held [string tolower [lindex $sp 0]] $fv $v }
+      }
+    }
+  }
+  ## A ROW WHOSE VECTOR IS IN THE JUDGED RESULTS HAS NOTHING TO BE TOLD, also
+  ## when the log refused the card written for it.  That happens where a
+  ## numbered port went into its card as it stands: MEASURED 2026-11-19 on
+  ## ver_53 over `.subckt blk 3 2 7`, the cards `I(x1,3)` and `I(x1,7)` give
+  ## the vector i(x1:7) -- the third port, made by the FIRST card -- and the
+  ## line `I(x1:7) not inserted: x1 has 3 terminals` for the second.  The row
+  ## i(x1:7) then has its current, and calling it refused would contradict the
+  ## results beside it.
+  ## A SIMULATOR THAT ANSWERED 0 TO ase::probe_marker's QUESTION SAVES NO
+  ## TERMINAL CURRENT BELOW THE TOP LEVEL, and its own words for that -- "Could
+  ## not find the instance line" -- send the user to look for a mistyped name.
+  ## So on such a run the terminals that NEED the hierarchy
+  ## (ase::probe_needs_hier, asked of the card's path) and were refused, or
+  ## are missing, are taken out of the two arms below and reported together
+  ## in ONE record of kind `hier`, at the place of the first of them: the
+  ## cause, and which registered program can (ase::sim_why `probe_hier`).  A
+  ## terminal of a top-level device that is no subcircuit instance keeps its
+  ## own sentence there too: such a build probes it, so the build is not what
+  ## refused it.
+  set old [expr {[ase::probe_marker_answer $data] eq {0}}]
+  set hier {}
+  set hier_at -1
+  set said {}
+  foreach rec $out {
+    lassign $rec kind sg card note cpath
+    if {$kind eq {withheld}} { lappend said $rec ; continue }
+    set held_it [expr {$judged && [dict exists $have [ase::raw_vectors_fold $sg]]}]
+    if {$kind eq {refused}} {
+      if {$held_it} { continue }
+      if {$old && [ase::probe_needs_hier $cpath]} {
+        if {$hier_at < 0} { set hier_at [llength $said] }
+        lappend hier $sg
+        continue
+      }
+      dict set tails [string tolower $sg] $note
+      lappend said [lrange $rec 0 2]
+      continue
+    }
+    if {!$judged || $held_it} { continue }
+    if {$old && [ase::probe_needs_hier $cpath]} {
+      if {$hier_at < 0} { set hier_at [llength $said] }
+      lappend hier $sg
+      continue
+    }
+    set path [lindex [ase::probe_split $sg] 0]
+    if {$note ne {}} {
+      set tail "the deck asked for it as .probe $card.$note"
+      set s "ase: the terminal current $sg is not in this run's results: $tail"
+    } elseif {[dict exists $held [string tolower $path]]} {
+      set tail "the deck asked for it (.probe $card), and for $path the results\
+ hold [join [dict values [dict get $held [string tolower $path]]] {, }]. Name\
+ the row after the one meant."
+      set s "ase: the terminal current $sg is not in this run's results under\
+ that name: $tail"
+    } else {
+      set tail "the deck asked for it (.probe $card) and the simulator\
+ neither made the vector nor said why."
+      set s "ase: the terminal current $sg is not in\
+ this run's results: $tail"
+    }
+    dict set tails [string tolower $sg] "in the last run $tail"
+    lappend said [list missing $sg $s]
+  }
+  ## THE PROGRAM, AS THE RUN NAMED IT WHEN IT STARTED (ase::run_deck's
+  ## `simname`); a record without the key -- a caller that hands a plan and
+  ## nothing else -- is named now.  The cure may start registered programs
+  ## (ase::probe_cure `ask`): the run is over and the user is reading.
+  set simname [ase::state_get $meta simname {}]
+  if {$simname eq {}} { set simname [ase::sim_run_name $sim] }
+  set hierx {}
+  if {[llength $hier]} {
+    set hierx [dict create role run terms $hier \
+                 cure [ase::probe_cure $state ask again]]
+    set said [linsert $said $hier_at \
+                [list hier $hier [ase::sim_why probe_hier $simname {} $hierx]]]
+  }
+  ## THE RUN THAT MADE ONLY ANALYSES THAT KEEP NO PROBED VECTOR (this proc's
+  ## header): the terminals whose card was written and not refused, and whose
+  ## vector no plot of the file holds under any wrapper.  `swept` counts the
+  ## design-variable sweeps that stand beside the four kinds, `advised` holds
+  ## the texts of the rows such a sweep's own advice speaks for, and `still`
+  ## the terminals some other row asks for.
+  set unkept {}
+  set swept 0
+  if {!$judged && [llength $map] && [llength $plots]} {
+    set blind 0
+    set advised [dict create]
+    set i -1
+    foreach row $rows {
+      incr i
+      if {[ase::state_get $row enabled 0] ne {1}} { continue }
+      if {[ase::probe_row_swept $state $sim $row $i]} {
+        incr swept
+        catch {
+          foreach r [[ase::backend_hook $sim dcvar_output_refusals] $state $row] {
+            dict set advised [lindex $r 0] 1
+          }
+        }
+        continue
+      }
+      if {[ase::state_get $row type] ni {noise tf pz sens}} { set blind 0 ; break }
+      set blind 1
+    }
+    if {$blind} {
+      set any [dict create]
+      foreach pl $plots {
+        foreach v [lindex $pl 2] { dict set any [ase::raw_vectors_fold $v] 1 }
+      }
+      set still [dict create]
+      if {[dict size $advised]} {
+        foreach sg [ase::probe_asked $state $advised] {
+          dict set still [string tolower $sg] 1
+        }
+      }
+      foreach rec $out {
+        lassign $rec kind sg
+        if {$kind ne {pending} || [dict exists $any [ase::raw_vectors_fold $sg]]} { continue }
+        if {[dict size $advised] && ![dict exists $still [string tolower $sg]]} { continue }
+        lappend unkept $sg
+      }
+    }
+  }
+  if {[llength $unkept]} {
+    set one [expr {[llength $unkept] == 1}]
+    set beside {}
+    if {$swept == 1} { set beside { beside a sweep of a design variable} }
+    if {$swept > 1} { set beside { beside sweeps of design variables} }
+    set tail "made only noise, transfer-function, pole-zero or sensitivity\
+ analyses$beside, and none of those keeps a terminal current. Enable an\
+ operating point, a dc sweep of a source, an ac or a transient analysis and\
+ run again."
+    foreach sg $unkept { dict set tails [string tolower $sg] "the last run $tail" }
+    lappend said [list note {} "ase: the terminal current[expr {$one ? {} : {s}}]\
+ [join $unkept {, }] [expr {$one ? {is} : {are}}] not in this run's results:\
+ the run $tail"]
+  }
+  set nterms [llength [ase::probe_terms $plan]]
+  if {$exitcode ne {0} && $nterms > 0
+      && [regexp -nocase {timestep too small|DC solution failed|no convergence|operating point could not be simulated} $data]} {
+    lappend said [list note {} "ase: this run did not converge, and its deck\
+ asked for $nterms terminal current[expr {$nterms == 1 ? {} : {s}}]. Each one\
+ puts a zero-volt source in series with its pin, and that alone can stop a\
+ run that finishes without it. Switching those rows off -- unticking Save and\
+ Plot on a Saves row, removing or disabling a Measures or measurement row that\
+ reads a terminal -- may let the run finish."]
+  }
+  ## WHAT THIS RUN SAID, KEPT FOR DIRECT PLOT'S REFUSAL -- before anything is
+  ## spoken, so that a sink that raises cannot cost the record.
+  ase::probe_said_keep $state $meta $plan $hier $tails $simname
+  foreach rec $said {
+    switch -- [lindex $rec 0] {
+      note { ::ase::echo [lindex $rec 2] note }
+      hier { ase::sim_say probe_hier $simname {} $hierx error }
+      default { ::ase::echo [lindex $rec 2] error }
+    }
+  }
+  return $said
+}
+
+namespace eval ase {
+  # WHAT THE MOST RECENT RUN'S PROBE REPORT SAID (issue 1724), for Direct
+  # Plot's refusal of a terminal the results do not hold:
+  #   raw    the results file that run wrote (ase::run_lock_key), which says
+  #          WHICH results this is about
+  #   sim    how that run named its program (ase::sim_run_name)
+  #   asked  every terminal its deck's plan held
+  #   hier   those its simulator cannot save (the report's `hier` record)
+  #   why    signal -> the reason the report gave for any other one
+  #   session  the key of the session whose run that was (ase::run_deck's
+  #          `session`); {} for a run no session started
+  # `asked`, `hier` and `why` are keyed on the lower-cased signal.  ONE
+  # variable beside `last_run`, as that one is: neither per session nor kept
+  # across a restart.  A reader holding other results -- another session's, a
+  # saved result in view -- finds another `raw` and reads nothing.  TWO
+  # SESSIONS CAN SHARE ONE RESULTS FILE (two state views of one bench with one
+  # run directory), and `session` is what keeps the reader of one from taking
+  # the other's run for its own.
+  variable last_probes [dict create]
+}
+
+# The key of the session whose CURRENT state is `state`, {} when no session
+# holds it.  A run started from a window is handed the session's state as it
+# stands (ase::ui::do_run), so at the start of ase::run_deck this is the
+# session that asked for the run.
+proc ase::session_holding {state} {
+  variable sessions
+  dict for {k s} $sessions {
+    if {[dict exists $s state] && [dict get $s state] eq $state} { return $k }
+  }
+  return {}
+}
+
+# Written by ase::probe_report for every run it is handed, a run that asked
+# for no terminal included (an empty plan is a fact about those results too).
+proc ase::probe_said_keep {state meta plan hier tails simname} {
+  variable last_probes
+  set raw [ase::state_get $meta rawlock {}]
+  if {$raw eq {}} { catch {set raw [ase::run_lock_key $state]} }
+  ## the run's own record of who started it; a caller that hands none -- a
+  ## plan and nothing else -- is asked now
+  set sess {}
+  if {[dict exists $meta session]} {
+    set sess [dict get $meta session]
+  } else {
+    catch {set sess [ase::session_holding $state]}
+  }
+  set asked [dict create]
+  foreach p $plan { dict set asked [string tolower [ase::state_get $p signal]] 1 }
+  set hd [dict create]
+  foreach sg $hier { dict set hd [string tolower $sg] 1 }
+  set last_probes [dict create raw $raw sim $simname asked $asked \
+                               hier $hd why $tails session $sess]
+  return {}
+}
+
+# Emptied when a run starts (ase::run_deck), if it is about the results that
+# run is about to replace: `raw` is the starting run's own results file.
+proc ase::probe_said_clear {raw} {
+  variable last_probes
+  if {[ase::state_get $last_probes raw {}] eq $raw} { set last_probes [dict create] }
+  return {}
+}
+
+# The record, when it is about the results session `key` has in view (the live
+# run's, or a saved result's: ase::result_state); {} when it is about others
+# or there is none.
+proc ase::probe_said_for {key} {
+  variable last_probes
+  if {![dict exists $last_probes raw]} { return {} }
+  set mine {}
+  catch {set mine [ase::run_lock_key [ase::result_state $key]]}
+  if {$mine eq {} || $mine ne [dict get $last_probes raw]} { return {} }
+  return $last_probes
+}
+
+# DIRECT PLOT'S REASONS for terminals the session's results do not hold
+# (src/ase_window.tcl ase::ui::sod_terminal_pick).  `signals` are the rows of
+# one click that are absent; the answer is {{<signals> <tail>} ...} in the
+# order to say them, every signal in exactly one group, where <tail> is what
+# follows "... not in this session's results: " -- or {} for the group that
+# keeps the click's own sentence (pick it under Outputs and run again).
+#   1. the last run's report says its simulator cannot save it: ONE group,
+#      the program and the cure (ase::sim_why `probe_hier_plot`).  The cure is
+#      read from what is already known (`peek`): a click starts no program.
+#      Where the program THIS session starts is already known able
+#      (ase::probe_session_verdict) the cure has been taken, and the sentence
+#      ends by saying so in place of naming what to pick;
+#   2. that report gave another reason for it -- withheld, refused, missing,
+#      an analysis that keeps none: one group per terminal, the report's own
+#      reason;
+#   3. the session asks for it now (ase::probe_asked): the next run will
+#      carry its probe.  What is said of the results:
+#        * the session has no results in view: that it has none yet;
+#        * the report is about these results, the run was THIS session's
+#          (the record's `session`) and its plan did not hold the terminal:
+#          that the results are from before the row was set;
+#        * otherwise -- no report about these results, another session's run
+#          on a results file the two share, a run that asked and said nothing
+#          -- only that they do not hold it.
+#      Each ends "run again" ("run" where there are no results), EXCEPT for a
+#      terminal that needs a program which probes below the top level
+#      (ase::probe_needs_hier) when the program this session starts is
+#      already known unable: a run on it cannot save the current either, so
+#      the sentence says that, and the cure (`probe_hier_plot`, role `now`);
+#   4. everything else: {}.
+# What the last run said about a terminal (1, 2) is tried before whether the
+# row is set (3): for a row that was set, run and refused it is the reason.
+proc ase::probe_absent_groups {key signals} {
+  set rec [ase::probe_said_for $key]
+  set st [ase::session_state $key]
+  set now [dict create]
+  catch {
+    foreach sg [ase::probe_asked $st] { dict set now [string tolower $sg] 1 }
+  }
+  set view [ase::probe_session_verdict $st]
+  set verdict [dict get $view verdict]
+  ## the results file of the result in view is there (what ase::probe_said_for
+  ## compares a record with: the live run's file, or a saved result's)
+  set have 0
+  catch {set have [file isfile [ase::run_lock_key [ase::result_state $key]]]}
+  set mine [expr {$rec ne {} && [ase::state_get $rec session {}] eq $key}]
+  set g1 {} ; set g2 {} ; set g4 {}
+  foreach a {before hold none} {
+    foreach h {0 1} { set g3($a,$h) {} }
+  }
+  foreach sg $signals {
+    set k [string tolower $sg]
+    if {$rec ne {} && [dict exists $rec hier $k]} {
+      lappend g1 $sg
+    } elseif {$rec ne {} && [dict exists $rec why $k]} {
+      lappend g2 [list [list $sg] [dict get $rec why $k]]
+    } elseif {[dict exists $now $k]} {
+      set a hold
+      if {!$have} {
+        set a none
+      } elseif {$mine && ![dict exists $rec asked $k]} {
+        set a before
+      }
+      set h 0
+      set sp [ase::probe_split $sg]
+      if {$verdict eq {cannot} && $sp ne {}
+          && [ase::probe_needs_hier [lindex $sp 0]]} { set h 1 }
+      lappend g3($a,$h) $sg
+    } else {
+      lappend g4 $sg
+    }
+  }
+  set out {}
+  if {[llength $g1]} {
+    set x [dict create terms $g1 cure [ase::probe_cure $st peek again]]
+    if {$verdict eq {can}} {
+      if {[dict get $view entry] ne {}} {
+        dict set x picked [dict get $view entry]
+      } else {
+        dict set x starts [dict get $view name]
+      }
+    }
+    lappend out [list $g1 [ase::sim_why probe_hier_plot [dict get $rec sim] {} $x]]
+  }
+  foreach g $g2 { lappend out $g }
+  foreach a {before hold none} {
+    foreach h {0 1} {
+      set g $g3($a,$h)
+      set n [llength $g]
+      if {!$n} { continue }
+      set lead "[ase::sim_plural $n {it is} {they are}] set to be saved"
+      switch -- $a {
+        before { set lead "$lead, and these results are from before that" ; set link {, but} }
+        hold   { set lead "$lead, but these results do not hold [ase::sim_plural $n it them]" ; set link {, and} }
+        none   { set lead "$lead, and this session has no results yet" ; set link {, but} }
+      }
+      if {$h} {
+        set x [dict create role now terms $g \
+                 cure [ase::probe_cure $st peek [expr {$a eq {none} ? {before} : {again}}]]]
+        lappend out [list $g "$lead$link [ase::sim_why probe_hier_plot [dict get $view name] {} $x]"]
+      } else {
+        lappend out [list $g "$lead — [expr {$a eq {none} ? {run} : {run again}}]."]
+      }
+    }
+  }
+  if {[llength $g4]} { lappend out [list $g4 {}] }
+  return $out
 }
 
 # ─── THE OUTPUTS PANE'S TWO TABS (ase_l.md R-OUT7, rulings 2026-10-13) ───────
@@ -9898,8 +11892,9 @@ proc ase::saves_widen_types {sim state} {
 proc ase::saves_all_forced {sim state} {
   if {$state eq {}} { return 0 }
   if {[ase::state_get $state save_all_v 0] eq {1}} { return 1 }
-  # R-OUT8: a deck with any output card saves everything first.
-  if {[llength [ase::output_save_cards $state]] > 0} { return 1 }
+  # R-OUT8: a deck with any output card -- or a Save-ticked terminal current,
+  # whose card is a `.probe` -- saves everything first (ase::output_saves_any).
+  if {[ase::output_saves_any $state]} { return 1 }
   if {[ase::saves_widen_types $sim $state] ne {}} { return 1 }
   return 0
 }
@@ -10102,6 +12097,19 @@ proc ase::saves_unresolved {sim state facts} {
   foreach o [ase::state_get $state outputs] {
     if {[ase::state_get $o save 0] ne {1}} { continue }
     if {![dict exists $o expr] || [string trim [dict get $o expr]] eq {}} { continue }
+    ## A TERMINAL-CURRENT ROW IS NOT A SAVE CARD (issue 1724), so it is not one
+    ## of the saves this proc counts: ase::output_card_sources writes no `.save`
+    ## for it and the deck carries a `.probe` term instead.  Counted, it would
+    ## read as a save that resolves to nothing -- a current whose name is no
+    ## source's.  The two preconditions that read this proc stand down for a
+    ## bench with a Save-ticked terminal row before they get here (it brings
+    ## the save-everything leader: ase::saves_all_forced), so the skip is what
+    ## keeps the COUNT true -- a terminal row adds to neither number -- and
+    ## what would keep such a bench from being cautioned on every analysis and
+    ## refused on `disto` if the leader were ever switched off.  MEASURED
+    ## 2026-11-19 on ver_53: `.probe` with no `.save` card at all, plus
+    ## `disto`, runs at rc 0 and the plot holds the probed vectors.
+    if {[ase::output_is_probe [dict get $o expr]]} { continue }
     incr nsave
     set ex [string trim [dict get $o expr]]
     set d {}
@@ -10226,6 +12234,46 @@ proc ase::field_active {row fd flds} {
 # an under-count, or every stopped run logs 'one plot of the tran analysis was
 # not captured' as though something were wrong." `{}` and `unknown` behave
 # exactly as before, so the four-argument callers are unaffected by construction.
+#
+# ⚠ TWO LEGS, PAIRED TWO DIFFERENT WAYS (issue 1657).
+#
+#   record against the FILE      position by position.  The deck writes one
+#                                record immediately above each `write`, so the
+#                                sidecar and the results file are in one order,
+#                                the order the run wrote them in.
+#   record against the REGISTRY  row by row.  A record carries the row that
+#                                wrote it (`PLOT <type> <row> |<name>|`), and it
+#                                is compared with what THAT row declares: the
+#                                first record of a row with the row's first
+#                                declared plot, the second with its second.
+#
+# The registry leg used to be positional too, against the rows walked in
+# `ase::analysis_emit_order $state 0 $sim`'s order -- which is not the order
+# every deck runs in.  A deck that asks for the per-device operating-point
+# numbers inside `.control` runs the operating point LAST (issue 0964; the
+# renderer's own `op_last`), so its records read `tran` then `op` where the
+# walk reads `op` then `tran`.  MEASURED 2026-11-20 on
+# sky130_tests_ase/tb_bandgap with `op` and `tran` enabled, on apt 45.2 and on
+# ver_53, with nothing forced: every run said the tran analysis recorded
+# 'Transient Analysis' where the registry declares 'Operating Point', and the
+# mirror sentence for the op row -- for a run in which each row wrote exactly
+# its own plot.  With `ac` enabled as well, one such sentence per row.  A run
+# STOPPED before its operating point was called mislabelled for the same
+# reason, in place of the calm sentence a Stop gets.
+#
+# So the order the rows are walked in no longer decides which plot a record of
+# an enabled row is held to.  The walk is still asked for, because its raise is
+# the news that an enabled row has no rank on this backend, and a prediction
+# made over such a bench is not one to hold a run to.
+#
+# A RECORD WITH NO ROW TO BE HELD TO -- its row is not an enabled row now, or
+# it is one more record than the row declares plots -- is the bench having
+# been edited between rendering the deck and reading it back, or a walk that
+# went too far.  Such records are compared, in order, with the declared plots
+# that no record claimed, which is how every record was compared before: a
+# bench edited under a run is still told, a walk too long in a run that then
+# ended early is still told, and a record beyond every declared plot is still
+# left to the count sentence.
 proc ase::reconcile_plots {sim state rawpath mappath {runstate {}}} {
   set stopped [expr {$runstate eq {aborted}}]
   set v [dict create verdict ok predicted 0 mapped 0 actual 0 \
@@ -10289,9 +12337,55 @@ proc ase::reconcile_plots {sim state rawpath mappath {runstate {}}} {
     dict set v why $why
     return $v
   }
-  # 1:1, position by position, against BOTH the file and the registry
-  set mis {}
+  # THE REGISTRY LEG'S PAIRING, WORKED OUT BEFORE ANYTHING IS REPORTED: which
+  # declared plot each record is held to (see the header).  A row is named by
+  # its index in `analyses`, which a record and a declared plot both carry.
+  # `want` is what each enabled row declares, in the order its walk writes
+  # them; `held` answers, per record, {1 <select>}, or {0} for a record with no
+  # row to be held to.
   set n [expr {$mapped < $actual ? $mapped : $actual}]
+  set want [dict create]
+  foreach e $expect {
+    dict lappend want [lindex $e 1] [lindex $e 2]
+  }
+  set nth [dict create]
+  set held {}
+  set loose {}
+  for {set i 0} {$i < $n} {incr i} {
+    set mrec [lindex $map $i]
+    set key [lindex $mrec 1]
+    set k 0
+    if {[dict exists $nth $key]} { set k [dict get $nth $key] }
+    dict set nth $key [expr {$k + 1}]
+    if {[dict exists $want $key] && $k < [llength [dict get $want $key]]} {
+      lappend held [list 1 [lindex [dict get $want $key] $k]]
+    } else {
+      lappend held [list 0]
+      lappend loose $i
+    }
+  }
+  if {[llength $loose]} {
+    # the declared plots no record claimed, in the order they were declared
+    set unclaimed {}
+    set at [dict create]
+    foreach e $expect {
+      set key [lindex $e 1]
+      set k 0
+      if {[dict exists $at $key]} { set k [dict get $at $key] }
+      dict set at $key [expr {$k + 1}]
+      set seen 0
+      if {[dict exists $nth $key]} { set seen [dict get $nth $key] }
+      if {$k >= $seen} { lappend unclaimed [lindex $e 2] }
+    }
+    set j -1
+    foreach i $loose {
+      incr j
+      if {$j >= [llength $unclaimed]} { break }
+      lset held $i [list 1 [lindex $unclaimed $j]]
+    }
+  }
+  # against the FILE position by position, against the REGISTRY row by row
+  set mis {}
   for {set i 0} {$i < $n} {incr i} {
     set mrec [lindex $map $i]
     set got [lindex $mrec 2]
@@ -10300,8 +12394,8 @@ proc ase::reconcile_plots {sim state rawpath mappath {runstate {}}} {
       lappend mis [list [lindex $mrec 0] [lindex $mrec 1] $got $onfile file]
       continue
     }
-    if {!$orderok || $i >= [llength $expect]} { continue }
-    set sel [lindex [lindex $expect $i] 2]
+    if {!$orderok || ![lindex [lindex $held $i] 0]} { continue }
+    set sel [lindex [lindex $held $i] 1]
     if {$sel eq {}} { continue }
     if {![string match -nocase $sel $got]} {
       lappend mis [list [lindex $mrec 0] [lindex $mrec 1] $got $sel registry]
@@ -10679,6 +12773,13 @@ proc ase::ckpt_plan {sim row state} {
 # lesson about a dead line: it is deleted rather than given a fixture. The
 # ordering that matters is render_deck's own loop, which walks
 # `ase::analysis_emit_order` with its own `op_last` and asks this proc nothing.
+#
+# ⚠ AND THE ORDER OF THIS LIST IS THE DECK'S EVEN WHEN THE DECK RUNS ITS
+# OPERATING POINT LAST (issue 1657).  An operating point declares no `salvage`
+# and is never a member, and it is the only row such a deck moves, so the
+# members keep their order among themselves -- which is all
+# ase::ckpt_report's "the last one" reads.  Row RO10 of
+# tests/headless/test_ase_core.tcl.
 proc ase::ckpt_rows {sim state} {
   set rows [ase::state_get $state analyses]
   set out {}
@@ -10690,6 +12791,41 @@ proc ase::ckpt_rows {sim state} {
     lappend out [list $arank $ai $atype $plan]
   }
   return $out
+}
+
+# HAD THE CHECKPOINTED ANALYSIS OF ROW `row` FINISHED, AND IS ITS PLOT IN THE
+# RESULTS FILE?  For ase::ckpt_report's abort arm, which hands it the run's
+# sidecar records (`map`, ase::plotmap_read) and the plots its results file
+# lists (`plots`, ase::cap_raw_plots).  The deck writes a row's sidecar record
+# directly above the `write` of its plot, behind the analysis, so a record of
+# that row says the analysis ran to its end; the results file listing a plot
+# of the record's name at the record's own place says the write was made.
+# -> {<plot name> <points> <rows>} when both hold, where <rows> names every
+# enabled row of the bench that left no record ("the op analysis in row 0"),
+# in row order; {} otherwise.  Reads no file and starts nothing.
+proc ase::ckpt_finished {state row map plots} {
+  set hit {}
+  set wrote [dict create]
+  set i -1
+  foreach m $map {
+    incr i
+    lassign $m type idx name
+    dict set wrote $idx 1
+    if {$idx ne $row} { continue }
+    set pl [lindex $plots $i]
+    if {[llength $pl] && [string equal -nocase $name [lindex $pl 0]]} {
+      set hit [list [lindex $pl 0] [lindex $pl 1]]
+    }
+  }
+  if {$hit eq {}} { return {} }
+  set rest {}
+  set i -1
+  foreach r [ase::state_get $state analyses] {
+    incr i
+    if {[ase::state_get $r enabled 0] ne {1} || [dict exists $wrote $i]} { continue }
+    lappend rest "the [ase::state_get $r type] analysis in row $i"
+  }
+  return [list [lindex $hit 0] [lindex $hit 1] $rest]
 }
 
 # DID THIS RUN FINISH? `complete` / `aborted` / `unknown`, and the third state
@@ -10720,6 +12856,17 @@ proc ase::run_completed {sim state logtext} {
 # "the partial-result label with how far it got" in src/ase_window.tcl, which
 # this task may not touch, so what the window DRAWS after a Stop is unchanged.
 # What is said is said in the log and the CIW, which is where `ase::echo` goes.
+#
+# ⚠ A CHECKPOINT ON DISK DOES NOT MEAN ITS ANALYSIS WAS STILL RUNNING (issue
+# 1657).  A deck that runs its operating point last runs it BEHIND the
+# checkpointed analysis, and a run stopped there has finished that analysis
+# and written its plot.  MEASURED 2026-11-20 on apt 45.2, an `op` and a `tran`
+# with device requests held, stopped under the trailing operating point: the
+# results file held the whole transient, the checkpoint an earlier part of
+# it, and the user was told the transient was "still filling" and "kept at"
+# the checkpoint's count -- of an analysis that was complete, while the one
+# thing lost, the operating point, was not named.  So the abort arm asks
+# ase::ckpt_finished first.
 proc ase::ckpt_report {sim state logtext} {
   set out {}
   set verdict [ase::run_completed $sim $state $logtext]
@@ -10748,10 +12895,30 @@ proc ase::ckpt_report {sim state logtext} {
     }
   }
   set est {}
+  set lastrow {}
   foreach ent [ase::ckpt_rows $sim $state] {
     set est [dict get [lindex $ent 3] points]
+    set lastrow [lindex $ent 1]
   }
-  if {$held eq {} || $held <= 0} {
+  set fin {}
+  if {$lastrow ne {}} {
+    catch {
+      set fin [ase::ckpt_finished $state $lastrow \
+                 [ase::plotmap_read [ase::plotmap_path $state]] \
+                 [ase::cap_raw_plots [[ase::backend_hook $sim raw_file] $state]]]
+    }
+  }
+  if {$fin ne {}} {
+    lassign $fin fname fpoints frest
+    set s "this run was stopped after its '$fname' plot was written: the\
+ results file holds it at $fpoints points, with every analysis that finished\
+ before it."
+    if {[llength $frest]} {
+      set who [ase::variant_join $frest]
+      append s " [string toupper [string index $who 0]][string range $who 1 end] did not finish."
+    }
+    lappend out $s
+  } elseif {$held eq {} || $held <= 0} {
     lappend out "this run was stopped before its first checkpoint, so the\
  analysis that was running kept nothing. The analyses that had already finished\
  are in the results file."
@@ -17592,6 +19759,9 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   if {[ase::run_in_flight $rawlock] ne {}} {
     return -code error [ase::run_refuse $rawlock]
   }
+  ## 1724: which session asked for this run (the run record's `session`)
+  set runsession {}
+  catch {set runsession [ase::session_holding $state]}
 
   ## THE SESSION BEING RUN DECIDES WHICH PROGRAM STARTS (the 2026-09-08
   ## ruling). `sim_entry` is this state's own choice and `ase::sim_use` is a
@@ -17676,6 +19846,11 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## before it writes leaves no raw, instead of serving last run's numbers as
   ## though they were this one's.
   catch {file delete -- [[ase::backend_hook $sim raw_file] $state]}
+  ## 1724: AND WHAT THE LAST RUN'S PROBE REPORT SAID ABOUT THOSE RESULTS
+  ## (ase::probe_said_keep), for the reason of the line above: a run that dies
+  ## before its own report must not leave Direct Plot quoting the previous
+  ## run's reasons about results that are gone.
+  catch {ase::probe_said_clear $rawlock}
   ## 1430: AND THE PLOT SIDECAR, for a sharper version of the same reason. The
   ## deck APPENDS to it (`echo … >> path`), so a sidecar left over from the
   ## previous run does not get truncated -- this run's records land behind last
@@ -17940,6 +20115,21 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## and nothing outside a run may be handed a remembered shape.
   ase::op_tier_disarm
 
+  ## 1724: THE TERMINAL CURRENTS THIS DECK ASKED FOR, AND THE ONES IT WITHHELD,
+  ## for `opblock`'s reason: ase::run_done is handed the state and this record,
+  ## never the netlist text, and the plan's rules read that text.  The same
+  ## proc, on the same three arguments, that the deck above was just written
+  ## from -- and, where it has to look a numbered port up in a model file, over
+  ## the headers ase::subckt_lib remembered from that first call -- so it is
+  ## the deck's own plan and not a second opinion.
+  ##
+  ## CAUGHT: it travels only to ase::probe_report, which is advisory, and a
+  ## defect in what a report is handed must never stop the run.
+  set probes {}
+  catch {
+    set probes [ase::probe_plan $state $netlist_text [ase::probe_mode $state]]
+  }
+
   set deckpath [ase::deck_file $state]      ;# ONE owner of this path (issue 0838)
   set f [open $deckpath w]
   puts -nonewline $f $deck
@@ -17991,6 +20181,24 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   if {[ase::run_composes_registry $sim]} {
     catch {set using [ase::run_using_report $state]}
   }
+
+  ## --- 1724: A TERMINAL THIS PROGRAM CANNOT SAVE, SAID BEFORE IT STARTS ------
+  ## The program about to start was measured to save no terminal current below
+  ## the top level (`hier_probes` 0, read from the peek ase::cap_report filled
+  ## above) and this deck's plan asks for one: say so, with which registered
+  ## simulator can and where it is picked (ase::probe_start_report).  Here for
+  ## ase::run_using_report's reason -- the gate has passed and the deck is
+  ## written, so a run that was refused is not told what it would have lost --
+  ## and directly under that sentence, which names the same program.
+  ##
+  ## `simname` IS HOW THIS RUN NAMES ITS PROGRAM (ase::sim_run_name), resolved
+  ## ONCE, here, and carried in the run record: the report after the run names
+  ## what this run started, not what is in force by the time it ends.
+  ##
+  ## THE RUN IS NOT REFUSED.  CAUGHT and advisory, like its neighbours.
+  set simname {}
+  catch {set simname [ase::sim_run_name $sim]}
+  catch {ase::probe_start_report $sim $state $probes $simname}
 
   ## --- STAGE 2e: WHAT A STOP WILL COST, SAID BEFORE IT IS PRESSED ----------
   ## Here for ase::run_using_report's reason and not one line earlier: the gate
@@ -18068,11 +20276,23 @@ proc ase::run_deck {state netlistfile {callback {}}} {
   ## ⚠ A meta WITHOUT the key is not a defect, it is the un-checkpointed run and
   ## every pre-1473 caller: ase::run_log_header defaults it to `{}` and writes
   ## exactly the line it always wrote.
+  ## `probes` (1724) rides for `opblock`'s reason: it is what THIS deck asked,
+  ## read by ase::probe_report and by nothing else.  A meta without the key is
+  ## a run that asked for no terminal current, and the report is then silent.
+  ## `simname` (1724) rides for `using`'s reason: the report names the program
+  ## this run started by what it was called when it started.  A meta without
+  ## the key is named when the report is made.
+  ## `session` (1724) is the session that asked for this run, where one did:
+  ## the one whose current state this proc was handed (ase::session_holding,
+  ## taken at the top, before anything can edit a session).  Two state views
+  ## of one bench can write one results file, and Direct Plot's reasons must
+  ## not take the other view's run for this one's (ase::probe_absent_groups).
   set meta [dict create cell $cell simulator $sim cmd $cmd dir $rd \
                         deck $deckpath started [clock seconds] \
                         opblock $opblock casenote $casenote optier $optier \
                         using $using ckpt $ckplan rawlock $rawlock \
-                        t0 [clock milliseconds]]
+                        simname $simname session $runsession \
+                        t0 [clock milliseconds] probes $probes]
   catch {ase::run_log_write $logpath $meta {} {}}
 
   set ::execute(callback) [list ase::run_done $logpath $state $callback $meta]
@@ -18605,6 +20825,11 @@ proc ase::run_done {logpath state callback {meta {}}} {
   ## must never break a run. The suite calls ase::op_report_missing directly,
   ## uncaught.
   catch {ase::op_report_missing $state $meta $exitcode}
+  ## 1724: AND WHAT CAME OF EACH TERMINAL CURRENT THE DECK ASKED FOR -- a card
+  ## ASE-L withheld, a probe the simulator refused, a vector that is not in the
+  ## results.  Silent for a run that asked for none.  CAUGHT, for the reason
+  ## the report above is: advisory, read by nothing downstream.
+  catch {ase::probe_report $state $meta $data $exitcode}
   ## 1430 (6c): AND SAY WHETHER THE RESULTS FILE HOLDS WHAT THIS RUN ASKED FOR.
   ## A `write` that aborts -- which ngspice does SILENTLY when a zero-length
   ## vector survives into the plot -- leaves a results file with fewer plots
@@ -22304,7 +24529,9 @@ proc ase::launch_for_current {} {
 # ANCESTOR of it (issue 0168) -- without going through the ASE window's Results
 # menu. Resolution is ase::session_for_current, which walks the hierarchy stack;
 # it then hands off to ase::ui::direct_plot -- the click mode where a wire/net-label
-# queues a voltage trace, a source/ammeter queues a current trace, and ESC plots
+# queues a voltage trace, an instance pin queues that terminal's current (when
+# the session's results hold it: Direct Plot adds no probe to a deck), the body
+# of a source/ammeter queues its current, and ESC plots
 # the queue into the session's waveform viewer (opening it if closed). Honest
 # no-op with an ase::echo when the current view is not a schematic or nothing in
 # the stack has an ASE session yet (ase::no_session_notice tells the two apart).
@@ -26225,6 +28452,26 @@ proc ase::facts_netlist_text {state} {
   return $txt
 }
 
+# THE NETLIST FILE THE SLOT NAMES FOR THIS STATE'S DESIGN, warm or stale, or
+# `{}` when the slot holds nothing or is about another design. A path and no
+# verdict: whether what that file holds still describes the sheet is
+# `ase::facts_status`'s to say, and the text of a warm one is
+# `ase::facts_netlist_text`'s. This is for a reader that wants only what does
+# not move with a sheet edit -- the model files such a netlist names (the pin
+# pick's header lookup, src/ase_window.tcl) -- and must not read the slot
+# itself from another file. It defines no artifact's place: where a netlist is
+# written is the netlister's to say, and this only repeats what the slot took
+# down when one was made.
+proc ase::facts_netlist_file {state} {
+  variable netlist_facts_slot
+  if {![dict exists $netlist_facts_slot sch] || ![dict exists $netlist_facts_slot path]} {
+    return {}
+  }
+  set sch [dict get $netlist_facts_slot sch]
+  if {$sch eq {} || $sch ne [ase::facts_design_path $state]} { return {} }
+  return [dict get $netlist_facts_slot path]
+}
+
 # THE TARGETS A FORM MAY OFFER FOR ONE FUNCTION, as `{<target field> {names}}`
 # in the contract's `targets` order -- every declared field present, `{}` when
 # it has no candidates. `{}` outright for no contract, no `candidates` leg, or a
@@ -26546,11 +28793,14 @@ namespace eval ase::backend::ngspice {
     # level, and one is enough (F12).  Order among dot cards does not matter:
     # measured 2026-10-13 on sky130 charge_pump, `.save i(v1)`.. cards ABOVE
     # the block's leader, and the op plot held all 184 vectors.
+    # A Save-ticked terminal current is such a save although its card is a
+    # `.probe` (issue 1724; ase::output_saves_any, the body
+    # ase::saves_all_forced reads too).
     set rdopc [ase::saves_op_cards_coming $state $netlist_text]
     if {[ase::state_get $state save_all_v 0] eq {1}
         || [ase::saves_widen_types $rdsim $state] ne {}} {
       lappend lines ".save all"
-    } elseif {[llength [ase::output_save_cards $state]] > 0} {
+    } elseif {[ase::output_saves_any $state]} {
       if {!$rdopc} { lappend lines ".save all" }
     } elseif {[ase::saves_op_phantom_risk $rdsim $state $rdopc]} {
       set rdcaps [dict create known 0]
@@ -26565,6 +28815,44 @@ namespace eval ase::backend::ngspice {
     foreach _sc [ase::output_save_cards $state] {
       lappend lines ".save $_sc"
     }
+    # --- 1724: THE TERMINAL CURRENTS THIS BENCH ASKS FOR ---------------------
+    # One `I(<path>,<pin>)` term per asked terminal (ase::probe_plan, which
+    # also decides the terms that must not be written), on `.probe` cards of
+    # space-separated terms: MEASURED 2026-11-19 on ver_53, several terms on a
+    # card and several cards in a deck are both taken, and a comma between two
+    # terms drops the second (`Warning: unknown .probe parameter`).  A card is
+    # closed when the next term would carry it past a hundred characters.
+    #
+    # DECK LEVEL, between the save list and the operating-point tier's block:
+    # a `.probe` inside a `.subckt` is not relative to it, and in this slot the
+    # probed vectors were measured once in every plot beside `.save all`, beside
+    # no `.save` at all, beside `.options savecurrents` and beside an
+    # in-`.control` `save @dev[...]` above `op`.
+    #
+    # Empty for every bench that asks for no terminal current, so no deck that
+    # carries none moves by a byte.
+    #
+    # A TERM THE NETLIST TEXT ALREADY ASKS FOR ON A `.probe` CARD OF ITS OWN IS
+    # NOT WRITTEN AGAIN (ase::probe_terms_new): twice in one deck, the term of
+    # a top-level device makes its vector twice.  The plan, the run's record of
+    # it and the capability echo below still count the term: the deck asks for
+    # it, on the netlist's card.
+    set _prterms [ase::probe_terms \
+                    [ase::probe_plan $state $netlist_text [ase::probe_mode $state]]]
+    set _prcard {}
+    foreach _prt [ase::probe_terms_new $_prterms $netlist_text [ase::probe_mode $state]] {
+      if {$_prcard ne {}
+          && [string length $_prcard] + [string length $_prt] >= 100} {
+        lappend lines $_prcard
+        set _prcard {}
+      }
+      if {$_prcard eq {}} {
+        set _prcard ".probe $_prt"
+      } else {
+        append _prcard " $_prt"
+      }
+    }
+    if {$_prcard ne {}} { lappend lines $_prcard }
     # --- the op_annot device operating-point save cards (plan step S4) -------
     # A PURE CONSUMER: the block was built by op_annot::save_cards at netlist
     # time (ase::op_cards_capture) and is never rebuilt here. Which SHAPE the
@@ -26797,6 +29085,23 @@ namespace eval ase::backend::ngspice {
     if {[llength $cosim] && ![ase::cosim_has_bridges $state $netlist_text] &&
         [ase::cosim_policy $state bridges auto] ne {0}} {
       foreach b [ase::cosim_default_bridges $state] { lappend lines $b }
+    }
+    # --- 1724: WHICH KIND OF PROBE THIS SIMULATOR HAS, SAID IN THE LOG --------
+    # Only a deck that carries a `.probe` card asks, and it asks once: the
+    # simulator's own answer to whether the terminal-probe extension is built
+    # in, 1 or 0, behind ase::probe_marker's word.  MEASURED 2026-11-19: 1 on
+    # the fork's ver_53, 0 on apt 45.2, ver_50 and ver_52, where a probe of a
+    # top-level device that is no subcircuit instance still works and every
+    # other one is refused with a warning at rc 0 -- so the vectors alone
+    # cannot tell an old build from a mistyped terminal, and ase::probe_report
+    # reads this line to say which.
+    #
+    # BEFORE THE FIRST ANALYSIS, because a failed analysis `quit`s where it
+    # stands and a line below it would never be reached; and not at the foot
+    # of the block, where a checkpointing deck's completion word must stay
+    # last.
+    if {[llength $_prterms]} {
+      lappend lines "echo [ase::probe_marker] \$?probe_version"
     }
     # --- 0929: ONE `write` PER ANALYSIS, NOT ONE PER RUN ----------------------
     # ngspice's `write` writes the CURRENT plot, and every analysis makes a new
@@ -28081,8 +30386,9 @@ namespace eval ase::backend::ngspice {
     ## shows `wave` -- a note naming it as having no value would contradict the
     ## cell beside it.
     if {$missvar ne {}} { set miss $missing ; return $results }
-    if {[llength $missing] && $path ne {} && [file isfile $path]} {
-      ::ase::echo [missing_note $missing] note
+    if {$path ne {} && [file isfile $path]} {
+      set missing [missing_spoken $missing $path]
+      if {[llength $missing]} { ::ase::echo [missing_note $missing] note }
     }
     return $results
   }
@@ -28111,6 +30417,41 @@ namespace eval ase::backend::ngspice {
  for [join $missing {, }], so [expr {[llength $missing] == 1 ? {that row has}\
  : {those rows have}}] no value: a multi-point vector is not a scalar, and a\
  run that computed nothing writes only the constants plot."
+  }
+
+  # The rows of `missing` that note is said for: all of them but a
+  # TERMINAL-CURRENT row (ase::output_is_probe) whose vector is in NO plot of
+  # the results file `path` (issue 1724).  Neither of the note's reasons holds
+  # for such a row -- its vector is not multi-point, it is not there, and the
+  # run computed everything else.  The true one is the `.probe` card's: it was
+  # withheld, refused or mistyped, which ase::probe_report says in the same
+  # run and is alone to say; or the row is a save that is switched off and
+  # asked for nothing.  A terminal the file does hold, in two multi-point
+  # plots and no operating point, stays in the note: for that one its first
+  # reason is the fact.
+  proc missing_spoken {missing path} {
+    set out {}
+    foreach ex $missing {
+      if {[ase::output_is_probe $ex] && ![llength \
+            [ase::raw_vectors_present $path [ase::output_probes $ex]]]} { continue }
+      lappend out $ex
+    }
+    return $out
+  }
+
+  # ONE row's own sentence, for the typed record (result_answers `msg`, which
+  # the optimizer export hands on): the note above -- or, for a terminal row
+  # that note leaves out, what is true of it.  That reader has no probe
+  # report beside it, so the sentence has to stand alone.  With no results
+  # file in hand nothing is known about the row and the note stays as it was.
+  proc missing_row_note {ex path} {
+    if {$path eq {} || ![file isfile $path]
+        || [llength [missing_spoken [list $ex] $path]]} {
+      return [missing_note [list $ex]]
+    }
+    return "ase: result -- the results file holds no vector for the terminal\
+ current $ex, so that row has no value: the simulator makes that vector only\
+ for a .probe card it accepts."
   }
 
   # `%.6e`, and non-numeric text verbatim. See result_probe_raw's header for
@@ -28325,8 +30666,9 @@ namespace eval ase::backend::ngspice {
     }
     set path {}
     catch {set path [raw_file $state]}
-    if {[llength $still] && $path ne {} && [file isfile $path]} {
-      ::ase::echo [missing_note $still] note
+    if {$path ne {} && [file isfile $path]} {
+      set still [missing_spoken $still $path]
+      if {[llength $still]} { ::ase::echo [missing_note $still] note }
     }
     return $results
   }
@@ -28389,7 +30731,7 @@ namespace eval ase::backend::ngspice {
       if {$g eq {raw}} {
         if {[lsearch -exact $missing $ex] >= 0} {
           dict set rec fellback 1
-          dict set rec msg [missing_note [list $ex]]
+          dict set rec msg [missing_row_note $ex $path]
           if {[dict exists $againans $key]} {
             set ca [dict get $againans $key]
             set st [calc_answer_status [dict get $ca answer]]
@@ -28949,6 +31291,25 @@ version -d >> probe_d.txt
   }
   proc cap_devhelp_lines {} { return {{devhelp >> fam.txt}} }
 
+  # ---- THE TERMINAL-PROBE LEG (issue 1724) ---------------------------------
+  #
+  # CAN THIS PROGRAM SAVE A TERMINAL CURRENT BELOW THE TOP LEVEL -- the current
+  # into a pin of a subcircuit instance, or into a device inside a subcircuit?
+  # The run deck asks the same thing of the program it starts, in its log
+  # (ase::probe_marker); this leg asks it before any run, so that ASE-L can say
+  # which registered program can.
+  #
+  # NO NEW RUN: one line, the FIRST of deck C's control block, writes the word
+  # of ase::probe_marker and the simulator's own answer into a file of its own.
+  # MEASURED 2026-11-20 through this probe: 0 on apt 45.2, on ver_50 and on
+  # ver_52, where a `.probe` of a subcircuit pin or of a device inside a
+  # subcircuit is refused with a warning at exit 0; 1 on ver_53.
+  #
+  # A BARE LOWER-CASE FILE NAME, for cap_help_lines' reason.
+  proc cap_hier_lines {} {
+    return [list "echo [::ase::probe_marker] \$?probe_version > probe_h.txt"]
+  }
+
   # ⚠ THE PARSE RULE IS "THE STANZA'S FIRST TOKEN EQUALS THE VERB PROBED",
   # COMPARED CASE-INSENSITIVELY, AND BOTH HALVES ARE MEASURED FACTS.
   #
@@ -29088,9 +31449,12 @@ write probe_b.raw
     set f [open $deckc w]
     set _toks [cap_probe_tokens]
     set _leg [join [concat [cap_help_lines $_toks] [cap_devhelp_lines]] "\n"]
+    set _hier [join [cap_hier_lines] "\n"]
+    set hierf [file join $workdir probe_h.txt]
     puts -nonewline $f "${ckt}vpw pw 0 pwl 0 0 1u 1 2u 0
 rpw pw 0 1k
 .control
+$_hier
 op
 set altshow
 show all > probe_c.txt
@@ -29192,6 +31556,14 @@ $_leg
     set altshow_measured 0
     set altshow_cut 0
     set anames {} ; set aprobed {} ; set devs {} ; set devs_why {}
+    # ---- HIER_PROBES (issue 1724) ----------------------------------------
+    # The answer deck C's first control line wrote (cap_hier_lines), read
+    # from the FILE and never from the exit code, under altshow_op_dump's
+    # contract: published only when the run was not cut and the file holds a
+    # 0 or a 1 behind the marker's word; a cut run records the key as
+    # unmeasured; a run that finished and left no such line publishes
+    # neither.
+    set hier_probes {}
     if {[ase::cap_left $t0] > 0} {
       set rc [ase::cap_run $exe [concat $exeargs [list -b $deckc]] $workdir \
                 [ase::cap_left $t0]]
@@ -29201,6 +31573,11 @@ $_leg
         set altshow_ok [ase::cap_altshow_verdict [read $fh]]
         close $fh
         set altshow_measured 1
+      }
+      if {![lindex $rc 2] && [file exists $hierf]} {
+        set fh [open $hierf r]
+        set hier_probes [ase::probe_marker_answer [read $fh]]
+        close $fh
       }
       # ---- THE ANALYSIS LEG'S VERDICT, READ FROM THE FILES ------------------
       # ⚠ NOT FROM THE EXIT CODE. Measured on all three preflight binaries, deck C
@@ -29276,6 +31653,7 @@ $_leg
                          blanket_op_save $blanket hier_op_names $hier]
     if {$cmok} { dict set out casemode_detected $cmdet }
     if {$altshow_measured} { dict set out altshow_op_dump $altshow_ok }
+    if {$hier_probes ne {}} { dict set out hier_probes $hier_probes }
     # ---- WHICH ANALYSES THIS BUILD HAS, AND WHICH DEVICE FAMILIES -----------
     #
     # ⚠ `analyses_available` IS GUARDED NON-EMPTY, AND THAT ONE GUARD IS THE
@@ -29318,6 +31696,10 @@ $_leg
     # that reason.
     if {$cmcut}      { set out [ase::caps_unmeasured $out casemode_detected timeout] }
     if {$altshow_cut} { set out [ase::caps_unmeasured $out altshow_op_dump timeout] }
+    # `hier_probes` (issue 1724) is a third KEY and no third leg: it rides the
+    # same run as `altshow_op_dump` (deck C), so the same cut leaves it
+    # unmeasured, by name.
+    if {$altshow_cut} { set out [ase::caps_unmeasured $out hier_probes timeout] }
     # ⚠ A THIRD TOKEN, AND IT IS A DIFFERENT CONDITION FROM THE TWO ABOVE. Those
     # two record a leg that was CUT. This one records a leg that RAN, finished,
     # and produced an artifact KNOWN to be incomplete: a build whose `spinit`
@@ -29977,8 +32359,9 @@ $_leg
   # ⚠ THE `plots` LIST IS IN **WRITE** ORDER, WHICH IS REVERSE CREATION ORDER,
   # AND THAT REFUTES `ase::analysis_plots`' OWN HEADER AS 1430 LEFT IT. The walk
   # steps BACKWARDS from the plot the analysis left current, and
-  # ase::reconcile_plots compares its prediction POSITIONALLY against a sidecar
-  # written in write order. MEASURED 2026-09-12 on both binaries:
+  # ase::reconcile_plots compares a row's declared plots, in the order they are
+  # listed here, against that row's records, which are in write order.
+  # MEASURED 2026-09-12 on both binaries:
   #
   #   noise dec 10 1 10k  ->  W0 Integrated Noise
   #                           W1 Noise Spectral Density Curves
@@ -30027,11 +32410,37 @@ $_leg
   # ⚠ NO `viewrank`, FOR THE FOURTH TIME AND WITH A NEW REASON. `src/save.c`'s
   # read_dataset() DOES have a `noise spectral density curves` arm, so unlike
   # `tf`, `pz` and `sens` a `noise` type name is not simply unmapped. The reason
-  # is one step on: the same function's `integrated noise` arm answers **`op`**
-  # unless a spectrum record preceded it, and this walk writes `Integrated
-  # Noise` FIRST. Which plot a multi-plot file offers a surface is ⚖ R3's
-  # reader question, not the writer's, and `ase::attach_dbs` is in
-  # src/ase_window.tcl, which Stage 6d may not touch.
+  # is one step on: the same function's `integrated noise` arm takes that plot
+  # for a read asking `noise` just as the spectrum's arm takes the spectrum,
+  # first in file order, and this walk writes `Integrated Noise` FIRST. So a
+  # read asking `noise` is handed the one-point totals, and the spectrum is
+  # dropped behind them at the variable-count mismatch (written the other way
+  # round, the spectrum is what it gets). Which plot a multi-plot file offers a
+  # surface is ⚖ R3's reader question, not the writer's.
+  #
+  # ⚠ THAT ARM ALSO READS THE TOTALS BACK AS **`op`**, AND SINCE ISSUE 1657 ONLY
+  # WHERE THERE IS NO OPERATING POINT TO GIVE. A read that names no type takes
+  # its type from the file's first plot, and that is `op` when the first plot
+  # is the totals. A caller that ASKS for `op` -- `xschem annotate_op`,
+  # `ase::attach_dbs <file> op`, the Calculator's operating-point read -- is
+  # given the `Operating Point` plot whenever the file holds one, wherever it
+  # stands, and the totals only when the file holds none. Until that rule the
+  # totals won by standing first, which is where a deck that runs its
+  # operating point last (issue 0964) puts them: the annotation then published
+  # no node voltage. Fenced by band M of
+  # tests/headless/test_raw_ascii_point_bounds.tcl.
+  #
+  # ⚠ WHERE THE TOTALS ARE STILL WHAT IS SHOWN, each case measured and each in
+  # issue 1657's list. (a) A results file whose blocks are ascii with CRLF
+  # line ends and whose totals stand first: the reader cannot step over such
+  # a block (issue 0300), so it never gets to the operating point. The deck
+  # this backend renders writes binary blocks. (b) A file ALREADY LOADED
+  # under `op` is not read again, and a read that named no type stores a
+  # totals-first file under `op`. After such a read `xschem raw read <file>
+  # op` shows those totals, and so does `xschem annotate_op <file>` unless
+  # that database is the current one (it removes the current one-point
+  # database before it reads); `ase::attach_dbs <file> op` and the Calculator's
+  # read were measured to be given the operating point all the same.
   #
   # ⚠ NO `seed_enabled`: four seeded rows, 104 byte-identical `.state` files.
   #
@@ -35148,6 +37557,13 @@ $_leg
   # so the fork reads "can do everything ASE-L offers" and the other two name
   # their gaps -- rows EX1-EX3 of tests/headless/test_ase_variant_1470.tcl.
   #
+  # ISSUE 1724 ADDED ONE COLUMN, `hier_probes`, MEASURED 2026-11-20 the same way:
+  #   apt 45.2   0      stock 47   0      the fork's ver_50 and ver_52   0
+  #   the fork's ver_53   1
+  # so "the fork" above is no longer one answer: ver_50, the build those three
+  # rows were taken on, now names the one gap it has, and the complete
+  # sentence is ver_53's (row EX4 there).
+  #
   # ⚠ NO VERSION ANYWHERE (D44). "no ngspice release has the fix yet" is a fact
   # about commit 10276f993 (`git tag --contains` empty, re-measured 2026-09-15),
   # stated without a number -- and never "ngspice 47 fixes that", which names a
@@ -35199,6 +37615,13 @@ $_leg
     lappend out {*}[variant_key_note $caps altshow_op_dump \
                      {the fast operating-point dump} \
                      {the fast operating-point dump}]
+    ## ISSUE 1724: a `.probe` below the top level.  The last clause before the
+    ## asides.  Which REGISTERED program can is not said here -- this sentence
+    ## is about one program -- but where a run or a pick needs it
+    ## (ase::probe_cure).
+    lappend out {*}[variant_key_note $caps hier_probes \
+                     {terminal currents of subcircuit pins or of devices inside subcircuits} \
+                     {whether it saves terminal currents inside subcircuits}]
     set asides {}
     if {[::ase::caps_measured_as $caps altshow_op_dump 0]} {
       lappend asides [dict create kind aside key altshow_op_dump text \

@@ -4726,7 +4726,12 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   the row index is two lines and looks obviously right, which is the shape this tree has been
   burned by twice, and two things are unmeasured first — whether the sidecar is *supposed* to be
   in row order (in which case the real defect is in its writer), and what the user actually lost
-  downstream, which is what decides the urgency.
+  downstream, which is what decides the urgency. **Measured and repaired on 2026-11-20**
+  (working tree on `d36cb429e`): the pairing is by the row a record names; the sidecar's order
+  was right; nothing wrong was handed on by the pairing itself. The same pass found and repaired
+  the one reader that did hand on a wrong value, the engine's read of type `op` on a results
+  file that holds noise totals ahead of the operating point (`read_dataset()`, `src/save.c`).
+  Two items stay open in the issue file.
 
 - **1658** — the Calculator's `settlingTime` tolerance is now a **percent of the step** (the user's
   ruling, 2026-10-07) while ASE-L's `ts` measure template still computes an **absolute** band — so
@@ -4856,7 +4861,43 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   not fixed. Minted 2026-11-16 by the driver after both checks (pointer + bands, then every
   `NUMBERING.md` and issues directory under `~/dev/*` and `~/private/*`).
 
-**The next free number is 1721.**
+~~**The next free number is 1721.**~~
+- **1721, 1722 and 1723 are left to `~/private/xschem-private`.** That clone holds issue files
+  1721 and 1722 (its gate clone `~/gcp0` carries the same two), and its own pointer read 1723
+  on 2026-11-18. None of the three names anything in this clone.
+- **1724** — Select On Design cannot queue a device terminal current: a click on an instance
+  pin queues the voltage of the pin's net, and only a voltage source's or an ammeter's body
+  gives a current. Asked by the user. Filed 2026-11-18 and built from 2026-11-19 (the pin
+  click, the `.probe` cards, the marker on a picked terminal, the Calculator's current
+  selectors); the issue file's stamp and open items say what is still owed. Minted 2026-11-18
+  after both checks (pointer + bands, then every `NUMBERING.md` and issues directory under
+  `~/dev/*` and `~/private/*`, and the clones `~/gc*`).
+
+~~**The next free number is 1725.**~~
+- **1725** — a window whose undo directory could not be created crashes xschem when it is
+  closed (`init_undo()` marks the context initialised with no directory name, and
+  `delete_undo()` then formats a NULL). Reached when the temporary directory cannot take
+  it, or when several xschem processes start in the same second and `random_string()`
+  hands them the same names. Found by the second review of issue 1724, present at this
+  branch's HEAD. Filed, not fixed. Minted 2026-11-19 by the driver after both checks
+  (pointer + bands, then every `NUMBERING.md` and issues directory under `~/dev/*` and
+  `~/private/*`, and the clones `~/gc*`). `~/private/xschem-private`'s own pointer also
+  read 1725 on that day: it must skip it.
+
+~~**The next free number is 1726.**~~
+- **1726** — `xschem new_schematic destroy_all` (and `xschem destroy_all`) leaves a real
+  window's toplevel standing when the tabbed interface is on: the arm routes by the
+  global flag to `destroy_all_tabs()`, where `destroy` and `switch` ask
+  `is_window_context()` about the target. Found by the fourth repair of issue 1724 on the
+  way, present at this branch's HEAD; the engine's, not that issue's. Filed, not fixed.
+  Minted 2026-11-19 by the docs package of that issue's closing pass after both checks
+  (pointer + bands, then every `NUMBERING.md` and issues directory under `~/dev/*` and
+  `~/private/*`, and the clones `~/gc*`, `~/g1724` and `~/pp1724`). No other clone held
+  the number: the two other `NUMBERING.md` files that contain it quote a line coordinate
+  of `src/op_annot.tcl`, not an issue. `~/private/xschem-private`'s own pointer still
+  read 1725 that day, so it advertises 1725 and 1726 as free there: it must skip both.
+
+**The next free number is 1727.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

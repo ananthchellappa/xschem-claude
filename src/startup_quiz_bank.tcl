@@ -669,9 +669,19 @@ startup_quiz::add direct-plot {
   q   {With Direct Plot you click nets on the schematic, press Esc, and they are plotted in
        the waveform viewer.}
   ok  true
-  why {In ASE-L: Results > Direct Plot. Click wires or net labels for voltages, and sources
-       or ammeters for currents.}
-  proof {[P_has src/ase_window.tcl {mb.results add command -label {Direct Plot}}] && [P_proc ::ase::ui::direct_plot]}
+  why {ASE-L: Results > Direct Plot. Click a wire or net label for its voltage, the body
+       of a source or ammeter for its current, or a device pin for the current into it; the
+       pin gets an ellipse in its trace's colour. A pin's current is plotted only if the
+       last run saved it (Outputs > To Be Saved > Select On Design, run). Otherwise a
+       source's or ammeter's pin plots the device's current, sign reversed on its second
+       pin.}
+  proof {[P_has src/ase_window.tcl {mb.results add command -label {Direct Plot}}] && [P_proc ::ase::ui::direct_plot]
+         && [P_sub pin_at] && [P_body ::ase::ui::sod_click {ase::ui::sod_terminal_at}]
+         && [P_body ::ase::ui::sod_terminal_pick {ase::raw_vectors_present}]
+         && [P_body ::ase::ui::sod_terminal_pick {ase::ui::sod_terminal_as_source}]
+         && [P_body ::ase::ui::sod_terminal_pick {ase::ui::sod_source_standin_notes}]
+         && [P_body ::ase::ui::sod_source_standin_notes {is the negative of that trace}]
+         && [P_sub pin_marker] && [P_body ::ase::ui::dp_hilight {xschem pin_marker add}]}
 }
 
 # ---------------------------------------------------------------- Waveform viewer
@@ -840,10 +850,19 @@ startup_quiz::add calc-pick {
   q   {In the Calculator, after choosing vt you can click a net on the schematic instead of
        typing its name.}
   ok  true
-  why {The selectors vt, vf, vdc and vs pick a net with a click; it, if, idc and is pick a
-       voltage source or an ammeter the same way.}
+  why {The selectors vt, vf, vdc and vs pick a net with a click. it, if, idc and is pick a
+       current the same way: click a pin of a device for the current into that pin, or the
+       body of a voltage source or an ammeter for its own current. A pin's current is
+       inserted only if the loaded result holds it. To get it there, pick the pin in ASE-L
+       under Outputs > To Be Plotted > Select On Design and run again.}
   proof {[P_proc ::calc::pick_click] && [P_proc ::calc::sel_click]
-         && [lindex [calc::sel_rows] 0 0] eq {vt vf vdc vs} && [lindex [calc::sel_rows] 1 0] eq {it if idc is}}
+         && [lindex [calc::sel_rows] 0 0] eq {vt vf vdc vs} && [lindex [calc::sel_rows] 1 0] eq {it if idc is}
+         && [P_body ::calc::pick_imeasure {ase::ui::sod_terminal_at}]
+         && [P_body ::calc::pick_imeasure {ase::ui::sod_source_at}]
+         && [P_body ::calc::pick_click {calc::pick_imeasure}]
+         && [P_body ::calc::pick_msg {is not in this result; ASE-L Outputs: To Be Plotted}]
+         && ![P_body ::calc::pick_msg {terminal currents not supported}]
+         && [P_sub pin_at] && [P_body ::ase::ui::sod_click {ase::ui::sod_terminal_at}]}
 }
 startup_quiz::add calc-measure {
   type tf  kind shipped  topic {Calculator}

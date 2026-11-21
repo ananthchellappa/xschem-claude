@@ -174,6 +174,17 @@ nobody added a door to and stops itself within 80 ms. A stale `Click on instance
 mode has ended is worse than no hint — it is an instruction for a click that
 will do nothing.
 
+**Note, 2026-11-19 (issue 1724, its last build).** One thing changed in what
+`rdw::_hint_sync` writes: it does not write the sentence while another click mode
+that is up (ASE-L's Select On Design, a Calculator selector's pick) is seized over
+this mode on the same canvas (`rdw::_pick_covered`). The presses are that mode's
+then, it keeps its own sentence on this slot, and the two used to take turns on it.
+Everything else in the table above goes on while this mode is underneath: the tag,
+the record of the slot, the blanking of what was last written, the timer, and the
+tip, which therefore still holds this mode's sentence over a slot that shows the
+other mode's. The sentence is back within one period of the mode on top ending.
+Band PG28 of `tests/headless/test_calc_pick.tcl`.
+
 The sentence itself is **one template**, because the identity token *is* the
 adjective the user's three sentences differ in; the fence on an unknown identity
 is `rdw::_list_name`, the proc that already owns which list names exist, so

@@ -200,3 +200,54 @@ commands were.
 
 1. Whether to lift the refusal now that the underlying defect is fixed. The user's ruling,
    filed as `owed.sh rule 1334`. Not a defect and not scheduled.
+
+---
+
+# 2026-11-19 — a capital in a suite's SCRATCH path: a second suite, and files outside the scratch
+
+The stamp line and the status above are left as they were, and so is the list of one open
+item. This section records a measurement made while verifying issue 1724's fourth repair,
+by a verifier that was not looking for it. It is not that work's.
+
+**What was measured.** The verifier ran its neighbour suites through
+`tests/headless/run_suites.sh --nogui` with `XSCHEM_TEST_SCRATCH` pointing into its own
+directory, whose path holds capital letters (`…/verify-DECK4/.scratch`). The checkout
+path itself has none. Two suites went red there and are green with the default scratch:
+
+| suite | rows | what the row read |
+|---|---|---|
+| `test_ase_variant_1470` | `OT1` | `{c dumppath}` where `{d dump}` is expected: this file's refusal, as in a capital checkout (above) |
+| `test_ase_saved_results_1705` | `SVR0`, `SVR10` | the fixture's `tb_ase.opinfo` is missing from both planted run directories |
+
+**And the second suite wrote outside its scratch.** Its fixture plants the operating-point
+dump "under the name the simulator was given", which is `op_annot::opdump_path` of the raw
+file: the WHOLE path lower-cased, directories included. The fixture's writer makes the
+directory it is handed. So the `.opinfo` files landed in a new sibling directory whose
+name is the scratch path in lower case (`…/verify-deck4/…` beside `…/verify-DECK4/…`),
+and that directory was still there after the suite had finished. The verifier removed it
+by hand.
+
+**Read, not measured:**
+
+* Both effects come from `op_annot::opdump_path` (`src/op_annot.tcl`), which this file
+  already names: `string tolower` over the whole path. `op_annot::opdump_find`, added
+  with issue 1705, looks at that lower-cased name first and then at the case-kept name
+  beside the raw file.
+* In the product, a run directory with a capital is refused the fast dump by this file's
+  guard (`ase::op_dump_reachable_dir`) before the simulator is asked, so no dump should
+  be written for it at all, in either directory.
+
+**Not measured:** whether a user's work area with a capital letter in its path is
+affected in any way beyond the refusal this file already describes: whether Results >
+Save, which copies the dump from the lower-cased name, ever finds or misses one there,
+and whether anything is ever written into a lower-cased sibling of a user's directory.
+Nobody ran the product in such a directory for this note.
+
+**What it means for a test run.** `test_ase_saved_results_1705` assumes a scratch path
+that equals its own lower-cased self and does not say so; with any other it goes red at
+its first fixture row and leaves files beside the scratch. Either a fixture row that
+states the assumption, so the cause names itself, or run directories built under a
+lower-cased copy of the scratch root, would cure the suite; neither was done here. Until
+then, do not point `XSCHEM_TEST_SCRATCH` at a path with a capital letter for these two
+suites. Issue 1484 carries the same class for a capital in the CHECKOUT path and has a
+pointer to this section.

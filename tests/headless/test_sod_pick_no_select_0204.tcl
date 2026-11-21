@@ -37,6 +37,8 @@
 #   SO13-SO14 the two new C probes pinned DIRECTLY (not through sod_click): object_at
 #             returns select_at's exact row and selects nothing; net_name_at returns the
 #             raw token on a wire and "" on everything else
+#   SO15      a pick whose hand drifts with the button down, through real Tk events:
+#             one pick, and the selection made before the mode is still there
 #
 # MUST run under X (real <Key-e> events, `xschem callback` dispatch):
 #   ./src/xschem --pipe -q --nolog --script tests/headless/test_sod_pick_no_select_0204.tcl
@@ -96,7 +98,7 @@ if {[catch {
 # NAMED  wire y=0    with a lab_pin driving it        -> flylines resolves it
 # (none) wire y=100  with no label at all             -> #netN, the 0154 fallback
 # V1                 an unlocked vsource              -> a current pick
-# R1                 a non-source device              -> the v1-scope notice
+# R1                 a non-source device              -> the "nothing to queue there" notice
 wfile [file join $scratch sp.sch] {v {xschem version=3.4.8RC file_version=1.3}
 G {}
 K {}
@@ -299,8 +301,8 @@ arm_sod
 ase::ui::sod_click K $RX $RY
 update idletasks
 check "SO9a a non-source device body still queues nothing"     $::queued {}
-check "SO9b ... but still gets the v1-scope notice"            \
-  [expr {[llength $::notices] == 1 && [string match {ase: v1 queues source*} [lindex $::notices 0]] ? 1 : 0}] 1
+check "SO9b ... but still gets the 'nothing to queue there' notice, once" \
+  [expr {[llength $::notices] == 1 && [string match {ase: nothing to queue there*} [lindex $::notices 0]] ? 1 : 0}] 1
 check "SO9c and it selected nothing either"                    [selstate] {{} 0}
 # a click that queues NOTHING used to poison the selection just as badly as one that
 # queued: pre-fix this left R1 selected and E descended into the resistor. Same E leg as
@@ -361,6 +363,104 @@ check "SO12a a pre-existing instance selection still takes noun-verb" $::resolve
 check "SO12b so E did NOT arm the pick"                        [armed] 0
 disarm ; xschem unselect_all
 
+# --- SO13  a REAL DOUBLE CLICK is two picks, and selects nothing ----------------
+# A design canvas binds <Double-Button-1> itself (set_bindings): the editor's double
+# click, which selects what is under the pointer and opens its property dialog (with the
+# Cadence-style profile it grows the selection instead). Tk hands the second press of a
+# double click to that binding unless the mode holds it too -- and a selection made that
+# way is exactly what this issue took out of the single click.
+#
+# Driven without the mode's hold on that binding, the second press opens the editor's
+# MODAL dialog. So the group is bounded: a timer that re-arms itself destroys any toplevel
+# that appears, and SO13c reports it.
+xschem unselect_all
+# the group before leaves its mode up: end it, so that what is read here is the canvas's own
+catch {ase::ui::sod_end K}
+update idletasks
+set so13_pre [bind .drw <Double-Button-1>]
+set so15_pre [bind .drw <B1-Motion>]
+arm_sod
+focus -force .drw
+update
+set so13_before [lmap w [winfo children .] { expr {[winfo toplevel $w] eq $w ? $w : [continue]} }]
+set ::so13_killed {}
+proc so13_guard {before} {
+  foreach w [winfo children .] {
+    if {[winfo toplevel $w] eq $w && [lsearch -exact $before $w] < 0} { lappend ::so13_killed $w ; catch {destroy $w} }
+  }
+  set ::so13_guard_id [after 1500 [list so13_guard $before]]
+}
+set ::so13_guard_id [after 1500 [list so13_guard $so13_before]]
+check "SO13a the mode holds the double click as well as the press (the editor's script was there before; the two slots now hold one script)" \
+  [list [string match {xschem callback %W -3 *} $so13_pre] [seized] [expr {[bind .drw <Double-Button-1>] eq [bind .drw <ButtonPress-1>]}]] {1 1 1}
+update
+event generate .drw <Motion>          -x [sx $WNX] -y [sy $WNY]
+update
+set so13_at [list [expr {abs([xschem get mousex] - $WNX) < 3}] [expr {abs([xschem get mousey] - $WNY) < 3}]]
+# two presses 120 ms apart on the event clock
+set so13_t 800000
+event generate .drw <ButtonPress-1>   -x [sx $WNX] -y [sy $WNY] -time $so13_t
+event generate .drw <ButtonRelease-1> -x [sx $WNX] -y [sy $WNY] -time [expr {$so13_t + 40}]
+event generate .drw <ButtonPress-1>   -x [sx $WNX] -y [sy $WNY] -time [expr {$so13_t + 120}]
+event generate .drw <ButtonRelease-1> -x [sx $WNX] -y [sy $WNY] -time [expr {$so13_t + 160}]
+update
+after cancel $::so13_guard_id
+set so13_new [lmap w [winfo children .] { expr {[winfo toplevel $w] eq $w && [lsearch -exact $so13_before $w] < 0 ? $w : [continue]} }]
+check "SO13b BOTH presses of a real double click on the named wire reach the pick (the pointer was on the wire; what the two presses queued)" \
+  [list $so13_at $::queued] {{1 1} {v(named) v(named)}}
+check "SO13c ... and neither reached the editor: no dialog opened, and nothing is selected (dialogs the guard had to close; toplevels left open; the selection)" \
+  [list $::so13_killed $so13_new [selstate]] {{} {} {{} 0}}
+event generate .drw <Key-e>
+update idletasks ; update
+check "SO13d so a real E right after the double click still ARMS the pick, and descends into nothing" \
+  [list [armed] $::resolved] {1 {}}
+disarm ; xschem unselect_all
+catch {ase::ui::sod_end K}
+update idletasks
+check "SO13e and when the mode ends the double click is the editor's again, verbatim" \
+  [bind .drw <Double-Button-1>] $so13_pre
+
+# --- SO15  a pick whose hand DRIFTS with the button down selects nothing either --
+# A motion with the left button held, left to the editor, starts its selection
+# rectangle: that clears the selection, and only the editor's own handling of the
+# release ends the rectangle -- which the mode swallows.  The mode holds that motion
+# too.  Driven with real events: a device is selected before the mode, then a press on
+# the named wire, two motions with the button held, one pixel each, and the release.
+xschem unselect_all
+xschem select_at $RX $RY
+set so15_sel [selstate]
+arm_sod
+focus -force .drw
+update
+set so15_held [bind .drw <B1-Motion>]
+set so15_ui [xschem get ui_state]
+event generate .drw <Motion>          -x [sx $WNX] -y [sy $WNY]
+update
+set so15_at [list [expr {abs([xschem get mousex] - $WNX) < 3}] [expr {abs([xschem get mousey] - $WNY) < 3}]]
+set so15_t 860000
+event generate .drw <ButtonPress-1>   -x [sx $WNX] -y [sy $WNY] -time $so15_t
+update
+event generate .drw <Motion>          -x [expr {[sx $WNX] + 1}] -y [sy $WNY] -state 256 -time [expr {$so15_t + 30}]
+update
+event generate .drw <Motion>          -x [expr {[sx $WNX] + 2}] -y [sy $WNY] -state 256 -time [expr {$so15_t + 60}]
+update
+set so15_mid [list [selstate] [expr {[xschem get ui_state] == $so15_ui ? {as before} : [xschem get ui_state]}]]
+event generate .drw <ButtonRelease-1> -x [expr {[sx $WNX] + 2}] -y [sy $WNY] -state 256 -time [expr {$so15_t + 90}]
+update
+check "SO15a the mode swallows the motion with the left button held (the slot while the mode is up)" \
+  $so15_held break
+check "SO15b A PICK THAT DRIFTS TWO PIXELS WITH THE BUTTON DOWN IS ONE PICK AND CHANGES NO SELECTION: the net is queued once; with the button down and after the release the device selected before the mode is still the selection, and the editor's state word is what it was before the press (the pointer was on the wire; what was queued; with the button down: the selection against before, the state word; after the release: the same two)" \
+  [list $so15_at $::queued [list [expr {[lindex $so15_mid 0] eq $so15_sel ? {as before} : [lindex $so15_mid 0]}] [lindex $so15_mid 1]] \
+        [list [expr {[selstate] eq $so15_sel ? {as before} : [selstate]}] [expr {[xschem get ui_state] == $so15_ui ? {as before} : [xschem get ui_state]}]]] \
+  {{1 1} v(named) {{as before} {as before}} {{as before} {as before}}}
+catch {ase::ui::sod_end K}
+update idletasks
+check "SO15c and when the mode ends the held motion is what the canvas had before, with the selection still there (the slot against before the mode; the selection against before)" \
+  [list [expr {[bind .drw <B1-Motion>] eq $so15_pre ? {as before} : [bind .drw <B1-Motion>]}] [expr {[selstate] eq $so15_sel ? {as before} : [selstate]}]] \
+  {{as before} {as before}}
+# whatever a failing build left: a rectangle in progress, the selection
+disarm ; xschem unselect_all
+
 } err]} { puts "FATAL: $err" ; incr fail }
 
 if {[info commands real_ciw_echo] ne {}} {
@@ -368,7 +468,11 @@ if {[info commands real_ciw_echo] ne {}} {
   catch {rename real_ciw_echo ciw_echo}
 }
 
+# The completion sentinel tests/banner_rule.tcl's banner_complete requires of a
+# registered case, printed only when every check passed. The verdict line stays
+# last: the regression driver carries a case's last verdict line into its block.
 if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"

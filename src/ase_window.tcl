@@ -739,6 +739,14 @@ proc ase::ui::close {key} {
   # design canvas gets its bindings back. AFTER the destroy + wins unset, so
   # sod_end's raise-the-ASE-window arm no-ops on the dead toplevel.
   ase::ui::sod_end $key
+  # The Results window's pick mode may have been entered on top of the mode
+  # that was just ended. That mode's release handed the canvas the editor's
+  # scripts, over the Results window's live ones, so the Results window's mode
+  # is asked to take the canvas again (rdw::pick_reseat does nothing unless
+  # that is the state it finds). Its own Escape then ends it. Under catch: the
+  # Results window may not be loaded, and closing a session must not depend
+  # on it.
+  catch {rdw::pick_reseat}
 }
 
 # --- item 16: save-on-close prompt -------------------------------------------
@@ -937,8 +945,9 @@ proc ase::ui::build {key top} {
   $top.mb add cascade -label [ase::ui::lbl_outputs] -menu $top.mb.outputs
   menu $top.mb.outputs.saved -tearoff 0
   # Select On Design (item 08): click mode on the design schematic — wire /
-  # net-label clicks queue v(<net>), source clicks queue i(<inst>); the To Be
-  # Saved flavor queues {save 1 plot 0}, To Be Plotted {save 1 plot 1}
+  # net-label clicks queue v(<net>), instance-pin clicks queue the terminal's
+  # i(<path>:<tname>), source-body clicks queue i(<inst>); the To Be Saved
+  # flavor queues {save 1 plot 0}, To Be Plotted {save 1 plot 1}
   $top.mb.outputs.saved add command -label {Select On Design} \
     -command [list ase::ui::select_on_design $key {save 1 plot 0}]
   $top.mb.outputs add cascade -label {To Be Saved} -menu $top.mb.outputs.saved
@@ -2230,10 +2239,16 @@ proc ase::ui::sod_bits {token} {
   return [split $exp ,]
 }
 
-# What one Select-On-Design click should queue: a list of tokens. A scalar (or
-# any `current` pick, which is an instance name and can never be a bus) is
-# itself; a multi-bit net opens the bit dialog and yields the user's chosen bits
-# in the order the dialog displayed them, or {} for Cancel.
+# What one Select-On-Design click on a NET or on a SOURCE BODY should queue: a
+# list of tokens. A scalar net is itself, and so is a `current` pick -- the
+# token is the source's instance name and is queued whole, never split. A
+# multi-bit net opens the bit dialog and yields the user's chosen bits in the
+# order the dialog displayed them, or {} for Cancel.
+#
+# A TERMINAL pick does not come through here: an instance pin can be several
+# vectors (a bus instance, a bus pin, or both), but its bits are already the
+# final `<path>:<tname>` tokens, so ase::ui::sod_terminal_pick hands them to
+# `ase::ui::bus_dialog` itself.
 #
 # This is the seam sod_click routes through, so a test can stub
 # `ase::ui::bus_dialog` and assert the queue set without driving Tk (the same
@@ -3034,29 +3049,42 @@ proc ase::ui::output_editor_cancel {key} {
 }
 
 # --- Select On Design (item 08) ----------------------------------------------
-# A click mode on the design schematic that queues Outputs rows: wire /
-# net-label click -> voltage output `v(<net>)`, source-class instance click
-# (symbol type vsource/ammeter) -> source-current output `i(<inst>)`; ESC
-# ends the mode, restores the seized canvas bindings VERBATIM and returns
+# A click mode on the design schematic that queues Outputs rows. What a click
+# queues depends on what is under it:
+#   an instance PIN of a device   the current into that terminal,
+#                                 `i(<path>:<tname>)` (issue 1724; the section
+#                                 "Terminal currents" below sod_click)
+#   a wire or a net label         the voltage of its net, `v(<net>)`
+#   the BODY of a voltage source  that source's branch current, `i(<inst>)`
+#   or an ammeter
+# ESC ends the mode, restores the seized canvas bindings VERBATIM and returns
 # focus to the ASE window. Entry points: Outputs > To Be Saved/To Be Plotted >
 # Select On Design and the Add/Edit Output dialog's "From Design…" button.
 #
 # Mechanism (no C hook): Tk fires the MOST SPECIFIC matching binding per tag,
 # so seizing <ButtonPress-1>/<ButtonRelease-1>/<Key-Escape> on the design
 # canvas pre-empts the generic <ButtonPress>/<ButtonRelease>/<KeyPress> ->
-# `xschem callback` bindings for exactly those events while Motion (context
-# switching + mousex_snap updates) keeps flowing to C. Every seized script
-# ends in `break` so the generic class/all bindtags never see the event. The
-# previous binding STRINGS are saved at entry and restored verbatim at exit,
-# which composes with the addpin/addlabel forms' shared `.drw <Key-Escape>`
-# slot for free.
+# `xschem callback` bindings for exactly those events while a Motion with no
+# button down (context switching + mousex_snap updates) keeps flowing to C.
+# <Double-Button-1> is seized as well, because the canvas binds that sequence
+# itself and Tk would hand it the second press of a double click; and so is
+# <B1-Motion>, the motion with the left button held, which would otherwise
+# start the editor's selection rectangle under a pick whose hand drifts. Every
+# seized script ends in `break` so the generic class/all bindtags never see the
+# event. The previous binding STRINGS are saved at entry and restored verbatim
+# at exit, which composes with the addpin/addlabel forms' shared
+# `.drw <Key-Escape>` slot for free. The slots are listed by sod_slots; the
+# seize is sod_seize, sod_release hands them back, and sod_held tells
+# src/cmdmode.tcl what the mode holds at the moment.
 #
-# v1 terminal-current scope (honest restriction, spec "Select On Design v1
-# scope"): only SOURCE-class instances (symbol type vsource/ammeter) queue
-# currents — a source has exactly one branch current, so instance-level hit
-# granularity is exact. Per-terminal currents of other devices need ngspice
-# `.options savecurrents` + `@m.x<inst>.<subdev>[id]` names that depend on
-# subcircuit internals invisible to the schematic click — deferred.
+# CURRENTS HAVE TWO GRANULARITIES, and the click decides which. A source has
+# exactly one branch current, so a click anywhere on its body is exact and
+# queues `i(<inst>)`. Every other device has a current per terminal, so the
+# click has to be on the PIN: it queues `i(<path>:<tname>)`, the vector ngspice
+# writes for a `.probe I(<path>,<pin>)` card, which the deck then carries for
+# that row (src/ase.tcl, the probe plan). A pin of a source is a terminal like
+# any other. The body of a device that is not a source queues nothing -- there
+# is no one current to mean -- and the click says so.
 
 # The design window's bottom mode-prompt slot for a canvas $cv: the green
 # .statusbar.10 label (xschem's "DRAW WIRE!" / "HIGHLIGHT NET!" convention),
@@ -3084,12 +3112,316 @@ proc ase::ui::sod_prompt_clear {cv} {
 # gone or moved to another key); the pending `after` id is also cancelled
 # explicitly in sod_end. ~80 ms => a blanking event shows at most a sub-frame
 # flicker before the prompt returns; a C ui_state bit would remove even that.
+#
+# THE PROMPT ALSO SAYS WHICH PIN A CLICK WOULD TAKE (sod_prompt_now). Under catch,
+# and the plain prompt is what is shown when that cannot be worked out: this
+# proc re-arms itself, so an error escaping it would end the prompt for the rest
+# of the mode.
+#
+# NOTHING IS WRITTEN WHILE ANOTHER CLICK MODE SITS ON TOP OF THIS ONE
+# (sod_covered). The Results window's pick mode can be entered over this mode,
+# and it keeps its own sentence on the same slot: the clicks are that mode's
+# then, and two timers each writing its own sentence would make the slot change
+# text every tick. The timer keeps running, so this mode's prompt is back
+# within one tick of the mode on top ending.
 proc ase::ui::sod_prompt_pump {key} {
   variable sod
   if {![info exists sod(active)] || $sod(active) ne $key} return
   if {![info exists sod($key,canvas)] || ![info exists sod($key,prompt)]} return
-  ase::ui::sod_prompt_set $sod($key,canvas) $sod($key,prompt)
+  if {![ase::ui::sod_covered $sod($key,canvas)]} {
+    set text $sod($key,prompt)
+    catch {set text [ase::ui::sod_prompt_now $key]}
+    ase::ui::sod_prompt_set $sod($key,canvas) $text
+  }
   set sod($key,pump) [after 80 [list ase::ui::sod_prompt_pump $key]]
+}
+
+# The words of the prompt for `mode`: `plot` is Direct Plot, anything else the
+# Outputs flavours.
+proc ase::ui::sod_prompt_base {mode} {
+  if {$mode eq {plot}} { return {select signals to plot} }
+  return {select outputs on design}
+}
+
+# THE PROMPT FOR A POINTER AT (x, y), schematic units: the mode's own words and,
+# when a click there would take a device pin, that pin after them --
+#   select outputs on design — pin R1:P (terminal current)
+# The editor's hover outline cannot say this: on a pin with a wire ending on it
+# the outline is the wire, and the click takes the terminal. The question is put
+# to the rule the click itself uses (sod_terminal_at at the raw pointer, behind
+# the same window test, sod_design_shown), so the prompt and the click cannot
+# disagree about where a pin is. Writes nothing and touches no widget.
+proc ase::ui::sod_prompt_text {key x y} {
+  set text [ase::ui::sod_prompt_words $key]
+  if {![ase::ui::sod_design_shown $key]} { return $text }
+  set term [ase::ui::sod_terminal_at $key $x $y]
+  if {![llength $term]} { return $text }
+  return "$text — pin [dict get $term instname]:[dict get $term pinname] (terminal current)"
+}
+
+# The mode's own words for session `key`, with no pin after them: the prompt
+# the mode keeps on record once it is entered, else the words of its flavour.
+proc ase::ui::sod_prompt_words {key} {
+  variable sod
+  if {[info exists sod($key,prompt)]} { return $sod($key,prompt) }
+  set mode outputs
+  if {[info exists sod($key,mode)]} { set mode $sod($key,mode) }
+  return [ase::ui::sod_prompt_base $mode]
+}
+
+# IS THE POINTER KNOWN TO BE IN ANOTHER WINDOW THAN THE ONE THE MODE IS ON? The
+# engine's pointer is that of the current context, and the current context is
+# the window the pointer was last in. The mode's bindings sit on ONE canvas: in
+# any other window of the same design -- the sheet above a block that was
+# opened in a window of its own, or that block's window -- a click is the
+# editor's, and no pin there is one a click would take.
+#
+# 1 only when all three hold: the canvas the mode has on record is a widget,
+# the current context has a canvas (sod_canvas), and the two are different
+# widgets. 0 wherever that cannot be asked -- no Tk, a mode whose recorded
+# canvas is no widget (a scripted pick) -- so there the prompt is worked out
+# from the pointer alone. Tabs share one canvas and are told apart by the
+# design they show (sod_design_shown), not here.
+proc ase::ui::sod_pointer_elsewhere {key} {
+  variable sod
+  if {![info exists sod($key,canvas)]} { return 0 }
+  set cv $sod($key,canvas)
+  if {[catch {winfo exists $cv} there] || !$there} { return 0 }
+  set cur {}
+  catch {set cur [ase::ui::sod_canvas]}
+  return [expr {$cur ne {} && $cur ne $cv ? 1 : 0}]
+}
+
+# The prompt for where the pointer is NOW, for the pump: the mode's own words
+# alone while the pointer is in another window than the one the mode is on
+# (sod_pointer_elsewhere), otherwise the prompt for the pointer's point
+# (sod_prompt_text).
+#
+# The pin test walks the sheet's wires when the pointer is near a device pin
+# and off its square, which on a very large sheet is too much to repeat every
+# tick for a pointer that has not moved. So the answer is kept with what it
+# was worked out from -- the pointer, the zoom (the pin radius follows it), the
+# window and sheet shown, the number of instances and wires on it and the
+# canvas the mode is on -- and worked out again only when one of those has
+# changed.
+proc ase::ui::sod_prompt_now {key} {
+  variable sod
+  set x [xschem get mousex]
+  set y [xschem get mousey]
+  set cv {}
+  if {[info exists sod($key,canvas)]} { set cv $sod($key,canvas) }
+  set at [list $x $y [xschem get zoom] [xschem get current_win_path] \
+            [xschem get sch_path] [xschem get instances] [xschem get wires] $cv]
+  if {[info exists sod($key,promptat)] && $sod($key,promptat) eq $at
+      && [info exists sod($key,prompttext)]} {
+    return $sod($key,prompttext)
+  }
+  if {[ase::ui::sod_pointer_elsewhere $key]} {
+    set text [ase::ui::sod_prompt_words $key]
+  } else {
+    set text [ase::ui::sod_prompt_text $key $x $y]
+  }
+  set sod($key,promptat)   $at
+  set sod($key,prompttext) $text
+  return $text
+}
+
+# The script the mode binds on the left press and on the double click, for
+# session `key`. FIRST it hands the engine the press's own position as a
+# pointer motion (event 6, with the press's %x %y and modifier state), THEN it
+# runs the click. sod_click reads the pointer the engine last heard of, and
+# that is not always where the press is: the engine takes the position of EVERY
+# event it is sent, a <Configure> of the canvas carries the canvas's place in
+# its parent as its position, and one can arrive between the last pointer
+# motion and the press (a window resized or laid out again under a resting
+# pointer; the second press of a double click, which no motion precedes;
+# issue 1659).
+proc ase::ui::sod_press_script {key} {
+  return "xschem callback %W 6 %x %y 0 0 0 %s; [list ase::ui::sod_click $key]; break"
+}
+
+# THE SLOTS THE MODE TAKES ON A CANVAS for session `key`, as a flat list
+#   <record> <sequence> <script>   ...
+# `record` is where sod($key,...) keeps what the slot held before the mode.
+#   <ButtonPress-1>    the pick (sod_press_script)
+#   <Double-Button-1>  the pick as well. A design canvas binds this sequence
+#                      itself (set_bindings: the editor's double click), and Tk
+#                      hands the second and every further press of a multiple
+#                      click to the most specific binding -- left alone, those
+#                      presses would go to the editor in the middle of the mode.
+#   <ButtonRelease-1>  swallowed: the press it pairs with never reached the
+#                      editor
+#   <B1-Motion>        swallowed: a pointer motion with the left button held.
+#                      Left to the editor it starts the selection rectangle,
+#                      which clears the selection and which only the editor's
+#                      own handling of the release ends -- and the release is
+#                      swallowed (issue 1304). A hand that drifts by a pixel
+#                      during a pick is enough.
+#   <Key-Escape>       ends the mode
+#   <Destroy>          the canvas going away under the mode (sod_canvas_gone)
+# One table for the seize (sod_seize) and for what the mode reports it holds
+# (sod_held). sod_release spells the sequences again, each beside its record.
+proc ase::ui::sod_slots {key} {
+  set press [ase::ui::sod_press_script $key]
+  return [list \
+      prevpress   <ButtonPress-1>   $press \
+      prevdbl     <Double-Button-1> $press \
+      prevrel     <ButtonRelease-1> {break} \
+      prevmotion  <B1-Motion>       {break} \
+      prevesc     <Key-Escape>      "[list ase::ui::sod_end $key]; break" \
+      prevdestroy <Destroy>         [list ase::ui::sod_canvas_gone $key %W]]
+}
+
+# Is `script` one this mode binds on a canvas, for any session: the pick, the
+# end, or the hook for the canvas going away? (A bare `break`, which the
+# release and the held-motion slots hold, cannot be told from anybody else's;
+# sod_seize judges those by the press slot beside them.)
+proc ase::ui::sod_own_script {script} {
+  if {[string match {*ase::ui::sod_click *; break} $script]} { return 1 }
+  if {[string match {ase::ui::sod_end *; break} $script]} { return 1 }
+  return [expr {[string first {ase::ui::sod_canvas_gone } $script] >= 0}]
+}
+
+# DOES A CLICK MODE THAT IS UP HOLD `script` IN THE PRESS SLOT OF `cv`? Every
+# click mode tells src/cmdmode.tcl what it holds on a canvas and what each slot
+# held before it (sod_held is this mode's answer), and cmdmode::pristine reads
+# those lists: handed a slot and the script it holds now, it answers what the
+# slot would hold with no mode up. A script no mode holds comes back unchanged,
+# so an answer that is not the script itself means a mode holds it. 0 when
+# cmdmode cannot be asked.
+proc ase::ui::sod_overlaid {cv script} {
+  set under $script
+  catch {set under [::cmdmode::pristine $cv <ButtonPress-1> $script]}
+  return [expr {$under ne $script ? 1 : 0}]
+}
+
+# IS ANOTHER CLICK MODE THAT IS UP SEIZED OVER THIS ONE ON `cv`? 1 when the
+# press slot of `cv` holds a script that is not one of this mode's own
+# (sod_own_script) and that a mode that is up holds there (sod_overlaid): the
+# Results window's pick mode entered while this one is up. 0 in every other
+# state -- this mode's own script in the slot, the editor's, a script no mode
+# says it holds, a canvas that is no widget or cannot be asked -- and it never
+# raises: the prompt timer asks it on every tick.
+proc ase::ui::sod_covered {cv} {
+  if {[catch {
+    set covered 0
+    if {$cv ne {} && [winfo exists $cv]} {
+      set now [bind $cv <ButtonPress-1>]
+      if {![ase::ui::sod_own_script $now]} { set covered [ase::ui::sod_overlaid $cv $now] }
+    }
+  }]} { return 0 }
+  return $covered
+}
+
+# The editor's own double-click script on the design canvas `cv`, for a seize
+# that finds the double-click slot holding one of the mode's scripts and has no
+# record of what was there before. For the other slots "nothing on record" and
+# "nothing was there" are the same thing on a design canvas; for this one they
+# are not, and handing back nothing would take the editor's double click away
+# from that window for the rest of the session. set_bindings binds the double
+# click of every button with one script and no click mode takes the middle
+# button's, so that slot still holds it. Empty when it cannot be read.
+proc ase::ui::sod_dbl_editor {cv} {
+  set s {}
+  catch {set s [bind $cv <Double-Button-2>]}
+  return $s
+}
+
+# SEIZE THE CANVAS `cv` FOR SESSION `key`: keep what each slot held in
+# sod($key,prev...), bind the mode's script on it, and record the canvas. The
+# slots are sod_slots'; sod_release hands the same slots back, each from its
+# own record.
+#
+# Shared by the entry (select_on_design) and by the resume (sod_resume), which
+# lands on whatever canvas is current after a descend -- a canvas with a binding
+# set of its own (set_bindings, clone_canvas_bindings), so the previous bindings
+# are read from the canvas being seized and never carried over from the one
+# before.
+#
+# A SLOT THAT ALREADY HOLDS ONE OF THE MODE'S OWN SCRIPTS IS NOT KEPT AS THE
+# PREVIOUS BINDING. Kept, the release would put the seize straight back and the
+# canvas could never be clicked on again (issue 1305). Such a slot keeps the
+# previous binding already on record for it. With none on record it is taken to
+# have held nothing -- except the double click, which is taken to have held the
+# editor's script (sod_dbl_editor). That is the state of a canvas seized twice,
+# and of one left carrying the scripts of a mode that has since ended.
+#
+# <Destroy> is added to what the slot holds, not put in its place, so a handler
+# somebody else has on the canvas still runs if the canvas goes while the mode
+# is up.
+proc ase::ui::sod_seize {key cv} {
+  variable sod
+  set pressown [ase::ui::sod_own_script [bind $cv <ButtonPress-1>]]
+  foreach {rec seq script} [ase::ui::sod_slots $key] {
+    set cur [bind $cv $seq]
+    set own [ase::ui::sod_own_script $cur]
+    if {$rec eq {prevrel} || $rec eq {prevmotion}} {
+      set own [expr {$pressown && $cur eq {break}}]
+    }
+    if {!$own} {
+      set sod($key,$rec) $cur
+    } elseif {![info exists sod($key,$rec)]} {
+      set sod($key,$rec) [expr {$rec eq {prevdbl} ? [ase::ui::sod_dbl_editor $cv] : {}}]
+    }
+    if {$rec eq {prevdestroy} && $sod($key,$rec) ne {}} {
+      set script "$sod($key,$rec)\n$script"
+    }
+    bind $cv $seq $script
+  }
+  set sod($key,canvas) $cv
+  return $cv
+}
+
+# WHAT THE MODE HOLDS NOW, for src/cmdmode.tcl (the fourth argument of the
+# cmdmode::register line below): a flat list
+#   <canvas> <sequence> <script> <predecessor>   ...
+# with one group for each slot of the canvas the mode is on -- the script bound
+# there and the script the slot held before the mode took it. For <Destroy> the
+# script is the whole bound script, the canvas's own handler with the mode's
+# hook behind it, and the predecessor is that handler. Empty when no mode is up
+# and when the mode is paused (a paused mode has handed the canvas back).
+#
+# This is what keeps the mode's scripts off a window created while the mode is
+# up: clone_canvas_bindings copies a canvas's bindings onto every new canvas,
+# and asks cmdmode::pristine, which reads this list, for the script each slot
+# holds underneath the mode.
+proc ase::ui::sod_held {} {
+  variable sod
+  if {![info exists sod(active)]} { return {} }
+  set key $sod(active)
+  if {[info exists sod($key,suspended)] || ![info exists sod($key,canvas)]} { return {} }
+  set cv $sod($key,canvas)
+  set out {}
+  foreach {rec seq script} [ase::ui::sod_slots $key] {
+    if {![info exists sod($key,$rec)]} { continue }
+    set prev $sod($key,$rec)
+    if {$rec eq {prevdestroy} && $prev ne {}} { set script "$prev\n$script" }
+    lappend out $cv $seq $script $prev
+  }
+  return $out
+}
+
+# THE CANVAS WIDGET OF THE WINDOW CONTEXT `ctx` (default: the current one), or
+# empty when it has none. `xschem get current_win_path` names a CONTEXT, which
+# is a Tk widget only for a window: with the tabbed interface a schematic in a
+# tab that is not the first answers `.x1.drw`, a name no widget has, while the
+# canvas that shows it is the main window's `.drw`, which the tabs share. So a
+# name that is no widget is looked up in `xschem windows`, whose rows hold the
+# context's name and then its toplevel, and the canvas is that toplevel's
+# `.drw` (the main window's toplevel is `.`).
+proc ase::ui::sod_canvas {{ctx {}}} {
+  if {$ctx eq {}} { catch {set ctx [xschem get current_win_path]} }
+  if {$ctx eq {}} { return {} }
+  if {![catch {winfo exists $ctx} there] && $there} { return $ctx }
+  if {[catch {xschem windows} rows]} { return {} }
+  foreach row $rows {
+    if {[lindex $row 0] ne $ctx} { continue }
+    set top [lindex $row 1]
+    if {$top eq {}} { continue }
+    set w [expr {$top eq {.} ? {.drw} : "$top.drw"}]
+    if {![catch {winfo exists $w} there] && $there} { return $w }
+  }
+  return {}
 }
 
 # Enter the mode for session `key` with `flavor` = {save S plot P} (menu To
@@ -3103,7 +3435,30 @@ proc ase::ui::sod_prompt_pump {key} {
 # window cannot be opened.
 proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   variable sod
-  if {[info exists sod(active)]} { ase::ui::sod_end $sod(active) }
+  # ONE CLICK MODE ON THE CANVAS AT A TIME. A Calculator selector that is waiting
+  # for its click has seized the same canvas slots; if it were left up, the
+  # seize below would keep ITS scripts as what the canvas had before this mode,
+  # and whichever of the two ended first would hand the other's dead scripts
+  # back to the canvas. So the Calculator's pick is ended first, before anything
+  # of this mode's is read or written. Under catch: the Calculator may not be
+  # loaded, and entering this mode must not depend on it.
+  #
+  # THE RESULTS WINDOW'S PICK MODE IS NOT ENDED: it stays up and this mode
+  # stacks on it. But when it was entered ON TOP of the mode that is ended here
+  # -- the Calculator's pick, or a Select On Design that is still up -- that
+  # mode's release hands the canvas what it held before, the editor's scripts,
+  # over the Results window's live ones, and the Results window's mode would be
+  # left recorded as up on a canvas that no longer runs it. So it is asked to
+  # take the canvas again (rdw::pick_reseat, which does nothing unless that is
+  # the state it finds): after the Calculator line, whether or not a pick was
+  # ended there, and again after a Select On Design that was ended. Under catch
+  # for the same reason as above.
+  catch { if {[calc::pick_running]} { calc::pick_end cancel } }
+  catch {rdw::pick_reseat}
+  if {[info exists sod(active)]} {
+    ase::ui::sod_end $sod(active)
+    catch {rdw::pick_reseat}
+  }
   # do_raise 0 (Ctrl-4 from the design window): the design is ALREADY the current
   # front window, so skip design_window's raise_activate_toplevel — a visible
   # withdraw/deiconify flash + a toplevel focus-steal (the reported "hiccup").
@@ -3111,24 +3466,21 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   if {$do_raise} {
     if {![ase::ui::design_window $key]} { return 0 }
   }
-  set cv [xschem get current_win_path]
-  if {![winfo exists $cv]} {
-    catch {::ase::echo "ase: no design canvas to select on ($cv)" error}
+  # The canvas of the window the design is in. With the tabbed interface the
+  # current context's name is not a widget when the design is in a tab that is
+  # not the first (sod_canvas).
+  set cv [ase::ui::sod_canvas]
+  if {$cv eq {}} {
+    set ctx {}
+    catch {set ctx [xschem get current_win_path]}
+    catch {::ase::echo "ase: no design canvas to select on ($ctx)" error}
     return 0
   }
-  set sod($key,canvas)    $cv
   set sod($key,flavor)    $flavor
   set sod($key,mode)      $mode
   if {$mode eq {plot}} { set sod($key,queue) {}; set sod($key,qcolors) {} }
   set sod($key,count)     0
-  set sod($key,prevpress) [bind $cv <ButtonPress-1>]
-  set sod($key,prevrel)   [bind $cv <ButtonRelease-1>]
-  set sod($key,prevesc)   [bind $cv <Key-Escape>]
-  bind $cv <ButtonPress-1>   "[list ase::ui::sod_click $key]; break"
-  # a lone release must not reach the C callback — the press it pairs with
-  # was swallowed above
-  bind $cv <ButtonRelease-1> {break}
-  bind $cv <Key-Escape>      "[list ase::ui::sod_end $key]; break"
+  ase::ui::sod_seize $key $cv
   # The seized <Key-Escape>/<ButtonPress-1> binds live on the design CANVAS, but
   # design_window's raise_activate_toplevel + `focus $tp` just moved keyboard
   # focus to the TOPLEVEL (and the seized Button-1 `break`s before the generic
@@ -3141,25 +3493,28 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   # up via sod_prompt_pump
   # (the C engine blanks .statusbar.10 on every event — see that proc). Cleared
   # and the pump cancelled in sod_end.
-  if {$mode eq {plot}} {
-    set sod($key,prompt) {select signals to plot}
-  } else {
-    set sod($key,prompt) {select outputs on design}
-  }
+  set sod($key,prompt) [ase::ui::sod_prompt_base $mode]
   set sod(active) $key
   ase::ui::sod_prompt_set $cv $sod($key,prompt)
   ase::ui::sod_prompt_pump $key
-  if {$mode eq {plot}} {
-    catch {::ase::echo "ase: Direct Plot — click wires/net labels for voltage\
- traces, sources for current traces; ESC plots"}
-  } else {
-    catch {::ase::echo "ase: Select On Design — click wires/net labels for\
- voltages, sources for currents; ESC ends"}
-  }
+  catch {::ase::echo [ase::ui::sod_entry_notice $mode]}
   return 1
 }
 
-# End the mode: restore the three seized bindings verbatim (catch — the
+# What the mode says when it is entered: the three things a click can pick, in
+# the words of the flavour (`plot` for Direct Plot, anything else for the
+# Outputs flavours). A proc of its own so the sentence can be read without a
+# canvas to seize.
+proc ase::ui::sod_entry_notice {mode} {
+  if {$mode eq {plot}} {
+    return "ase: Direct Plot — click wires/net labels for voltage traces, pins for\
+ terminal currents, sources for current traces; ESC plots"
+  }
+  return "ase: Select On Design — click wires/net labels for voltages, pins for\
+ terminal currents, sources for currents; ESC ends"
+}
+
+# End the mode: restore the seized bindings verbatim (catch — the
 # canvas may be dead; the restore is IDENTICAL for both modes), clear the
 # mode records, then finish per mode: `outputs` reports how many outputs
 # were queued and returns focus to the ASE window (raise_activate_toplevel —
@@ -3167,21 +3522,117 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
 # SKIPS the ASE-window raise and hands the queued trace expressions to
 # dp_finish, which raises/opens the VIEWER instead. Safe to call when no
 # mode is active for `key` (early return).
-# Shared teardown: hand the three seized canvas bindings back verbatim, stop the prompt
-# pump, clear the status-line prompt. Deliberately does NOT touch the sod($key,*) records
+# Shared teardown: hand every seized canvas binding (the slots of sod_slots) back verbatim,
+# stop the prompt pump, clear the status-line prompt. Deliberately does NOT touch the sod($key,*) records
 # and does NOT finish the command — both sod_end (which then finishes) and sod_suspend
-# (which must not) go through here. Returns 0 if no mode was live for `key`.
+# (which must not) go through here.
 # doc/claude/issues/0201-no-command-suspend-resume-contract.md D3.
+#
+# A PAUSED MODE'S RELEASE WRITES NOTHING. A mode that a descend has paused
+# (sod_suspend) handed every slot back when it was paused, with its prompt timer
+# stopped and its prompt cleared, and what the canvas and the status slot hold
+# since then is not this mode's to overwrite. Its records still name what the
+# slots held when it took them, and for a mode that was entered over the Results
+# window's pick mode those are that mode's scripts. That mode is paused by the
+# same descend, so writing them back would put the scripts of a paused mode on
+# the canvas: it would take the click the descend is waiting for, and nothing
+# would descend. So when a paused mode is ended -- the session window closed, the
+# mode entered again, a Calculator selector pressed -- the canvas and the status
+# slot are left as they are, and sod_end finishes the command as for any other
+# end.
+#
+# Answers 1 when a mode was on record for `key`, live or paused, and 0 when none
+# was.
 proc ase::ui::sod_release {key} {
   variable sod
   if {![info exists sod($key,canvas)]} { return 0 }
+  if {[info exists sod($key,suspended)]} { return 1 }
   set cv $sod($key,canvas)
   catch {bind $cv <ButtonPress-1>   $sod($key,prevpress)}
+  catch {bind $cv <Double-Button-1> $sod($key,prevdbl)}
   catch {bind $cv <ButtonRelease-1> $sod($key,prevrel)}
+  catch {bind $cv <B1-Motion>       $sod($key,prevmotion)}
   catch {bind $cv <Key-Escape>      $sod($key,prevesc)}
+  catch {bind $cv <Destroy>         $sod($key,prevdestroy)}
   if {[info exists sod($key,pump)]} { catch {after cancel $sod($key,pump)} }
   ase::ui::sod_prompt_clear $cv
   return 1
+}
+
+# THE PIN MARKERS OF THE OUTPUTS FLAVOURS GO WITH THE MODE (issue 1724). A pin
+# picked for a session row carries an ellipse while the mode is up
+# (sod_terminal_pick), and the mode ending takes every one of them away: ESC, a
+# second entry and the session window closing all end it through sod_end, and
+# sod_resume ends it where the window it was on is gone. Direct Plot's markers
+# are left: like its net and source colours they are the map from a trace back
+# to the schematic, and stay until the highlights are cleared (`xschem
+# unhilight_all`, which takes the outputs flavours' markers too).
+#
+# This takes away every marker tagged `save`, in every window and tab. Markers
+# of another tag -- Direct Plot's `plot`, or one a script added -- are not
+# touched. Answers how many went, 0 when the engine could not be asked: a
+# marker must never stand in the way of the mode ending.
+proc ase::ui::sod_marks_clear {} {
+  set n 0
+  catch {set n [xschem pin_marker clear -tag save -all]}
+  return $n
+}
+
+# DROP THE MODE WHERE IT CANNOT BE ENDED: the window it was on is gone. The
+# records go, the row flavours' pin markers go from every window that is left,
+# and one sentence says so. Nothing is plotted: a queue the user can no longer
+# see or add to is not plotted behind their back.
+#
+# IN DIRECT PLOT WITH TRACES QUEUED the sentence also says how many were not
+# plotted, and that the colours their picks left on the schematic -- a net's, a
+# source's, the ellipse on a pin -- stay until the highlights are cleared. They
+# are not taken away here: clearing Direct Plot's pin markers would also take
+# the markers of earlier plots, whose traces are still in the viewer, and the
+# net and source colours would stay all the same.
+proc ase::ui::sod_drop {key} {
+  variable sod
+  set lost 0
+  if {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}} {
+    catch {set lost [llength $sod($key,queue)]}
+  }
+  set msg "ase: the design window the pick mode was on is gone — mode dropped"
+  if {$lost} {
+    append msg "; [expr {$lost == 1 ? {1 queued trace was} : "$lost queued traces were"}]\
+ not plotted, and the colours [expr {$lost == 1 ? {its pick} : {their picks}}] left on the\
+ schematic stay until the highlights are cleared (Highlight > Un-highlight all net/pins,\
+ or its key)"
+  }
+  catch {::ase::echo $msg error}
+  array unset sod $key,*
+  if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
+  ase::ui::sod_marks_clear
+}
+
+# THE SEIZED CANVAS IS BEING DESTROYED UNDER THE MODE (its window was closed
+# with the mode up). This is the canvas's <Destroy> binding. Nothing is undone
+# here: while a window is being torn down the engine has no schematic to ask,
+# so a marker sweep made now clears nothing. The work is put off until the event
+# loop is idle (sod_drop_gone). `w` is the widget the event is for: a copy of
+# this binding on another canvas (clone_canvas_bindings) does nothing.
+proc ase::ui::sod_canvas_gone {key w} {
+  variable sod
+  if {![info exists sod($key,canvas)] || $sod($key,canvas) ne $w} { return }
+  after idle [list ase::ui::sod_drop_gone $key $w]
+}
+
+# ...and once the window is gone: if the mode is still the one that was on that
+# canvas, is not paused (a paused mode has given the canvas back, and sod_resume
+# decides where it comes up again) and the canvas really no longer exists, the
+# mode is dropped. Without this the mode would stay recorded on a canvas nobody
+# can press ESC on, and its pin markers would stay in the other windows.
+proc ase::ui::sod_drop_gone {key w} {
+  variable sod
+  if {![info exists sod(active)] || $sod(active) ne $key} { return }
+  if {![info exists sod($key,canvas)] || $sod($key,canvas) ne $w} { return }
+  if {[info exists sod($key,suspended)]} { return }
+  if {![catch {winfo exists $w} there] && $there} { return }
+  ase::ui::sod_release $key
+  ase::ui::sod_drop $key
 }
 
 proc ase::ui::sod_end {key} {
@@ -3198,6 +3649,7 @@ proc ase::ui::sod_end {key} {
   if {[info exists sod($key,qcolors)]} { set qcolors $sod($key,qcolors) }
   array unset sod $key,*
   if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
+  ase::ui::sod_marks_clear
   if {$mode eq {plot}} {
     catch {::ase::echo "ase: Direct Plot — $n trace(s) queued"}
     ase::ui::dp_finish $key $queue $qcolors
@@ -3215,17 +3667,21 @@ proc ase::ui::sod_end {key} {
 
 # --- cmdmode participation (issue 0201) ---------------------------------------------
 #
-# ASE's ENTIRE share of the suspend/resume contract: two arms and one register line. The
+# ASE's ENTIRE share of the suspend/resume contract: two arms, the list of what the mode
+# holds on a canvas (sod_held, beside sod_seize) and one register line. The
 # mechanism is in src/cmdmode.tcl and knows nothing about sessions, traces, waveforms or
 # graph elements (D1, the user's explicit constraint). sod_end is untouched.
 
 # Suspend arm. Release the canvas, KEEP the records: queue, qcolors, count, flavor, mode
 # and prompt all survive. This is the whole difference from sod_end, which wipes them and
-# — in plot flavour — PLOTS what it wiped. Returns 1 if a live mode was released.
+# — in plot flavour — PLOTS what it wiped. Returns 1 if a live mode was released, and 0
+# for a mode that is already paused, as the suspend arms of the two other click modes do
+# (calc::pick_suspend, rdw::pick_suspend).
 proc ase::ui::sod_suspend {} {
   variable sod
   if {![info exists sod(active)]} { return 0 }
   set key $sod(active)
+  if {[info exists sod($key,suspended)]} { return 0 }
   if {![ase::ui::sod_release $key]} { return 0 }
   # sod(active) stays SET while suspended, on purpose: select_on_design's self-serialise
   # (`if {[info exists sod(active)]} { sod_end $sod(active) }`) must still find this mode
@@ -3241,8 +3697,8 @@ proc ase::ui::sod_suspend {} {
 # select_on_design call: that re-initialises queue/qcolors and resets count to 0, i.e. it
 # would silently discard every trace the user picked before the interruption.
 #
-# The three `bind` reads below re-capture the predecessors from the canvas we are landing
-# on, so ESC/Button-1 are handed back correctly on THAT canvas when the mode finally ends
+# sod_seize re-captures the predecessors from the canvas we are landing on, so every
+# seized slot is handed back correctly on THAT canvas when the mode finally ends
 # — a new canvas has its own binding set (set_bindings + clone_canvas_bindings), and the
 # predecessors latched on the parent do not describe it.
 proc ase::ui::sod_resume {{canvas {}}} {
@@ -3250,26 +3706,21 @@ proc ase::ui::sod_resume {{canvas {}}} {
   if {![info exists sod(active)]} { return 0 }
   set key $sod(active)
   if {![info exists sod($key,suspended)]} { return 0 }
+  # `canvas` is the name of a window context (cmdmode::resume_all hands over the
+  # current one), which for a tab that is not the first is not a widget: the
+  # canvas that shows it is looked up (sod_canvas).
+  if {$canvas ne {}} { set canvas [ase::ui::sod_canvas $canvas] }
   if {$canvas eq {} || ![winfo exists $canvas]} {
     set canvas {}
     catch {set canvas $sod($key,canvas)}
   }
   if {$canvas eq {} || ![winfo exists $canvas]} {
     # Nowhere left to come back to (the window was closed while suspended). Drop the
-    # mode rather than leave an unreachable record behind; do not plot a queue the user
-    # can no longer see or extend.
-    catch {::ase::echo "ase: the design window the pick mode was on is gone — mode dropped" error}
-    array unset sod $key,*
-    unset -nocomplain sod(active)
+    # mode rather than leave an unreachable record behind (sod_drop).
+    ase::ui::sod_drop $key
     return 0
   }
-  set sod($key,canvas)    $canvas
-  set sod($key,prevpress) [bind $canvas <ButtonPress-1>]
-  set sod($key,prevrel)   [bind $canvas <ButtonRelease-1>]
-  set sod($key,prevesc)   [bind $canvas <Key-Escape>]
-  bind $canvas <ButtonPress-1>   "[list ase::ui::sod_click $key]; break"
-  bind $canvas <ButtonRelease-1> {break}
-  bind $canvas <Key-Escape>      "[list ase::ui::sod_end $key]; break"
+  ase::ui::sod_seize $key $canvas
   catch {focus $canvas}
   unset -nocomplain sod($key,suspended)
   if {[info exists sod($key,prompt)]} {
@@ -3279,7 +3730,54 @@ proc ase::ui::sod_resume {{canvas {}}} {
   return 1
 }
 
-cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume
+# TAKE THE CANVAS AGAIN AFTER THE RESULTS WINDOW'S PICK MODE WAS ENDED
+# UNDERNEATH THIS ONE. That mode nests with this one: this mode, entered while
+# it is up, keeps its scripts as what the canvas held before. Ended first -- by
+# Escape pressed in the Results window -- it writes what IT took the canvas
+# with, the editor's scripts, over this mode's live ones. This mode would stay
+# recorded as up with nothing bound: its prompt on the status bar, clicks
+# selecting, Escape doing nothing; and ended later it would hand the canvas the
+# scripts of a mode that is gone, on which no click selects again. So the end
+# of that mode (rdw::pick_end) calls this proc straight after it. This is the
+# counterpart of rdw::pick_reseat, which that mode is asked when this one is
+# ended underneath it.
+#
+# It seizes again on the canvas the mode is on (sod_seize), so what the mode
+# has on record as the canvas's own is what the canvas holds NOW, and the
+# mode's Escape then leaves an unseized canvas. Nothing else of the mode
+# moves: the rows it queued, their count, its pin markers, its prompt and the
+# prompt's one timer are as they were, and the <Destroy> hook, which the other
+# mode's end does not touch, is not added a second time (sod_seize knows its
+# own script there). The canvas is then given the keyboard, as the entry and
+# the resume give it: the mode's Escape is bound on the canvas.
+#
+# IT DOES NOTHING unless a mode is up, is not paused, its canvas is a live
+# widget, and the press slot of that canvas holds neither one of this mode's
+# own scripts (sod_own_script) nor the script of another mode that is up
+# (sod_overlaid). The last test is what makes it safe to call when nothing was
+# ended underneath: with this mode at the BOTTOM of a stack the press slot
+# holds the script of the mode on top of it, and seizing then would put this
+# mode over a mode that is up, with that mode's scripts kept as the canvas's
+# own. That test asks src/cmdmode.tcl; the test on this mode's own scripts
+# stands in front of it because it needs nothing but the slot, and where
+# cmdmode cannot be asked it is the only thing that says the canvas is already
+# this mode's. Answers 1 when it seized, else 0.
+proc ase::ui::sod_reseat {} {
+  variable sod
+  if {![info exists sod(active)]} { return 0 }
+  set key $sod(active)
+  if {[info exists sod($key,suspended)] || ![info exists sod($key,canvas)]} { return 0 }
+  set cv $sod($key,canvas)
+  if {$cv eq {} || [catch {winfo exists $cv} there] || !$there} { return 0 }
+  set now [bind $cv <ButtonPress-1>]
+  if {[ase::ui::sod_own_script $now]} { return 0 }
+  if {[ase::ui::sod_overlaid $cv $now]} { return 0 }
+  ase::ui::sod_seize $key $cv
+  catch {focus $cv}
+  return 1
+}
+
+cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume ase::ui::sod_held
 
 # The net under a mode click, as the RAW schematic token (issue 0154).
 #
@@ -3292,7 +3790,7 @@ cmdmode::register ase_sod ase::ui::sod_suspend ase::ui::sod_resume
 # unique per physical cluster and can never connect implicitly, so a fly-line
 # star for it would be meaningless; but it is a perfectly ordinary net to
 # probe, and inheriting the exclusion is what made clicking one print the
-# "source currents only" notice. A6 is NOT relaxed — the overlay, the query and
+# "nothing to queue there" notice. A6 is NOT relaxed — the overlay, the query and
 # tests/headless/test_flylines.sh keep it exactly as shipped.
 #
 # The fallback is `xschem net_name_at`, the READ-ONLY net probe (issue 0204):
@@ -3333,7 +3831,8 @@ proc ase::ui::sod_net_at {x y hit} {
 # is a voltage source or an ammeter -- a `cell::type` of `vsource` or `ammeter`
 # -- and the empty string for anything else, including a hit it cannot read.
 # ONE rule with two callers: this file's Select-On-Design click and the
-# Calculator's current selectors (`calc::pick_click`, calculator.md R208e), so
+# Calculator's current selectors (`calc::pick_imeasure`, calculator.md R208e
+# and R208f), so
 # the two gestures cannot disagree about which devices have a current to pick.
 proc ase::ui::sod_source_at {hit} {
   if {[lindex $hit 0] ne {instance}} { return {} }
@@ -3346,12 +3845,70 @@ proc ase::ui::sod_source_at {hit} {
   return $nm
 }
 
-# One mode click. Bare x/y (the canvas binding) read the last snapped mouse
-# position — kept current by the generic <Motion> binding that still flows to
-# C; tests pass explicit schematic coordinates (replayable). Classification
-# (D4): object_at miss -> nothing; source-class instance -> current output;
-# anything resolving to a net under the click (wires, net labels, labeled
-# pins — via sod_net_at) -> voltage output; else the v1 scope notice.
+# DOES THE WINDOW SHOWN HOLD THE SESSION'S DESIGN? 1 when the design of session
+# `key` is the sheet shown or one of the sheets above it in this window's
+# hierarchy (the user has descended from it), 0 when the window shows some
+# other design. The mode's bindings sit on a canvas, and with tabs every tab
+# shares that canvas -- so the mode stays armed while the user looks at another
+# design, and a click there would name that design's nets and devices into
+# this session's rows.
+#
+# 1 as well whenever the question cannot be asked: a key with no design that
+# resolves (a scripted pick with no session behind it), or a window whose
+# hierarchy cannot be read. Only a design known to be elsewhere stops a click.
+proc ase::ui::sod_design_shown {key} {
+  set dpath {}
+  catch {set dpath [ase::ui::design_path $key]}
+  if {$dpath eq {}} { return 1 }
+  set lvl {}
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl < 0} { return 1 }
+  set read 0
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p eq {}} { continue }
+    incr read
+    if {[file normalize $p] eq $dpath} { return 1 }
+  }
+  return [expr {$read ? 0 : 1}]
+}
+
+# What a click says when sod_design_shown answers 0: the session's design by
+# its library and cell, and where to click instead.
+proc ase::ui::sod_elsewhere_notice {key} {
+  set what {}
+  catch {
+    set d [ase::state_get [ase::session_state $key] design]
+    set what " '[dict get $d lib]/[dict get $d cell]'"
+  }
+  return "ase: nothing queued — this window shows neither the session's design$what\
+ nor a sheet below it; switch to that design's window or tab and click there"
+}
+
+# One mode click. Bare x/y (the canvas binding) read the pointer the engine last
+# heard of — the press's own position, which the bound script hands the engine
+# before it calls this (sod_press_script); tests
+# pass explicit schematic coordinates (replayable). A click in a window that
+# does not show the session's design queues nothing, says so and leaves the
+# mode armed (sod_design_shown) -- nets, sources and pins alike. Otherwise,
+# classification, first match wins:
+#   a device pin under the cursor (sod_terminal_at)   -> that terminal's
+#       current, queued or refused by sod_terminal_pick, and the click ends.
+#       A click ON A WIRE, off the pin's own square, is not on the pin: the
+#       pin rule says so itself and the click goes on down this list;
+#   a source-class instance (sod_source_at)           -> its current;
+#   anything resolving to a net under the click (wires, net labels, labeled
+#       pins — via sod_net_at)                        -> its voltage;
+#   something else was hit                            -> the "nothing to queue
+#       there" notice;
+#   nothing was hit                                   -> silence.
+#
+# TWO CURSOR POSITIONS, on purpose (issue 1724). The pin test asks about the
+# RAW cursor: with the snapped one, any click within half a grid step of an
+# on-grid pin would land exactly on it, and no wire end near a pin could be
+# picked for its voltage. Everything after the pin test keeps the SNAPPED
+# position it always used. With explicit coordinates both are those.
 #
 # issue 0204: the pick is READ-ONLY. It used to classify with `xschem select_at`,
 # the MUTATING coordinate pick, so every plot click left its target selected —
@@ -3367,14 +3924,39 @@ proc ase::ui::sod_source_at {hit} {
 # re-created the pick anyway (it re-selects an object; it does not re-enter
 # Direct Plot or queue anything). An honest SOD-pick log line is a separate
 # piece of work. (b) In `plot` flavour dp_hilight still paints the picked object
-# in its future trace colour (issue 0153), but `outputs` flavour paints nothing,
-# so there the selection highlight WAS the only on-canvas acknowledgement; its
-# feedback is now the CIW echo and the Outputs pane only.
+# in its future trace colour (issue 0153), but `outputs` flavour paints nothing
+# for a net or a source, so there the selection highlight WAS the only on-canvas
+# acknowledgement; its feedback is now the CIW echo and the Outputs pane only.
+# (A PIN picked in the `outputs` flavour does get a cue of its own, the marker
+# sod_terminal_pick asks for.)
 proc ase::ui::sod_click {key {x {}} {y {}}} {
   variable sod
   if {![info exists sod($key,flavor)]} { return }
-  if {$x eq {}} { set x [xschem get mousex_snap] }
-  if {$y eq {}} { set y [xschem get mousey_snap] }
+  if {![ase::ui::sod_design_shown $key]} {
+    catch {::ase::echo [ase::ui::sod_elsewhere_notice $key] error}
+    return
+  }
+  set px $x
+  set py $y
+  if {$x eq {}} { set x [xschem get mousex_snap] ; set px [xschem get mousex] }
+  if {$y eq {}} { set y [xschem get mousey_snap] ; set py [xschem get mousey] }
+  # issue 1724: a device pin comes BEFORE the source rule, so the pin of a
+  # voltage source or an ammeter is a terminal like any other and only its body
+  # is the branch current. What a device pin is lives in sod_terminal_at.
+  #
+  # A pin test that RAISES is said and then treated as "no pin there": this
+  # proc is a canvas binding followed by `break`, so an error escaping it would
+  # let the same press through to the editor as an ordinary click, and would
+  # take the wire and source picks below down with a fault that is not theirs.
+  if {[catch {ase::ui::sod_terminal_at $key $px $py} term]} {
+    catch {::ase::echo "ase: the pin test of this click failed ($term) — the click\
+ is treated as one on a wire or a source" error}
+    set term {}
+  }
+  if {[llength $term]} {
+    ase::ui::sod_terminal_pick $key $term
+    return
+  }
   # issue 0160: an EMPTY hit is not the end of the click. The hit test runs with
   # override_lock=0, so a `lock=true` wire returns nothing even though its net
   # resolves perfectly (`xschem flylines at` uses override_lock=1 and never had a
@@ -3411,8 +3993,9 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
     # this became the late return — a pick mode that scolded every miss-click
     # would be noise (issue 0160).
     if {$hit eq {}} { return }
-    catch {::ase::echo "ase: v1 queues source currents only — click a wire, a\
- net label or a voltage source/ammeter"}
+    catch {::ase::echo "ase: nothing to queue there — click a wire or a net label for a\
+ voltage, an instance pin for its terminal current, or a voltage source/ammeter for\
+ its current"}
     return
   }
   # item 13 (D1): route on the mode — `outputs` writes session outputs
@@ -3457,6 +4040,1688 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   }
 }
 
+# --- Terminal currents (issue 1724) -------------------------------------------
+# A mode click ON AN INSTANCE PIN queues the current flowing INTO that terminal,
+# `i(<path>:<tname>)` -- the vector ngspice writes for a deck card
+# `.probe I(<path>,<pin>)`. The row is the vector's own name; the deck side
+# (src/ase.tcl: ase::probe_split recognises such a row, and the probe plan turns
+# it back into the card) needs nothing else from the pick.
+#
+# Four questions are answered here, each by its own proc so a test -- or
+# another gesture that picks a pin -- can ask them one at a time:
+#   sod_terminal_at       is the click on a device pin, and on which one?
+#   sod_term_name         what does the simulator call the current into it?
+#   sod_terminal_resolve  may that pin be named here at all, and as what?
+#                         (every refusal, with its reason, and the tokens)
+#   sod_terminal_pick     queue it (or say, in one sentence, why not)
+#
+# NOTHING HERE NETLISTS. A name comes from the live sheet: the instance's own
+# netlist format, expanded by `xschem translate` with a marker standing where
+# each pin's net would be, gives the element's name and the pin's position on
+# its line; the terminal's name then follows from the element's first letter,
+# and for a subcircuit call from the callee's `.subckt` header.
+#
+# THE CUE ON THE SHEET. A pin whose pick queued something carries an ellipse
+# round it (the engine's `xschem pin_marker`): in layer 16's colour while the
+# outputs flavours of the mode are up and gone when the mode ends, in the
+# trace's colour in Direct Plot and kept with that flavour's other colours.
+# Which picks mark is in sod_terminal_pick's header; the calls are
+# sod_mark_pin, dp_hilight's `terminal` arm and sod_marks_clear.
+
+# `strboolcmp(v, "true") == 0` (src/util.c), the netlister's reading of a
+# boolean attribute: true/on/yes in any case, or an integer other than zero.
+proc ase::ui::sod_bool {v} {
+  if {[regexp {^-?[0-9]+$} $v]} { return [regexp {[1-9]} $v] }
+  return [expr {[lsearch -exact {true on yes} [string tolower $v]] >= 0 ? 1 : 0}]
+}
+
+# `tclgetboolvar(name)` (src/scheduler.c): the global Tcl switch as a boolean, 0
+# when it is unset or is not one.
+proc ase::ui::sod_tclbool {name} {
+  if {![info exists ::$name]} { return 0 }
+  return [expr {[string is true -strict [set ::$name]] ? 1 : 0}]
+}
+
+# One attribute of instance `n` (`cell::<attr>` reads its symbol) as
+# {present value}, untouched by Tcl substitution. `present` is the tokenizer's
+# own answer (`xschem get_tok_size`: the length of the attribute NAME it found),
+# so an attribute set to the empty string is told apart from one that is absent
+# -- the distinction resolve_netlist_format() makes.
+proc ase::ui::sod_attr {n attr} {
+  set v [xschem getprop instance_notcl $n $attr]
+  return [list [expr {[xschem get_tok_size] > 0 ? 1 : 0}] $v]
+}
+
+# The format string instance `n` is netlisted through, as {format source}:
+# resolve_netlist_format() (src/token.c), step for step. The attribute NAME is
+# `lvs_format` under an LVS netlist, else the custom format attribute when one
+# is set (`xschem get format`), else `format`; it is looked up on the instance,
+# then on the symbol, and when it is not plain `format` the same two are asked
+# for `format` again. `source` is `inst` or `sym` -- an instance carrying its
+# own format is written from a different string than its `.subckt` header -- and
+# both are empty when nothing answers, or when the attribute that answered is
+# set to nothing: the netlister then writes no line for the instance.
+proc ase::ui::sod_term_format {n} {
+  set attr format
+  if {[ase::ui::sod_tclbool lvs_netlist]} {
+    set attr lvs_format
+  } else {
+    set custom {}
+    catch {set custom [xschem get format]}
+    if {$custom ne {} && $custom ne {<NULL>}} { set attr $custom }
+  }
+  set tries [list [list $attr inst] [list cell::$attr sym]]
+  if {$attr ne {format}} { lappend tries {format inst} {cell::format sym} }
+  foreach t $tries {
+    lassign $t a src
+    if {[catch {ase::ui::sod_attr $n $a} r]} { return {{} {}} }
+    lassign $r present v
+    if {$present} { return [list $v [expr {$v eq {} ? {} : $src}]] }
+  }
+  return {{} {}}
+}
+
+# Is instance `n` left out of the netlist? skip_instance() (src/netlist.c) with
+# the flags set_inst_flags()/set_sym_flags() (src/actions.c) derive: the
+# instance's OR the symbol's `spice_ignore` is `short`, `open` or boolean-true;
+# and, while the `lvs_ignore` switch is on, the same for the `lvs_ignore`
+# attribute. `0`, `false` and an absent attribute are NOT ignored -- every stock
+# ammeter carries `spice_ignore=0` and is in the deck.
+proc ase::ui::sod_inst_ignored {n} {
+  set attrs spice_ignore
+  if {[ase::ui::sod_tclbool lvs_ignore]} { lappend attrs lvs_ignore }
+  foreach a $attrs {
+    foreach where [list $a cell::$a] {
+      set v {}
+      catch {set v [xschem getprop instance $n $where]}
+      if {$v eq {short} || $v eq {open} || [ase::ui::sod_bool $v]} { return 1 }
+    }
+  }
+  return 0
+}
+
+# WHAT A DEVICE IS, for the pin pick: instance `n` puts an element line into the
+# deck of session `key`. Four tests, all the netlister's own:
+#   - its symbol is not one that only carries a net (labels, ports, probes ...);
+#   - it is not ignored (sod_inst_ignored);
+#   - it is not an `only_toplevel` instance on a sheet BELOW the session's
+#     design: spice_netlist() drops those from every `.subckt` body;
+#   - its format is not empty and does not open with `*` or `.` -- a comment or
+#     a card is not an element (connectors, jumpers, `.ic`).
+# The symbol `type` is an open vocabulary, so the first test is a list of what
+# is NOT a device and never a list of what is.
+proc ase::ui::sod_inst_is_device {key n} {
+  set ctype {}
+  catch {set ctype [xschem getprop instance $n cell::type]}
+  if {[lsearch -exact {label ipin opin iopin show_label scope bus_tap noconn probe} \
+         $ctype] >= 0} { return 0 }
+  if {[ase::ui::sod_inst_ignored $n]} { return 0 }
+  set only {}
+  catch {set only [xschem getprop instance $n only_toplevel]}
+  if {[ase::ui::sod_bool $only]} {
+    set lvl 0
+    catch {set lvl [xschem get currsch]}
+    if {[string is integer -strict $lvl] && $lvl > [ase::ui::sod_base_level $key]} {
+      return 0
+    }
+  }
+  set c [string index [string trim [lindex [ase::ui::sod_term_format $n] 0]] 0]
+  if {$c eq {} || $c eq {*} || $c eq {.}} { return 0 }
+  return 1
+}
+
+# Does a wire under the cursor take the click from the device pin at (px,py)?
+# `hit` is what `xschem object_at` answers at the cursor (x,y). 1 when all of
+# these hold, 0 otherwise:
+#   - the cursor is outside the pin's own box: 2.5 units either side of the
+#     pin's point, the square the stock device symbols draw for a pin;
+#   - the object under the cursor is a wire;
+#   - the cursor's FOOT on that wire -- the nearest point of the wire's line --
+#     lies on the wire itself, not past either end, and outside the pin's box.
+# So the pin's square and the device's own lead are the terminal, and the wire
+# is the net. The third test is what keeps the lead: a wire's pick tolerance
+# reaches past its end, onto the lead of the device it ends on, and there the
+# foot is beyond the wire's end.
+proc ase::ui::sod_wire_wins {x y px py hit} {
+  set half 2.5
+  if {abs($x - $px) <= $half && abs($y - $py) <= $half} { return 0 }
+  if {[lindex $hit 0] ne {wire}} { return 0 }
+  if {[catch {xschem wire_coord [lindex $hit 1]} c] || [llength $c] != 4} { return 0 }
+  foreach v $c { if {![string is double -strict $v]} { return 0 } }
+  lassign $c x1 y1 x2 y2
+  set dx [expr {$x2 - $x1}]
+  set dy [expr {$y2 - $y1}]
+  set l2 [expr {$dx * $dx + $dy * $dy}]
+  if {$l2 == 0} { return 0 }
+  set t [expr {(($x - $x1) * $dx + ($y - $y1) * $dy) / double($l2)}]
+  if {$t < 0 || $t > 1} { return 0 }
+  set fx [expr {$x1 + $t * $dx}]
+  set fy [expr {$y1 + $t * $dy}]
+  return [expr {abs($fx - $px) > $half || abs($fy - $py) > $half ? 1 : 0}]
+}
+
+# Is the cursor (x,y) ON A WIRE near the device pin at (px,py), whatever the
+# editor's hit test names there? 1 when both hold, 0 otherwise:
+#   - the cursor is outside the pin's own box (2.5 units either side of the
+#     pin's point, as in sod_wire_wins);
+#   - some wire's nearest point to the cursor, taken ON THE WIRE -- at one of
+#     its ends when the cursor's foot falls past it -- is within the tolerance
+#     and outside the pin's box.
+# The tolerance is 2.5 units or one and a half screen pixels, whichever is
+# more (`xschem get zoom` is units per pixel).
+#
+# WHY sod_wire_wins IS NOT ENOUGH. That test trusts `xschem object_at`, and the
+# hit test scores an instance by the distance to the EDGE of its box. A net
+# label whose box lies along a wire, or the device's own box near its edge, is
+# then the answer for a cursor a fraction of a unit off the wire -- which is
+# where a pixel's centre usually is. The wires are therefore asked directly.
+#
+# The nearest point is held to the wire's ends so that the device's own lead
+# stays the terminal: past the end of a wire that ends on the pin, the nearest
+# point of that wire is the pin's point, inside the box.
+#
+# Every wire of the sheet is read (`xschem wire_coord`), so the caller asks
+# this only once a device pin is in range and sod_wire_wins has said no. A
+# wire whose coordinates cannot be read or computed with is passed over, and so
+# is one of no length.
+proc ase::ui::sod_wire_near {x y px py} {
+  set half 2.5
+  if {abs($x - $px) <= $half && abs($y - $py) <= $half} { return 0 }
+  set z 0.0
+  catch {set z [xschem get zoom]}
+  if {![string is double -strict $z]} { set z 0.0 }
+  set tol [expr {max($half, 1.5 * abs($z))}]
+  set tol2 [expr {$tol * $tol}]
+  set nw 0
+  catch {set nw [xschem get wires]}
+  if {![string is integer -strict $nw]} { return 0 }
+  ## a wire with both ends beyond the tolerance on one side of the cursor has no
+  ## point that near: it is passed over before any arithmetic
+  set xlo [expr {$x - $tol}]
+  set xhi [expr {$x + $tol}]
+  set ylo [expr {$y - $tol}]
+  set yhi [expr {$y + $tol}]
+  for {set i 0} {$i < $nw} {incr i} {
+    set near 0
+    catch {
+      lassign [xschem wire_coord $i] x1 y1 x2 y2
+      if {($x1 < $xlo && $x2 < $xlo) || ($x1 > $xhi && $x2 > $xhi)
+          || ($y1 < $ylo && $y2 < $ylo) || ($y1 > $yhi && $y2 > $yhi)} {
+        set l2 0
+      } else {
+        set dx [expr {$x2 - $x1}]
+        set dy [expr {$y2 - $y1}]
+        set l2 [expr {$dx * $dx + $dy * $dy}]
+      }
+      if {$l2 > 0} {
+        set t [expr {(($x - $x1) * $dx + ($y - $y1) * $dy) / double($l2)}]
+        set t [expr {$t < 0 ? 0.0 : ($t > 1 ? 1.0 : $t)}]
+        set fx [expr {$x1 + $t * $dx}]
+        set fy [expr {$y1 + $t * $dy}]
+        set near [expr {($fx - $x) * ($fx - $x) + ($fy - $y) * ($fy - $y) <= $tol2
+                        && (abs($fx - $px) > $half || abs($fy - $py) > $half)}]
+      }
+    }
+    if {$near} { return 1 }
+  }
+  return 0
+}
+
+# The names of the symbol pins of instance `n`, in index order.
+#
+# The engine is asked for the names first (`xschem pinlist <n> name`, one row
+# `{ {<index>} {<name>} }` for each pin), and its answer is kept when it is a
+# list whose every row is a list of two words. The engine writes each name
+# between braces as it stands, so for a name that ends in a backslash (the
+# gschem import library has symbols with such pins) that answer is no list.
+# Then each name is read off the pin's own attribute string instead (`xschem
+# pinlist <n>`, and the attribute reader for `name`), as sod_term_pins reads
+# it. That second answer is no list either when an attribute string itself
+# ends in a backslash, which is why it is not asked first: a symbol with plain
+# pin names and such an attribute beside them is read by its names.
+#
+# No name is expanded as a bus here, which sod_term_pins does: on a display
+# the engine answers a name it cannot expand with a message box that waits,
+# and the mode's prompt puts the pin rule's question again each time the
+# pointer has moved. Raises when the instance is not there, or when neither
+# answer can be read; the two callers below catch.
+proc ase::ui::sod_term_pin_names {n} {
+  if {![catch {xschem pinlist $n name} rows] && ![catch {llength $rows}]} {
+    set out {}
+    set whole 1
+    foreach row $rows {
+      if {[catch {llength $row} words] || $words != 2} { set whole 0 ; break }
+      lappend out [lindex $row 1]
+    }
+    if {$whole} { return $out }
+  }
+  set out {}
+  foreach row [xschem pinlist $n] {
+    lappend out [xschem get_tok [lindex $row 1] name]
+  }
+  return $out
+}
+
+# The point of the pin called `name` of instance `n`, {x y}, or the empty
+# string when the engine has none or it cannot be read. `xschem
+# instance_pin_coord` answers `{<name>} <x> <y>` with the name as it stands,
+# which is not a list either when the name ends in a backslash, so the two
+# numbers are taken off the end of the answer as text.
+proc ase::ui::sod_term_pin_xy {n name} {
+  if {[catch {xschem instance_pin_coord $n name $name} c]} { return {} }
+  if {![regexp {\s(\S+)\s+(\S+)\s*$} $c -> x y]} { return {} }
+  if {![string is double -strict $x] || ![string is double -strict $y]} { return {} }
+  return [list $x $y]
+}
+
+# How far the cursor (x,y) stands from the point (px,py) TOWARDS instance `n`:
+# its offset from the point, measured along the direction from the point to the
+# middle of the instance's pins. Positive on the instance's side of the point,
+# negative on the far side, 0 on the point itself and for an instance whose
+# pins give no direction (they could not be read, or their middle is the
+# point). The pins are read off the symbol (sod_term_pin_names), which prepares
+# no netlist.
+proc ase::ui::sod_term_toward {n px py x y} {
+  if {[catch {ase::ui::sod_term_pin_names $n} names]} { return 0.0 }
+  set sx 0.0
+  set sy 0.0
+  set k 0
+  foreach name $names {
+    set c [ase::ui::sod_term_pin_xy $n $name]
+    if {[llength $c] != 2} { continue }
+    lassign $c cx cy
+    set sx [expr {$sx + $cx}]
+    set sy [expr {$sy + $cy}]
+    incr k
+  }
+  if {!$k} { return 0.0 }
+  set dx [expr {$sx / $k - $px}]
+  set dy [expr {$sy / $k - $py}]
+  set len [expr {hypot($dx, $dy)}]
+  if {$len < 1e-9} { return 0.0 }
+  return [expr {(($x - $px) * $dx + ($y - $py) * $dy) / $len}]
+}
+
+# The middle of the box of instance `n` on the sheet, {x y}, or the empty
+# string when it cannot be read. The box is the SYMBOL's, without its texts
+# (the `Symbol:` line of `xschem instance_bbox`, in the symbol's own
+# coordinates), put on the sheet by the instance's origin, rotation and flip
+# (the last four words of `xschem instance_coord`) the way the engine places
+# every point of a symbol. The instance's own box (`Instance:`) is not used: it
+# holds the symbol's texts, and a title that reaches over a neighbour moves its
+# middle to the neighbour's side.
+proc ase::ui::sod_term_box_centre {n} {
+  if {[catch {xschem instance_bbox $n} box]} { return {} }
+  if {![regexp {Symbol: (\S+) (\S+) (\S+) (\S+)} $box -> x1 y1 x2 y2]} { return {} }
+  if {[catch {xschem instance_coord $n} co]} { return {} }
+  if {![regexp {(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*$} $co -> x0 y0 rot flip]} { return {} }
+  foreach v [list $x1 $y1 $x2 $y2 $x0 $y0] {
+    if {![string is double -strict $v]} { return {} }
+  }
+  if {![string is integer -strict $rot] || ![string is integer -strict $flip]} { return {} }
+  set cx [expr {($x1 + $x2) / 2.0}]
+  set cy [expr {($y1 + $y2) / 2.0}]
+  if {$flip} { set cx [expr {-$cx}] }
+  switch -- $rot {
+    1 { lassign [list [expr {-$cy}] $cx] cx cy }
+    2 { lassign [list [expr {-$cx}] [expr {-$cy}]] cx cy }
+    3 { lassign [list $cy [expr {-$cx}]] cx cy }
+  }
+  return [list [expr {$x0 + $cx}] [expr {$y0 + $cy}]]
+}
+
+# sod_term_toward's measure with the middle of the instance's BOX standing for
+# the middle of its pins: how far the cursor (x,y) stands from the point
+# (px,py) towards the middle of the box of instance `n` (sod_term_box_centre).
+# 0 for a box that cannot be read, or whose middle is the point.
+#
+# It is asked where sod_term_toward says nothing about an instance's side. A
+# symbol with every pin on ONE edge has the middle of its pins on that edge, so
+# towards it is along the edge and says nothing about which side the body is
+# on; the box always has a side.
+proc ase::ui::sod_term_toward_box {n px py x y} {
+  set c [ase::ui::sod_term_box_centre $n]
+  if {[llength $c] != 2} { return 0.0 }
+  set dx [expr {[lindex $c 0] - $px}]
+  set dy [expr {[lindex $c 1] - $py}]
+  set len [expr {hypot($dx, $dy)}]
+  if {$len < 1e-9} { return 0.0 }
+  return [expr {(($x - $px) * $dx + ($y - $py) * $dy) / $len}]
+}
+
+# DO THE PINS OF INSTANCE `n` SAY NOTHING ABOUT WHICH SIDE OF THE POINT (px,py)
+# ITS BODY IS ON? 1 when
+#   - the middle of its pins is the point itself (a one-pin symbol, the middle
+#     pin of a block whose pins are all on one edge), or
+#   - every pin lies on one line through the point -- the line towards the
+#     middle of the pins -- while the middle of its box (sod_term_box_centre)
+#     is more than 5 units off that line: the pins run along an edge and the
+#     body is beside it. 5 units is the side of the square the stock symbols
+#     draw for a pin.
+# and when its pins cannot be read at all. 0 otherwise: a resistor's two pins
+# are on one line through either of them, and so is the middle of its box, so
+# its pins do say where its body is. 0 as well when the pins are on one line
+# and the box cannot be read. A two-pin symbol whose drawing is lopsided by
+# more than 5 units (the stock led.sym) answers 1 as well; the box measure
+# still takes the device whose lead the cursor is on.
+#
+# LIMIT: 0 for an instance whose symbol has two pins of one name, because the
+# pins are placed by name here and for a name used twice the engine answers
+# the first pin of that name: such a symbol's pins cannot be placed, so nothing
+# is claimed about them.
+proc ase::ui::sod_term_edge_on {n px py} {
+  if {[catch {ase::ui::sod_term_pin_names $n} names]} { return 1 }
+  if {[llength [lsort -unique $names]] != [llength $names]} { return 0 }
+  set pts {}
+  set sx 0.0
+  set sy 0.0
+  foreach name $names {
+    set c [ase::ui::sod_term_pin_xy $n $name]
+    if {[llength $c] != 2} { continue }
+    lassign $c cx cy
+    lappend pts [list $cx $cy]
+    set sx [expr {$sx + $cx}]
+    set sy [expr {$sy + $cy}]
+  }
+  if {![llength $pts]} { return 1 }
+  set dx [expr {$sx / [llength $pts] - $px}]
+  set dy [expr {$sy / [llength $pts] - $py}]
+  set len [expr {hypot($dx, $dy)}]
+  if {$len < 1e-9} { return 1 }
+  foreach p $pts {
+    if {abs(([lindex $p 0] - $px) * $dy - ([lindex $p 1] - $py) * $dx) / $len > 1e-6} { return 0 }
+  }
+  set c [ase::ui::sod_term_box_centre $n]
+  if {[llength $c] != 2} { return 0 }
+  return [expr {abs(([lindex $c 0] - $px) * $dy - ([lindex $c 1] - $py) * $dx) / $len > 5.0 ? 1 : 0}]
+}
+
+# THE PIN RULE: is the point (x,y) on a device pin, and on which one? Answers a
+# dict {inst pin instname pinname x y others} or the empty string, and reads
+# only -- `xschem pin_at` and `xschem object_at` select, draw and log nothing.
+#
+# IN RANGE. A pin counts when the pin-select click would reach it AND it is
+# within 10 schematic units. The first is `xschem pin_at -all`'s own test: the
+# point is within 12 screen pixels of the pin (a radius that grows with the
+# zoom value), or inside the pin's drawn rectangle, which keeps the whole of
+# that square the pin when the sheet is zoomed in until the radius is smaller
+# than it. The second bound is what keeps the body of a source pickable on a
+# sheet seen from far away, where the pixel radius alone reaches from a
+# source's pin to the middle of its body.
+#
+# WHICH PIN. `pin_at -all` answers nearest first (then instance, then pin
+# index). A pin of something that is not a device (sod_inst_is_device: a net
+# label, a port) that is STRICTLY nearer than every device pin makes the click
+# an ordinary voltage pick -- the empty answer. At the same distance the device
+# wins.
+#
+# A CLICK ON A WIRE IS THE WIRE. A device pin in range does not take a click
+# that is on a wire and off the pin's own square: the answer is empty and the
+# click is the voltage pick it always was. Without this a wire of twenty units
+# or less between two device pins had no point left on it that picked its net,
+# at any zoom where the pixel radius is past the 10 units. Two tests say "on a
+# wire", and either is enough: the editor's hit test names a wire under the
+# cursor (sod_wire_wins), or a wire passes within a pixel or two of the cursor
+# although the hit test names something else there (sod_wire_near).
+#
+# SEVERAL DEVICE PINS ON ONE POINT (two abutting devices). They are equally
+# near wherever the cursor stands, so distance cannot choose. The device on
+# whose SIDE of the point the cursor stands is taken: a click on a device's
+# lead or body near the shared point is that device's terminal. The side is
+# measured towards the middle of the instance's pins (sod_term_toward) and,
+# between two instances that measure gives the same value, towards the middle
+# of the instance's box (sod_term_toward_box).
+#
+# THE TWO MEASURES ARE NEVER COMPARED WITH EACH OTHER. For an instance whose
+# pins say nothing about the side its body is on -- every pin on one edge, or
+# one pin only (sod_term_edge_on) -- the pin measure runs along the edge, or is
+# zero, and held against another instance's it lets the side of the lead's AXIS
+# the cursor is on choose the device. So when any sharer of the point is such
+# an instance, EVERY sharer is measured by its box.
+#
+# With the cursor exactly on the point, or no more on one device's side than on
+# another's by the measure in use, `pin_at`'s order decides (lowest instance
+# index). `others` lists the rest as {instname pinname} pairs, so the caller
+# can say which one it took: one click never queues two terminals.
+#
+# The side is NOT asked of `xschem object_at`. Where two symbols' boxes overlap
+# -- the pin squares of two abutting devices always do -- the editor's hit test
+# answers the instance whose box EDGE is nearest, and within that band it is
+# the device on the far side of the point.
+#
+# Not gated on `en_pin_select`: that switch is about SELECTING pins in the
+# editor, and this mode selects nothing.
+proc ase::ui::sod_terminal_at {key x y} {
+  if {![string is double -strict $x] || ![string is double -strict $y]} { return {} }
+  if {[catch {xschem pin_at $x $y -all} rows]} { return {} }
+  set dev {}
+  set nearest_other {}
+  foreach r $rows {
+    if {[llength $r] != 6} { continue }
+    lassign $r n j iname pname px py
+    if {![string is double -strict $px] || ![string is double -strict $py]} { continue }
+    set d [expr {hypot($px - $x, $py - $y)}]
+    if {$d > 10.0} { continue }
+    if {[ase::ui::sod_inst_is_device $key $n]} {
+      lappend dev [list $d $n $j $iname $pname $px $py]
+    } elseif {$nearest_other eq {} || $d < $nearest_other} {
+      set nearest_other $d
+    }
+  }
+  if {![llength $dev]} { return {} }
+  lassign [lindex $dev 0] d n j iname pname px py
+  if {$nearest_other ne {} && $nearest_other < $d} { return {} }
+  set hit {}
+  catch {set hit [xschem object_at $x $y]}
+  if {[ase::ui::sod_wire_wins $x $y $px $py $hit]} { return {} }
+  if {[ase::ui::sod_wire_near $x $y $px $py]} { return {} }
+  set same {}
+  foreach r $dev {
+    if {[lindex $r 5] == $px && [lindex $r 6] == $py} { lappend same $r }
+  }
+  if {[llength $same] > 1} {
+    ## one measure for every sharer: the box when the pins of any of them say
+    ## nothing about its side, the pins otherwise
+    set usebox 0
+    foreach r $same {
+      if {[ase::ui::sod_term_edge_on [lindex $r 1] $px $py]} { set usebox 1 ; break }
+    }
+    ## `best` is the side of the instance held so far by that measure;
+    ## `bestbox` its side by its box where the pins were the measure and gave
+    ## two instances the same value -- worked out only when such a tie asks
+    set best {}
+    set bestbox {}
+    foreach r $same {
+      set m [lindex $r 1]
+      if {$usebox} {
+        set side [ase::ui::sod_term_toward_box $m $px $py $x $y]
+      } else {
+        set side [ase::ui::sod_term_toward $m $px $py $x $y]
+      }
+      set box {}
+      if {$best eq {}} {
+        set take 1
+      } elseif {abs($side - $best) > 1e-9} {
+        set take [expr {$side > $best}]
+      } elseif {$usebox} {
+        set take 0
+      } else {
+        if {$bestbox eq {}} { set bestbox [ase::ui::sod_term_toward_box $n $px $py $x $y] }
+        set box [ase::ui::sod_term_toward_box $m $px $py $x $y]
+        set take [expr {$box > $bestbox + 1e-9}]
+      }
+      if {$take} {
+        set best $side
+        set bestbox $box
+        lassign $r d n j iname pname
+      }
+    }
+  }
+  set others {}
+  foreach r $same {
+    if {[lindex $r 1] == $n && [lindex $r 2] == $j} { continue }
+    lappend others [list [lindex $r 3] [lindex $r 4]]
+  }
+  return [dict create inst $n pin $j instname $iname pinname $pname \
+            x $px y $py others $others]
+}
+
+# The symbol pins of instance `n` in index order, one row each:
+#   <index> <name> <ignored 0|1> <width>
+# `ignored` is the pin's OWN `spice_ignore`, read as the netlister reads it
+# (boolean only: `short` and `open` mean something for an instance, not for a
+# pin); `width` is the number of bits its name expands to.
+proc ase::ui::sod_term_pins {n} {
+  set out {}
+  foreach row [xschem pinlist $n] {
+    set idx [string trim [lindex $row 0]]
+    set prop [lindex $row 1]
+    set name [xschem get_tok $prop name]
+    set w [llength [ase::ui::sod_bits $name]]
+    lappend out [list $idx $name [ase::ui::sod_bool [xschem get_tok $prop spice_ignore]] \
+                   [expr {$w < 1 ? 1 : $w}]]
+  }
+  return $out
+}
+
+# The text standing for pin `idx` in a marked format: the `?<width>` tag the
+# netlister itself writes ahead of a pin's nets, then a word no net is called.
+proc ase::ui::sod_term_mark {idx w} { return "?$w __TPIN_${idx}__" }
+
+# Format `fmt` cut into pieces {kind text}, in order. The kinds are the three
+# tokens the netlister replaces by A PIN'S NETS (print_spice_element(),
+# src/token.c) and `text` for everything else:
+#   pinlist   @pinlist   every pin in index order, minus the ignored ones, each
+#                        NAME once
+#   named     @@<name>   the first pin of that name, unless it is ignored
+#   numbered  @#<n>      pin number <n>, or the first pin NAMED <n>, unless it is
+#                        ignored (`@#<n>:<attr>` asks for an attribute, not for
+#                        the net: that is `text`)
+# A backslash-escaped character is `text` with its backslash, so `xschem
+# translate` still sees it escaped.
+proc ase::ui::sod_term_pieces {fmt} {
+  set out {}
+  set text {}
+  set len [string length $fmt]
+  set k 0
+  while {$k < $len} {
+    set c [string index $fmt $k]
+    if {$c eq "\\"} {
+      append text $c [string index $fmt [expr {$k + 1}]]
+      incr k 2
+      continue
+    }
+    if {$c ne {@}} { append text $c ; incr k ; continue }
+    ## one token: `@`, an optional second `@` or `#`, then up to the next
+    ## whitespace, `@`, `%` or backslash
+    set e [expr {$k + 1}]
+    set c2 [string index $fmt $e]
+    if {$c2 eq {@} || $c2 eq {#}} { incr e }
+    while {$e < $len && ![regexp {[\s@%\\]} [string index $fmt $e]]} { incr e }
+    set tok [string range $fmt $k [expr {$e - 1}]]
+    set k $e
+    set kind text
+    if {$tok eq {@pinlist}} {
+      set kind pinlist
+    } elseif {[string range $tok 0 1] eq {@@}} {
+      set kind named
+    } elseif {[string range $tok 0 1] eq "@#" && ![ase::ui::sod_term_has_attr $tok]} {
+      set kind numbered
+    }
+    if {$kind eq {text}} { append text $tok ; continue }
+    if {$text ne {}} { lappend out [list text $text] ; set text {} }
+    lappend out [list $kind $tok]
+  }
+  if {$text ne {}} { lappend out [list text $text] }
+  return $out
+}
+
+# Those pieces put back together with a marker in place of each pin token --
+# the format `xschem translate` is then asked to expand. `pins` is
+# sod_term_pins' answer.
+proc ase::ui::sod_term_rewrite {pins pieces} {
+  set seen [dict create]
+  set pl {}
+  foreach p $pins {
+    lassign $p idx name ign w
+    if {$ign || [dict exists $seen $name]} { continue }
+    dict set seen $name 1
+    lappend pl [ase::ui::sod_term_mark $idx $w]
+  }
+  set out {}
+  foreach piece $pieces {
+    lassign $piece kind tok
+    if {$kind eq {text}} { append out $tok ; continue }
+    if {$kind eq {pinlist}} { append out [join $pl { }] ; continue }
+    set want [string range $tok 2 end]
+    set byindex [expr {$kind eq {numbered} && [regexp {^-?[0-9]+$} $want]}]
+    if {$byindex} { scan $want %d want }
+    foreach p $pins {
+      lassign $p idx name ign w
+      if {$byindex ? ($idx != $want) : ($name ne $want)} { continue }
+      if {!$ign} { append out [ase::ui::sod_term_mark $idx $w] }
+      break
+    }
+  }
+  return $out
+}
+
+# Does an `@#<pin>...` token ask for a pin ATTRIBUTE (`@#0:net_name`)? The
+# attribute follows the first `:` that is not inside the pin's own bus brackets
+# (`@#A[3:0]` has none), as get_pin_and_attr() (src/token.c) reads it.
+proc ase::ui::sod_term_has_attr {tok} {
+  set depth 0
+  foreach c [split [string range $tok 2 end] {}] {
+    if {$c eq {[}} { set depth 1 } elseif {$c eq {]}} { set depth 0 } \
+    elseif {$c eq {:} && !$depth} { return 1 }
+  }
+  return 0
+}
+
+# The element line(s) instance `n` netlists as, with the pin markers in place
+# of the nets: a list of token lists. `+` continuation lines are joined, and
+# comment and card lines (`*`, `.`) dropped -- neither is an element. Raises
+# what `xschem translate` raises.
+proc ase::ui::sod_term_lines {n marked} {
+  set logical {}
+  foreach raw [split [xschem translate $n $marked] "\n"] {
+    set t [string trim $raw]
+    if {$t eq {}} { continue }
+    if {[string index $t 0] eq {+} && [llength $logical]} {
+      lset logical end "[lindex $logical end] [string trim [string range $t 1 end]]"
+      continue
+    }
+    lappend logical $t
+  }
+  set out {}
+  foreach t $logical {
+    set c [string index $t 0]
+    if {$c eq {*} || $c eq {.}} { continue }
+    lappend out [regexp -all -inline {\S+} $t]
+  }
+  return $out
+}
+
+# Where pin `j` lands on those lines: one {element position width untagged
+# callee} row per marker of that pin (a pin written twice has two).
+#   position  1-based node position on the line: one plus the widths of
+#             everything ahead of the marker. A `?<w>` tag gives a word its
+#             width; an untagged word counts one.
+#   untagged  the untagged words ahead of the marker. On a subcircuit call they
+#             are nodes (an extra supply node written into the format); on any
+#             other element they may be anything, and the caller refuses.
+#   callee    the last word ahead of the first `<k>=<v>` word, which is where a
+#             subcircuit call names what it calls.
+proc ase::ui::sod_term_where {lines j} {
+  set hits {}
+  foreach toks $lines {
+    set pos 1
+    set untagged {}
+    set callee {}
+    set found {}
+    for {set k 1} {$k < [llength $toks]} {incr k} {
+      set t [lindex $toks $k]
+      set w 1
+      set tagged [regexp {^\?(-?[0-9]+)$} $t -> w]
+      if {$tagged} { incr k ; set t [lindex $toks $k] }
+      if {[string first = $t] >= 0} { break }
+      set callee $t
+      if {[regexp {^__TPIN_([0-9]+)__$} $t -> idx]} {
+        if {$idx == $j} { lappend found [list $pos $w $untagged] }
+      } elseif {!$tagged} {
+        lappend untagged $t
+      }
+      incr pos [expr {$w < 1 ? 1 : $w}]
+    }
+    foreach f $found {
+      lassign $f p w u
+      lappend hits [list [lindex $toks 0] $p $w $u $callee]
+    }
+  }
+  return $hits
+}
+
+# THE `.subckt` HEADER READER IS THE CORE'S (src/ase.tcl: ase::subckt_scan,
+# ase::subckt_walk, ase::subckt_lib). A pin click that has to be named and a
+# `.probe` card that has to carry a port's position ask the same question, so
+# the three procs below hold no rule of their own: each hands its arguments to
+# the core's and answers what that answers. The names stay because this file's
+# port lookups and the pick suite call them.
+#
+#   sod_subckt_scan text section   the headers of one netlist or model text and
+#                                  the files it pulls in: {subckts cards}
+#   sod_subckt_walk cards          every header reachable from `cards`
+#                                  ({<absolute file> <section>} rows), and the
+#                                  mtime of every file looked at: {subckts stamps}
+#   sod_subckt_lib cards           that walk, remembered until a file it read
+#                                  changes; the memory is the core's
+proc ase::ui::sod_subckt_scan {text section} { return [ase::subckt_scan $text $section] }
+proc ase::ui::sod_subckt_walk {cards} { return [ase::subckt_walk $cards] }
+proc ase::ui::sod_subckt_lib {cards} { return [ase::subckt_lib $cards] }
+
+# The `device_model` text instance `n` puts into the deck, with its tokens
+# expanded, or the empty string. The instance's own is the one the netlister
+# writes when it is not empty, and only otherwise the symbol's
+# (spice_netlist(), src/spice_netlist.c): the two are never both in the deck.
+proc ase::ui::sod_term_device_model {n} {
+  foreach attr {device_model cell::device_model} {
+    if {[catch {ase::ui::sod_attr $n $attr} r]} { continue }
+    lassign $r present text
+    if {!$present || [string trim $text] eq {}} { continue }
+    catch {set text [xschem translate $n $text]}
+    if {[string trim $text] eq {}} { continue }
+    return $text
+  }
+  return {}
+}
+
+# `.include`/`.lib` cards ({<file as written> <section>} rows) as the absolute
+# files the simulator would open: Tcl variables and `~` expanded as the deck
+# writer expands them, a relative path taken from the run directory `rd`. A
+# card whose path cannot be expanded or is empty is dropped.
+proc ase::ui::sod_term_abs_cards {cards rd} {
+  set abs {}
+  foreach c $cards {
+    lassign $c f sec
+    if {[catch {ase::expand_path $f} f] || [string trim $f] eq {}} { continue }
+    if {[file pathtype $f] ne {absolute}} { set f [file join $rd $f] }
+    lappend abs [list [file normalize $f] $sec]
+  }
+  return $abs
+}
+
+# The `.include`/`.lib` cards of the netlist ASE-L last made for the design of
+# state `st`, read off the netlist FILE while the facts slot still names it for
+# this design but is no longer warm (the sheet was edited, or the file was
+# rewritten); the empty list when the slot is about another design, or holds
+# nothing. Only the cards: a model file does not move with a sheet edit, so the
+# files such a netlist names are still the ones the next deck will name, while
+# a `.subckt` written IN it describes a sheet that has changed since.
+#
+# Which file that is, is the core's to say (`ase::facts_netlist_file`,
+# src/ase.tcl): the slot itself is not read from here.
+#
+# `::open` AND `::close`, NOT THE BARE WORDS. Inside namespace ase::ui those are
+# the session-window procs ase::ui::open and ase::ui::close; the bare `open`
+# raises on its argument count, and the `catch` around the read would turn
+# that into "no cards".
+proc ase::ui::sod_term_stale_cards {st} {
+  set cards {}
+  catch {
+    set path [ase::facts_netlist_file $st]
+    if {$path ne {}} {
+      set fh [::open $path r]
+      set text {}
+      catch {set text [read $fh]}
+      ::close $fh
+      set cards [lindex [ase::ui::sod_subckt_scan $text {}] 1]
+    }
+  }
+  return $cards
+}
+
+# What a user can do when no `.subckt` header is in hand, as the one clause the
+# caution and the refusals of sod_term_name end with. The model files are named
+# by the menu entry that lists them.
+proc ase::ui::sod_term_header_remedy {} {
+  return "netlist the design from ASE-L (or run), or name the model file under\
+ Setup > Model Files, then pick again"
+}
+
+# WHY NO `.subckt` HEADER NAMES A PORT OF `callee`, in the words the caution and
+# the refusal of sod_term_name are built from: {<what is known> <what to do>}.
+# `place` and `lists` are sod_term_port_lists' answer -- or `symdef` and the one
+# header of a `spice_sym_def` -- and `need` is the position on the call line a
+# port has to be found for. Three cases, told apart so that each sentence is
+# true:
+#   - no header at all                        -> sod_term_header_remedy;
+#   - several headers whose ports differ      -> where they are, and that one
+#     definition has to be left there;
+#   - one header with fewer than `need` ports -> its port count against the
+#     position asked for.
+proc ase::ui::sod_term_header_gap {callee place lists need} {
+  if {[llength $lists] > 1} {
+    switch -- $place {
+      netlist {
+        return [list "the design's netlist holds more than one .subckt header for '$callee'\
+ and their ports differ" "leave one definition of '$callee' in the design, netlist it from\
+ ASE-L (or run), then pick again"]
+      }
+      device_model {
+        return [list "its device_model holds more than one .subckt header for '$callee' and\
+ their ports differ" "leave one definition of '$callee' in that device_model, then pick again"]
+      }
+      default {
+        return [list "the session's model files hold more than one .subckt header for\
+ '$callee' and their ports differ" "leave one definition of '$callee' in the model files\
+ (Setup > Model Files), then pick again"]
+      }
+    }
+  }
+  if {[llength $lists] == 1} {
+    set have [llength [lindex $lists 0]]
+    set s [expr {$have == 1 ? {} : {s}}]
+    set todo [ase::ui::sod_term_header_remedy]
+    if {$place eq {symdef}} {
+      set todo "give the .subckt header in its spice_sym_def a port for every node of the\
+ call, then pick again"
+    }
+    return [list "the .subckt header known for '$callee' has $have port$s, too few for that\
+ pin, which is node $need of the call" $todo]
+  }
+  return [list "no .subckt header for '$callee' is known" [ase::ui::sod_term_header_remedy]]
+}
+
+# EVERY DIFFERENT PORT LIST session `key` has for subcircuit `callee`, with the
+# place that holds them: {<place> <lists>}, or {{} {}} when no header for it is
+# in hand. `lists` is one port list per DIFFERENT `.subckt` header of that name
+# in that place. Three places are asked, in this order, and the first one that
+# has the name answers:
+#   netlist       the netlist ASE-L last made for this design, while it is
+#                 still current (`ase::facts_netlist_text`: empty unless the
+#                 facts slot is warm) -- that is where an xschem-netlisted
+#                 block's header is;
+#   device_model  the `device_model` text of instance `n`
+#                 (sod_term_device_model), and the files that text includes --
+#                 the netlister copies it into the deck, so it is known before
+#                 anything has been netlisted. Skipped when `n` is not given;
+#   models        the model files the session's deck will name: its `includes`
+#                 and `models` rows, plus the `.include`/`.lib` cards of that
+#                 netlist, followed through the files (sod_subckt_lib) -- that
+#                 is where a PDK wrapper's is. The list is the core's
+#                 (`ase::subckt_model_cards`, src/ase.tcl), the one the deck
+#                 side reads a numbered port's position from. The netlist's
+#                 cards are still followed after the netlist has gone stale
+#                 (sod_term_stale_cards).
+# A relative model path is taken from the run directory, as the simulator
+# takes it.
+proc ase::ui::sod_term_port_lists {key callee {n {}}} {
+  set nm [string tolower $callee]
+  set st [ase::session_state $key]
+  set deck {}
+  catch {set deck [ase::facts_netlist_text $st]}
+  set subckts [lindex [ase::ui::sod_subckt_scan $deck {}] 0]
+  if {[dict exists $subckts $nm]} { return [list netlist [dict get $subckts $nm]] }
+  set rd {}
+  catch {set rd [ase::state_get $st rundir]}
+  if {$rd eq {}} { catch {set rd [ase::rundir_default_preview]} }
+  if {$n ne {}} {
+    set dm {}
+    catch {set dm [ase::ui::sod_term_device_model $n]}
+    if {$dm ne {}} {
+      lassign [ase::ui::sod_subckt_scan $dm {}] subckts dmcards
+      if {![dict exists $subckts $nm] && [llength $dmcards]} {
+        set subckts [lindex [ase::ui::sod_subckt_walk \
+                               [ase::ui::sod_term_abs_cards $dmcards $rd]] 0]
+      }
+      if {[dict exists $subckts $nm]} { return [list device_model [dict get $subckts $nm]] }
+    }
+  }
+  ## the session's rows and the warm netlist's cards, as the core assembles
+  ## them for the deck side; a stale netlist's cards are put behind them here
+  set abs [ase::subckt_model_cards $st $deck]
+  if {$deck eq {}} {
+    lappend abs {*}[ase::ui::sod_term_abs_cards [ase::ui::sod_term_stale_cards $st] $rd]
+  }
+  if {![llength $abs]} { return {{} {}} }
+  set subckts [ase::ui::sod_subckt_lib $abs]
+  if {![dict exists $subckts $nm]} { return {{} {}} }
+  return [list models [dict get $subckts $nm]]
+}
+
+# The ports of subcircuit `callee` as session `key` will simulate it, or the
+# empty list when no header for it is in hand, or when the place that answers
+# holds several whose ports differ: sod_term_port_lists' one list, and nothing
+# when it has none or more than one. Which of several the simulator would use
+# is not guessed here.
+proc ase::ui::sod_term_ports {key callee {n {}}} {
+  set lists [lindex [ase::ui::sod_term_port_lists $key $callee $n] 1]
+  return [expr {[llength $lists] == 1 ? [lindex $lists 0] : {}}]
+}
+
+# The name of the block instance ABOVE the current sheet whose `spiceprefix`
+# makes the hierarchy path wrong, or the empty string (issue 0488).
+#
+# `xschem get sch_path` spells each level by the instance's NAME, while the
+# deck spells it by the element the format wrote -- `XSUB1` for a block
+# `name=SUB1 spiceprefix=X`. A path built from sch_path would then name nothing
+# in the deck, so the pick is refused for every level between the session's
+# design and the current sheet where the prefix is in force: the `spiceprefix`
+# switch is on, and the attribute is non-empty on the instance, or absent
+# there and non-empty in the symbol's template. (The clicked instance's own
+# prefix is not the concern: its element comes off its marked line.)
+#
+# The two strings are `lcc[<level>].prop_ptr` and `lcc[<level>].templ` of
+# `xschem globals`. A template is routinely several lines long and is printed
+# verbatim, so a value runs to the next line that opens another key, not to the
+# next newline (the scan op_annot::_lcc_attr makes for the level above only).
+proc ase::ui::sod_term_prefixed_ancestor {key} {
+  if {![ase::ui::sod_tclbool spiceprefix]} { return {} }
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl < 1} { return {} }
+  if {[catch {xschem globals} g]} { return {} }
+  set vals [dict create]
+  set cur {}
+  foreach l [split $g "\n"] {
+    if {[regexp {^lcc\[([0-9]+)\]\.(prop_ptr|templ)=(.*)$} $l -> L which rest]} {
+      set cur [list $L $which]
+      dict set vals $cur $rest
+    } elseif {[regexp {^(lcc\[[0-9]+\]\.|previous_instance\[|sch_path\[|sch\[|modified=)} $l]} {
+      set cur {}
+    } elseif {$cur ne {}} {
+      dict append vals $cur "\n$l"
+    }
+  }
+  for {set L [ase::ui::sod_base_level $key]} {$L < $lvl} {incr L} {
+    set pp {}
+    set tp {}
+    catch {set pp [dict get $vals [list $L prop_ptr]]}
+    catch {set tp [dict get $vals [list $L templ]]}
+    if {$pp eq {<NULL>}} { set pp {} }
+    if {$tp eq {<NULL>}} { set tp {} }
+    set v [xschem get_tok $pp spiceprefix]
+    if {$v eq {} && [xschem get_tok_size] == 0} { set v [xschem get_tok $tp spiceprefix] }
+    if {$v ne {}} {
+      set nm [xschem get_tok $pp name]
+      return [expr {$nm ne {} ? $nm : {(unnamed)}}]
+    }
+  }
+  return {}
+}
+
+# Terminal `pos` (1-based) of a primitive element, by the element's letter --
+# what ngspice calls the current into that node. The letters that name their
+# terminals have a table; every other element answers `n<position>`, and so does
+# a position past the end of a table.
+proc ase::ui::sod_term_letter_name {letter pos} {
+  switch -- [string tolower $letter] {
+    m { set t {d g s b_tj tc n6 n7} }
+    q { set t {c b e s t} }
+    j - z { set t {d g s} }
+    d { set t {a c} }
+    default { set t {} }
+  }
+  set nm [lindex $t [expr {$pos - 1}]]
+  if {$nm eq {}} { return n$pos }
+  return $nm
+}
+
+# Is instance `n` a block xschem writes the `.subckt` body of itself, from the
+# same symbol the call line is written from? Then the callee's ports ARE the
+# symbol's pins, name for name, and no header has to be found. All of these
+# must hold (global_spice_netlist()/spice_block_netlist(), src/spice_netlist.c):
+# the symbol is a `subcircuit`; the call line comes off the SYMBOL's format
+# (`fsrc`, from sod_term_format: an instance format is not what the header was
+# written from); nothing replaces the body (`spice_sym_def`, on the instance or
+# the symbol); it is not a `spice_primitive`; its `default_schematic` is not
+# `ignore`; and its path matches none of the `xschem_libs` patterns, which mark
+# libraries whose cells are not netlisted.
+proc ase::ui::sod_term_own_block {n fsrc} {
+  if {$fsrc ne {sym}} { return 0 }
+  set v {}
+  catch {set v [xschem getprop instance $n cell::type]}
+  if {$v ne {subcircuit}} { return 0 }
+  if {[ase::ui::sod_term_sym_def $n] ne {}} { return 0 }
+  set v {}
+  catch {set v [xschem getprop instance $n cell::spice_primitive]}
+  if {[ase::ui::sod_bool $v]} { return 0 }
+  set v {}
+  catch {set v [xschem getprop instance $n cell::default_schematic]}
+  if {$v eq {ignore}} { return 0 }
+  set path {}
+  catch {set path [abs_sym_path [xschem getprop instance $n cell::name]]}
+  if {[info exists ::xschem_libs]} {
+    foreach pat $::xschem_libs {
+      if {![catch {regexp -- $pat $path} hit] && $hit} { return 0 }
+    }
+  }
+  return 1
+}
+
+# The `spice_sym_def` instance `n` is netlisted with -- the instance's own, else
+# its symbol's, as has_included_subcircuit() (src/token.c) looks -- with its
+# tokens expanded; the empty string when there is none.
+proc ase::ui::sod_term_sym_def {n} {
+  foreach attr {spice_sym_def cell::spice_sym_def} {
+    if {[catch {ase::ui::sod_attr $n $attr} r]} { continue }
+    lassign $r present def
+    if {!$present || [string trim $def] eq {}} { continue }
+    catch {set def [xschem translate $n $def]}
+    return $def
+  }
+  return {}
+}
+
+# The ports of `callee` as a `spice_sym_def` text declares them, or the empty
+# list. The text is either the `.subckt` itself or one `.include <file>` line
+# naming a file that holds it, found the way the netlister finds it
+# (`abs_sym_path`). The first header of that name is the one the netlister
+# takes.
+proc ase::ui::sod_term_sym_def_ports {def callee} {
+  set nm [string tolower $callee]
+  lassign [ase::ui::sod_subckt_scan $def {}] subckts cards
+  if {![dict exists $subckts $nm] && [llength $cards]} {
+    set abs {}
+    foreach c $cards {
+      set f [lindex $c 0]
+      catch {set f [abs_sym_path $f]}
+      lappend abs [list $f [lindex $c 1]]
+    }
+    set subckts [lindex [ase::ui::sod_subckt_walk $abs] 0]
+  }
+  if {![dict exists $subckts $nm]} { return {} }
+  return [lindex [dict get $subckts $nm] 0]
+}
+
+# WHAT THE SIMULATOR CALLS THE CURRENT INTO PIN `j` OF INSTANCE `n`: a dict
+#   {ok 1 tokens <list> label <text> caution <text>}   or   {ok 0 why <text>}
+# `tokens` are `<path>:<tname>` in the netlist's own spelling, one per instance
+# bit times pin bit (a bus instance and a bus pin each multiply); sod_expr wraps
+# and folds them. `label` names the pick as the schematic spells it, for the bit
+# dialog. `caution`, when not empty, is a sentence the caller must show.
+# `why` completes "cannot name the terminal current of <inst> pin <pin> -- ...".
+#
+#   ELEMENT and POSITION come off the marked line (sod_term_format ->
+#   sod_term_pieces -> sod_term_rewrite -> sod_term_lines -> sod_term_where).
+#   The element is that line's FIRST WORD and never `@spiceprefix@name`: a
+#   format that does not write the prefix netlists the bare name, whatever the
+#   instance's `spiceprefix` says. The pin must be written exactly once; a pin
+#   that shares its name with an earlier one stands where that one does.
+#
+#   PATH is the instance path from the session's own design down to this sheet
+#   (sod_rel_path from sod_base_level), then the element.
+#
+#   TERMINAL NAME, by the element's first letter. Anything but `x`:
+#   sod_term_letter_name. A subcircuit call is named by the CALLEE's port at
+#   that position, found in this order:
+#     1. the symbol's own pin, when xschem writes the callee's body from that
+#        symbol (sod_term_own_block);
+#     2. the `.subckt` header, when the session has exactly one for the callee
+#        (sod_term_port_lists) and it has a port at that position;
+#     3. failing both, the pin's name with a caution -- right when the callee
+#        names its ports as the symbol names its pins, and only then.
+#   A call line written from the INSTANCE's own format never takes 1 or 3: its
+#   pin order is not the header's, so only a header can name the port and the
+#   pick is refused without one. That refusal and the caution of 3 say WHY no
+#   header names the port -- none is known, several are and their ports
+#   differ, or the one known is too short -- and end with what to do about
+#   that (sod_term_header_gap).
+#
+#   A port whose NAME is a number is named like any other (`i(x1:3)` for the
+#   port called 3, wherever it stands): the row is the vector's own name. That
+#   the simulator reads a number in a `.probe` card as a position is the deck
+#   writer's to deal with (ase::probe_card, src/ase.tcl), not the pick's.
+#
+#   A `spice_sym_def` never takes 1 or 3 either, and adds a case. When the
+#   format writes its pins with `@pinlist` and with nothing else, the netlister
+#   asks that definition for the callee's ports and, if every port it lists (up
+#   to the symbol's pin count) is a pin of the symbol, writes the nets in the
+#   HEADER's order (has_included_subcircuit(), src/token.c). The position off
+#   the marked line is then not the line's, and the terminal is the header port
+#   NAMED as the pin. In every other case the symbol's order stands and the
+#   port is the one at the position, from the definition's header or from
+#   sod_term_ports.
+proc ase::ui::sod_term_name {key n j} {
+  lassign [ase::ui::sod_term_format $n] fmt fsrc
+  if {[string trim $fmt] eq {}} { return {ok 0 why {it has no netlist line}} }
+  if {[catch {ase::ui::sod_term_pins $n} pins] || $j >= [llength $pins]} {
+    return {ok 0 why {its pins could not be read}}
+  }
+  set pname [lindex [lindex $pins $j] 1]
+  set jj $j
+  foreach p $pins {
+    if {[lindex $p 1] eq $pname} { set jj [lindex $p 0] ; break }
+  }
+  set pieces [ase::ui::sod_term_pieces $fmt]
+  if {[catch {ase::ui::sod_term_lines $n [ase::ui::sod_term_rewrite $pins $pieces]} lines]} {
+    return {ok 0 why {its netlist format could not be expanded}}
+  }
+  set hits [ase::ui::sod_term_where $lines $jj]
+  if {![llength $hits]} {
+    return {ok 0 why {its netlist line does not carry that pin}}
+  }
+  if {[llength $hits] > 1} {
+    return [list ok 0 why "its netlist format writes that pin [llength $hits] times"]
+  }
+  lassign [lindex $hits 0] elem pos width untagged callee
+  ## the two forms src/spice.awk expands: `#<p>#<name>` netlists as <p><name>
+  ## per bit, `##<name>` as <name>
+  set pfx {}
+  if {[string index $elem 0] eq {#}} {
+    if {![regexp {^#([a-zA-Z_0-9]*)#([a-zA-Z_].*)$} $elem -> pfx elem]} {
+      return [list ok 0 why "its netlist line starts with '$elem'"]
+    }
+  }
+  set label "$pfx$elem:$pname"
+  set ebits {}
+  foreach b [ase::ui::sod_bits $elem] { lappend ebits $pfx$b }
+  set pbits [ase::ui::sod_bits $pname]
+  set letter [string tolower [string index [lindex $ebits 0] 0]]
+  set caution {}
+  set tnames {}
+  if {$letter ne {x}} {
+    if {[llength $untagged]} {
+      return [list ok 0 why "its netlist line has '[lindex $untagged 0]' ahead of that\
+ pin, which may not be a node"]
+    }
+    for {set k 0} {$k < $width} {incr k} {
+      lappend tnames [ase::ui::sod_term_letter_name $letter [expr {$pos + $k}]]
+    }
+  } elseif {[ase::ui::sod_term_own_block $n $fsrc]} {
+    set tnames $pbits
+  } else {
+    ## the deck's callee where it can differ from the live one (a model that is
+    ## a reference to the enclosing cell's attribute: op_annot::model_netlist)
+    if {![catch {op_annot::model_netlist $n live} deckmodel] \
+        && $live ne {} && $deckmodel ne {} && $deckmodel ne $live} {
+      set at [string last $live $callee]
+      if {$at >= 0} {
+        set callee [string replace $callee $at [expr {$at + [string length $live] - 1}] \
+                      $deckmodel]
+      }
+    }
+    if {$callee eq {} || [regexp {^__TPIN_[0-9]+__$} $callee]} {
+      return {ok 0 why {its netlist line does not name what it calls}}
+    }
+    set symdef [ase::ui::sod_term_sym_def $n]
+    set ports {}
+    set byname {}
+    if {$symdef ne {}} {
+      set ports [ase::ui::sod_term_sym_def_ports $symdef $callee]
+      set kinds {}
+      foreach piece $pieces {
+        if {[lindex $piece 0] ne {text}} { lappend kinds [lindex $piece 0] }
+      }
+      if {[llength $ports] && [lsort -unique $kinds] eq {pinlist}} {
+        ## has_included_subcircuit()'s own test, on the header it reads
+        set have [dict create]
+        set nbits 0
+        foreach p $pins {
+          if {[lindex $p 2]} { continue }
+          foreach b [ase::ui::sod_bits [lindex $p 1]] {
+            dict set have [string tolower $b] 1
+            incr nbits
+          }
+        }
+        set byname [lrange $ports 0 [expr {$nbits - 1}]]
+        foreach p $byname {
+          if {![dict exists $have [string tolower $p]]} { set byname {} ; break }
+        }
+      }
+    }
+    ## `lists` is every different header in the place that answered, kept for
+    ## the sentence said when none of them can name the port: the definition's
+    ## own header here, else what the session has (sod_term_port_lists), of
+    ## which only a single one is used
+    set place symdef
+    set lists {}
+    if {[llength $ports]} {
+      set lists [list $ports]
+    } else {
+      lassign [ase::ui::sod_term_port_lists $key $callee $n] place lists
+      if {[llength $lists] == 1} { set ports [lindex $lists 0] }
+    }
+    if {[llength $byname]} {
+      foreach b $pbits {
+        set i [lsearch -exact [string tolower $byname] [string tolower $b]]
+        if {$i < 0} {
+          return [list ok 0 why "the .subckt header its spice_sym_def gives for\
+ '$callee' has no port of that name"]
+        }
+        lappend tnames [lindex $byname $i]
+      }
+    } elseif {[llength $ports] >= $pos + $width - 1} {
+      set tnames [lrange $ports [expr {$pos - 1}] [expr {$pos + $width - 2}]]
+    } else {
+      ## no port for that position: say which of the three reasons it is
+      ## (sod_term_header_gap) -- no header, several that differ, one too short
+      lassign [ase::ui::sod_term_header_gap $callee $place $lists \
+                 [expr {$pos + $width - 1}]] known todo
+      set none [expr {![llength $lists]}]
+      if {$fsrc eq {inst} || $symdef ne {}} {
+        set own [expr {$symdef ne {} ? {a spice_sym_def} : {a netlist format of its own}}]
+        if {$none} {
+          return [list ok 0 why "it has $own, and $known to name the port at that\
+ position; to get one, $todo"]
+        }
+        return [list ok 0 why "it has $own, and $known, so the port at that position is\
+ not known; to name it, $todo"]
+      }
+      set tnames $pbits
+      if {$none} {
+        set caution "$known, so the terminal is named as the symbol's pin; that is right\
+ only if the subcircuit names its ports the same way; to be sure, $todo"
+      } else {
+        set caution "$known, so the terminal is named as the symbol's pin; that is right\
+ only if the subcircuit the simulator uses names its ports the same way; to be sure, $todo"
+      }
+    }
+  }
+  if {[llength $tnames] != $width || [llength $tnames] < 1} {
+    return {ok 0 why {its pin does not expand to the nodes on its netlist line}}
+  }
+  set path [ase::ui::sod_rel_path [ase::ui::sod_base_level $key]]
+  set tokens {}
+  foreach e $ebits {
+    foreach t $tnames { lappend tokens "$path$e:$t" }
+  }
+  return [dict create ok 1 tokens $tokens label $label caution $caution]
+}
+
+# CAN THE TERMINAL OF `term` BE NAMED, AND AS WHAT? `term` is sod_terminal_at's
+# answer; only its `inst` and `pin` are read. Answers a dict, always of one of
+# these two shapes:
+#   {ok 1 tokens <list> label <text> caution <text>}
+#   {ok 0 why <reason>}
+# The first is sod_term_name's own answer: `tokens` are `<path>:<tname>`, the
+# simulator's name of each vector without its `i(...)` wrapper (sod_expr
+# `terminal` wraps and folds one); `label` is the pick as the schematic spells
+# it, for a bit dialog; `caution`, when not empty, is a sentence to show.
+# `why` completes "cannot name the terminal current of <inst> pin <pin> --
+# <why>; place an ammeter (ammeter.sym) in series". The refusals, in the order
+# they are tested:
+#   - flat netlisting is on: the flattener renames every device, so no path
+#     built here would name one;
+#   - a block instance above this sheet carries a `spiceprefix`
+#     (sod_term_prefixed_ancestor);
+#   - the naming step raised, or answered something that is neither shape;
+#   - the terminal cannot be named (sod_term_name's `why`).
+# It queues nothing, opens no dialog and says nothing: the Select-On-Design
+# click (sod_terminal_pick) and any other caller that wants a terminal's name
+# ask this one proc, so they cannot disagree about what is refused.
+proc ase::ui::sod_terminal_resolve {key term} {
+  if {[ase::ui::sod_tclbool flat_netlist]} {
+    return [dict create ok 0 why {flat netlisting renames every device}]
+  }
+  set above [ase::ui::sod_term_prefixed_ancestor $key]
+  if {$above ne {}} {
+    return [dict create ok 0 why "the block instance '$above' above this sheet carries a\
+ spiceprefix, so the hierarchy path would not be the simulator's"]
+  }
+  ## a naming step that raises is a refusal like any other, with its text; so
+  ## is an answer that lacks a key the caller is promised
+  if {[catch {
+    set nm [ase::ui::sod_term_name $key [dict get $term inst] [dict get $term pin]]
+    if {[dict get $nm ok]} {
+      set nm [dict create ok 1 tokens [dict get $nm tokens] label [dict get $nm label] \
+                caution [dict get $nm caution]]
+    } else {
+      set nm [dict create ok 0 why [dict get $nm why]]
+    }
+  } err]} {
+    return [dict create ok 0 why "its name could not be worked out ($err)"]
+  }
+  return $nm
+}
+
+# Direct Plot on the pin of a voltage source or an ammeter, when the terminal's
+# own current cannot be plotted: the click is the SOURCE pick it was before
+# pins were picked, and queues the branch current every run holds (`i(v1)`)
+# through the same steps as a click on the source's body. Answers 1 when it
+# queued, 0 when the instance of `term` is no source (sod_source_at) and
+# nothing was done. `exvar`, when given, names a variable of the caller that
+# receives the expressions queued, in order.
+proc ase::ui::sod_terminal_as_source {key term {exvar {}}} {
+  if {$exvar ne {}} { upvar 1 $exvar exs }
+  set exs {}
+  set src {}
+  catch {set src [ase::ui::sod_source_at [list instance [dict get $term inst]]]}
+  if {$src eq {}} { return 0 }
+  set base [ase::ui::sod_base_level $key]
+  set cmode [ase::ui::sod_case_mode $key]
+  set first 1
+  foreach t [ase::ui::sod_pick_tokens $key current $src] {
+    set ex [ase::ui::sod_expr current [ase::ui::sod_qualify current $t $base] $cmode]
+    ase::ui::dp_queue $key $ex current [expr {$first ? $src : {}}]
+    lappend exs $ex
+    set first 0
+  }
+  return 1
+}
+
+# Is the pin of `term` the FIRST terminal of its element -- the node the branch
+# current of a source flows into (`i(v1)` is `i(v1:n1)` and the negative of
+# `i(v1:n2)`)? `nm` is sod_terminal_resolve's answer for that pin. When it
+# names the terminal by position (`<path>:n<position>`) the position says so;
+# when the pin was refused a name, or is named some other way, the pin's index
+# on the symbol does: the stock source and ammeter symbols write their pins in
+# index order. 1 or 0. (What a stand-in click SAYS is decided by
+# sod_term_pin_place below, which also tells the second terminal from any
+# further pin and reads a refused pin's place off the netlist line.)
+proc ase::ui::sod_term_first_pin {term nm} {
+  set tok {}
+  catch {
+    if {[dict get $nm ok]} { set tok [lindex [dict get $nm tokens] 0] }
+  }
+  if {[regexp {:n([0-9]+)$} $tok -> pos]} { return [expr {$pos == 1 ? 1 : 0}] }
+  set j {}
+  catch {set j [dict get $term pin]}
+  return [expr {$j eq {0} ? 1 : 0}]
+}
+
+# The node position of pin `j` of instance `n` on the instance's own netlist
+# line, 1 for the first node after the element's name -- or the empty string
+# when the line does not say: the instance has no netlist line, its pins or its
+# format cannot be read, the line does not carry the pin or carries it more
+# than once, the line does not open with an element's name, or a word that may
+# not be a node stands ahead of the pin (on any element but a subcircuit call,
+# where such a word is an extra node). The walk is the one sod_term_name opens
+# with, so a pin that proc names by position has the same position here.
+# Raises what the engine raises.
+proc ase::ui::sod_term_line_pos {n j} {
+  set fmt [lindex [ase::ui::sod_term_format $n] 0]
+  if {[string trim $fmt] eq {}} { return {} }
+  set pins [ase::ui::sod_term_pins $n]
+  if {![string is integer -strict $j] || $j < 0 || $j >= [llength $pins]} { return {} }
+  set pname [lindex [lindex $pins $j] 1]
+  set jj $j
+  foreach p $pins {
+    if {[lindex $p 1] eq $pname} { set jj [lindex $p 0] ; break }
+  }
+  set lines [ase::ui::sod_term_lines $n \
+               [ase::ui::sod_term_rewrite $pins [ase::ui::sod_term_pieces $fmt]]]
+  set hits [ase::ui::sod_term_where $lines $jj]
+  if {[llength $hits] != 1} { return {} }
+  lassign [lindex $hits 0] elem pos width untagged callee
+  set pfx {}
+  if {[string index $elem 0] eq {#}} {
+    if {![regexp {^#([a-zA-Z_0-9]*)#([a-zA-Z_].*)$} $elem -> pfx elem]} { return {} }
+  }
+  if {[string tolower [string index $pfx$elem 0]] ne {x} && [llength $untagged]} { return {} }
+  return $pos
+}
+
+# WHERE THE PIN OF `term` STANDS ON ITS ELEMENT, in one word:
+#   first    the element's first node. The branch current of a source is the
+#            current into this pin (`i(v1)` is `i(v1:n1)`).
+#   second   its second node: the branch current is the negative of the current
+#            into this pin (`i(v1)` is the negative of `i(v1:n2)`).
+#   other    any other pin, and every pin whose place is not known. The branch
+#            current says nothing about the current into it: a controlling pin
+#            of a controlled source (the third and fourth nodes of the stock
+#            vsource_pwl.sym) carries no current at all.
+# `term` is sod_terminal_at's answer and `nm` sod_terminal_resolve's answer for
+# that pin -- the arguments of sod_term_first_pin. When `nm` names the terminal
+# by position (`<path>:n<position>`) the position is read off the name. When it
+# does not -- the pin was refused a name, or is named some other way -- the
+# position is the pin's place on the instance's netlist line
+# (sod_term_line_pos), and a pin that line cannot place is `other`: one the
+# line does not carry (pin m of the stock filesource.sym), one behind a word
+# that may not be a node, and one of an instance that cannot be read. Never
+# raises.
+proc ase::ui::sod_term_pin_place {term nm} {
+  set tok {}
+  catch {
+    if {[dict get $nm ok]} { set tok [lindex [dict get $nm tokens] 0] }
+  }
+  set pos {}
+  if {![regexp {:n([0-9]+)$} $tok -> pos]} {
+    set pos {}
+    catch {set pos [ase::ui::sod_term_line_pos [dict get $term inst] [dict get $term pin]]}
+  }
+  ## read as a decimal number whatever its leading zeros; nothing to read is `other`
+  if {[scan $pos %d pos] != 1} { return other }
+  return [expr {$pos == 1 ? {first} : ($pos == 2 ? {second} : {other})}]
+}
+
+# What a Direct Plot click says after the source's current stood in for the
+# pin of `term` (sod_terminal_as_source queued the expressions `exs`: one, a
+# source pick being one token whatever the instance's width). `nm` is
+# sod_terminal_resolve's answer for the pin. Nothing when nothing was queued.
+# Otherwise up to two sentences, each for a fact the queued trace does not show:
+#   - other device pins share the point (`others` of `term`): which ones, and
+#     that the click took the source's current and none of theirs;
+#   - the pin is not the source's first terminal (sod_term_pin_place). On its
+#     SECOND terminal the trace is the current into the first pin, so the
+#     current into the pin that was clicked is its negative. On ANY OTHER pin
+#     -- a controlling pin, a pin the netlist line does not carry -- the trace
+#     is the source's own current and not the current into that pin, and the
+#     sentence says no more about a sign than that. Either sentence ends with
+#     how to get the pin's own current when the pin can be named (by its row).
+#     A pin that cannot be named gets the ammeter advice when it is neither
+#     first nor second, and no advice when it is the second.
+# A click on the source's first pin with nothing else on the point says
+# nothing, as a click on the source's body does.
+proc ase::ui::sod_source_standin_notes {term nm exs} {
+  if {![llength $exs]} { return }
+  set iname [dict get $term instname]
+  set pname [dict get $term pinname]
+  if {[llength [dict get $term others]]} {
+    set names {}
+    foreach o [dict get $term others] { lappend names "[lindex $o 0] pin [lindex $o 1]" }
+    catch {::ase::echo "ase: that point is also [join $names {, }] — the click took the\
+ current of $iname"}
+  }
+  set place [ase::ui::sod_term_pin_place $term $nm]
+  if {$place eq {first}} { return }
+  set named 0
+  catch {set named [dict get $nm ok]}
+  set msg "ase: $iname pin $pname — the trace is the source's own current\
+ '[lindex $exs 0]'"
+  if {$place eq {second}} {
+    append msg ", which is the current into its first pin, so the current into $iname\
+ pin $pname is the negative of that trace"
+  } else {
+    append msg ", which is not the current into $iname pin $pname"
+  }
+  if {$named} {
+    append msg "; to plot the pin's own current, pick it under Outputs > To Be Saved >\
+ Select On Design and run again"
+  } elseif {$place ne {second}} {
+    append msg "; to plot that pin's current, place an ammeter (ammeter.sym) in series\
+ with it"
+  }
+  catch {::ase::echo $msg}
+}
+
+# The cue on a pin picked for a session row: an ellipse round the pin, on the
+# layer the outputs flavours mark with -- 16, a light green in the dark colour
+# scheme -- and tagged `save`, the tag sod_marks_clear sweeps when the mode
+# ends. `pin` is {<instance index> <pin index>} of the sheet shown. Answers 1
+# when the marker is there, 0 when the engine refused it (it raises on an
+# instance, a pin or a layer it does not have): a marker must never break the
+# pick.
+proc ase::ui::sod_mark_pin {pin} {
+  return [expr {[catch {xschem pin_marker add -layer 16 -tag save {*}$pin}] ? 0 : 1}]
+}
+
+# WOULD THE ROWS OF A PIN PICK BE TERMINAL ROWS? `toks` are the tokens the pin
+# was named with (sod_terminal_resolve), `cmode` the session's case mode. Each
+# is wrapped as the click would queue it and put to the deck side's own
+# predicate, ase::probe_split, which is what decides whether a row gets a
+# `.probe` card. Empty when every one is a terminal row. Otherwise
+#   {<the first row that is not> <the characters at fault, in words>}
+# -- an instance or a port whose name holds a dollar sign, an equals sign, a
+# single quote, a brace, a semicolon, a comma, a parenthesis, a double quote, a
+# second colon or a blank. Such a row would be saved as an ordinary signal the
+# simulator does not have (or would stop the run), and the pin would be marked
+# for a current no run can produce.
+proc ase::ui::sod_term_unwritable {toks cmode} {
+  foreach t $toks {
+    set ex [ase::ui::sod_expr terminal $t $cmode]
+    if {[llength [ase::probe_split $ex]]} { continue }
+    set found {}
+    foreach {re word} {
+      {\$} {a dollar sign} {=} {an equals sign} {'} {a single quote} {[{}]} {a brace}
+      {;} {a semicolon} {,} {a comma} {[()]} {a parenthesis} {"} {a double quote}
+      {\s} {a blank}
+    } {
+      if {[regexp -- $re $t]} { lappend found $word }
+    }
+    if {[regexp -all {:} $t] > 1} { lappend found {more than one colon} }
+    if {![llength $found]} { set found [list {a character the simulator's name for a terminal cannot hold}] }
+    return [list $ex [join $found { or }]]
+  }
+  return {}
+}
+
+# THE SAME QUESTION, PUT TO THE INSTANCE'S OWN NAME. The engine's bit expansion
+# drops such a character from a BUS instance's name (an instance written
+# `R=B[1:0]` comes back as the one bit `R`), so the tokens of its pins are
+# ordinary and sod_term_unwritable passes them, while they name an instance the
+# deck does not have. `iname` is the name as the sheet writes it. A comma, a
+# colon and a bracket are bus syntax in an instance name and are not judged
+# here. Answers the characters at fault in words, or nothing.
+proc ase::ui::sod_term_odd_inst {iname} {
+  set found {}
+  foreach {re word} {
+    {\$} {a dollar sign} {=} {an equals sign} {'} {a single quote} {[{}]} {a brace}
+    {;} {a semicolon} {[()]} {a parenthesis} {"} {a double quote} {\s} {a blank}
+  } {
+    if {[regexp -- $re $iname]} { lappend found $word }
+  }
+  return [join $found { or }]
+}
+
+# The terminal arm of a mode click: `term` is sod_terminal_at's answer. Queues
+# the terminal's current, or says in ONE sentence why it does not.
+#
+# REFUSED, naming the instance and the pin and ending with the way that always
+# works (an ammeter in series): whatever sod_terminal_resolve refuses, with its
+# reason. The one test this proc adds is the name the deck cannot carry (below).
+#
+# The token is ALREADY the simulator's hierarchical name, so it is wrapped by
+# sod_expr and does not go through sod_qualify, whose current arm builds the
+# branch form of a SOURCE (`<letter>.<path><name>`).
+#
+# SEVERAL VECTORS (a bus instance, a bus pin, or both) go through the same bit
+# dialog a bus net does; the items it lists are the final tokens, so its answer
+# is queued as it comes back and Cancel queues nothing.
+#
+# PLOT FLAVOUR (Direct Plot) writes no session row, so the next deck carries no
+# probe for the pick: the current can be plotted only if the LAST run's deck
+# asked for it. It is queued when the session's results file lists the vector
+# (`ase::raw_vectors_present` on `ase::last_rawfile`: the file's own header, no
+# viewer and no loaded database needed) and otherwise the click says why the
+# results do not hold it, where that is known, and what to do next
+# (ase::probe_absent_groups): the last run's simulator cannot save it and
+# which registered one can; the reason the last run's report gave; the row is
+# set to be saved and the results do not hold it yet -- or the session has no
+# results yet -- and, where the simulator this session starts is already
+# known unable to save it, that too.  A vector none of that is known about
+# gets the sentence that says where to ask for it; a session with no results
+# yet is that case when the row is not set.
+#
+# THE ROW FLAVOURS SAY ONE THING MORE, when the simulator this session starts
+# is ALREADY KNOWN to save no terminal current below the top level and the
+# pick queued such a row: that it cannot, and which registered one can, once
+# for the click (ase::probe_pick_report).  The click starts no program to find
+# out; the rows are queued and the pin is marked all the same.  The simulator
+# is THIS session's -- what a run of it would start -- not the one another
+# session's run left in force (ase::sim_session_view).
+#
+# ...EXCEPT ON A SOURCE. The pin of a voltage source or an ammeter whose
+# terminal cannot be plotted -- it is refused, or none of its vectors is in the
+# results -- plots the source's branch current instead
+# (sod_terminal_as_source): that is what the same click plotted before pins
+# were picked, and every run holds it. On the source's first pin, alone on its
+# point, nothing is said. Where the trace is not what the click was aimed at,
+# the click says so (sod_source_standin_notes): on the source's second pin the
+# trace has the opposite sign of that pin's own current, on a pin that is
+# neither its first nor its second the trace is not that pin's current at all,
+# and on a point shared with another device's pin the click took the source and
+# not that pin. The
+# outputs flavours are not touched by this: there the pin of a source queues
+# its terminal row, or is refused.
+#
+# THE MARKER. A pick that queued gets ONE ellipse on the pin the click took
+# (`xschem pin_marker`), however many vectors it queued:
+#   - outputs flavours: on layer 16 with the tag `save` (sod_mark_pin), also
+#     when every row of the pick was already in the table -- the pin is chosen
+#     all the same. The mode ending takes it away (sod_marks_clear);
+#   - Direct Plot: through the plot queue, which hands the pin to dp_hilight
+#     with the first held vector, so the ellipse is in that trace's colour and
+#     carries the tag `plot`. A vector that is queued already puts the marker
+#     back in the colour its trace has (dp_queue).
+# NOTHING IS MARKED by a refused pick, by a bit dialog that was cancelled, by a
+# Direct Plot pick none of whose vectors the results hold, or by the source
+# stand-in above: that one colours the source's body, as a click on the body
+# does.
+#
+# A NAME THE DECK CANNOT CARRY IS REFUSED HERE, before the bit dialog and
+# before anything is queued or marked (sod_term_unwritable): the row would not
+# be a terminal row, so no run could ever hold its current. In Direct Plot the
+# pin of a source still plots the source's current, as for any other pin that
+# cannot be named. The instance's own name is asked the same way
+# (sod_term_odd_inst), for the bus instance whose bits lose the character.
+proc ase::ui::sod_terminal_pick {key term} {
+  variable sod
+  set iname [dict get $term instname]
+  set pname [dict get $term pinname]
+  set plot [expr {[info exists sod($key,mode)] && $sod($key,mode) eq {plot}}]
+  set nm [ase::ui::sod_terminal_resolve $key $term]
+  if {![dict get $nm ok]} {
+    if {$plot && [ase::ui::sod_terminal_as_source $key $term exs]} {
+      ase::ui::sod_source_standin_notes $term $nm $exs
+      return
+    }
+    catch {::ase::echo "ase: cannot name the terminal current of $iname pin $pname —\
+ [dict get $nm why]; place an ammeter (ammeter.sym) in series" error}
+    return
+  }
+  set toks [dict get $nm tokens]
+  set cmode [ase::ui::sod_case_mode $key]
+  set odd [ase::ui::sod_term_unwritable $toks $cmode]
+  if {[llength $odd]} {
+    lassign $odd oddex oddchars
+    set why "its current would be the row '$oddex', and a terminal-current row cannot\
+ hold $oddchars"
+    if {$plot && [ase::ui::sod_terminal_as_source $key $term exs]} {
+      ase::ui::sod_source_standin_notes $term [dict create ok 0 why $why] $exs
+      return
+    }
+    catch {::ase::echo "ase: nothing queued for $iname pin $pname — $why; rename the\
+ instance or the port, or place an ammeter (ammeter.sym) in series" error}
+    return
+  }
+  ## the instance's own name, where the tokens no longer show the character
+  set oddname [ase::ui::sod_term_odd_inst $iname]
+  if {$oddname ne {}} {
+    set why "the instance's name holds $oddname, which a terminal-current row cannot\
+ hold"
+    if {$plot && [ase::ui::sod_terminal_as_source $key $term exs]} {
+      ase::ui::sod_source_standin_notes $term [dict create ok 0 why $why] $exs
+      return
+    }
+    catch {::ase::echo "ase: nothing queued for $iname pin $pname — $why; rename the\
+ instance, or place an ammeter (ammeter.sym) in series" error}
+    return
+  }
+  if {[llength $toks] > 1} {
+    set toks [ase::ui::bus_dialog $key [dict get $nm label] $toks]
+  }
+  if {![llength $toks]} { return }
+  set absent {}
+  set rows {}
+  set first 1
+  ## the pin the click took, as the marker is asked for: its instance and pin
+  ## indexes on the sheet shown
+  set pin [list [dict get $term inst] [dict get $term pin]]
+  foreach t $toks {
+    set ex [ase::ui::sod_expr terminal $t $cmode]
+    if {!$plot} {
+      ase::ui::sod_queue $key $ex
+      lappend rows $ex
+      continue
+    }
+    set held 0
+    catch {
+      set held [expr {[llength [ase::raw_vectors_present [ase::last_rawfile $key] \
+                                  [list $ex]]] == 1}]
+    }
+    if {!$held} {
+      lappend absent $ex
+      continue
+    }
+    ase::ui::dp_queue $key $ex terminal [expr {$first ? $pin : {}}]
+    set first 0
+  }
+  if {!$plot} {
+    ase::ui::sod_mark_pin $pin
+    ## THE SIMULATOR THIS SESSION STARTS IS ALREADY KNOWN NOT TO SAVE SUCH A
+    ## CURRENT: say so now, once for the click, with which registered one can
+    ## (ase::probe_pick_report; the sentence and its conditions are there).
+    ## The rows stay queued and the pin stays marked.
+    catch {ase::probe_pick_report [ase::session_state $key] $rows}
+  }
+  ## `first` is still set when no vector of this pick was held
+  if {[llength $absent] && $first && [ase::ui::sod_terminal_as_source $key $term exs]} {
+    ase::ui::sod_source_standin_notes $term $nm $exs
+    return
+  }
+  ## WHY, WHERE THAT IS KNOWN, AND THE ONE THING TO DO NEXT.  The reasons are
+  ## ase::probe_absent_groups': the last run's simulator cannot save it, the
+  ## last run's report gave another reason, the row is set and the results do
+  ## not hold it yet -- each `{<vectors> <reason>}`, said in place of the
+  ## sentence below, which is kept for the vectors nothing is known about.
+  set groups [list [list $absent {}]]
+  catch {set groups [ase::probe_absent_groups $key $absent]}
+  foreach grp $groups {
+    lassign $grp gone why
+    if {![llength $gone]} { continue }
+    set many [expr {[llength $gone] > 1}]
+    set head "ase: terminal current[expr {$many ? {s} : {}}]\
+ '[join $gone {', '}]' [expr {$many ? {are} : {is}}] not in this session's results"
+    if {$why ne {}} {
+      catch {::ase::echo "$head: $why"}
+      continue
+    }
+    catch {::ase::echo "$head —\
+ pick [expr {$many ? {them} : {it}}] under Outputs > To Be Saved > Select On Design\
+ and run again"}
+  }
+  if {[llength [dict get $term others]]} {
+    set names {}
+    foreach o [dict get $term others] { lappend names "[lindex $o 0] pin [lindex $o 1]" }
+    catch {::ase::echo "ase: that point is also [join $names {, }] — the click took\
+ $iname pin $pname"}
+  }
+  if {[dict get $nm caution] ne {}} {
+    catch {::ase::echo "ase: $iname pin $pname — [dict get $nm caution]"}
+  }
+}
+
 # Paint the schematic object a queued Direct Plot signal came from, in the layer
 # color its waveform trace will carry (issue 0153) — the whole point of the
 # feature: the viewer's traces map back onto the schematic by color.
@@ -3473,9 +5738,27 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
 # while reading the plots; clear them the normal way (Del/unhilight). Existing
 # highlights are deliberately NOT wiped on entry. All catch-guarded: a net that
 # resolves to nothing must never break the picking mode.
+#
+# A `terminal` pick (issue 1724) is cued ON ITS PIN: an ellipse round the pin
+# in the trace's layer, tagged `plot` (`xschem pin_marker`). Its token is
+# therefore not a name: it is the pin, {<instance index> <pin index>} of the
+# sheet shown, which is what sod_terminal_pick hands the plot queue. Anything
+# else under kind `terminal` -- the vector's `<path>:<tname>`, a net's name --
+# answers 0 and asks the engine nothing: handed to `hilight_netname` such a
+# word would colour nothing, or some unrelated net that happens to be called
+# the same. The tag is what keeps this marker when the mode ends (sod_end
+# sweeps the tag `save` only); `xschem unhilight_all` clears it with the other
+# colours.
 proc ase::ui::dp_hilight {kind token color} {
   if {$color eq {} || $token eq {}} { return 0 }
   if {![string is integer -strict $color] || $color <= 0} { return 0 }
+  if {$kind eq {terminal}} {
+    if {[catch {llength $token} words] || $words != 2} { return 0 }
+    foreach w $token {
+      if {![string is integer -strict $w] || $w < 0} { return 0 }
+    }
+    return [expr {[catch {xschem pin_marker add -layer $color -tag plot {*}$token}] ? 0 : 1}]
+  }
   if {$kind eq {current}} {
     # a current probe was picked on a source/ammeter BODY: there is no wire to
     # color, so the instance itself carries the cue
@@ -3516,12 +5799,19 @@ proc ase::ui::sod_queue {key ex} {
 # queue-so-far always returns this signal's color last), recorded in a parallel
 # `qcolors` list, and applied to the clicked net/instance. dp_finish hands the
 # colors to plot_signals, so the schematic cue and the trace can never disagree.
-# A duplicate re-queue colors nothing (it adds no trace).
+# A duplicate re-queue colors nothing (it adds no trace) -- except a
+# `terminal`, whose pin marker is put back in the colour the queued trace
+# already has: the pin is still chosen, and `xschem unhilight_all` may have
+# taken its marker away since the first click.
 proc ase::ui::dp_queue {key ex {kind {}} {token {}}} {
   variable sod
   if {![info exists sod($key,queue)]} { return }
-  if {[lsearch -exact $sod($key,queue) $ex] >= 0} {
+  set at [lsearch -exact $sod($key,queue) $ex]
+  if {$at >= 0} {
     catch {::ase::echo "ase: trace '$ex' already queued"}
+    if {$kind eq {terminal}} {
+      catch {ase::ui::dp_hilight terminal $token [lindex $sod($key,qcolors) $at]}
+    }
     return
   }
   lappend sod($key,queue) $ex

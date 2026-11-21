@@ -135,6 +135,20 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   and the same `wc -l` as `87ac3cfa` (`tests/results.2256072.log`, 870s) three stages earlier.
   Derive your own delta from the registration lists and check it against `planned_cases` in the
   header; do not carry any figure here forward as a baseline.
+  ⚠ **That `a43b6332` figure is long stale too.** Measured 2026-11-20 on the working tree of
+  issue 1724 (uncommitted, on top of `d36cb429e`), in the `~/g1724` clone with
+  `T1_DISPLAY=private`: `cases=225 blocks=224 counted_failures=0 skips=13`, `wc -l` 679, 1352s
+  (`tests/results.1229661.log`; 3 `tcases` + 148 `hcases` + 73 `dcases` + `xschemtest`), zero
+  live-peer lines. `d36cb429e` itself read `213/212/0/12` in the same clone
+  (`tests/results.1747519.log`); the work registers twelve entries (five `hcases`, seven
+  `dcases`), and one of them, `test_pin_marker_1724`, prints one lower-case `skip:` line on its
+  counted arm. A home that cannot reach a probe-capable ngspice gets more `skip:` lines from the
+  suites of issue 1724 (their real-simulator rows); that arm was derived, never gated.
+  Gated again later that day, after the simulator messages of issue 1724 and the repair of
+  issue 1657 (`src/save.c` recompiled in the clone): the same trailer and the same `wc -l`,
+  1425s (`tests/results.3452141.log`), zero live-peer lines. No registration moved, so no
+  trailer term could; only published check counts did (`test_raw_ascii_point_bounds`
+  90 → 377 among them).
   At `7a46275f`: 87 cases (3 `tcases` + 72 `hcases` + 11 `dcases` + `xschemtest`), 86
   blocks, `wc -l` 177 green, 185 with eight failures, on the **pre-1487** driver. Read off
   the gate verdict `tests/results.296161.log` at **`e3e6039d`**, taken in the `~/gc26` clone at an
@@ -201,6 +215,15 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   **The product half is NOT fixed** (issue 1659, `claim=latent`): what was never established is
   whether a real hand gesture can land a Configure between the motion and the press, since a real
   pointer sends a genuine motion first. **Measure that before touching `callback()`.**
+  ⚠ **CORRECTED 2026-11-19 (issue 1724; the measurements are in issue 1659's own dated note): THE
+  `<Configure>` SCRIPT IS ON THE DESIGN CANVAS, NOT ON A TOPLEVEL.** `set_bindings` is called with
+  canvas paths, `bind . <Configure>` is empty, and a `<Configure>` on `.statusbar.1` or a status-text
+  change leaves the pair alone; what overwrites it is the canvas's OWN `<Configure>` (a re-layout or
+  a real resize). A real gesture can land one between two presses (a double click in the RDW's pick
+  mode did), so the three click modes (`ase::ui::sod_press_script`, `calc::_pick_seize`,
+  `rdw::_pick_seize`) now run `xschem callback %W 6 %x %y 0 0 0 %s` ahead of their click and read a
+  pair the press itself wrote. `callback()` is unchanged, so any other reader of the pair after a
+  re-layout with no motion in between still sees the stale one.
   ⚠⚠ **AND THE TEST FIX IS NOT ONE FIX, IT IS TWO, BECAUSE THE PUMP'S ROLE DIFFERS BY HELPER.**
   `test_rdw_keys_1245`'s `kx_click`/`kx_click_px` pass **`-when now`**, which delivers synchronously --
   so their post-motion `update` was **pure exposure** and the fix is to move it in FRONT of the motion
@@ -267,9 +290,11 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   IN THE WORST DIRECTION.** `xschem get current_win_path` is a CONTEXT identifier: under the TABBED
   interface it answers `.x2.drw` for a schematic whose canvas widget is `.drw`, `winfo exists
   .x2.drw` is **0**, and `xschem windows` gives that row a toplevel of `.` and THE SAME X WINDOW ID as
-  `.drw`. `bind` on it does not fail — it creates bindings for a widget that does not exist, so no
-  gesture ever arrives, the prompt sits on the design window saying *click a net*, and nothing
-  happens: **a mode that looks armed and is not.** Resolve the widget out of `xschem windows`' own
+  `.drw`. `bind` on it **raises** `bad window path name ".x2.drw"` (a tag that starts with a dot must
+  be a live window; corrected 2026-11-19, issue 1724 — this sentence used to say it creates bindings
+  for a widget that does not exist), and a caller that wraps the `bind` in `catch` then binds
+  nothing: no gesture ever arrives, the prompt sits on the design window saying *click a net*, and
+  nothing happens: **a mode that looks armed and is not.** Resolve the widget out of `xschem windows`' own
   table (field 0 is the context path, field 1 the toplevel; the main window's toplevel is `.`, so its
   canvas is `.drw` and not `..drw`). ⚠ And the C answer cannot be trusted as a read-back either
   (landmine 17: `switch_window()`/`switch_tab()` both open `if(xctx->semaphore) return 1` and
@@ -328,6 +353,11 @@ tclsh run_regression.tcl        # T1: all cases (tcases, headless, display arm, 
   `find_closest_obj` over an instance it crosses. So that class needs a bare-pin fixture, and
   `xschem instance_pin_coord <i> name <pin>` answers **`{name} x y`** — the pin NAME is element 0, so
   reading (0,1) probes a name and an x and concludes, wrongly, that `net_at` never answers 1.
+  ⚠ For a pin name that ends in a backslash (the gschem import library has such symbols) that
+  answer is **not a Tcl list at all**, and neither is `xschem pinlist <n> name`: both write the
+  name between braces as it stands. Read such a name off the pin's attribute string and the two
+  numbers off the end of the answer as text (`ase::ui::sod_term_pin_names`,
+  `ase::ui::sod_term_pin_xy`; issue 1724, open item 15).
   ⚠ **Two of my own comments were false and the rows caught both**, which is the argument for writing
   the row even when the code is obviously right: `calc::pick_cadence`'s header declared a limit the
   code does not have (a dotted leaf name is NOT re-levelled — only the PATH is mapped), and a scan row
@@ -1258,8 +1288,10 @@ tests/headless/devdisplay.sh status|stop
   die with `cannot open display`). **The display does not survive a reboot**; re-run
   `start`.
 - **`test_wave_markers` times out when `run_suites.sh` attaches to a dev display**
-  (issue 1488, pre-existing): with `:99` up that `TIMEOUT` is not your change. It passes
-  on the private `xvfb-run` display; `AUDIT_DISPLAY=private` takes that arm with `:99` up.
+  (issue 1488, pre-existing): with `:99` up that `TIMEOUT` is not your change. It used to
+  pass on the private `xvfb-run` display (`AUDIT_DISPLAY=private` takes that arm with `:99`
+  up); measured 2026-11-19 it times out there too, with `MF` rows red before the stall
+  (issue 1488's dated section), so a `TIMEOUT` of it on either display is not your change.
 - **A launcher steps aside for another run on the dev display**, by the same detector as
   `T1_DISPLAY=auto` (`tests/headless/dev_display_users.tcl`, shared): it then prints
   `display arm: the dev display :99 is IN USE by …` and takes a private Xvfb.

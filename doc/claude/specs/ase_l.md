@@ -658,7 +658,45 @@ written without a stub for exactly that reason.
 `ase::reconcile_plots` is the post-run safety net: it compares what the registry
 predicted against what the file actually holds and names the disagreement
 (`mislabel`, and its siblings) rather than letting a wrong number reach the
-Value column.
+Value column. A sidecar record is compared with the results file **position by
+position** (the record sits immediately above its `write`) and with the registry
+**by the row it carries** — the first record of a row with the first plot that
+row declares — so the order the deck runs the rows in does not matter **to the
+reconciliation**. It does vary: a deck that asks for the per-device
+operating-point numbers inside `.control` runs the operating point last (issue
+0964), and while the registry leg compared in a fixed operating-point-first
+order every such run was told its rows had recorded each other's plots (issue
+1657).
+
+⚠ **A reader that picks a plot by its TYPE, asked for `op`, is given the
+operating point wherever the deck wrote it.** The engine's raw reader
+(`read_dataset()` in `src/save.c`, behind `xschem raw read <file> op`, `xschem
+annotate_op`, `ase::attach_dbs <file> op` and the Calculator's operating-point
+read) takes, in file order, the plots whose name reads as the type asked for,
+and two of ngspice's plot names read as `op`: the operating point's and
+`Integrated Noise`, the totals of a noise row. A caller that ASKS for `op` is
+given the `Operating Point` plot; the totals answer `op` only when the file
+holds no operating point, so a noise-only run still annotates its totals.
+**Measured** 2026-11-20 on apt 45.2 and on a copy of `ver_53`, an `op` and a
+`noise` row with device requests held: the file is written `Integrated Noise`,
+`Noise Spectral Density Curves`, `Operating Point`; the reader asked for `op`
+lists the node voltages, the annotation publishes them and an Outputs row
+`vdc(out)*2` evaluates, exactly as with the operating point first. Until that
+rule (issue 1657) the totals won by standing first: no node voltage was
+annotated and such a row could not be evaluated. What the rule leaves alone: a
+read that names no type takes the type of the file's first plot, and a read
+asking for `noise` is given whichever noise plot stands first, which in this
+deck's files is the totals and not the spectrum. Band M of
+`tests/headless/test_raw_ascii_point_bounds.tcl`. **Where the totals are still
+what such a caller is shown**, each case measured and each in issue 1657's
+list: a results file whose blocks are ascii with CRLF line ends and whose totals
+stand first, because the reader cannot step over such a block (issue 0300; this
+deck writes binary blocks, which it steps over whatever the line ends); and a
+file already loaded under `op`, which is not read again -- a read that named no
+type stores a totals-first file under `op`, and `xschem raw read <file> op`
+after it shows those totals, as does `xschem annotate_op <file>` unless that
+database is the current one. `ase::attach_dbs <file> op` and the Calculator's
+read are given the operating point all the same.
 
 ⚠ **`opinfo` plots are predicted and DECLINED.** `src/save.c`'s `read_dataset()`
 matches `strstr(lowerline,"operating point")` **above** its AC arm, so `AC
@@ -734,6 +772,26 @@ They should not influence the input to the simulator."* ADE-L is the floor
   expressions' signals ride along. `.save
   -i(v1)` is accepted and saves `i(v1)` (measured), so a negated row's card
   stays verbatim. Rows: OE1, OE2, OE7.
+  ⚖ **Since issue 1724 (2026-11-19) one signal is never a card: a terminal
+  current**, `i(<path>:<tname>)`, as a plain row's own signal or as a read of
+  an expression. `ase::output_card_sources` skips it in both roles and the
+  deck carries a `.probe` term for it instead — R-OUT17.
+  ⚖ **And an expression's read of a name holding `=`, `'`, `{` or `}` makes no
+  card** (issue 1724, 2026-11-19), whatever its shape: a node, a
+  terminal-shaped current, a device parameter (`@m1[g=m]`). **Measured
+  2026-11-19** on the fork's `ver_53` build and on apt 45.2, with hand-written
+  decks: a `.save` of a name holding an equals sign, a single quote or an
+  opening brace stops the simulator with a netlist error before any analysis
+  (exit 1, no results file); a closing brace is harmless and leaves with the
+  opening one. One such read in one expression row therefore cost a narrowed
+  bench its whole run. With no card the run goes on and the row's Value says
+  what it says for any read the results lack (*"Cannot evaluate: unknown token
+  'vdc(a=b)' (not an operator/function, number or raw variable)."*). A read of
+  a name holding `;` or `$` keeps its card: both were measured harmless on a
+  `.save` card. Only the `read` role is held to this: a Save-ticked plain row
+  of such a name is still a card, and the pre-flight refuses it by name before
+  the run (R-OUT3a). Rows PX7, PR11d, PN12 and PN12b of
+  `tests/headless/test_ase_probe_deck_1724.tcl`.
   ⚠ **An ngspice INFIX row is an expression, not a plain signal (fix round
   2026-10-11).** `Vcc/I(Vr)` is one whitespace-free token, and the first cut
   emitted it as `.save Vcc/I(Vr)`. Measured on the same ngspice: `.save
@@ -755,9 +813,10 @@ They should not influence the input to the simulator."* ADE-L is the floor
   row it came from and its role, `plain` or `read` — and checks the **plain**
   cards only (a ticked plain row's signal; a ticked `vt(x)` is checked as
   `v(x)`). An expression, ticked or not, is a computation on the results: the
-  signals it reads still become `read` cards on a narrowed deck, but they are
-  **not** checked, and one the circuit lacks is reported in that row's Value
-  after the run. Fix round 2026-10-11: an UNTICKED expression's absent signal
+  signals it reads still become `read` cards on a narrowed deck (all but a
+  read whose name holds `=`, `'` or a brace, which makes no card: R-OUT3), but
+  they are **not** checked, and one the circuit lacks is reported in that
+  row's Value after the run. Fix round 2026-10-11: an UNTICKED expression's absent signal
   used to be checked once the deck was narrowed, and refused the whole
   simulation. **Measured 2026-10-11** on the registry's ngspice-46+: `.save
   v(out)` + `.save v(nosuch)` (likewise `i(vnosuch)` or a bare `nosuch`) runs at
@@ -770,6 +829,14 @@ They should not influence the input to the simulator."* ADE-L is the floor
   2026-10-11): an unticked `v(out)*09` (Tcl's octal `09`) or a 400-deep
   nesting used to raise out of the deck render and the scan, so the simulator
   never started; both are now ordinary texts (calculator.md R610). Row OE14.
+  A **terminal-current row** is not among the cards (R-OUT3, R-OUT17), so the
+  pre-flight does not see it: the netlist map it checks against holds no
+  terminal, and a ticked `i(x1.xm1:d)` used to be refused as *"names something
+  this circuit does not have"*. A mistyped terminal is therefore reported
+  after the run (R-OUT17), not before it. One exception: a name holding a `;`,
+  a `$`, an `=`, a `'` or a brace is not a terminal (R-OUT17's predicate), so
+  with Save ticked it is a `.save` card again and the pre-flight refuses it
+  before the run.
 - **R-OUT3b — the op phantom guard counts the deck's vectors.**
   `ase::saves_op_phantom_risk` asks whether `ase::output_save_cards` holds
   exactly one card, not whether one row is ticked: a ticked plain row plus a
@@ -854,7 +921,14 @@ They should not influence the input to the simulator."* ADE-L is the floor
   a multi-point analysis, or a verb answering a wave): the word **`wave`** —
   never a last point. The on-screen "no single-point value" note names only the
   rows still without a value after the Calculator was asked, so a row whose
-  cell reads `wave` is never also reported as having none (row OE12). A refusal: the Calculator's sentence. No results file: no
+  cell reads `wave` is never also reported as having none (row OE12). It also
+  leaves out a terminal-current row whose vector is in no plot of the results
+  file (`ase::backend::ngspice::missing_spoken`, issue 1724): neither of the
+  note's reasons holds for it, and R-OUT17's report speaks for it. The typed
+  record of such a row carries its own sentence (`missing_row_note`): *"ase:
+  result -- the results file holds no vector for the terminal current <row>,
+  so that row has no value: the simulator makes that vector only for a .probe
+  card it accepts."* A refusal: the Calculator's sentence. No results file: no
   value at all, as before. Plotting a verb-valued wave from Outputs is **not
   built**; the Plot tick keeps plotting plain RPN rows as before. Row OE6.
 - **R-OUT6 — declared limits.** Sweeps, corners and Monte Carlo: **dataset 0
@@ -879,7 +953,8 @@ They should not influence the input to the simulator."* ADE-L is the floor
   Outputs pane is two tabs over the ONE `outputs` list; **Measures is shown on open and after a
   state loads** (Load State, Revert). A row's tab is a pure function of its TEXT,
   `ase::output_tab` (no Tk; counted arm): **Saves** = a plain `v(<node>)`, `v(<a>,<b>)` or
-  `i(<source>)`, either case, Cadence quotes allowed, no sign (`ase::output_is_save`);
+  `i(<source>)`, either case, Cadence quotes allowed, no sign (`ase::output_is_save`; a
+  terminal current `i(<path>:<tname>)` has that shape and sorts here too, R-OUT17);
   **Measures** = everything else — an analysis-qualified fetch (`vt(out)`, `vdc(out)`,
   `idc(v1)`), a signed signal (`-i(v1)`, `-idc(v1)`: a save has no sign, and the author's sign
   flip is a number they meant to read), a bare name, a device quantity (`@m1[gm]`), a
@@ -914,6 +989,15 @@ They should not influence the input to the simulator."* ADE-L is the floor
   the outputs need their own); with device-parameter saving off, the narrowed decks of
   `test_mos_binning` and `charge_pump` held **2 and 25** op vectors before and hold **14 and
   100** after. Rows TD, OE1, OE7, WD2–WD6 (`test_ase_core`), PF*0-REAL.
+  A **terminal-current row is not a card** (R-OUT17), **but a Save-ticked one is a save and
+  brings the leader** (`ase::output_saves_any`, the one body `ase::saves_all_forced` and
+  `render_deck`'s leader arm read). A plot-only terminal row brings none, like a plot-only
+  voltage row. Why it has to: a netlist can carry a `.save` of its own (every stock ammeter
+  writes `.save i(vmeas)`), and that card narrows the results to what it lists. **Measured
+  2026-11-19** on `ver_53` over such a netlist, transient only: with the terminal row
+  Save-ticked the results hold the terminal, `i(vmeas)` and the node voltages; plot-only, the
+  terminal and `i(vmeas)` and no voltage; with no row, `i(vmeas)` alone. A netlist with no
+  `.save` of its own keeps every usual vector beside the probed ones either way.
 - **R-OUT9 — the Value header sorts the Measures VIEW.** The user: *"click on the 'Value'
   header to push the 'waves' to the bottom - since user really only wants to SEE the values -
   real numbers"*. A click orders numbers first (a list of numbers counts as numbers), then
@@ -941,7 +1025,8 @@ They should not influence the input to the simulator."* ADE-L is the floor
   that leaves its text unchanged (unticking Plot, renaming it) is admitted, and only a changed
   text is judged afresh (`output_admit`'s `orig`). Every other door that adds a row routes by the same classifier because the tab IS
   the text, and **shows the tab the row landed in**: Select On Design writes
-  `v(<net>)`/`i(<inst>)` (Saves), the two-port matrix picker writes `S_1_1 db20()` (Measures),
+  `v(<net>)`, a source's `i(<inst>)` or a terminal's `i(<path>:<tname>)` (all Saves), the
+  two-port matrix picker writes `S_1_1 db20()` (Measures),
   and R608's Export (not built) will. Rows TA, TN, TW4, TW7, TW8.
 - **R-OUT11 — a committed plain row whose author meant the operating point is a measure
   (user ruling 2026-10-13).** The user: *"Yes, proceed with vdc(vbg) and analogues of that in
@@ -1172,6 +1257,441 @@ They should not influence the input to the simulator."* ADE-L is the floor
     leaves its layout, tabs and target byte-identical and never reaches `ase::ui::auto_plot`;
     with the viewer closed it opens none; a plain click is the control) of
     `tests/headless/test_ase_plot_outputs.tcl`.
+- **R-OUT17 — a terminal current is probed, never saved (issue 1724; BUILT 2026-11-19).** The
+  current into ONE terminal of a device or of a subcircuit instance is a row spelled as the
+  simulator names the vector, `i(<path>:<tname>)` — `i(x1.xm1:d)`, `i(r9:n1)`, `i(x1:in)`.
+  Select On Design writes it for a click on a device pin (*A click on a device pin queues its
+  terminal current*, in the UI section), and it can be typed like any other row. ngspice makes
+  that vector for a `.probe I(<path>,<pin>)` card at the deck's top level and for nothing else:
+  **measured 2026-11-19** on the fork's `ver_53` build, `.save i(x1.xm1:g)` with no probe
+  behind it runs at rc 0 and writes no such vector and no message.
+  - **One predicate, asked of a SIGNAL and never of a row's text.** `ase::probe_split` answers
+    `{<path> <tname>}` for one `i(…)` wrapper in either case, with or without the Cadence
+    quotes, holding exactly one `:` with something on each side and no whitespace, comma,
+    parenthesis, `;`, `$`, `=`, `'` or brace. Measured on `ver_53`, each between two good
+    terms on one `.probe` card: a `;` starts a comment and cuts the card there, so the terms
+    behind it are lost; a `$` opening the pin (`I(rt,$n1)`) does the same at rc 0; an `=`
+    (`I(=rt,1)`, `I(rt,1=)`), a `'` (`I(rt,1')`) and an opening brace stop the simulator with
+    a netlist error before any analysis; a closing brace is harmless and leaves with the
+    opening one. A row holding one of them is therefore the `.save` card it was before
+    R-OUT17: Save-ticked, the pre-flight refuses it by name (R-OUT3a); plot-only, it writes
+    nothing. Names the netlister does write still split: `i(xm1[3]:d)`, `i(x1.xm<2>:d)`,
+    `i(x1:in+)`, `i(x1:in-)`. A plain row
+    is read as `ase::output_is_plain` reads it (one leading `-` off,
+    then `ase::output_signal`) and an expression row through `calc::eval_text_signals`
+    (`ase::output_probes`), so `-i(x1.xm1:d)`, `it(x1.xm1:d)` and both reads of
+    `db(if(a:d)/if(b:d))` are terminals. A source's `i(v1)` and `i(v.x1.vp)` are not.
+  - **No `.save` card and no pre-flight row; the leader is R-OUT8's.**
+    `ase::output_card_sources` skips a terminal in both roles (R-OUT3, R-OUT3a). A
+    Save-ticked terminal row still brings the `.save all` leader (R-OUT8,
+    `ase::output_saves_any`). `ase::saves_unresolved` does not count a plain terminal row
+    (`ase::output_is_probe` is the one body the two share), which keeps its two numbers
+    true. As a bench stands, `saves_resolve` and `disto_saves` stand down through
+    `ase::saves_all_forced` before they read that count; the skip is what would keep a
+    terminal-only bench from being cautioned on every analysis and refused on `disto` if the
+    leader were ever switched off. Measured: a deck with `.probe`, no `.save` card at all and
+    `disto` runs at rc 0, and the plot holds the probed vectors.
+  - **The probe plan.** `ase::probe_plan {state netlist_text {mode fold}}`: one record per
+    asked name, the Outputs rows' in pane order and then the measurement rows', each as
+    `ase::probe_card`'s record `{signal path pin card why nohdr}`. Which rows ask is one
+    body, `ase::probe_asked {state {but {}}}`, read by the plan and by the report (which
+    hands it the rows another sentence already speaks for, to pass over). Asked means:
+    - a **Saves-tab** row (`ase::output_is_save`) with Save OR Plot ticked. A plotted terminal
+      has no vector unless it is probed. With neither box ticked it asks for nothing, like
+      any save that is switched off;
+    - every terminal a **Measures-tab** row reads, ticked or not, whether the row is one
+      signal (`idc(xm1:d)`, `-i(rt:n1)`, `it(xm1:d)`) or an expression. Its Value is computed
+      from the results whether or not it is saved, and the Add Output dialog
+      (`ase::ui::output_editor`) opens with both boxes off;
+    - every terminal an **enabled measurement row** reads (`ase::meas_probes`): the rows
+      whose `ase::meas_verdict` is `ok` or `caution`, their fields of kind `vecexpr`, each
+      `i(…)` token `ase::probe_split` takes. A `param` measurement's `expr` field is not
+      such a field and asks for nothing.
+
+    Two spellings that differ only in case are one terminal unless the run requests
+    `distinguish`. Two names for one terminal (`i(x1.m2:b)` and `i(x1.m2:b_tj)`) are two
+    records with one card, so that the report can speak about each row. There is no Tk in
+    it, and it reads no file except for one kind of terminal: a numbered port of a
+    subcircuit instance whose `.subckt` header the netlist text does not hold (below). It
+    is ONE body for the deck writer and for `ase::run_deck`, which carries the plan to the
+    report as the `probes` key of its run record.
+  - **The card is not the row's text** (`ase::probe_card`; measured on `ver_53`). A
+    subcircuit instance (leaf `x…`) takes its port by name, `I(<path>,<tname>)`, unless the
+    name is a number (next item). Any other
+    leaf takes `n<k>` as the position `<k>` and `b_tj` as `b`: the simulator answers with
+    those two names and refuses them in a card. A device's own letters go as they stand. A
+    TOP-LEVEL instance that is not a subcircuit instance is written in lower case unless the
+    run requests `distinguish`: spelled in upper case, a simulator that is not folding case
+    names both pins of `Rtop` `i(Rtop:nn)`.
+  - **A subcircuit port whose name is a number goes into the card as its position.**
+    Measured on `ver_53`: a word of digits in a card is a POSITION, also where a port has
+    that number as its name. Over `.subckt blk 3 2 7`, `I(x1,3)` is the third port and comes
+    back as `i(x1:7)`, and `I(x1,7)` is refused (*"x1 has 3 terminals"*). Vendor macro-models
+    name their ports this way (`.SUBCKT LM741 1 2 99 50 28`). So for a leaf `x…` with an
+    all-digit terminal `ase::probe_x_ports` walks the instance path through the netlist text
+    (the top-level card of its first component, the subcircuit that card calls, and for each
+    further component the card of that name inside that subcircuit's body) and takes the last
+    subcircuit's `.subckt` header from the netlist text or, when the text has none, from the
+    model files the deck names (`ase::subckt_model_cards`, read through `ase::subckt_lib`).
+    Then: the number names exactly one port of that header, and the card carries that port's
+    1-based position; it names no port, or two, and it is written as it stands (a position
+    typed by hand); no header, or no card for the instance, is found, and it is written as it
+    stands with the record's `nohdr` set to `{header <subcircuit>}` or `{call <instance
+    path>}`, which the report reads. A body is only ever walked in the netlist text. A name
+    that is not all digits triggers none of this: no netlist is walked and no file is read
+    for it. `ase::probe_refusals` is not taught the simulator's *"is taken as a position"*
+    line: a correct positional card prints it whenever the number is also another port's
+    name.
+  - **One `.subckt` header reader.** `ase::subckt_scan` (the headers and the
+    `.include`/`.lib` cards of one text, section-aware), `ase::subckt_walk` (every header
+    reachable from a list of files, each file's own cards followed relative to its
+    directory) and `ase::subckt_lib` (that walk, remembered until a file it read changes).
+    The pin pick's `ase::ui::sod_subckt_scan`, `sod_subckt_walk` and `sod_subckt_lib` forward
+    to them, so the click that names a port and the card that carries its position cannot
+    read a header differently.
+  - **Withheld: no card is written, and the report says why.** Any `K` coupling. A top-level
+    `E` whose card, `+` lines joined (`ase::probe_top_card`), has fewer than six words, and
+    pin 3 or 4 of one that carries `vol=` or `value=`: each stops the simulator before any
+    analysis, on `ver_53` and on apt 45.2 alike, while the six-word
+    `E5 TEMPERAT VSS VOL=' temper '` that xschem's `vsource_arith` symbol netlists is probed
+    without harm. And, under `distinguish`, a top-level device with a capital in its name:
+    its lower-case spelling is refused there (*"differs only in case"*) and its upper-case
+    one is mis-named.
+  - **Where the cards go** (`ase::backend::ngspice::render_deck`). `.probe I(…) I(…)` cards
+    of space-separated terms (a comma between two terms drops the second), a card closed
+    when the next term would carry it past a hundred characters, directly after the output
+    `.save` cards and above the operating-point tier's block. Each distinct term is written
+    once (`ase::probe_terms`), also when two records carry it. A bench that asks for no
+    terminal renders the deck it rendered before, byte for byte.
+  - **A term the netlist already asks for is not written again**
+    (`ase::probe_netlist_terms`, `ase::probe_terms_new`; the card writer loops over the
+    filtered terms). A schematic written for this simulator can carry a `.probe` card of its
+    own in a code block. **Measured** on `ver_53` and on apt 45.2: the same term twice in a
+    deck makes the vector of a top-level device twice, under one name, and on `ver_53` a
+    second probe node stands in series with the first; for a device inside a subcircuit
+    `ver_53` kept one vector. What is read of the netlist text: the card word without case;
+    a card's `+` lines joined on, a comment line between them skipped; a card inside a
+    `.subckt` body like one at the top level, because the simulator does not read a `.probe`
+    relative to the subcircuit it stands in; nothing behind a `;`, or behind a `$` that
+    follows a blank or a comma (both measured to be comments); and only the spelling ASE-L
+    itself writes, with no blank inside the parentheses. How two terms are compared follows
+    the case mode the run requests: under `fold` without case (a netlist's `.PROBE
+    I(RTOP,1)` and ASE-L's `I(rtop,1)` made the one vector twice); under `preserve` and
+    `distinguish` only an identical spelling counts, because under `preserve` a netlist's
+    `.probe I(Rtop,1)` makes `i(Rtop:nn)` while ASE-L's `I(rtop,1)` makes the row's own
+    `i(Rtop:n1)`, and dropping ASE-L's term there would cost the row its vector. The plan,
+    the run record and the capability echo are keyed on the unfiltered list and are
+    unchanged. Declared: it is a comparison of text, so `I(m1,d)` beside `I(m1,1)` is still
+    written twice.
+  - **The marker.** A deck that carries a `.probe` card echoes
+    `ASE-PROBE-VERSION $?probe_version` (`ase::probe_marker`) in its `.control` block, below
+    the pre-commands and bridges and above `set appendwrite`, so before the first analysis:
+    a failed analysis quits where it stands. The simulator answers 1 when the terminal-probe
+    extension is built in (`ver_53`) and 0 otherwise (apt 45.2, `ver_50`, `ver_52`). The
+    report after the run reads this line of the run's own log (`ase::probe_marker_answer`).
+  - **The capability key `hier_probes`** asks the same question of a program BEFORE any
+    run. The capability probe's deck C carries, as the first line of its control block,
+    `echo ASE-PROBE-VERSION $?probe_version > probe_h.txt`
+    (`ase::backend::ngspice::cap_hier_lines`), and the adapter's `capabilities` publishes
+    `hier_probes` 0 or 1 from that file, never from the exit code, under
+    `altshow_op_dump`'s contract: a run of deck C cut by the budget records the key as
+    unmeasured (`timeout`), and one that finished and left no 0 or 1 publishes neither.
+    **Measured** 2026-11-20 through the real probe: 0 on apt 45.2, `ver_50`, `ver_52`
+    and stock 47, 1 on `ver_53`; every other key of the four answers taken that day was
+    unchanged. The adapter's `variant_notes` names the gap as *"terminal currents of
+    subcircuit pins or of devices inside subcircuits"* (unmeasured: *"whether it saves
+    terminal currents inside subcircuits"*), after the fast dump's clause and before the
+    asides, so apt 45.2 reads *"… can do everything ASE-L offers except case-sensitive net
+    names, the fast operating-point dump and terminal currents of subcircuit pins or of
+    devices inside subcircuits. …"* and `ver_53` still reads *"… can do everything ASE-L
+    offers."* The run is never refused on the key.
+  - **Which terminals need such a program** is one predicate, `ase::probe_needs_hier
+    <path>`: the path holds a `.` (a device inside a subcircuit) or its last word begins
+    with `x` or `X` (a pin of a subcircuit instance). `ase::probe_plan_hier <plan>` gives
+    the plan's terminals of that kind whose card was written.
+  - **The cure**, `ase::probe_cure {state {mode ask} {tail again}}`, is the words every
+    sentence about a program that cannot ends with: which REGISTERED simulator can, and
+    where it is picked. It walks the entries that can serve the session's backend
+    (`ase::sim_list`), in registry order, leaving none out
+    (`ase::probe_cure_entries`), and says, the first of these that applies:
+    - an entry is known able: *"<A> can — pick it under Setup > Simulators… and run
+      again."*; *"<A> and <B> can — pick one under Setup > Simulators… and run again."*
+      (three or more: *"A, B and C"*);
+    - none is, and an entry has not been tried: *"<C> has not been tried yet — the next
+      run finds out whether it can, or select it under Setup > Simulators…, press Edit…
+      and then Detect."* (several: *"<C> and <D> have not been tried yet — the next run
+      finds out which of them can, or select each under Setup > Simulators…, press Edit…
+      and then Detect."*). The steps are spelled out because the Simulators window has
+      no Detect button of its own: Detect is in the row editor that window's `Edit…`
+      button opens for the entry selected in its list;
+    - none is, none is untried, and an entry's answer is not known: *"None of the
+      simulators you have registered is known to. Register an ngspice build that saves
+      terminal currents inside subcircuits under Setup > Simulators… and run again, or
+      place an ammeter (ammeter.sym) in series with the pin."*;
+    - every entry was measured unable: the same with *"None of the simulators you have
+      registered can."*;
+    - nothing is registered: the same without its first sentence.
+
+    `tail before` ends each sentence that ends *"and run again"* with *"before you run"*
+    instead. The door is the Setup menu's `Simulators…` entry
+    (`ase::ui::simulators_dialog`), spelled as the menu spells it.
+
+    **The verdicts about an entry** (`ase::probe_cure_peek`, `ase::probe_cure_verdict`):
+    `can` and `cannot` are measured answers (`can` only for a program also measured to
+    simulate, `usable`); `unknown` is an entry that was asked and gave no answer to the
+    question, one the cure held to be slow, or one the cure does not ask (registered as
+    not runnable, no program at its file, a backend with no probe: row PH12c of
+    `test_ase_probe_deck_1724` reads each at a peek, and row TPV6b of
+    `test_ase_terminal_pick_1724` the first two at a click); `untried` is an entry
+    that the cure can ask and has not. "Registered as not runnable" is read from what
+    registering recorded, not from the file as it is now: an entry whose file was
+    repaired afterwards stays `unknown` to the cure until it is registered again (OK in
+    the row editor), although Detect measures it and a run on it starts it by then --
+    **measured** 2026-11-20 on a copy of `ver_53`; issue 1724's Limits has the run. An entry that is not `can` is never recommended,
+    and one that is not `cannot` is never ruled out. `untried` exists so that "nobody has
+    asked yet" does not send the user to register another build: **measured** 2026-11-20
+    on a copy of the user's registry and bench, a pick made after a run that had asked for
+    no such current read *"None of the simulators you have registered is known to.
+    Register …"* and the run one gesture later read *"ng_w_stb and ver_53 can"*.
+
+    **`mode peek` starts nothing**: an entry's answer is read from the capability store
+    (`ase::sim_caps_have`) or from the cure's own record, and every other entry is
+    `unknown` or `untried`. It is what a click uses. **`mode ask` may start a registered
+    program** that is `untried`, and is what a run uses. It is bounded
+    (`ase::probe_cure_entries`): one call spends at most `ase::probe_cure_ms` starting
+    programs; a program with entries still to be asked behind it is not given all of what
+    is left -- `ase::probe_cure_each_ms` is kept back for each of them, up to half of
+    what is left -- so that one program that never answers does not cost the entries
+    behind it their turn; an entry whose share would be under `ase::probe_cure_min_ms`
+    is left `untried` for the next call; a program that did not answer in a fair share of
+    the call (`ase::probe_cure_fair`) is not started again by the cure until the
+    capability store is cleared, the registry is edited or its file changes, and one cut
+    after less than that is asked again by the next call; and an answer the lowered
+    budget cut short is not left in the capability store, where a run would read it. The
+    shipped figures are held by row PH13b of `test_ase_probe_deck_1724`.
+
+    **What the cure knows is kept under the program, and over an edit of the registry.**
+    Its own record (`ase::probe_cure_seen`) is keyed on the program file's stamp and the
+    words the program is started with (`ase::probe_cure_key`), so two entries for one
+    program share an answer and a program rebuilt in place is asked again.
+    `ase::sim_register` and `ase::sim_unregister` still empty the capability store (issue
+    0950) and carry the answers `can` and `cannot` over the edit
+    (`ase::probe_cure_carry`); `slow` is not carried. So a click made after the user has
+    added an entry still names the one that can.
+  - **How a sentence names the program of a run**: `ase::sim_run_name <backend>` -- the
+    file when no registered entry is in force (`/usr/bin/ngspice`), `<entry> (<file>)`
+    when one is, the backend's own word for a backend whose run command does not start
+    what the registry holds. `ase::run_deck` resolves it once and carries it in the run
+    record (`simname`), so the report names what the run started.
+  - **Before the run.** `ase::probe_start_report`, called from `ase::run_deck` directly
+    under the sentence that says which registered simulator the run is starting: when the
+    capability answer for the program in force is MEASURED `hier_probes` 0 (read from the
+    peek `ase::cap_report` has just filled) and the deck's plan holds a terminal that needs
+    the hierarchy, *"ase: <program>, the simulator this run is starting, cannot save the
+    terminal current i(x1.xm1:d): it saves terminal currents only on top-level devices
+    that are not subcircuit instances. <cure> This run goes on without that current."*
+    (several: *"the terminal currents A, B and C"*, *"without those currents"*). Said as
+    an error on every such run. The run is not refused. An unmeasured program is not told
+    it cannot. **A run on a program measured unable whose plan holds NO such terminal
+    says nothing and asks the registered entries all the same** (`ase::probe_cure_entries`
+    in `ask` mode, bounded as above, and starting nothing once each has been asked): a
+    click starts no program, so it can name the entry that can only if a run found out.
+  - **After the run.** `ase::probe_report {state meta data {exitcode 0}}`, called from
+    `ase::run_done` directly under the operating-point report and caught like it, says at
+    most one sentence per asked terminal, the first of these that applies:
+    - *withheld*: *"ase: no probe was written for the terminal current i(k1:n1): k1 is a
+      coupling between inductors and has no terminal. To measure it, place an ammeter
+      (ammeter.sym) in series."*
+    - *refused*: *"ase: the simulator refused the terminal current i(x1.nope:d) (.probe
+      I(x1.nope,d)): no instance named x1.nope."* The reason is the simulator's own. A
+      refusal is matched by CONTENT on the card's path and pin, without case, `,` or `:`
+      (`ase::probe_refusals`), in both shapes the simulator prints:
+      `probe: I(<path>:<pin>) not inserted: <reason>`, and `.probe i(<dev>,<pin>) will be
+      ignored` with its `Warning:` line directly above. Each refusal is said once, however
+      often a reloading deck reprints it. It is NOT said when the judged results hold a
+      vector of the row's own name: over `.subckt blk 3 2 7` with no header in reach, the
+      card `I(x1,3)` makes `i(x1:7)` while `I(x1,7)` is refused, and calling the row
+      `i(x1:7)` refused would contradict the results beside it.
+    - *missing*, when the judged results hold other terminal currents of the same instance:
+      *"ase: the terminal current i(x1.m2:b) is not in this run's results under that name:
+      the deck asked for it (.probe I(x1.m2,b)), and for x1.m2 the results hold
+      i(x1.m2:b_tj). Name the row after the one meant."* The card was taken and the
+      simulator called the vector something else.
+    - *missing*, when they hold none: *"ase: the terminal current i(x1.xm1:d) is not in this
+      run's results: the deck asked for it (.probe I(x1.xm1,d)) and the simulator neither
+      made the vector nor said why."*
+
+    A refused or missing **numbered port whose position could not be looked up** says why
+    (`ase::probe_nohdr_note`; behind the refused sentence, and in a missing one after *"…
+    the deck asked for it as .probe <card>."*): *"The simulator reads a number in a .probe card as a
+    position, not as the port of that name, and ASE-L did not find one .subckt header for
+    <subcircuit>, in this run's netlist or in the model files it names, to turn the port
+    named <n> into its position. Name the model file that holds that header under Setup >
+    Model Files and run again."* Where it is the instance's card that was not found, the
+    sentence ends *"… found no card for the instance <path> in this run's netlist, so it
+    could not turn the port named <n> into its position. To measure it, place an ammeter
+    (ammeter.sym) in series."*
+
+    **A simulator that answered 0 saves no terminal below the top level**, and its own
+    words for that (*"Could not find the instance line for x1.xm1"*) read like a mistyped
+    name. So when the run's log shows `ASE-PROBE-VERSION 0`, the terminals that need the
+    hierarchy (`ase::probe_needs_hier`) and were refused or are missing are reported
+    TOGETHER, in ONE record of kind `hier` whose second word is the list of them, in place
+    of their own records and at the place of the first of them: *"ase: <program>, the
+    simulator this run started, cannot save the terminal current i(x1.xm1:d): it saves
+    terminal currents only on top-level devices that are not subcircuit instances.
+    <cure>"* (several: *"the terminal currents A, B and C"*). `<program>` is the run
+    record's `simname`; `<cure>` is `ase::probe_cure` in `ask` mode. The sentence is minted
+    in `ase::sim_why` (kind `probe_hier`) and said through `ase::sim_say`. A terminal of a
+    top-level device that is no subcircuit instance keeps its *refused* or *missing*
+    sentence on such a build too, and nothing is added for it: such a build probes it, so
+    the build is not the cause. (Until 2026-11-20 each such terminal kept its refusal and
+    one note, *"this simulator probes only top-level devices …"*, record kind `oldbuild`,
+    stood behind them; that note is gone.)
+
+    What the report said is kept for Direct Plot (`ase::probe_said_keep`, the variable
+    `ase::last_probes` beside `last_run`): the results file it is about, the run's name
+    for its program, the plan's terminals, those of the `hier` record, the reason given
+    for every other one, and the session that asked for the run (`session`, from the run
+    record: `ase::run_deck` takes it with `ase::session_holding` -- two state views of one
+    bench can write one results file). It is taken when the run STARTS and read from the
+    record, not asked again when the report is made: a session edited while its
+    simulator runs no longer holds the state the run was handed, and is still the session
+    whose run it was (row PH37 of `test_ase_probe_deck_1724`, through `ase::run_deck`;
+    row TPV13 of `test_ase_terminal_pick_1724` for what Direct Plot then says). A run
+    that starts empties it when it is about the results that run replaces
+    (`ase::probe_said_clear`).
+
+    Behind those, at most one note:
+    - when the exit code is not 0, the plan wrote at least one term and the log holds a
+      convergence failure (`timestep too small`, `DC solution failed`, `no convergence` or
+      `operating point could not be simulated`, in any case): *"ase: this run did not
+      converge, and its deck asked for <N> terminal
+      current(s). Each one puts a zero-volt source in series with its pin, and that alone
+      can stop a run that finishes without it. Switching those rows off -- unticking Save
+      and Plot on a Saves row, removing or disabling a Measures or measurement row that
+      reads a terminal -- may let the run finish."* (record kind `note`). **Measured** on
+      `ver_53` and on apt 45.2, sky130 `tb_ft_test_2`: one terminal row on M1's drain turned
+      an exit-0 transient into `Timestep too small`, and a hand-placed 0 V source at the same
+      pin fails the same way. Any other failed run has another cause and gets no such note.
+      The simulator's `singular matrix` line is not in the key: it is a warning that is
+      printed on the way to a solution too. **Measured** on both binaries: a bench with a
+      capacitively coupled node prints it and finishes at exit 0. So a healthy run that the
+      user stopped, or that failed later for another reason, is not told it did not
+      converge; a real unsolvable operating point always prints `Error: The operating
+      point could not be simulated successfully.` -- with `timestep too small` beside it
+      only when the transient-op rung was tried, and `DC solution failed` only from the
+      `op` analysis -- and still is, also when the Convergence form has switched that rung
+      off (deck line `optran 1 1 1 0 10u 0`). **Measured** on `ver_53` and on apt 45.2 for
+      ac, tran, a dc sweep, noise, pz and sens: with the rung off the log holds that line
+      and none of the other three. `iteration limit reached` is not in the key either:
+      the pole-zero search prints it in a warning (`Pole-zero iteration limit reached;
+      giving up after N trials`) and the run goes on to exit 0, on both binaries;
+    - when the exit code is 0, the plot sidecar and the results file are there, no plot was
+      judged (next item), at least one noise, tf, pz or sens analysis is enabled and EVERY
+      other enabled analysis is one of those four or a sweep of a design variable
+      (`ase::probe_row_swept`, the `dcvar_plan` hook):
+      *"ase: the terminal current i(r1:n1) is not in this run's results: the run made only
+      noise, transfer-function, pole-zero or sensitivity analyses, and none of those keeps a
+      terminal current. Enable an operating point, a dc sweep of a source, an ac or a
+      transient analysis and run again."* (record kind `note`; several rows: *"the terminal
+      currents <a>, <b> are not …"*). With a sweep among them the sentence names it: *"…
+      or sensitivity analyses beside a sweep of a design variable, and none of those keeps
+      a terminal current. …"* (two or more: *"beside sweeps of design variables"*); with no
+      sweep enabled the sentence is unchanged. It names each terminal whose card was
+      written and not refused and whose vector no plot of the file holds under any wrapper.
+      Those are the rows the "no single-point value" note leaves out (R-OUT5), so each row
+      is spoken for once: a sens-only run lists `v(r1:n1)`, that older note names the row,
+      and this one does not. Without it such a row had an empty Value and no sentence
+      anywhere.
+      **Beside a sweep, a row that reads the sweep by its qualifier is left to the sweep's
+      own advice.** Measured on the real road: beside a noise analysis
+      `ase::backend::ngspice::dcvar_output_refusals` still speaks, before the run and in
+      the row's Value, for a row such as `is(r1:n1)`, alone or inside an expression. A
+      terminal that only such rows ask for is not named in the note; one that any other
+      row asks for is (`ase::probe_asked` with those rows passed over), under the spelling
+      asked first. The sweep's qualifier is `is(…)`; `idc(…)` reads the operating point.
+      **Not said:** with an `sp` analysis enabled (its plot holds the probed vector), with
+      a `dc` sweep of a source or an operating point enabled (the row then has a value),
+      and for a sweep of a design variable that is the bench's only analysis, which keeps
+      its own advice.
+  - **Which plots can say a vector is missing.** Measured on `ver_53`: a probed vector is in
+    the op, dc, ac, tran, disto and sp plots and in none of the noise, tf, pz and sens plots,
+    and a design-variable sweep's plot holds only what its loop copies. So the vector is
+    looked for only in the plots of rows whose result vectors are netlist names
+    (`ase::analysis_resultvecs`) and that are not a `dcvar_plan` sweep, and it is missing
+    when none of those holds it. A run that wrote no such plot says nothing about missing
+    vectors, and so does a run that failed or left no results file. The one thing said for
+    a run with no such plot is the note above, for a bench of only noise, tf, pz and sens
+    analyses, with or without sweeps of a design variable beside them.
+  - **An older simulator is not refused a run.** The card is written for every build. A
+    build answering 0 probes a top-level device that is not a subcircuit instance, by
+    position and under the same vector name, and refuses every other probe with a warning at
+    rc 0; the report then names each one.
+  - **Reading the row back.** xschem's raw reader stores every `:` of a variable name as
+    `.`, so the vector is `i(x1.xm1.d)` in the viewer, the Calculator and `xschem raw …`. The
+    row's colon spelling resolves through rung 5 of the lookup ladder
+    (`doc/claude/specs/raw_case_mode.md` §9). ASE-L's own file readers
+    (`ase::raw_vectors_present`, `ase::raw_scalars`) keep the colon.
+  - **Declared limits.** The pre-flight does not check a terminal row. A hand-typed bus
+    range `i(xb[1:0]:out)` holds two colons, is not a terminal, and stays an inert `.save`
+    card. A typed row with a signed number for the terminal, `i(rt:-1)`, is taken as a
+    terminal: its card `I(rt,-1)` made the operating point fail to converge on `ver_53`,
+    and the convergence note is then said. A bench whose ONLY enabled analyses are two or
+    more sweeps of a design variable leaves an unqualified terminal row with an empty Value
+    and no sentence: none of the sweeps is the bench's one analysis, so
+    `dcvar_output_refusals` judges no unqualified row, and none of the four kinds is there
+    to bring the note (row PL15f pins that silence; measured on the real road with states
+    written by hand). Beside a sweep the note was run on the simulator for a noise analysis
+    (row PA8h); for tf, pz, sens and two sweeps it is fenced from written files (rows
+    PL15e, PL15e2). Under `distinguish` two rows that differ only in case count as one when
+    the note decides which terminals are still asked for. The netlist's own `.probe`
+    terms are compared as text. An `sp` plot holds probed vectors but is not asked about a
+    missing one. A numbered
+    port of an instance below a subcircuit whose BODY is in a model file is not followed
+    (`nohdr {call …}`, the ammeter sentence). A probe's source is a device to a `sens`
+    analysis: each probed terminal adds entries to that plot, and nothing in ASE-L lists a
+    sensitivity result today. Under `preserve`, no card spelling gives the two terminals of
+    a top-level expression source (`vol=`): the lower-case card ASE-L writes is refused and
+    the report relays the simulator's reason. A run that requests `distinguish` (its plan
+    and its deck are fenced, the run is not), an older build (its report sentences are
+    fenced from synthetic log text) and the cards beside the operating-point tier's block
+    are run by no row. The convergence note is fenced from log text, and against a run
+    that really fails to converge by one real-simulator row: an operating point that
+    fails with the transient-op rung off (PN13b). The transient's `Timestep too small`
+    form of it is run by no row (the failure lines were measured on both binaries by
+    hand). A `tf` analysis goes on after a failed operating point. Where the failed solve
+    leaves no singular matrix (**measured**: a comparator loop, with the transient-op rung
+    on and off, both binaries) the run ends at exit 0, so a bench whose only analysis is
+    `tf` gets no convergence note there: it gets the note for a bench of only noise, tf,
+    pz or sens analyses. Where it does leave one (**measured** with the rung off: an
+    inductor loop, a node with no dc path) the simulator aborts in the `tf` solve at a
+    nonzero exit and the note is said. No row pins either case.
+  - Suite `tests/headless/test_ase_probe_deck_1724.tcl`: bands PS (the predicate), PX (no
+    card and no pre-flight row; the leader), PU (`ase::saves_unresolved`), PP (the plan:
+    Saves rows by their ticks, Measures rows and measurement rows always), PQ (a port whose
+    name is a number, and the header reader), PR (the rendered deck), PL (the report, from
+    synthetic logs), PW (the plan carried and the report called), PA (the other readers of
+    an output row), PN (real runs) and PE (from a click on the sheet, through the rendered
+    deck and a real run, to the vector in the results). PN, PE and rows PA8g and PA8h are
+    announced by a `skip:` line where no ngspice answers `$?probe_version` = 1. Rows by
+    subject: PS1d, PR11b and PR11c (the characters that are no terminal); PX7, PR11d, PN12
+    and PN12b (an expression's read of a name no `.save` card can carry: no card, the deck
+    equal to the bench without the rows, a real run that ends at exit 0, and the control
+    that each such card written back by hand stops the simulator); PR15 to PR18 and PN10,
+    PN10b, PN10c (a term the netlist already holds, also under `preserve`); PL28, PL28b,
+    PL29 and PL29b (the convergence key with the transient-op rung on and off, and the
+    `singular matrix`, `stepping failed` and pole-zero `iteration limit reached` warnings
+    that are not in it); PN13 and PN13b (a bench that converges only on the transient-op
+    rung, and the same bench failing with that rung off, on the real simulator; the other
+    failure lines these two and PL28b look for are read out of the key of
+    `ase::probe_report` itself, and a PD0 fixture row goes red when that key cannot be
+    read); PL15,
+    PL15b to PL15d and PA8g (the note for a bench of only noise, tf, pz or sens; PA8g on
+    the real simulator); PL15e, PL15e2, PL15f, PL15g, PL15h and PA8h (that note beside sweeps of a
+    design variable: said, in the plural, when not, which rows it leaves to the sweep's
+    advice, the asking body, and PA8h on the real simulator); PN11 (`i(v1)` equals
+    `i(v1:n1)` and is the negative of `i(v1:n2)`).
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 
@@ -1181,6 +1701,24 @@ time` — which hands the integrator a breakpoint, changes both the grid and the
 byte count, and is **not disarmed when it fires**. Eligibility floor: **100,000
 points**; below it the deck is byte-identical to one rendered with checkpointing
 off.
+
+**What a stopped run is told** (`ase::ckpt_report`, once, as a note that opens
+*"ase: salvage -- "*), the first of these that applies:
+
+- its checkpointed analysis had already been written — the sidecar holds that
+  row's record and the results file lists the plot at the record's place
+  (`ase::ckpt_finished`): *"this run was stopped after its 'Transient Analysis'
+  plot was written: the results file holds it at <N> points, with every analysis
+  that finished before it. The op analysis in row 0 did not finish."* (the last
+  sentence names every enabled row that left no record, and is left out when
+  there is none). A deck that runs its operating point last runs it behind the
+  transient, so a Stop under it lands here (issue 1657);
+- no checkpoint is on disk: *"this run was stopped before its first checkpoint,
+  so the analysis that was running kept nothing. The analyses that had already
+  finished are in the results file."*;
+- otherwise: *"this run was stopped: the analyses that finished are in the
+  results file, and the '<plot>' plot the simulator was still filling was kept
+  at <N> points of an estimated <M>, in <file>."*
 
 ⚠ **AN EMITTED LOOP'S EXIT MUST BE THE FALSE BRANCH.** `.control`'s `if` takes
 the **false** branch for an *unevaluable* condition — measured on both binaries,
@@ -1620,7 +2158,8 @@ icons welcome where Tk can do them, e.g. unicode ▶ ■)
 - `=`     → Add Variable dialog (fields: name, value)
 - `-->`   → Setup Outputs dialog (name optional + expression, or
             choose-from-design: raises/opens the schematic, user clicks
-            wires → voltage / terminals → current; ESC ends)
+            wires → voltage / device pins → terminal current /
+            source bodies → source current; ESC ends)
 - `X`     → Delete current selection (noun-verb, single-pane selections)
 - `N&>`   → Netlist and Run
 - `>`     → Run (existing netlist)
@@ -1628,20 +2167,909 @@ icons welcome where Tk can do them, e.g. unicode ▶ ■)
 - `~`     → Plot outputs and update values (Ctrl-click: values only) (R-OUT12, R-OUT16)
 
 **Select On Design v1 scope** (item 08; applies to the `-->` choose-from-
-design flow and both Outputs > To Be Saved/Plotted > Select On Design):
-a click on a wire, a net label or anything else that resolves to a net
-queues the voltage output `v(<net>)`; a click on a SOURCE-class instance
-(symbol `type` ∈ {vsource, ammeter}) queues the source-current output
-`i(<instname>)` — a source has exactly one branch current, so instance-
-level click granularity is exact for the supported class. Generated tokens
-are lowercased (ngspice echoes `print` expressions lowercased and
-result_probe matches the expr literally). Per-terminal currents of OTHER
-devices are deferred: ngspice needs `.options savecurrents` plus
-`@m.x<inst>.<subdev>[id]`-style names that depend on subcircuit internals
-invisible to the schematic click. Clicks that resolve to neither report a
-one-line notice and queue nothing. Queueing dedupes on the exact expression
-string: an existing row gets the flavor's plot/save flags ORed in, an
-identical re-queue writes nothing.
+design flow, both Outputs > To Be Saved/Plotted > Select On Design and
+Results > Direct Plot; the pin arm is issue 1724, 2026-11-19). One click,
+`ase::ui::sod_click`. A click in a window that shows neither the session's
+design nor a sheet below it queues nothing and says so (T12); otherwise it
+is classified in this order, first match wins:
+
+1. **a device pin under the cursor** queues the current into that terminal,
+   `i(<path>:<tname>)` — see *A click on a device pin queues its terminal
+   current*, below. A click on a wire, off the pin's own square, is not on
+   the pin (T3) and goes on down this list;
+2. **the body of a SOURCE-class instance** (symbol `type` ∈ {vsource,
+   ammeter}, `ase::ui::sod_source_at`) queues the source-current output
+   `i(<instname>)` — a source has exactly one branch current, so a click
+   anywhere on its body is exact;
+3. **a wire, a net label or anything else that resolves to a net**
+   (`ase::ui::sod_net_at`) queues the voltage output `v(<net>)`;
+4. **anything else that was hit** queues nothing and reports
+   *"ase: nothing to queue there — click a wire or a net label for a voltage,
+   an instance pin for its terminal current, or a voltage source/ammeter for
+   its current"*;
+5. **empty canvas** queues nothing and says nothing.
+
+Generated tokens are lowercased unless the session's simulator is asked to
+keep case (`ase::ui::sod_expr`, `ase::ui::sod_case_mode`). Queueing dedupes
+on the exact expression string: an existing row gets the flavor's plot/save
+flags ORed in, an identical re-queue writes nothing. The mode's entry echo
+names all three picks (`ase::ui::sod_entry_notice`): *"… click wires/net
+labels for voltages, pins for terminal currents, sources for currents; ESC
+ends"*, and for Direct Plot *"… for voltage traces, pins for terminal
+currents, sources for current traces; ESC plots"*.
+
+**A click on a device pin queues its terminal current** (issue 1724,
+BUILT 2026-11-19; reviewed twice and repaired after each review the same
+day, then repaired a third time for what the second repair had measured and
+handed back, reviewed a third time and repaired a fourth time; that repair
+was verified, and a closing pass built what the verifiers listed; that
+pass was verified too, and a last build built what was ruled in of its
+verifiers' list; the
+marker of T11 and the mode rules of T12 came with the repairs). The
+user: *"when I'm not in any mode, if I put
+the cursor on a terminal (such as instance pin) and click, it selects the
+pin. So, why am I unable to save a terminal current in ASE-L"*. The deck
+half is R-OUT17.
+
+- **T1 — the pin test runs first and in its own proc.**
+  `ase::ui::sod_terminal_at {key x y}` answers the pin or nothing;
+  `sod_click` only calls it, ahead of the source rule. It reads only
+  (`xschem pin_at -all`, `doc/claude/specs/pin_selection.md` §4.6, and
+  `xschem object_at`, `wire_coord`, `pinlist`, `instance_pin_coord`,
+  `instance_bbox` and `instance_coord`) and does not depend on
+  `en_pin_select`. Called without coordinates (the canvas
+  binding) the pin test uses the RAW cursor (`xschem get mousex`/`mousey`);
+  the rest of the click keeps the snapped pair. With the snapped pair any
+  click within half a grid step of an on-grid pin would be that pin, and no
+  wire end near a pin could be picked for its voltage. A pin test that raises
+  is announced and the click goes on as a wire or source pick.
+- **T2 — in range.** A pin counts when the pin-select click would reach it
+  AND it is within 10 schematic units. The first is `xschem pin_at -all`'s own
+  test: the cursor is within `12 * zoom * tk scaling` of the pin's point (a
+  fixed distance on screen, so it grows in schematic units as the view zooms
+  out), or inside the pin's own drawn rectangle. The rectangle keeps the
+  whole square the pin when the sheet is zoomed in until the radius is
+  smaller than the square (`point_in_inst_pin_rect()`, pin_selection.md
+  §4.2). The second bound keeps the body of a source pickable from far away,
+  where the on-screen radius alone reaches from a source's pin to the middle
+  of its body. A wire is kept by T3's wire rule, not by this bound. Beyond
+  the square the device's lead is the terminal only as far as the radius
+  reaches: zoomed far in, a point a few units down the lead is not the
+  terminal (declared; row TPR26).
+- **T3 — which pin, and when a wire wins.** Pins in range are ordered by
+  distance. A pin of something that is not a device, strictly nearer than
+  every device pin, makes the click the ordinary voltage pick. At equal
+  distance the device wins: a `lab_pin` placed ON a device pin gives the
+  terminal at the shared point and into the label's text as far as the range
+  of T2 reaches, and the net's voltage beyond it. Among device pins the
+  nearest wins.
+  - **A net label's box near a device pin** (declared; row TPR23). A label
+    that is not on the pin, but whose box reaches within the range of T2, is
+    the terminal's there, except within the wire tolerance below of a wire:
+    a point in the label's box beside the wire queues the terminal, the same
+    point on the wire queues the voltage. For the net's voltage the user
+    clicks the wire, or the label farther from the pin.
+  - **A click on a wire is the wire.** The nearest device pin does not take a
+    click when the cursor is outside the pin's own box (2.5 units either side
+    of its point, the square the stock symbols draw) and one of two tests
+    says it is on a wire; either is enough.
+    - `ase::ui::sod_wire_wins`: `xschem object_at` there is a wire, and the
+      cursor's foot on that wire lies on the wire, not past either end, and
+      outside the box. The last test keeps the lead: a wire's pick tolerance
+      reaches past its end onto the lead of the device it ends on, and there
+      the foot is beyond the wire's end.
+    - `ase::ui::sod_wire_near`: some wire's nearest point to the cursor,
+      taken ON THE WIRE (at one of its ends when the foot falls past it), is
+      within 2.5 units or one and a half screen pixels, whichever is more,
+      and outside the box. This test does not trust `xschem object_at`, which
+      scores an instance by the distance to the EDGE of its box: a net label
+      whose box lies along a wire, or the device's own box near its edge, is
+      then the answer for a cursor a fraction of a unit off the wire, which
+      is where a pixel's centre usually is. Held to the wire's ends, the
+      nearest point of a wire that ends on the pin is the pin's point past
+      that end, inside the box, so the lead stays the terminal. It reads
+      every wire of the sheet (`xschem wire_coord`), so it is asked only once
+      a device pin is in range and the first test has said no.
+
+    So the pin's square is the pin and the wire is the net, at any zoom.
+    **Measured** on scratch copies of the shipped `sky130_tests_ase` sheets
+    at their fit view: without a wire rule a short wire between two device
+    pins had no point left on it that picked its net; with the first test
+    every net that a wire click picked at HEAD has a wire point that picks it
+    again, and every device pin keeps a pixel of its own.
+    **Measured 2026-11-19 with real pointer motion** on such sheet copies,
+    over wire points near a device pin that queue a voltage at HEAD (the
+    counts are in the review's scratch and are not written here: no row
+    re-checks them): with the first test alone a share of those points became
+    a terminal, at the nearest pixel and one pixel to either side; with both
+    tests a handful were left, all on sheets whose fit view is so far out
+    that the pixel's centre or the wire's nearest point is inside the pin's
+    own box. No device pin lost every pixel, and the points up a device's
+    lead that were the terminal still are.
+    Declared: two pixels off a wire, inside a label's box, a click within
+    range of a device pin is still the terminal's when two pixels are more
+    than 2.5 units.
+  - **Several device pins on the very same point** (two abutting devices) are
+    equally near wherever the cursor stands. The device on whose SIDE of the
+    point the cursor stands is taken. The side is the cursor's offset from
+    the point, projected on a direction from the point, and there are two
+    such directions:
+    - *to the middle of that instance's pins* (`ase::ui::sod_term_toward`);
+    - *to the middle of the instance's box* (`ase::ui::sod_term_toward_box`).
+      The box is the SYMBOL's, without its texts: the `Symbol:` line of
+      `xschem instance_bbox`, put on the sheet by the origin, rotation and
+      flip that `xschem instance_coord` prints
+      (`ase::ui::sod_term_box_centre`). The `Instance:` box is not used: it
+      holds the symbol's texts, and a title that reaches over a neighbour
+      moves its middle to the neighbour's side. The placement arithmetic is
+      held against the engine's own `Instance:` box in all eight placements
+      (four rotations, plain and flipped) of a symbol with no text, where
+      the two boxes have the same middle (row TPR4s).
+
+    **The two are never compared with each other.** A symbol with every pin
+    on ONE edge has the middle of its pins on that edge, and a one-pin symbol
+    has it on the pin: towards it is along the edge, or nowhere, and says
+    nothing about the side the body is on. `ase::ui::sod_term_edge_on {n px
+    py}` answers 1 for such an instance at that point: the middle of its pins
+    is the point, or every pin lies on one line through the point while the
+    middle of its box is more than 5 units off that line (5 units is the side
+    of the square the stock symbols draw for a pin). A resistor answers 0:
+    its two pins and the middle of its box are on one line. A two-pin symbol
+    whose drawing is lopsided by more than 5 units (the stock `led.sym`)
+    answers 1 as well; the box measure still takes the device whose lead the
+    cursor is on (**measured** by the fourth repair's verifier on the LED's
+    junctions; row TPR4r holds that the LED answers 1). **An instance whose
+    symbol uses one pin name twice answers 0** (the shipped
+    `examples/xcross.sym`): the proc places pins by name, with `xschem
+    instance_pin_coord <n> name <name>`, and for a name used twice the engine
+    answers the first pin of that name, so such a symbol's pins cannot be
+    placed and nothing is claimed about them. **Measured** before that guard
+    (the closing pass; a regression of the fourth repair): on the shipped
+    `examples/test_doublepin.sch` shared points were read as edge-on that are
+    not, and the device taken changed at points off the leads; with it every
+    junction of that sheet answers as before the fourth repair (the closing
+    pass's sweep; row TPR4u holds the shape on two instances of that symbol).
+    **A pin name that ends in a backslash is read like any other** (the last
+    build; symbols of the gschem import library have such pins). Both
+    measures ask one reader for the names (`ase::ui::sod_term_pin_names
+    {n}`) and read each pin's point off the end of `xschem
+    instance_pin_coord`'s answer as text (`ase::ui::sod_term_pin_xy {n
+    name}`): for such a name neither `xschem pinlist <n> name` nor that
+    verb answers a list (each writes the name between braces as it stands).
+    The reader asks `xschem pinlist <n> name` first and keeps its answer
+    when it is a list whose every row is a list of two words; when it is
+    not, it reads each name off the pin's own attribute string (`xschem
+    pinlist <n>` and the attribute reader). The order matters: the list of
+    the attribute strings is itself no list when one of them ends in a
+    backslash, so a symbol with plain pin names and such an attribute
+    beside them is read by its names (row TPR4x; a reader that asked the
+    attribute strings alone took its pins for unreadable and measured it by
+    its box). It raises only when neither answer can be read.
+    No name is expanded as a bus there, which `ase::ui::sod_term_pins` does:
+    on a display the engine answers a name it cannot expand with a message
+    box that waits, and the prompt asks the pin rule at every hover.
+    **Measured** before it: both measures raised on such a symbol, and a
+    click on a point it shares with another device queued nothing and said
+    *"ase: the pin test of this click failed …"*. Row TPR4w (scratch symbols:
+    a two-pin device, a one-pin device and a block).
+    **When any
+    instance sharing the point answers 1, every sharer is measured by its
+    box; otherwise by its pins, with the box deciding between two that the
+    pins measure the same.** "Any" is held by row TPR4v, against "the first
+    sharer" and against "the last": a one-pin capacitor placed later on the
+    sheet than the resistor it shares a point with, and (the last build) a
+    second pair whose capacitor is placed earlier.
+    **Measured** before this (real presses in the
+    mode, several views): with a three-pin block against a five-pin block
+    the two pin measures differed at two of the three shared pins, the box
+    was never asked, and every press on one block's lead there took the
+    other block's pin. With the cursor exactly on the point, or no more
+    on one device's side than on another's by the measure in use,
+    `pin_at`'s order decides (the lowest instance index, then the lowest pin
+    index). Declared: exactly beside a shared point, on neither device's
+    lead, where the pins measure the same, it is now the text-free box and
+    then the index that decide, where the symbols' texts used to. On the
+    shipped sheets that were swept (the examples and the sky130 ASE test
+    benches), at shared points with no edge-on instance on them, that
+    changed the device taken only at points exactly on an axis through the
+    point, where the lowest index is taken now, and at no point on a lead or
+    half a unit beside one. At a shared point WITH an edge-on instance on
+    it, points on a lead did change, as they were meant to: on sky130
+    `test_carry_lookahead` a one-pin capacitor sits on a block's pin, and a
+    point on the capacitor's own lead now takes the capacitor, where it took
+    the block (measured 2026-11-19 by the fourth repair's verifier, with the
+    sky130 libraries registered and the pins listed by index; the counts are
+    in the repairs' scratch). The other shipped sheets were swept afterwards
+    by the closing pass's verifier: the same two classes, with points shared
+    with an edge-on instance on sheets of `sky130_tests` as well (issue 1724,
+    Limits, names them) and no lead point lost or gained. Declared too: a block that has every pin on
+    one edge AND repeats a pin name is measured by its pins (one shipped
+    symbol has that shape, the PCB connector
+    `gschem_import/sym/31-71043-1.sym`); and the pin
+    measure itself aims at a middle built from the first pin of each name.
+    An engine verb that gives a pin's coordinates by index would lift both
+    (issue 1724, open items). Declared since the last build: a block whose
+    PORT name ends in a backslash is chosen by this rule and then refused at
+    the click by T10's sentence for a name a terminal row cannot hold, which
+    shows a blank where the backslash is and names a blank as the character
+    (`ase::ui::sod_bits` reads the engine's expansion of such a name as a
+    list; issue 1724, Limits). The click says
+    which one it took (*"ase: that point is also R2 pin P — the click took R1
+    pin M"*). The side is not asked of `xschem object_at`: where two symbols'
+    boxes overlap, as the pin squares of abutting devices always do, the
+    editor's hit test answers the instance whose box edge is nearest, which
+    within that band is the device on the far side.
+
+  One click never queues two terminals.
+- **T4 — what a device is** (`ase::ui::sod_inst_is_device`), by the
+  netlister's own tests: the symbol `type` is none of `label ipin opin iopin
+  show_label scope bus_tap noconn probe`; the instance is not ignored
+  (`spice_ignore` on the instance or the symbol is `short`, `open` or
+  boolean-true as `strboolcmp()` reads it, and the same for `lvs_ignore`
+  while that switch is on; `0`, `false` and an absent attribute are not
+  ignored, which is what every stock ammeter carries); it is not an
+  `only_toplevel` instance on a sheet below the session's design; and its
+  netlist format is not empty and does not open with `*` or `.`.
+- **T5 — sources.** A pin of a voltage source or an ammeter is a terminal
+  like any other (`i(v1:n1)`); a click on its body is unchanged (`i(v1)`).
+  Direct Plot has an exception for that pin (T9).
+- **T6 — the row is the simulator's name for the vector**,
+  `i(<path>:<tname>)`, built by `ase::ui::sod_term_name` without netlisting:
+  - *element and position* come off the instance's own netlist line. The
+    format is resolved as `resolve_netlist_format()` resolves it
+    (`ase::ui::sod_term_format`), each pin token (`@pinlist`, `@@<name>`,
+    `@#<n>`) is replaced by a marker, `xschem translate` expands the rest,
+    and the pin's position is one plus the widths of the words ahead of its
+    marker. The element is the line's first word, never
+    `@spiceprefix@name`. A pin left out by its own `spice_ignore` takes no
+    position; a pin sharing its name with an earlier one stands where that
+    one does;
+  - *path* is `ase::ui::sod_rel_path` from `ase::ui::sod_base_level`, then
+    the element. The token is already hierarchy-qualified and does not go
+    through `ase::ui::sod_qualify`;
+  - *`<tname>`* by the element's first letter (`ase::ui::sod_term_letter_name`):
+    `m` → `d g s b_tj tc n6 n7`; `q` → `c b e s t`; `j`, `z` → `d g s`;
+    `d` → `a c`; any other letter but `x` → `n<position>`;
+  - *for `x`* it is the callee's port at that position: the symbol's own pin
+    when xschem writes the callee's body from that symbol
+    (`ase::ui::sod_term_own_block`); else the `.subckt` header
+    `ase::ui::sod_term_ports` finds, asking these places in this order:
+    1. the netlist ASE-L last made, while it is current
+       (`ase::facts_netlist_text`): that is where an xschem-netlisted block's
+       header is;
+    2. the `device_model` text the instance puts into the deck, with its
+       tokens expanded, and the files that text includes
+       (`ase::ui::sod_term_device_model`: the instance's own when it is not
+       empty, otherwise the symbol's, as `spice_netlist()` writes it), so a
+       header that lives there is known before anything has been netlisted;
+    3. the model files the deck will name (`ase::subckt_model_cards`, the
+       list the deck side reads a numbered port's position from): the
+       session's `includes` and `models` rows and the `.include`/`.lib`
+       cards of that netlist. Those cards are still followed after the
+       netlist has gone stale (`ase::ui::sod_term_stale_cards`, which asks
+       `ase::facts_netlist_file` for the file): a model file does not move
+       with a sheet edit, while a `.subckt` written IN a stale netlist
+       describes a sheet that has changed since and is not read.
+
+    Files are followed section-aware and relative to the file that names
+    them, and remembered until one of them changes (the core's reader,
+    R-OUT17). The three places are `ase::ui::sod_term_port_lists`, which
+    answers the place that has the name and every DIFFERENT port list there;
+    `ase::ui::sod_term_ports` is its one list, and the empty list when it has
+    none or several. Two different headers for one callee in the place that
+    answers are therefore no answer: which of them the simulator would use is
+    not guessed. Failing all of them, the symbol's pin name, with a caution
+    that says WHY no header names the port and ends with what to do about
+    that (`ase::ui::sod_term_header_gap`, three cases):
+    - none is known: *"… no .subckt header for 'fake_res' is known, so the
+      terminal is named as the symbol's pin; that is right only if the
+      subcircuit names its ports the same way; to be sure, netlist the design
+      from ASE-L (or run), or name the model file under Setup > Model Files,
+      then pick again"* (the remedy clause is
+      `ase::ui::sod_term_header_remedy`);
+    - several differ: *"… the session's model files hold more than one
+      .subckt header for 'fake_res' and their ports differ, so the terminal
+      is named as the symbol's pin; that is right only if the subcircuit the
+      simulator uses names its ports the same way; to be sure, leave one
+      definition of 'fake_res' in the model files (Setup > Model Files), then
+      pick again"*. For the other two places: *"the design's netlist holds
+      more than one … leave one definition of '<callee>' in the design,
+      netlist it from ASE-L (or run), then pick again"* and *"its
+      device_model holds more than one … leave one definition of '<callee>'
+      in that device_model, then pick again"*;
+    - the one header known is too short: *"… the .subckt header known for
+      'fake_res' has 1 port, too few for that pin, which is node 2 of the
+      call, so the terminal is named as the symbol's pin; …"*, with the first
+      case's remedy.
+
+    A call line written from the INSTANCE's own format, or a `spice_sym_def`,
+    never takes the symbol's pin name on trust: it needs a header and is
+    refused without one that names the port, in the same three cases and
+    with the same remedies (*"… it has a netlist format of its own, and the
+    session's model files hold more than one .subckt header for 'fake_rel'
+    and their ports differ, so the port at that position is not known; to
+    name it, leave one definition …"*; for a `spice_sym_def` header that is
+    too short: *"… give the .subckt header in its spice_sym_def a port for
+    every node of the call, then pick again"*).
+    A port whose NAME is a number is named like any other (`i(x1:3)` for the
+    port called 3, wherever it stands): the row is the vector's own name, and
+    the card's position is the deck writer's to work out (R-OUT17). A `spice_sym_def` whose format writes its pins with
+    `@pinlist` and nothing else follows the netlister
+    (`has_included_subcircuit()`): when every port of the definition's
+    header, up to the symbol's pin count, is a pin of the symbol, the nets go
+    out in the HEADER's order, so the terminal is the header port named as
+    the pin. In every other case the symbol's order stands and the port is
+    the one at the position.
+- **T7 — several vectors open the bit dialog.** A bus instance, a bus pin or
+  both give one token per instance bit and pin bit; `ase::ui::bus_dialog`
+  lists the final `<path>:<tname>` tokens and Cancel queues nothing.
+- **T8 — Outputs flavours** queue the row through `ase::ui::sod_queue`; it
+  sorts into Saves (R-OUT7).
+- **T9 — Direct Plot queues a terminal only when the last run saved it.**
+  The plot flavour writes no session row, so the next deck would carry no
+  probe for the pick. The trace is queued when the session's results file
+  lists the vector (`ase::raw_vectors_present` on `ase::last_rawfile`; no
+  viewer and no loaded database needed) and otherwise the click says why the
+  results do not hold it, where that is known, and what to do next
+  (`ase::probe_absent_groups`), each sentence opening *"ase: terminal current
+  'i(x1.xm1:d)' is not in this session's results"* (several vectors of one
+  click that share a reason: *"terminal currents 'a', 'b' are not …"*):
+  1. the last run's report said its simulator cannot save it (the `hier`
+     record of R-OUT17, kept in `ase::last_probes` for these results): *"…:
+     <program>, the simulator of the last run, cannot save it. <cure>"* -- the
+     cure of `ase::probe_cure` in `peek` mode, so the click starts no program.
+     `<program>` is the name that run gave its program. Where the program
+     THIS session starts is already known able (`ase::probe_session_verdict`)
+     the cure has been taken and the sentence ends *"<entry> is picked now —
+     run again."* (a session that starts no registered entry: *"<file>, which
+     this session starts now, can — run again."*);
+  2. that report gave another reason (withheld, refused, missing, an analysis
+     that keeps no terminal current): the report's own reason as a clause,
+     one sentence per terminal -- *"…: in the last run the simulator refused
+     it (.probe I(r5,3)): Node zz is not available for device r5."*, *"…: in
+     the last run no probe was written for it: <reason>. To measure it, place
+     an ammeter (ammeter.sym) in series."*, *"…: in the last run the deck
+     asked for it (.probe <card>) and the simulator neither made the vector
+     nor said why."*, *"…: the last run made only noise, transfer-function,
+     pole-zero or sensitivity analyses, and none of those keeps a terminal
+     current. Enable an operating point, a dc sweep of a source, an ac or a
+     transient analysis and run again."*;
+  3. the session asks for the terminal now (`ase::probe_asked`) and the last
+     run said nothing about it. What is said of the results depends on what
+     is known. The session has no results in view, *"…: it is set to be saved,
+     and this session has no results yet — run."*; the last run's report is
+     about these results, the run was THIS session's and its plan did not
+     hold the terminal, *"…: it is set to be saved, and these results are from
+     before that — run again."*; otherwise (the run on these results was
+     another session's, it did ask and said nothing of it, or nothing is
+     remembered about these results: a saved result in view, a restart),
+     *"…: it is set to be saved, but these results do not hold it — run
+     again."*. **A terminal that needs the hierarchy is not sent into a run
+     that cannot save it**: when the program this session starts is already
+     known unable, each of them ends instead *"…, but <program>, the
+     simulator this session starts, cannot save it. <cure>"* (after *"do not
+     hold it"*: *"…, and <program>, …"*; with no results the cure ends
+     *"before you run"*);
+  4. otherwise *"… — pick it under Outputs > To Be Saved > Select On Design
+     and run again"*. A session with no results yet is this case when the
+     row is not set, and case 3 when it is.
+
+  Cases 1 and 2 are tried before 3: what the last run said about a terminal
+  is the reason also for a row that is set, and the simulator's sentence is
+  said ahead of any other.
+  **The row flavours say one thing at the pick** (`ase::probe_pick_report`):
+  when the simulator this session starts is ALREADY KNOWN unable -- the
+  capability store's measured `hier_probes` 0 for it, or, where the store
+  holds nothing about that program, the cure's own record -- and the pick
+  queued a terminal that needs the hierarchy, *"ase: <program>, the simulator
+  this session starts, cannot save that current: it saves terminal currents
+  only on top-level devices that are not subcircuit instances. <cure ending
+  "before you run">"* (a bus pick: *"those currents"*), once for the click, as
+  an error. The click starts no program; the row is queued and the pin marked
+  all the same.
+  **The program is the clicking session's own.** `ase::sim_use` is one choice
+  for the whole process and holds what the last run of ANY session left
+  there, so a click reads the program through `ase::sim_session_view`: the
+  session's choice put in force as a run of it does, read, and the old
+  choice put back.
+  **Except on the pin of a voltage source or an ammeter**
+  (`ase::ui::sod_terminal_as_source`). When that pin's terminal cannot be
+  plotted — none of its vectors is in the results, or T10 refuses it a name —
+  the click queues the source's branch current through the steps a click on
+  the body takes (kind `current`, the instance coloured): that is what the
+  same click plotted before pins were picked, and every run holds it. On the
+  source's first pin, alone on its point, nothing more is said. Where the
+  trace is not what the click was aimed at, the click says so
+  (`ase::ui::sod_source_standin_notes`), in up to two sentences:
+  - *other device pins share the point*: *"ase: that point is also RE pin M
+    — the click took the current of Vef"*;
+  - *the pin is the source's second terminal*: *"ase: V1 pin m — the
+    trace is the source's own current 'i(v1)', which is the current into its
+    first pin, so the current into V1 pin m is the negative of that trace; to
+    plot the pin's own current, pick it under Outputs > To Be Saved > Select
+    On Design and run again"*. The last clause is left out when T10 refuses
+    the pin a name. **Measured** on `ver_53` (R-OUT17, row PN11): `i(v1)`
+    equals `i(v1:n1)` and is the negative of `i(v1:n2)`;
+  - *the pin is neither its first nor its second terminal*: *"ase: E1 pin cp
+    — the trace is the source's own current 'i(e1)', which is not the
+    current into E1 pin cp; to plot that pin's current, place an ammeter
+    (ammeter.sym) in series with it"*. When the pin can be named the last
+    clause is the Outputs advice of the sentence above instead. Nothing is
+    said about a sign. **Measured** on a copy of `ver_53` by the third
+    review: for a four-node `E` element the current into nodes 3 and 4 is
+    zero while `i(e1)` is the current into node 1. Driven on the two
+    controlling pins of the stock `vsource_pwl.sym` and on both pins of
+    `filesource.sym`, whose netlist line places neither (its first pin
+    stands behind a word that may not be a node, its second is not on the
+    line).
+
+  **Which terminal the pin is** is one proc's answer,
+  `ase::ui::sod_term_pin_place {term nm}`: `first`, `second` or `other`. It
+  is the position in the row's own name when that is `n<position>`;
+  otherwise the pin's place on the instance's netlist line
+  (`ase::ui::sod_term_line_pos {n j}`, the walk `ase::ui::sod_term_name`
+  opens with, so a pin that proc names by position has the same position
+  here). A pin the line does not carry, carries more than once, or carries
+  behind a word that may not be a node (on any element but a subcircuit
+  call) is `other`, and so is a pin of an instance that cannot be read. It
+  never raises. The Calculator asks the same proc (calculator.md R208f).
+  `ase::ui::sod_term_first_pin {term nm}` is kept, with its answers
+  unchanged.
+
+  A source pick is one token whatever the instance's width, so the stand-in
+  queues one trace for a bus instance of a source too, as a click on its body
+  does. When some vector of the pick is held (a bus source with one bit in
+  the results) the held one is plotted and the others get the sentence. The
+  three flavours that write rows are not touched by this.
+- **T10 — refused at the click**, one sentence naming the instance and the
+  pin and ending with the way that always works: *"ase: cannot name the
+  terminal current of R1 pin P — <why>; place an ammeter (ammeter.sym) in
+  series"*. The refusals are ONE proc's, `ase::ui::sod_terminal_resolve {key
+  term}`, which answers `{ok 1 tokens <list> label <text> caution <text>}`
+  or `{ok 0 why <reason>}`, never raises, queues nothing and says nothing;
+  `ase::ui::sod_terminal_pick` adds one test of its own (the name the deck
+  cannot carry, below), and the Calculator's current selectors ask the same
+  proc (calculator.md R208f).
+  The reasons: `flat_netlist` is on; a block instance between the session's
+  design and the current sheet carries a `spiceprefix` in force (issue 0488:
+  `sch_path` spells that level by the instance's name, the deck by the
+  prefixed element, `ase::ui::sod_term_prefixed_ancestor`); the pin is not
+  on the netlist line; *"its netlist format writes that pin N times"*; an
+  untagged word stands ahead of the pin on a line that is not a subcircuit
+  call; the line starts with a `#` form other than the two `src/spice.awk`
+  expands; an instance format or a `spice_sym_def` with no header that names
+  the port (none in hand, several that differ, or one too short: T6); a
+  naming step that raised.
+  **A name the deck cannot carry is refused too**, by
+  `ase::ui::sod_terminal_pick` itself, after the resolver and before the bit
+  dialog: `ase::ui::sod_term_unwritable {toks cmode}` wraps each token as the
+  click would queue it and puts it to the deck side's own predicate,
+  `ase::probe_split` (R-OUT17). When a row would not be a terminal row the
+  click queues nothing, marks nothing and says *"ase: nothing queued for x1
+  pin Y=1 — its current would be the row 'i(x1:y=1)', and a terminal-current
+  row cannot hold an equals sign; rename the instance or the port, or place
+  an ammeter (ammeter.sym) in series"*. The class is the predicate's whole
+  class: a dollar sign, an equals sign, a single quote, a brace, a semicolon,
+  a comma, a parenthesis, a double quote, a blank or a second colon; the
+  sentence names the ones found. **Measured**: such names reach the pick (a
+  block port `Y=1`; instances named `R=9`, `R$8`, `R'7`), while an instance
+  written `R;6` reads back as `R`, so a semicolon cannot arrive through an
+  instance name. In Direct Plot the pin of a SOURCE with such a name still
+  plots the source's own current (T9's stand-in), as for any pin that cannot
+  be plotted. A bus instance named `R=B[1:0]` is named `R:n1` by the
+  resolver, one token with the equals sign and the bus range gone, so the
+  token test is handed an ordinary token (measured 2026-11-19 beside a control
+  `RB[1:0]`; the cause was not looked into). The click therefore also puts the
+  instance's own name to the same words (`ase::ui::sod_term_odd_inst`, which
+  judges no comma, colon or bracket: bus syntax in an instance name) and
+  refuses with *"... the instance's name holds an equals sign, which a
+  terminal-current row cannot hold; rename the instance, or place an ammeter
+  (ammeter.sym) in series"*. Rows TPU0 to TPU6.
+  **Declared: a block whose port name ends in a backslash** (measured by the
+  last build of issue 1724) is refused by this sentence too, with the right
+  remedy and the wrong reason. `xschem expandlabel` answers the name and a
+  count, `ase::ui::sod_bits` reads that as a list, and for the port `A\` the
+  one element it finds is `A 1`: the row shown is *'i(xw:a 1)'* and the
+  character named is a blank. Nothing is queued or marked (a leg of row
+  TPR4w). Not built: reading the expansion as text, or naming the backslash.
+- **T11 — a pick that queued marks its pin.** One ellipse on the pin the
+  click took, however many vectors it queued (`xschem pin_marker`,
+  `doc/claude/specs/pin_selection.md` §4.7).
+  - *The three flavours that write rows*: layer 16, tag `save`
+    (`ase::ui::sod_mark_pin`), also when every row of the pick was already
+    in the table. So a pin picked under To Be Plotted has the same
+    light-green ellipse as a saved one, and its waveform, which
+    `ase::ui::auto_plot` plots after the run, has the viewer's next colour
+    and not the ellipse's. Only Direct Plot's ellipse has its trace's
+    colour (declared).
+  - *Direct Plot*: the pick hands the plot queue the PIN, `{<instance index>
+    <pin index>}` of the sheet shown, with the first vector the results
+    hold, and `ase::ui::dp_hilight terminal <pin> <layer>` runs `xschem
+    pin_marker add -layer <layer> -tag plot` and answers 1. Any other token
+    under kind `terminal` answers 0 and asks the engine nothing. The layer
+    is the one `ase::ui::dp_queue` takes from `wviewer::predict_colors` and
+    hands the viewer, so the ellipse and the trace have one colour. A vector
+    that is queued already puts the marker back in the colour its trace has
+    (`xschem unhilight_all` may have taken it since); a net or a source
+    queued again still colours nothing. Declared: the ellipse keeps that
+    colour until the highlights are cleared, so after a run whose plot
+    replaces the viewer's traces (a row with Plot ticked, destination
+    Replace) it shows the colour of a trace that is gone, or that another
+    signal now has. Direct Plot's net and source colours do the same (issue
+    0153's persistence).
+  - *Nothing is marked* by a refused pick, a cancelled bit dialog, a Direct
+    Plot pick none of whose vectors the results hold, a click on a wire
+    beside a pin, a click T12 refuses, or the source stand-in of T9 (the
+    source's body is coloured instead).
+  - *Lifetime.* `ase::ui::sod_end`, `ase::ui::sod_drop` (the window the mode
+    was on is gone: T12, and the window-gone arm of `ase::ui::sod_resume`)
+    call `ase::ui::sod_marks_clear` (`xschem pin_marker clear -tag save
+    -all`): the row flavours' markers go when the mode ends, in every window
+    and tab. Markers tagged `plot` stay, as Direct Plot's net and source
+    colours do. `xschem unhilight_all` clears both kinds in the window it is
+    given in and in the windows and tabs linked to that one by a descend
+    (pin_selection.md §4.7), also while the mode is up; a later click on the
+    same pin puts the marker back. Given while that window is in the middle
+    of a gesture it clears that window only, and the linked ones keep their
+    markers with their net colours until it is given again (rows PV1 and PV2
+    of `tests/headless/test_pin_marker_1724.tcl`).
+  - *Below the top.* A pick made on a sheet below, after a descend with the
+    mode up, is marked on that sheet (the marker is keyed by the hierarchy
+    path of the sheet shown), and the mode's end from any sheet sweeps it.
+  - Every engine call is `catch`-guarded: a marker never breaks the pick.
+- **T12 — the mode: what it holds, and how it ends.**
+  - *Six slots* on the design canvas, one table (`ase::ui::sod_slots {key}`),
+    taken by `ase::ui::sod_seize {key cv}` for the entry
+    (`ase::ui::select_on_design`) and for the resume after a descend
+    (`ase::ui::sod_resume`), and handed back by `ase::ui::sod_release`, each
+    from its own record: `<ButtonPress-1>` and `<Double-Button-1>` (the
+    pick), `<ButtonRelease-1>` and `<B1-Motion>` (swallowed), `<Key-Escape>`
+    (ends the mode) and `<Destroy>` (below). The previous bindings are read
+    from the canvas being seized and handed back verbatim; on a design canvas
+    the double click's is the editor's own script (`set_bindings`). A slot
+    that already holds one of the mode's own scripts is never kept as the
+    previous binding (`ase::ui::sod_own_script`; the bare `break` of the
+    release and of the held motion is judged by the press slot beside it):
+    kept, the release would put the seize straight back (issue 1305's
+    shape). Such a slot keeps the record it has; with none it is taken to
+    have held nothing, except the double click, which falls back to the
+    editor's script, read from the middle button's double click
+    (`ase::ui::sod_dbl_editor`): handing back nothing there would take the
+    editor's double click away from that window. The `<Destroy>` hook is
+    added behind a handler the canvas already has, not put in its place.
+  - *A drag in the mode is one pick* (issue 1304). The held motion is
+    swallowed, so a hand that moves with the button down starts no selection
+    rectangle; the selection made before the mode is kept and nothing is
+    drawn. **Measured** with real events before the slot was taken: a click
+    whose pointer moved two pixels with the button down queued its pick,
+    cleared the selection and left the editor's rectangle up past the mode's
+    own ESC.
+  - *The press hands its own position to the engine first.* The script bound
+    on the press and on the double click is `xschem callback %W 6 %x %y 0 0 0
+    %s; ase::ui::sod_click <key>; break` (`ase::ui::sod_press_script`).
+    `sod_click` reads the pointer the engine last heard of, and the engine
+    takes the position of every event it is sent; a `<Configure>` of the
+    canvas carries the canvas's place in its window, and one can arrive
+    between the last pointer motion and the press (issue 1659). **Measured
+    2026-11-19**: after a real motion onto a pin, a `<Configure>` delivered to
+    the canvas, generated or from a real resize of the window, left the
+    engine's pointer far from the pin, and a press there with the earlier
+    script queued nothing and said nothing. `sod_click`'s signature and its
+    scripted default (no coordinates: the engine's pointer) are unchanged.
+  - *The canvas is looked up, not assumed* (`ase::ui::sod_canvas {{ctx
+    {}}}`). `xschem get current_win_path` names a context, which is a widget
+    only for a window: with the tabbed interface a schematic in a tab that is
+    not the first answers a name no widget has, while the canvas that shows
+    it is the main window's, which the tabs share. The canvas is taken from
+    `xschem windows`, as `calc::pick_canvas` takes it. **Measured** before
+    this: with the design in the second tab neither the session's menu
+    entries nor Ctrl-4 could enter the mode (*"ase: no design canvas to select
+    on (.x1.drw)"*). `ase::ui::sod_resume` resolves the context it is handed
+    the same way.
+  - *What the mode holds is reported to `cmdmode`* (`ase::ui::sod_held`, the
+    fourth argument of the mode's `cmdmode::register` line): for each slot
+    the canvas, the sequence, the script bound and the script the slot held
+    before; for `<Destroy>` the whole bound script and the canvas's own
+    handler. Empty with no mode up and while the mode is paused.
+    `clone_canvas_bindings` asks `cmdmode::pristine`, which reads it, so a
+    window made while the mode is up (`xschem new_schematic create_window`,
+    which the Cadence-style profile's Ctrl-N runs) gets the bindings it would
+    have got with no mode up. Clicks there are the editor's, while the mode
+    is up and after it, and so is ESC: the mode ends by ESC in the window it
+    is on.
+  - *A double click is two picks.* Tk hands the second and every further
+    press of a multiple click to the most specific binding, and the canvas
+    binds the double click itself, so with only the press seized that press
+    went to the editor. **Measured** with real events before the change: the
+    pick ran once, then the editor's modal property dialog opened and the
+    object was selected (stock bindings), or the object was selected with no
+    dialog (Cadence-style profile). Now both presses, and the third of a triple
+    click, reach the pick; nothing is selected and no dialog opens. A second
+    press on something already queued says *"already queued"*.
+  - *One click mode on the canvas at a time.* `select_on_design` ends a live
+    Calculator pick as its first act (`calc::pick_end cancel` when
+    `calc::pick_running`), before the previous mode is ended and before any
+    binding is read; `calc::pick_arm` ends a live Select On Design before it
+    seizes (calculator.md R307). Both seize the same slots and keep one set
+    of previous bindings each, so stacked and ended out of order they left a
+    canvas that took no left click (issue 0202). The Results Display
+    Window's pick mode is not ended by either and still nests (declared).
+    Declared on the Calculator's side: a pick that resolved is one-shot and
+    has ended by the second press of a double click, which is then the
+    editor's (calculator.md R307).
+  - *The Results Display Window's mode, entered on top of the mode that is
+    ended, takes the canvas again.* The mode `select_on_design` ends (the
+    Calculator's pick, or a Select On Design that is still up) hands the
+    canvas what it held before it, the editor's scripts, over the Results
+    window's live ones. So after each of the two ends the entry runs `catch
+    {rdw::pick_reseat}`, and `calc::pick_end_sod` does the same after
+    `ase::ui::sod_end`. That proc (`src/rdw.tcl`) seizes again only when its
+    mode is recorded up, is not paused, its canvas is a live widget and the
+    press slot holds neither one of its own scripts nor the script of
+    another mode that is up; in every other state it does nothing, so the
+    call that follows an end that did not happen is harmless. The Results
+    window's mode stays up, the new mode stacks on it, and ESC, ESC unwinds
+    the two to a free canvas. **Measured** before it, with real events:
+    Select On Design, key 1 with nothing selected, a selector (and the two
+    other orders) left the Results window's mode recorded as up with nothing
+    bound, its sentence on the status bar, clicks selecting and its key
+    arming nothing. Rows TPL1c (the order of the calls, with stand-ins) and
+    band PG27 of `tests/headless/test_calc_pick.tcl` (the three orders and a
+    control, real events).
+    **The session window's close is such a door too** (the closing pass).
+    `ase::ui::close` ends the session's Select On Design with
+    `ase::ui::sod_end` and then runs `catch {rdw::pick_reseat}`. **Measured**
+    before it, by the fourth repair's verifiers: Select On Design, the
+    Results window's key, the session window closed left that mode recorded
+    as up with nothing bound, through ESC and ESC again. Now it holds the
+    canvas after the close and one ESC ends it. Row I11 of
+    `tests/headless/test_ase_interact.tcl` (the window's own close script on
+    a session with nothing unsaved, a real ESC). The Calculator's own doors
+    ask the same (calculator.md R307).
+  - *This mode, entered on top of the Results Display Window's mode, takes
+    the canvas again when that mode is ended first* (the last build of issue
+    1724). Escape pressed in the Results window ends that window's mode from
+    underneath, and its release hands the canvas the editor's scripts over
+    this mode's live ones. So `rdw::pick_end`, once its own record is gone
+    and when its release released a mode, runs `catch {::ase::ui::sod_reseat}`
+    (and the Calculator's counterpart beside it). `ase::ui::sod_reseat {}`
+    seizes again through `ase::ui::sod_seize` only when a mode is up, is not
+    paused, its canvas is a live widget and the press slot holds neither one
+    of this mode's own scripts (`ase::ui::sod_own_script`) nor the script of
+    another mode that is up (`ase::ui::sod_overlaid {cv script}`, which asks
+    `cmdmode::pristine`); in every other state it does nothing and answers 0.
+    What the mode has on record as the canvas's own is then what the canvas
+    holds now, the `<Destroy>` hook is not added a second time, and the
+    queue, its count, the pin markers, the prompt and its one timer are as
+    they were. The canvas is given the keyboard, as the entry and the resume
+    give it: the mode's ESC is bound there. **Measured** before it: Select On
+    Design stayed recorded as up with nothing bound, its prompt on the bar,
+    through four ESC on the canvas, and entered again and ended it left the
+    Results window's dead scripts on a canvas that took no left click
+    (issue 0202's sequence A2). Now one ESC on the canvas ends the mode and
+    every binding is as before any mode. Rows TPL13 (the states it acts in
+    and does not, with the canvas stood in for), I12 of
+    `tests/headless/test_ase_interact.tcl` (the mode entered by its menu
+    entry, a real press that still queues, a real ESC) and E6 of
+    `tests/headless/test_rdw_keys_1245.tcl` (the real Escape in the Results
+    window's text pane; the keyboard on the canvas afterwards).
+  - *The prompt is not written while another click mode sits on top* (the
+    same build). The Results Display Window's mode keeps its own sentence on
+    the same slot with a timer of its own, and with the two modes stacked
+    the slot showed the two sentences in turn (**measured**: changing many
+    times a second in either order). `ase::ui::sod_prompt_pump` now writes
+    only while `ase::ui::sod_covered {cv}` answers 0: the press slot of the
+    mode's canvas holds no script that is not this mode's own and that a
+    mode that is up declares. The timer keeps running, so the prompt is back
+    within one tick of the mode on top ending. With `cmdmode` out of reach,
+    a canvas that is no widget, the editor's script or a script no mode
+    declares in the slot, or an emptied slot, the pump writes as before. Row
+    TPL14, and band PG28 of `tests/headless/test_calc_pick.tcl` for the real
+    slot.
+  - *Stacked modes keep their order across a descend.* `cmdmode::suspend_all`
+    releases the top of a stack first (`cmdmode::release_order`, read from
+    what the modes say they hold) and `cmdmode::resume_all` puts the stack
+    back bottom first, so while a descend has the modes paused the canvas
+    holds the editor's bindings, and the modes come up where the descend
+    lands stacked as they were (issue 0202 has the measurements; leg DS8 of
+    `tests/headless/test_cmdmode_descend_0201.tcl`, across a descend into a
+    new window and, in rows DS8j to DS8q, across a descend in the same
+    window).
+  - *A mode ended while a descend has it paused writes nothing on the
+    canvas.* The descend command given with nothing selected pauses the
+    modes and waits for a click on an instance. A paused mode has handed
+    the canvas back and still has on record what the canvas held when it
+    took it; entered over the Results Display Window's mode, that is that
+    mode's scripts. `ase::ui::sod_release {key}` therefore writes nothing
+    for a mode marked paused and answers 1: `ase::ui::sod_end` goes on as
+    for any other end (the records dropped, the row flavours' pin markers
+    taken off, the one sentence, Direct Plot's plot), and the canvas keeps
+    the editor's bindings, so the click on an instance still descends and
+    the Results window's mode comes up alone where the descend lands. The
+    doors that end a paused mode: the session window closed, the mode
+    entered again, a Calculator selector pressed. `calc::pick_release` and
+    `rdw::pick_release` do the same for their modes. **Measured** before
+    it: with this mode over the Results window's mode and both paused,
+    closing the session window put that mode's scripts on the canvas: the
+    click on the instance was that mode's, and nothing descended. Row TPL15 (the three releases, the canvas stood in
+    for), row I13 of `tests/headless/test_ase_interact.tcl` (the session
+    window), leg DS9 of `tests/headless/test_cmdmode_descend_0201.tcl`
+    (Escape in the Results window, and this mode entered again) and band
+    PG29 of `tests/headless/test_calc_pick.tcl` (a selector).
+  - *A click in a window that does not show the session's design is
+    refused.* The bindings sit on a canvas, and with tabs every tab shares
+    it, so the mode stays armed while another design is shown.
+    `ase::ui::sod_design_shown {key}` answers 1 when the session's design is
+    the sheet shown or one of the sheets above it in this window's hierarchy,
+    and also whenever the question cannot be asked (a key with no resolvable
+    design, such as a scripted pick with no session; a window whose hierarchy
+    cannot be read). On 0 the click queues nothing, marks nothing, leaves the
+    mode armed and says (`ase::ui::sod_elsewhere_notice`): *"ase: nothing
+    queued — this window shows neither the session's design '<lib>/<cell>'
+    nor a sheet below it; switch to that design's window or tab and click
+    there"*. A block opened from the design in a new window or a new tab
+    still picks.
+  - *The prompt names the pin.* `ase::ui::sod_prompt_text {key x y}` (pure:
+    it writes nothing) is the mode's words and, when a click at that point
+    would take a device pin, that pin: *"select outputs on design — pin R1:P
+    (terminal current)"*, in Direct Plot *"select signals to plot — pin R1:P
+    (terminal current)"*. It asks `ase::ui::sod_terminal_at` at the raw
+    pointer behind the same window test, so the prompt and the click cannot
+    disagree. `ase::ui::sod_prompt_pump` writes it every period of its timer,
+    under `catch`, except while another click mode sits on top of this one
+    (above); `ase::ui::sod_prompt_now` keeps the answer with
+    the pointer, the zoom, the window, the hierarchy path, the instance
+    and wire counts and the canvas the mode is on, and works it out again
+    only when one of them has changed, because the pin test can walk every
+    wire of the sheet. In a window that does not show the session's design
+    no pin is named. The editor's hover outline cannot say this: on a pin
+    with a wire ending on it the outline is the wire.
+  - *It names a pin only while the pointer is in the window the mode is on.*
+    The engine's pointer is that of the current context, which is the window
+    the pointer was last in, while the mode's bindings sit on ONE canvas: in
+    another window of the same design (the sheet above a block that was
+    opened in a window of its own, or that block's window) a click is the
+    editor's. `ase::ui::sod_pointer_elsewhere {key}` answers 1 when the
+    canvas the mode has on record is a live widget, the current context has
+    a canvas (`ase::ui::sod_canvas`) and the two are different widgets;
+    `sod_prompt_now` then answers the mode's own words
+    (`ase::ui::sod_prompt_words {key}`) and does not ask the pin rule. It
+    answers 0 wherever that cannot be asked (no Tk, a mode whose recorded
+    canvas is no widget), and there the prompt is worked out from the
+    pointer as before. Tabs share one canvas and are told apart by the
+    design they show. **Measured** before it: with the mode carried into a
+    block's own window and the pointer back on a pin of the first window,
+    that window's prompt named the pin, and a press there selected the pin
+    in the editor and queued nothing. Rows TPM12 (stand-ins) and group PE of
+    `tests/headless/test_pin_marker_1724.tcl` (real `<Enter>` and
+    `<Motion>` after a descend into a new window).
+  - *Closing the window the mode is on ends the mode.* The canvas's
+    `<Destroy>` binding (`ase::ui::sod_canvas_gone {key w}`) only schedules
+    `ase::ui::sod_drop_gone` for when the event loop is idle: while a window
+    is being torn down the engine has no schematic to ask, and a marker sweep
+    made then clears nothing. Once idle, if the mode is still the one on that
+    canvas, is not paused and the canvas is really gone, `ase::ui::sod_drop`
+    removes the records, sweeps the row flavours' markers from every window
+    that is left and says *"ase: the design window the pick mode was on is
+    gone — mode dropped"*. Nothing queued in Direct Plot is plotted, and
+    with traces queued there the sentence goes on: *"…; 2 queued traces
+    were not plotted, and the colours their picks left on the schematic
+    stay until the highlights are cleared (Highlight > Un-highlight all
+    net/pins, or its key)"* (one trace: *"1 queued trace was not plotted,
+    and the colours its pick left …"*). It names the menu entry because the
+    key differs by profile. The drop clears no Direct Plot colour: `xschem
+    pin_marker clear -tag plot -all` would also take the ellipses of earlier
+    plots whose traces are still in the viewer (**measured** by the third
+    review), and the net colours would stay. With nothing queued, and in the
+    three row flavours, the sentence ends at *"mode dropped"*. Rows TPL6 and
+    TPL6b, and group PF of `test_pin_marker_1724.tcl`. With
+    tabs the canvas is shared, so closing a tab does not end the mode.
+- **Declared limits.** The pin of a `lock=true` instance is not offered, and
+  no pin is while the pin layer is hidden (`find_closest_pin()`'s rule).
+  Rows already in the Outputs table when the mode is entered are not marked.
+  A pin that carries a Direct Plot marker and is then picked in a row flavour
+  takes that flavour's marker, which the mode's end removes (the engine keeps
+  one marker per pin). When xschem runs with 16 layers or fewer no
+  row-flavour marker is drawn and nothing is said. A window made while the
+  mode is up gets the editor's bindings only where the mode's script is the
+  exact string the canvas holds: a script appended to a slot the mode holds
+  is copied whole. With the tabbed interface a new tab is not a new canvas,
+  so nothing is copied and the shared canvas keeps the mode's bindings; a
+  click in a tab showing another design is refused by T12's window test. The
+  Results Display Window's pick mode nests under and over this mode. No door
+  of the product that was found leaves the canvas on a mode's dead scripts
+  any more, in either order: a mode ended underneath that mode no longer
+  strands it (the closing pass), and that mode ended first, by Escape in the
+  Results window, no longer strands the mode on top of it (the last build,
+  T12). A canvas put into such a state by hand is still freed by entering
+  and ending the mode whose scripts were left (issue 0202). What is left is
+  the user's to rule on: whether that mode should nest at all, a real stack,
+  and the keyboard, which is on the schematic after a mode has taken the
+  canvas again (after a pick is ended from the Calculator window:
+  calculator.md R307; after Escape in the Results window: T12). While the
+  Results window's mode is under this mode, the tooltip it arms on the
+  status slot keeps its own sentence, though the slot shows this mode's
+  prompt. The Results window's real Escape was pressed with this mode on
+  top in one shape (row E6: the first tab, the mode entered by the proc its
+  menu entries call); Direct Plot's flavour on top of that mode was not
+  driven. A mode ended while a descend has it paused leaves the canvas
+  alone (T12): driven in the first tab, with the descend's wait ended by a
+  click on an instance the suite gives no views or by Escape on the
+  schematic; the chooser's own path into a new window was driven in the
+  order bench only, with the modal chooser stood in for, and a second tab
+  and a new-tab descend after such an end were not driven. Row
+  I11 drove the session window's close in one shape: the design in the
+  first tab, the stock bindings, a session with nothing unsaved. With the
+  design in a tab other than the
+  first and a second real window on the screen, the main window can end
+  with the first tab in front while the mode is armed: the engine takes an
+  event on the shared canvas for the first tab once a real window has been
+  current (issue 1713, older than this work); the click on the wrong sheet
+  is refused by the window test and the mode stays armed. The prompt's
+  window rule was driven with real events in one shape, the mode carried
+  into a new window and the pointer back on the first; the other shape is
+  row TPM12's, with stand-ins. A paused mode coming
+  back up with a tab current, after having been on a window of its own, is
+  fenced with a stood-in window list (row TPL12) and not with real windows.
+  A press with Shift or Control held hands that state to the engine with the
+  press's position; it was not driven. The real bit dialog is not driven by
+  a suite (the rows stub `bus_dialog`), and nobody has looked at the pick,
+  the prompt or the marker on a real screen.
+- Suite `tests/headless/test_ase_terminal_pick_1724.tcl`, on three sheets:
+  bands TPC (what a device pin is), TPR (range and winner: the bound, the
+  label on a pin, the side of a shared point and its box tie-break, blocks
+  with unequal pin sets and a title that reaches over the neighbour in rows
+  TPR4n to TPR4t, a symbol with two pins of one name in row TPR4u, a one-pin
+  device placed after the device it shares a point with, and one placed
+  before it, in row TPR4v, pin names that end in a backslash in row TPR4w,
+  plain pin names beside another pin attribute that ends in a backslash in
+  row TPR4x, on a small sheet of its own,
+  both wire tests, the label's box, the pin's own square at
+  a radius pinned below it), TPD (the click with no coordinates, one row at a zoom and
+  origin where no pixel centre is on the wire), TPN (primitive elements and
+  their refusals), TPX (subcircuit calls: the header in the netlist, in a
+  `device_model`, in the model files, the stale netlist's cards, the caution
+  in its three cases and their remedies, numbered ports, the bit dialog),
+  TPH (below the top, the 0488 refusal, the window test of T12 and the
+  descends into a new window and a new tab), TPP (Direct Plot, the source's
+  current that stands in and what it says; the place of a pin on its element
+  in rows TPP13 to TPP14b), TPM (the notices and the prompt; the pointer in
+  another window in row TPM12), TPK (call shapes, the cue on the pin, the
+  resolver), TPU (a name the deck cannot carry, on a scratch sheet with a
+  scratch symbol) and TPL (the mode's lifecycle with the canvas stood in
+  for: the Calculator pick ended first and the Results Display Window's mode
+  asked to take the canvas again in rows TPL1 and TPL1c, the slots taken and
+  handed back, the double-click fallback in row TPL4b, what the mode reports
+  it holds in rows TPL9 and TPL9b, the bound press script run after the
+  pointer was overwritten in row TPL10, the canvas of a tab in rows TPL11
+  and TPL12, the drop when the canvas goes and what it says in Direct Plot
+  in rows TPL6 and TPL6b, the mode taking the canvas again after another
+  mode was ended underneath it in row TPL13, the prompt's timer under
+  another mode in row TPL14, the release of a paused mode writing nothing,
+  for this mode, the Calculator's pick and the Results Display Window's
+  mode, in row TPL15).
+  It runs no simulator and never netlists, and it runs on both arms and is
+  in both gate lists (`hcases` and, since the closing pass, `dcases`): a
+  recorder stands in for `tk_messageBox`, because on a display the engine
+  raises a modal box about the fixture instance `R=B[1:0]` the first time
+  one of its pins is named (row TPU6 says what the engine asked for, and the
+  last row, TPZ1, names any box asked for elsewhere). The real events are on the
+  display arm of registered suites: `tests/headless/test_ase_interact.tcl`
+  (a real double and triple click, row I2b; the slots handed back, rows I7
+  and I10; the session window closed with the Results Display Window's mode
+  on top, row I11; that mode ended first from under this one, row I12; the
+  mode entered from the session's menu with the design in a
+  second tab, rows IT0 to IT3) and `tests/headless/test_pin_marker_1724.tcl`,
+  which fences the marker: band G through the real `ase::ui::sod_click` on
+  both arms, and on a display a real click, a real ESC, the real viewer, the
+  window closed under the mode (group PC), the prompt naming the pin (group
+  PN), a drag in the mode (group PD, and row P8d under the Cadence-style
+  profile), a press after the pointer was overwritten (group PS), a window
+  made while the mode is up (group PW), the design in a second tab (group
+  PT), the prompt with the pointer in another window of the design (group
+  PE) and Direct Plot's window closed with traces queued (group PF). The run
+  from a click to the vector in the results is band PE of
+  `tests/headless/test_ase_probe_deck_1724.tcl` (R-OUT17).
 
 **Picking works from a DESCENDED schematic** (issue 0168). Run, descend into an
 instance, and Direct Plot (Ctrl-4 or Results > Direct Plot) probes its internals:

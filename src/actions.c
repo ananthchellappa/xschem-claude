@@ -876,6 +876,7 @@ void ask_new_file(int in_new_window, char *filename)
         if(!(in_new_window || tclgetboolvar("open_in_new_window"))) {
           dbg(1, "ask_new_file(): load file: %s\n", f);
           clear_all_hilights();
+          pin_marker_clear(NULL); /* issue 1724: another document fills this context */
           xctx->currsch = 0;
           unselect_all(1);
           remove_symbols();
@@ -6757,6 +6758,10 @@ void clear_schematic(int cancel, int symbol)
         label_ride_free();  /* wire_label_ride.md S1: a teardown mid-gesture must drop the label
                              * rider set too, else a later move END would leash instance ids that
                              * belong to a different buffer. */
+        /* issue 1724: the pin markers belong to the document being discarded. Here
+         * and not in clear_drawing(), which descend, go_back and an undo restore
+         * run too. Before the draw() below, which is what erases them. */
+        pin_marker_clear(NULL);
         remove_symbols();
         clear_drawing();
         /* next free untitled[-n] name, avoiding both files already in pwd_dir -- the very

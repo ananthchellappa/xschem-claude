@@ -3039,9 +3039,20 @@ proc wviewer::db_suffix {tr} {
 #   rung 3     the v()-wrapped query                  MidNode -> v(MidNode)
 #   rung 4     an anchored, case-blind `i(v.x` prefix rewritten to `i(`
 #              (get_raw_index()'s rung-4 rewrite; `i(v.x1.vp)` -> `i(x1.vp)`)
+#   rung 5     rungs 1 to 4 once more for the query with every `:` written as
+#              `.`  (`i(x1.xm1:d)` -> `i(x1.xm1.d)`), and only for a query that
+#              holds a `:`
 # Each is then looked up EXACTLY and, when folding is allowed, case-folded —
 # that pairing is `raw_lookup_name()` and it is why the rungs and
 # the fold are two separate loops in `name_lookup` below.
+#
+# RUNG 5 is `get_raw_index_in()`'s: `read_dataset()` stores every `:` of a
+# variable name as `.`, while ngspice writes a `.probe` terminal current as
+# `i(x1.xm1:d)` and that file spelling is what an ASE-L Outputs row and a
+# Calculator expression hold. The C runs it last, after rungs 1 to 4 have all
+# declined the caller's own spelling, so its candidates are APPENDED here, after
+# the caller's own: a colon-free token earns none, so its list is rungs 1 to 4
+# and nothing else. The recursion ends at once — the mapped token holds no `:`.
 #
 # ⚠ RUNG 4 IS NEW HERE and is the item-5 half of the mirror: item 2 left it
 # unmirrored as a declared residue, so the gate REFUSED `i(v.x1.vp)` against a
@@ -3059,6 +3070,9 @@ proc wviewer::name_rungs {tok} {
   if {[string match -nocase {i(v.x*} $tok]} {
     set rest [string range $tok 4 end]
     lappend out "i($rest"
+  }
+  if {[string first : $tok] >= 0} {
+    foreach cand [wviewer::name_rungs [string map {: .} $tok]] { lappend out $cand }
   }
   return $out
 }
@@ -11038,6 +11052,22 @@ proc wviewer::browser_label_full {e} { return [wviewer::dget $e name {}] }
 # instance the user drew; a discrete `c1`/`r1`/`q1` has no wrapper and IS its own
 # instance. One rule, two shapes, because the corpus genuinely has two shapes.
 #
+# ⚠⚠ THE MODEL-SHAPED RULE DOES NOT APPLY TO A PLAIN CURRENT OF CLASS `net`
+# (issue 1724). "Plain" is a leaf with neither a `[param]`
+# nor a `#node`: such a name under a path is a TERMINAL current,
+# `i(<path>.<terminal>)` -- ngspice's `.probe` vector `i(x2:in_p)`, whose `:`
+# read_dataset() stores as `.`. Its leaf is a terminal or a PORT name, and a
+# port is named by whoever drew the block, so an underscore there says nothing
+# about a model: `in_p`, `in_n`, the MOS bulk `b_tj`. Read as model-shaped, two
+# pins of one block both rendered `x2:i` and a transistor's bulk rendered as the
+# transistor (`m1:i`). The leaf is the label: `in_p:i`, `in_n:i`, `b_tj:i`.
+# A class-net current that DOES carry a param or a `#node` keeps the rule
+# above, so nothing else moves. Rows BL01-BL06 of
+# tests/headless/test_wave_sigbrowser.tcl: BL04 and BL05 derive, over every raw
+# fixture under tests/headless/data and the committed name lists, that the
+# labels this exception changes are exactly the plain class-net currents whose
+# leaf holds a `_` under a path, and that no other label moved.
+#
 # ⚠ One leading `@` is stripped: 25 corpus names are untagged single-segment
 # `@`-forms (11 in cmos_ac_sweep), which would otherwise read `@ibias:current`.
 #
@@ -11075,14 +11105,15 @@ proc wviewer::browser_label {e} {
   if {$class eq {net} && $type ne {i}} { return $leaf }
   set base $leaf
   set param {}
+  set plain 1
   if {[regexp {^(.*?)\[([^][]*)\]$} $leaf -> b p]} {
-    set base $b ; set param $p
+    set base $b ; set param $p ; set plain 0
   } elseif {[regexp {^([^#]*)(#.*)$} $leaf -> b p]} {
-    set base $b ; set param $p
+    set base $b ; set param $p ; set plain 0
   }
   if {$param eq {}} { set param i }
   set inst $base
-  if {[string first _ $base] >= 0} {
+  if {[string first _ $base] >= 0 && !($plain && $class eq {net})} {
     set segs [split [wviewer::dget $e path {}] .]
     set last [lindex $segs end]
     if {$last ne {}} { set inst $last }
@@ -14756,6 +14787,16 @@ proc wviewer::hier_now {} {
 # some other instance. Declared limit, not guarded: a raw file's hierarchy path
 # segments are SPICE instance names, which cannot be all digits, so the case is
 # unreachable from the browser.
+#
+# ⚠ A THIRD TIER, ONLY WHEN NO INSTANCE IS CALLED `seg` IN ANY CASE (issue
+# 1724): the ONE instance that NETLISTS under that name. A FET
+# drawn `M9` with a `spiceprefix` is the deck's `XM9` and the raw's `xm9`, so
+# the two name tiers find nothing for a segment that is on the sheet. The
+# netlisted name is `ase::inst_path_segment`'s answer -- the reader the
+# schematic -> browser direction already uses (issue 0319), so the two
+# directions cannot disagree about what an instance is called. Two instances
+# netlisting under one name is not a deck any simulator ran, and it resolves to
+# NOTHING here rather than to the first of them (hier_scan, hier_device).
 proc wviewer::hier_resolve {seg} {
   if {[string first {[} $seg] >= 0} { return VECTOR }
   set n 0
@@ -14768,7 +14809,136 @@ proc wviewer::hier_resolve {seg} {
     if {$nm eq $seg} { return $nm }
     if {$ci eq {} && [string equal -nocase $nm $seg]} { set ci $nm }
   }
-  return $ci
+  if {$ci ne {}} { return $ci }
+  set rows [wviewer::hier_device $seg]
+  if {[llength $rows] == 1} { return [lindex [lindex $rows 0] 1] }
+  return {}
+}
+
+# Every instance of the CURRENT sheet that path segment `seg` could be, one row
+# each, in instance order:
+#     {<index> <name> <byname> <bydeck>}
+#   byname   `exact` when the instance is CALLED `seg` byte for byte, `nocase`
+#            when it is called `seg` in another case, else {}
+#   bydeck   the same two words for the name the instance NETLISTS under
+#            (`ase::inst_path_segment`: its name, with the `spiceprefix` its
+#            format writes in front), else {}
+# An instance that is neither is not listed. Reads only: nothing is selected,
+# drawn or netlisted, and no symbol's `tcleval(...)` format is run (the reader
+# asks `xschem translate` for the literal `@spiceprefix` and reads the format
+# with `instance_notcl`).
+#
+# ⚠ WHAT IT CANNOT SEE: a format that writes a LITERAL letter in front of
+# `@name` (`X@name ...` netlists `XM7`; this reads `M7`), and the SECOND element
+# of a format that writes two lines. Both are misses -- such a segment finds no
+# instance -- never another instance. Row BV02 of
+# tests/headless/test_wave_sigbrowser_panes.tcl holds one instance of each
+# shape and compares every element the sheet writes, as the Select-On-Design
+# pick expands it, with what this scan finds.
+#
+# The INDEX is what a caller selects by: `get_instance()` reads an all-digit
+# NAME as an index (hier_resolve's ⚠).
+proc wviewer::hier_scan {seg} {
+  set out {}
+  if {$seg eq {} || [string first {[} $seg] >= 0} { return $out }
+  set n 0
+  catch {set n [xschem get instances]}
+  if {![string is integer -strict $n]} { return $out }
+  for {set i 0} {$i < $n} {incr i} {
+    set nm {}
+    if {[catch {xschem getprop instance $i name} nm]} { continue }
+    set el $nm
+    catch {set el [ase::inst_path_segment $nm]}
+    set how {}
+    foreach s [list $nm $el] {
+      if {$s eq $seg} { lappend how exact } \
+      elseif {[string equal -nocase $s $seg]} { lappend how nocase } \
+      else { lappend how {} }
+    }
+    if {[lindex $how 0] eq {} && [lindex $how 1] eq {}} { continue }
+    lappend out [list $i $nm [lindex $how 0] [lindex $how 1]]
+  }
+  return $out
+}
+
+# THE DEVICE a last path segment names on the CURRENT sheet: hier_scan's rows
+# for it, narrowed to the best tier that has any --
+#     1. it netlists as `seg`, byte for byte
+#     2. it netlists as `seg` in another case   (ngspice lower-cases the raw)
+#     3. it is CALLED `seg`, byte for byte
+#     4. it is called `seg` in another case
+# The deck's name comes first because the segment IS a deck name: an instance
+# merely called `XM9` that netlists as `XXM9` is not the raw's `xm9` when
+# another one netlists as `XM9`. Tiers 3 and 4 are for a sheet whose deck names
+# moved since the run (the `spiceprefix` switch is read now, not then).
+#
+# ONE row is the device. SEVERAL rows are instances this proc cannot tell apart,
+# and the caller selects NONE of them. No row: nothing on the sheet answers.
+proc wviewer::hier_device {seg} {
+  set rows [wviewer::hier_scan $seg]
+  foreach {col word} {3 exact 3 nocase 2 exact 2 nocase} {
+    set tier {}
+    foreach r $rows {
+      if {[lindex $r $col] eq $word} { lappend tier $r }
+    }
+    if {[llength $tier]} { return $tier }
+  }
+  return {}
+}
+
+# Did the LAST `xschem descend` of this context refuse because the instance is
+# not a block at all -- the engine's token `not-descendable:<type>`: a
+# transistor, a resistor, a source? Every other refusal (`busy`, a cancelled
+# save, a symbol or a schematic that did not load, ...) is NOT this, and stays
+# an error with a rollback: none of them says the instance is a device.
+proc wviewer::hier_no_sheet {} {
+  set why {}
+  catch {set why [xschem get descend_error]}
+  return [expr {[string match {not-descendable*} $why] ? 1 : 0}]
+}
+
+# hier_walk's DEVICE ending: `tgt` is the walk's target as segments, `dev` are
+# hier_device's rows for its last one. Answers
+#     {device <parent path> <instance names> <selected 0|1>}
+# or the empty list when the context is NOT standing on the parent of that last
+# segment (read back, as every rung of the walk is) -- the caller then fails and
+# rolls back as it always did.
+#
+# The selection is cleared first, so "none selected" is true of the sheet and
+# not only of this proc. ONE row is then selected BY INDEX and the selection is
+# READ BACK: `selected` is 1 only when the sheet's selection is exactly that
+# instance. What the refused `descend -inst` left selected is not trusted -- it
+# selected the instance the NAME tiers found, which hier_device may overrule.
+proc wviewer::hier_stay {tgt dev} {
+  set here [wviewer::hier_now]
+  if {![wviewer::hier_same $here [lrange $tgt 0 end-1]]} { return {} }
+  catch {xschem unselect_all}
+  set names {}
+  foreach d $dev { lappend names [lindex $d 1] }
+  set selected 0
+  if {[llength $dev] == 1} {
+    catch {xschem select instance [lindex [lindex $dev 0] 0]}
+    set got {}
+    catch {set got [xschem selected_set]}
+    if {![catch {llength $got} n] && $n == 1 && [lindex $got 0] eq [lindex $names 0]} {
+      set selected 1
+    }
+  }
+  return [list device [join $here .] $names $selected]
+}
+
+# PURE. The sentence for hier_walk's `device` answer: `seg` is the browser
+# path's last segment (the raw's spelling), the rest are that answer's fields.
+proc wviewer::hier_device_msg {seg where names selected} {
+  set at [expr {$where eq {} ? {the top level} : $where}]
+  if {[llength $names] == 1} {
+    set nm [lindex $names 0]
+    if {$selected} {
+      return "'$seg' is a device with no sheet of its own; selected $nm at $at"
+    }
+    return "'$seg' is a device with no sheet of its own; it is $nm at $at, which could not be selected"
+  }
+  return "'$seg' could be any of [llength $names] instances at $at ([join $names {, }]); none is selected"
 }
 
 # THE ITEM. Walk the CURRENT context to `target` (a dotted, sim-root-relative
@@ -14805,7 +14975,24 @@ proc wviewer::hier_resolve {seg} {
 # ⚠ A SUCCESSFUL WALK CLEARS THE SELECTION at every level it traverses, because
 # both `descend -inst` and `go_back` call unselect_all(1) in C. The `already`
 # path does not. Declared, not hidden.
-proc wviewer::hier_walk {target {rollback 1}} {
+#
+# `leaf` (default 0: everything above, unchanged) IS FOR A TARGET THAT MAY END IN
+# A DEVICE (issue 1724). A terminal current `i(x1.xm9.d)`
+# files under the path `x1.xm9`, and `xm9` is a transistor: a place on its
+# parent's sheet, with no sheet of its own. With `leaf` on, when it is the LAST
+# segment that cannot be entered, the walk does NOT roll back. It STAYS on the
+# parent sheet and answers a fourth shape (hier_stay builds it),
+#     {device <parent path> <instance names> <selected 0|1>}
+# in two cases:
+#   * the segment resolved and `descend -inst` refused it as not a block
+#     (hier_no_sheet): hier_device's rows for the segment are the names. ONE
+#     name is the device, and it is left SELECTED there;
+#   * the segment did not resolve because SEVERAL instances could be it: the
+#     names are all of them and NOTHING is selected.
+# A last segment that nothing on the sheet answers to is still `no instance`
+# with a rollback, and so is a refusal for any other reason: there is no device
+# to stay with.
+proc wviewer::hier_walk {target {rollback 1} {leaf 0}} {
   set tgt   [wviewer::hier_split $target]
   set start [wviewer::hier_now]
   if {[join $start .] eq [join $tgt .]} {
@@ -14822,17 +15009,37 @@ proc wviewer::hier_walk {target {rollback 1}} {
     }
   }
   if {$problem eq {}} {
+    set k 0
     foreach seg $segs {
+      incr k
+      set last [expr {$leaf && $k == [llength $segs]}]
       set real [wviewer::hier_resolve $seg]
       if {$real eq {VECTOR}} {
         set problem "vector instance '$seg' cannot be addressed (issue 0212)"
         break
       }
-      if {$real eq {}} { set problem "no instance '$seg'" ; break }
+      if {$real eq {}} {
+        if {$last} {
+          set dev [wviewer::hier_device $seg]
+          if {[llength $dev] > 1} {
+            set ans [wviewer::hier_stay $tgt $dev]
+            if {[llength $ans]} { return $ans }
+          }
+        }
+        set problem "no instance '$seg'"
+        break
+      }
       set before [llength [wviewer::hier_now]]
       set r {}
-      catch {xschem descend -inst $real} r
+      set threw [catch {xschem descend -inst $real} r]
       if {$r ne {1} || [llength [wviewer::hier_now]] <= $before} {
+        if {$last && !$threw && [wviewer::hier_no_sheet]} {
+          set dev [wviewer::hier_device $seg]
+          if {[llength $dev]} {
+            set ans [wviewer::hier_stay $tgt $dev]
+            if {[llength $ans]} { return $ans }
+          }
+        }
         set problem "descend refused at '$real'"
         break
       }
@@ -15054,8 +15261,10 @@ proc wviewer::browser_descend_to {token ids} {
     return 0
   }
 
-  # 5. the walk
-  set res [wviewer::hier_walk $path]
+  # 5. the walk. `leaf` is ON: a browser node can be a DEVICE (the path of a
+  # terminal current ends in one), and the walk then stays on its parent sheet
+  # with the device selected instead of failing -- see hier_walk.
+  set res [wviewer::hier_walk $path 1 1]
 
   # 6. raise + activate, ALSO on the already-there path (the PLAN: "a no-op that
   # still raises the window, and says so"). raise_activate_toplevel is the WSLg
@@ -15066,6 +15275,21 @@ proc wviewer::browser_descend_to {token ids} {
   catch {focus $wtop}
 
   # 7. say what happened, both surfaces, never silently
+  if {[lindex $res 0] eq {device}} {
+    # 1 only when the device is really selected on its sheet; several
+    # candidates, or a selection that did not take, are a 0 with their sentence
+    lassign $res - where names selected
+    set m [wviewer::hier_device_msg [lindex [wviewer::hier_split $path] end] \
+             $where $names $selected]
+    set done [expr {[llength $names] == 1 && $selected ? 1 : 0}]
+    catch {wviewer::browser_status $token $m}
+    if {$done} {
+      catch {wviewer::echo "signal browser: $m"}
+    } else {
+      catch {wviewer::echo "signal browser: $m" error}
+    }
+    return $done
+  }
   if {[lindex $res 0] ne {ok}} {
     set m "descend to '$path' failed: [lindex $res 1] (returned to [lindex $res 2])"
     catch {wviewer::browser_status $token $m}

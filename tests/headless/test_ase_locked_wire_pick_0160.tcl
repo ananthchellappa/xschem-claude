@@ -5,8 +5,9 @@
 #     if {$hit eq {}} { return }
 # and `xschem select_at` selects with override_lock=0 (scheduler.c, via
 # select_object), so a `lock=true` wire yields an empty hit and the click died
-# right there -- before any net classification, so not even the v1-scope notice
-# fired. Measured on a locked wire whose net is perfectly resolvable:
+# right there -- before any net classification, so not even the "nothing to
+# queue there" notice fired. Measured on a locked wire whose net is perfectly
+# resolvable:
 #     xschem select_at 100 0     -> {}          (nothing)
 #     xschem flylines at 100 0   -> net LOCKED  (resolves fine)
 #     ase::ui::sod_net_at ...    -> LOCKED
@@ -43,7 +44,8 @@
 #             a locked wire's net still takes the 0153 colour cue (hilight_netname
 #             does not honour lock).
 #   LK8c-LK8d a non-source instance body still queues nothing but DOES get the
-#             v1-scope notice -- the late return must not swallow it.
+#             "nothing to queue there" notice -- the late return must not
+#             swallow it.
 #   LK11-LK12 a LOCKED voltage source still queues nothing (find_closest_element
 #             excludes it, so nothing resolves at its body); an unlocked one
 #             still queues its current.
@@ -178,9 +180,9 @@ xschem unselect_all
 set ::queued {} ; set ::notices {}
 ase::ui::sod_click k 400 -200
 check "LK8c (control) a non-source instance body still queues nothing" $::queued {}
-check_true "LK8d (control) ... but DOES get the v1-scope notice (the late return\
- must not swallow it)" \
-  [expr {[llength $::notices] == 1 && [string match {ase: v1 queues source*} \
+check_true "LK8d (control) ... but DOES get the 'nothing to queue there' notice,\
+ once (the late return must not swallow it)" \
+  [expr {[llength $::notices] == 1 && [string match {ase: nothing to queue there*} \
      [lindex $::notices 0]]}]
 
 xschem unhilight_all

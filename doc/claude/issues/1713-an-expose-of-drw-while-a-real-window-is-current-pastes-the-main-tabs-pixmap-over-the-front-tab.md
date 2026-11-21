@@ -140,3 +140,102 @@ send it to slot 0.
 - A fence for it is K6's shape, made into rows:
   - `.drw` after the Expose must be AE 0 against a full redraw of the front tab;
   - a control with the main tab in front must still repaint the main tab (0848's case).
+
+## Two more shapes of the same routing, measured 2026-11-19 (issue 1724's third review)
+
+Found while reviewing issue 1724 (finding VJ1 of its third review, re-measured by a second
+agent). Neither is caused by that work: `src/callback.c` was byte-identical to
+`d36cb429e` and the same runs on a build of `d36cb429e` printed the same. Filed here, not
+fixed; the stamp line above is left as it was. Every run was on a private Xvfb with
+openbox, a throwaway `HOME`, `tabbed_interface` 1 and `mouse_follows_focus` 1.
+
+Both come from the fact this file is about: under the tabbed interface an event whose
+window is the shared canvas `.drw` is taken for **slot 0**, the first tab, and
+`get_drw_front_win()` is not read on that path.
+
+### Shape 1: an Enter on `.drw` after a real window was current brings the FIRST tab to the front
+
+No Expose is needed, and the main tab's drawing is not pasted over the front tab: the
+main window really switches tab.
+
+1. Tab `one.sch` (slot 0), a second tab `two.sch` made with `xschem new_schematic create`,
+   and a real window `three.sch` made with `xschem new_schematic create_window`, placed
+   BESIDE the main window (no overlap).
+2. Put `two.sch` in front with its tab button.
+3. Move the real pointer into the real window's canvas (`event generate <canvas> <Motion>
+   -warp 1`): the real window becomes the current context.
+4. Move the real pointer back onto `.drw`.
+
+Result, working tree and `d36cb429e` alike: the current context is `.drw`, the sheet shown
+is `one.sch` and the tab bar has `one.sch` in front, where `two.sch` was. Traced in a
+scratch build with a print in `handle_window_switching()`: the event is 7 (EnterNotify)
+with the window `.drw` while the current context is the real window, and the function
+calls `switch_tab(".drw")`, which is slot 0.
+
+### Shape 2: the restore after a borrowed event fails for a tab, and strands the context on the real window
+
+With a tab other than the first as the current context and an event that belongs to the
+real window (traced: event 12, an Expose of the real window's canvas),
+`handle_window_switching()` borrows the real window's context for the event and then
+restores the previous one with `new_schematic("switch_no_tcl_ctx", <the tab's context>)`.
+That goes through `switch_window()`, which asks Tk for a widget named after the context.
+A tab's context name (`.x1.drw`) is no widget, so the restore gives up, prints
+
+    new_schematic("switch",...): Warning: .x1.drw has been destroyed
+
+and leaves the REAL WINDOW as the current context. The next Enter on `.drw` is then
+shape 1.
+
+### What a user sees (measured through issue 1724's Select On Design)
+
+With a design in a tab other than the first and a second real window on the screen (the
+waveform viewer's window, or a block opened in a window of its own):
+
+- Session > Design Window, or entering a click mode from the session's menu, raises the
+  main window, and the main window can end with the FIRST tab in front. The mode is then
+  armed over another design's sheet; its first click is refused by the mode's own window
+  test, the mode stays armed, and one press of the design's tab puts it right.
+- With the other window moved clear of the main window the entry leaves the design's tab
+  shown, and the tab still flips as soon as the real pointer crosses the other window's
+  canvas on its way to the schematic. A synthetic pointer that never visits the other
+  window does not show it, which is how a "window moved away" control passed.
+- Straight after a plot, with the viewer in front, the entry works.
+- Pressing a Calculator selector does it too (measured the same day by the verifier of
+  issue 1724's closing pass: the design in the second tab, the viewer's window on the
+  screen, a real press on `vt`). Before the press the current context was the design's
+  tab; after it the pick was armed with the FIRST tab's sheet in front, and the output
+  held shape 2's line, `new_schematic("switch",...): Warning: .x1.drw has been
+  destroyed`. Nothing wrong is inserted: a real click on the sheet that came to the
+  front left the Calculator's buffer as it was and said `selector vt: this window is on
+  another schematic now; pick cancelled`. Unlike Select On Design, which stays armed
+  after its refused click, the pick is cancelled by that click: the user presses the
+  design's tab, presses the selector again and clicks.
+
+A cure in the caller does not hold: a switch back to the design's context once the entry
+has settled is undone by the next crossing of the other window.
+
+### The cure proposed, two symbols, NOT built
+
+Tried in a scratch build outside the repository, on four flows only, not on the
+regression population:
+
+- `handle_window_switching()` in `src/callback.c`: under the tabbed interface an event
+  whose window is `.drw` is for the tab in front, `get_drw_front_win()`, not slot 0 (the
+  slot number, the comparison with the current context and the `new_schematic` calls);
+- `switch_window()` in `src/xinit.c`: for a context with an empty top path (a tab) the
+  widget asked of Tk is `.drw`, so the redraw-only restore to a tab succeeds.
+
+With the second alone, the flow with the pointer in the session window passed and a
+pointer resting over an overlap still flipped the tab. With both, shape 1's probe and the
+three ASE-L flows tried ended right. The first is the same change as "Proposed fix" above,
+applied to every event and not only to the redraw-only arm.
+
+A fence, once the engine is changed: shape 1 as a row beside K6's (two tabs, the second in
+front, a real window beside the main one, the REAL pointer warped there and back; the
+sheet shown is still the second tab's), and the same with the window under the main one.
+The row must place the real pointer itself: on Xvfb it rests at the screen's centre, and
+the same scenario passes or fails with where it happens to be.
+
+The probes are in that review's scratch (`review3/verify-journey/`: `v1e.tcl` is shape 1
+with no ASE-L; `v1.tcl` the flows through Select On Design; the traced build is `bld/`).
+That directory is session scratch and will not last, which is why the steps are here.

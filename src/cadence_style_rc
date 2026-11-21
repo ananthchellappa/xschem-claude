@@ -139,7 +139,13 @@ bind .drw <Key-i> {xschem create_instance; break}
 #       and click nets/labels to highlight, ESC to end.
 #   8 : remove a specific net highlight (noun-verb on the selection, or click-to-remove
 #       mode otherwise).
-#   0 : remove ALL net highlights.
+#   0 : remove ALL net highlights, and the ellipses on picked pins (ASE-L's Select
+#       On Design / Direct Plot markers, issue 1724), in this window and in the
+#       windows and tabs linked to it by a descend. A window showing another
+#       document keeps its ellipses. It works while Select On Design is up too,
+#       and leaves that mode armed. Pressed in the middle of a gesture (a wire
+#       being drawn) it clears this window only; the linked windows keep their
+#       highlights and ellipses until it is pressed again after the gesture.
 # `break` stops the digit reaching the C dispatcher (where 0 toggles pin logic level).
 bind .drw <Key-9> {xschem hilight_net_interactive;   break}
 bind .drw <Key-8> {xschem unhilight_net_interactive; break}
@@ -371,9 +377,16 @@ bind .drw <Control-Shift-Key-2> {cadence::make_readonly;          break}
 # design window). Enters the ASE Direct Plot click mode for the session bound to
 # THIS schematic -- or, once descended, to the nearest ANCESTOR of it (issue 0168),
 # so you can run, descend into an instance and probe its internal nodes: click
-# wires/net-labels for voltage traces, sources/ammeters for current traces; ESC
-# plots the queue into the session's waveform viewer (opening it if needed). A
-# bottom-status-line prompt shows while the mode is armed.
+# wires/net-labels for voltage traces, the body of a source/ammeter for its
+# current trace, a device pin for the current into that terminal (plotted only
+# if the last run saved it, except on the pin of a source/ammeter, which plots
+# the source's own current -- on the source's second pin that is the negative
+# of the pin's own, and the CIW says so; the pin gets an ellipse in the trace's
+# colour; issue 1724); ESC plots the queue into the session's waveform viewer
+# (opening it if needed). A bottom-status-line prompt shows while the mode is
+# armed, and names the pin a click would take while the pointer is on one in
+# the window the mode is on. Closing that window instead of pressing ESC plots
+# nothing, and the CIW says how many queued traces were dropped.
 # Overrides the C default (Ctrl+4 = select drawing layer 4), so it ends in
 # `break`, exactly like Ctrl-2 above. Remap: edit the chord on this line.
 bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}

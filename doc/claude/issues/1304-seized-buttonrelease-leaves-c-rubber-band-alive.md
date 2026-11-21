@@ -1,6 +1,9 @@
 # 1304 — a canvas command mode swallows `<ButtonRelease-1>` and leaves C's rubber band alive; pointer drift then CHANGES THE SELECTION
 
-**Status: FILED, NOT FIXED.** Found by item **B4**'s adversary. It is the
+**Status: FILED; since 2026-11-19 all three click modes hold the motion with
+the button held** (the Results Display Window's mode, the Calculator's pick and ASE-L's
+Select On Design: see the last section). What follows is the record as it was filed and
+updated. Found by item **B4**'s adversary. It is the
 sharpest of the three refutations that **reverted item B4**, because it breaks
 the user's own headline requirement for that feature. The binding shape is
 **live in the tree at `735ea26e`** in `src/ase_window.tcl`.
@@ -123,3 +126,38 @@ Once `<B1-Motion> {break}` is in the seized set, it joins whatever leaks. Issues
 **1307** (a new window inherits a live seize) both end with a permanently seized
 canvas; with the fourth sequence, that canvas also loses its rubber band for the
 session. **Land 1305 and 1307's fixes with this one, not after it.**
+
+## Re-measured 2026-11-19, with the work of issue 1724 in the tree, and then cured there
+
+The sentence above, *"`src/ase_window.tcl` still seizes only three sequences"*, is no longer
+true. Select On Design's seize is one proc, `ase::ui::sod_seize`, shared by
+`ase::ui::select_on_design` and `ase::ui::sod_resume`. After issue 1724's second repair it
+took five slots (the press, the double click, the release, Escape and the canvas's
+`<Destroy>`) and still not `<B1-Motion>`.
+
+**Measured on that tree**, on the mode itself (a private Xvfb with openbox, real press,
+motion and release events, stock bindings and the Cadence-style profile, the same before
+and after that repair): a click whose pointer moved two pixels with the button down queued
+its pick, cleared a selection made before the mode, and left the editor's rubber band up
+(`ui_state` 16) past the mode's own ESC; a second ESC cleared it.
+
+**Cured in issue 1724's third repair, the same day**, by the fix this issue recommends.
+`<B1-Motion>` is a slot of the mode's table (`ase::ui::sod_slots`), bound to `break`, and
+`ase::ui::sod_release` hands it back from its own record, with the same own-script rule as
+the release slot (a bare `break` there counts as the mode's own only beside the mode's own
+press). A drag in the mode is now one pick: the selection made before the mode is kept, the
+editor's state word does not move with the button down or after the release, and no pixel
+changes. Fenced with real events: group PD of `tests/headless/test_pin_marker_1724.tcl`
+(a press, a drag and a release; a click on a pin that drifts; the real ESC), its row P8d
+with `src/cadence_style_rc` sourced, rows SO15a to SO15c of
+`tests/headless/test_sod_pick_no_select_0204.tcl`, and on the counted arm the slot rows of
+band TPL in `tests/headless/test_ase_terminal_pick_1724.tcl`. Row PK10 of
+`tests/headless/test_calc_selector_names.tcl` moved with it.
+
+What the last section above asked to land with the fourth sequence is in the tree too. A
+canvas seized twice no longer latches the mode's own scripts, in any of the three click
+modes (`ase::ui::sod_own_script`, the guard in `calc::_pick_seize`, `rdw::pick_own_script`:
+issue 1305's shape). And a window made while a mode is up no longer gets the mode's
+scripts, the held motion included: each mode tells `cmdmode` what it holds and
+`clone_canvas_bindings` copies what is underneath (issue 1307). Issue 0202 has the
+measurements.

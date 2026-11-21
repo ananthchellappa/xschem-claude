@@ -5,6 +5,9 @@
 `ase::ui::sod_statusbar`, `ase::ui::sod_prompt_pump`).
 **Status: NOT FIXED — filed.** Found while repairing issue **1384**; none of it
 is 1384's to fix, and all of it was measured in the same runs.
+**2026-11-19:** the tab half of §1 is closed (the keys arm the mode in a tab), and of §3
+the label is no longer written by two pumps at once; the rest stands, the ruling §3
+asks for included. See the note at the end.
 
 Three defects that share one cause: **the design canvas has two Tcl-level
 command modes and no owner**, and both of them identify the canvas by a string
@@ -134,3 +137,61 @@ exactly the kind of unfenced edit this tree keeps paying for.
 
 **Nothing here was fixed.** Issue 1384's suites are green on `:99` with all of
 it live, because none of it is reachable from the gestures 1384 owns.
+
+## Note, 2026-11-19 (issue 1724, its fourth repair): the tab half of §1 is closed
+
+Closed as §1 proposed: the seize holds the real widget.
+
+- `rdw::_pick_canvas {ctx}` (`src/rdw.tcl`) resolves a window context to the canvas that
+  shows it: the name itself when it is a widget, otherwise the `.drw` of the toplevel that
+  `xschem windows` lists for that context (the main window's toplevel is `.`). It is the
+  lookup `calc::pick_canvas` and `ase::ui::sod_canvas` make, written out here because
+  `rdw.tcl` loads without either of those files.
+- `rdw::pick_start` puts `xschem get current_win_path` through it, so `1`, `2` or `3`
+  with nothing selected, in a tab other than the first, arm the mode on the main window's
+  canvas with its sentence on the main window's status bar. **Measured** with a real
+  second tab and real clicks: a click on a device dumps it.
+- `rdw::pick_resume` puts the name `cmdmode` hands it through the same lookup, so the mode
+  follows a return from a block opened in its own window to a parent that is in such a
+  tab. The Calculator's pick does the same (`calc::pick_resume`), as Select On Design has
+  since the third repair of that issue.
+- Row `HT14` of `tests/headless/test_rdw_window_1245.tcl`, which asserted the silence and
+  was written to go red on this day, is restated: the mode arms on the shared canvas with
+  its sentence on the shared bar, and ending it takes all of that off again. Row XP8 of
+  `tests/headless/test_rdw_keys_1245.tcl` is the key and the resume in a real second tab.
+
+**Not closed:**
+
+- The silence half of §1 where the mode still cannot arm (no canvas at all for the
+  context): `rdw::pick_start` still answers 0 and says nothing.
+- ~~`rdw::_focus_canvas` still tests the context's name as a widget, so in a tab other
+  than the first no dump hands the keyboard back to the canvas.~~ **Closed the same day**
+  by the closing pass of issue 1724: `rdw::_focus_canvas` resolves the name through
+  `rdw::_pick_canvas` too, and after a dump made in such a tab the keyboard is back on
+  the canvas, as in the first tab. Measured in a real second tab with the tabbed
+  interface on; row XP8 holds it and goes red with the old line put back. A third tab
+  and the non-tabbed interface were not driven. This was the last place in `rdw.tcl`
+  and `calculator.tcl` that the fourth repair's verifier found treating the context's
+  name as a widget.
+- §2 and §4 are as they were. §3's nesting is issue 0202, which has what the
+  repairs of 2026-11-19 changed about it.
+- **§3's second bullet, the label written by two pumps, is closed for the label** by the
+  last build of issue 1724, the same day. `ase::ui::sod_prompt_pump`, `rdw::_hint_sync`
+  and the Calculator's `calc::pick_pump` each write the slot only while no other click
+  mode that is up holds the press slot of the mode's canvas over it
+  (`ase::ui::sod_covered`, `rdw::_pick_covered`, `calc::pick_covered`, which ask
+  `cmdmode::pristine`); the timers keep running. So with two modes stacked the slot
+  shows one sentence, that of the mode on top, which is the mode a press goes to, and
+  the lower mode's sentence is back when the top mode ends. **Measured before it**,
+  the slot sampled with no event sent: two sentences in turn in each stack of two.
+  **After it**: one. Band PG28 of `tests/headless/test_calc_pick.tcl` and row TPL14 of
+  `tests/headless/test_ase_terminal_pick_1724.tcl`. This is not ruling (a), (b) or (c)
+  of §3: the modes still nest and the last arm still wins the click. What it adds is
+  that the label says so. Not touched: the tooltip the Results window's mode arms on
+  the slot keeps its own sentence while that mode is underneath.
+- **§3's stack, ended out of order**, no longer leaves a mode with nothing bound by any
+  door of the product that was found: the Results window's mode takes the canvas again
+  when the mode under it is ended (`rdw::pick_reseat`), and since the same last build
+  the mode on top takes it again when the Results window's mode is ended first, by
+  Escape in the Results window (`ase::ui::sod_reseat`, `calc::pick_reseat`). Issue 0202
+  has the orders. The ruling §3 asks for is still owed.

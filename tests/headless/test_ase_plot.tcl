@@ -13,8 +13,10 @@
 #   P1   op-only run with a Plot-checked row -> auto-plot NOTICE arm: run
 #        Ready/Green, NO viewer opened (GUI + ngspice)
 #   P2   op-only Results > Direct Plot: menu entry live, mode seizes the
-#        design-canvas bindings, click queues, sod_end -> notice arm (no
-#        viewer), bindings restored VERBATIM, session outputs UNCHANGED (D2)
+#        design-canvas bindings (the press, the double click with the press's
+#        own script, the release, Escape, and Destroy), click queues, sod_end
+#        -> notice arm (no viewer), every one of them restored VERBATIM,
+#        session outputs UNCHANGED (D2)
 #   P3   dc-sweep run, id=-i(v1) + v(d) Plot-checked -> viewer auto-opened,
 #        raw attached (loaded INDEX >= 0, sim_type dc, points 181), auto
 #        graph 0 carries both traces (id materialized via `raw add` from the
@@ -328,6 +330,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     set pre_press [bind $cv <ButtonPress-1>]
     set pre_rel   [bind $cv <ButtonRelease-1>]
     set pre_esc   [bind $cv <Key-Escape>]
+    set pre_dbl   [bind $cv <Double-Button-1>]
+    set pre_gone  [bind $cv <Destroy>]
+    set pre_drag  [bind $cv <B1-Motion>]
     $top.mb.results invoke {Direct Plot}
     update
     check "P2 design is the current schematic" \
@@ -336,6 +341,21 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check_true "P2 mode armed (ButtonPress-1 seized)" \
       [expr {[bind $cv <ButtonPress-1>] ne {} && \
              [bind $cv <ButtonPress-1>] ne $pre_press}]
+    # The mode also holds the double click (with the press's own script, so the
+    # second press of a double click is a pick and never the editor's) and the
+    # canvas going away. The first leg is the fixture: the editor's double-click
+    # script was there to be taken, so that slot's restore row below compares
+    # against a real script and not against an empty slot. The third leg says
+    # the Destroy slot changed while the mode was up, so its restore row cannot
+    # pass on a slot the mode never touched.
+    check "P2 mode armed: Double-Button-1 holds the press's own script over the editor's, and Destroy is hooked" \
+      [list [string match {xschem callback %W -3 *} $pre_dbl] \
+            [expr {[bind $cv <Double-Button-1>] eq [bind $cv <ButtonPress-1>]}] \
+            [expr {[bind $cv <Destroy>] ne $pre_gone}]] {1 1 1}
+    # ...and the motion with the left button held, which it swallows: left to
+    # the editor that motion starts the selection rectangle under a pick.
+    check "P2 mode armed: B1-Motion is swallowed (the slot holds `break`, and held something else before)" \
+      [list [bind $cv <B1-Motion>] [expr {$pre_drag ne {break} ? 1 : 0}]] {break 1}
     ase::ui::sod_click $key 550 -330                   ;# the D-net wire
     update
     ase::ui::sod_end $key
@@ -345,6 +365,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "P2 ButtonPress-1 restored verbatim" [bind $cv <ButtonPress-1>] $pre_press
     check "P2 ButtonRelease-1 restored" [bind $cv <ButtonRelease-1>] $pre_rel
     check "P2 Key-Escape restored" [bind $cv <Key-Escape>] $pre_esc
+    check "P2 Double-Button-1 restored verbatim (the editor's own)" \
+      [bind $cv <Double-Button-1>] $pre_dbl
+    check "P2 Destroy restored verbatim" [bind $cv <Destroy>] $pre_gone
+    check "P2 B1-Motion restored verbatim" [bind $cv <B1-Motion>] $pre_drag
     check "P2 outputs unchanged (D2: plot mode writes no outputs)" \
       [ase::state_get [ase::session_state $key] outputs] $outs_snap
     ase::ui::close $key
@@ -490,10 +514,19 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       set pre_press [bind $cv <ButtonPress-1>]
       set pre_rel   [bind $cv <ButtonRelease-1>]
       set pre_esc   [bind $cv <Key-Escape>]
+      set pre_dbl   [bind $cv <Double-Button-1>]
+      set pre_gone  [bind $cv <Destroy>]
+      set pre_drag  [bind $cv <B1-Motion>]
       $top.mb.results invoke {Direct Plot}
       update
       check_true "P4 mode armed (ButtonPress-1 seized)" \
         [expr {[bind $cv <ButtonPress-1>] ne $pre_press}]
+      check "P4 mode armed: Double-Button-1 holds the press's own script over the editor's, and Destroy is hooked" \
+        [list [string match {xschem callback %W -3 *} $pre_dbl] \
+              [expr {[bind $cv <Double-Button-1>] eq [bind $cv <ButtonPress-1>]}] \
+              [expr {[bind $cv <Destroy>] ne $pre_gone}]] {1 1 1}
+      check "P4 mode armed: B1-Motion is swallowed (the slot holds `break`, and held something else before)" \
+        [list [bind $cv <B1-Motion>] [expr {$pre_drag ne {break} ? 1 : 0}]] {break 1}
       ase::ui::sod_click $key 550 -330                 ;# wire -> v(d)
       update
       # issue 0153: the click must have painted net d in the color its trace will
@@ -529,6 +562,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         [bind $cv <ButtonPress-1>] $pre_press
       check "P4 ButtonRelease-1 restored" [bind $cv <ButtonRelease-1>] $pre_rel
       check "P4 Key-Escape restored" [bind $cv <Key-Escape>] $pre_esc
+      check "P4 Double-Button-1 restored verbatim (the editor's own)" \
+        [bind $cv <Double-Button-1>] $pre_dbl
+      check "P4 Destroy restored verbatim" [bind $cv <Destroy>] $pre_gone
+      check "P4 B1-Motion restored verbatim" [bind $cv <B1-Motion>] $pre_drag
       set gs4 [dict get [wviewer::layout_for $key] graphs]
       set n4 [llength $gs4]
       check "P4 exactly ONE new graph appended" $n4 [expr {$g_before + 1}]
@@ -909,7 +946,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 }
 
 # --- verdict -----------------------------------------------------------------
+# The completion sentinel tests/banner_rule.tcl's banner_complete requires of a
+# registered case, printed only when every check passed. The verdict line stays
+# last: the regression driver carries a case's last verdict line into its block.
 if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
   puts "RESULT: ALL PASS ($npass checks)"
 } else {
   puts "RESULT: $fail FAILED ($npass passed)"

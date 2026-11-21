@@ -91,3 +91,51 @@ directly on this file's fix step 3 (*"run the other three S2a suites on an attac
 to see whether this is one issue or four"*): whatever the mechanism is, it is **not** unique
 to `test_wave_markers`, and a second name is the cheapest evidence anyone has added to that
 question. `open=2` counts the two suites.
+
+---
+
+## 2026-11-19 — `test_wave_markers` also times out on a PRIVATE display now
+
+The stamp line above is left as it was. This section records a measurement that
+contradicts this file's table, whose last row says the suite passes on `run_suites.sh`'s
+private `xvfb-run` display.
+
+MEASURED by the verifier of the command-mode part of issue 1724's fourth repair, while
+running that work's neighbours and not looking for this:
+
+```
+AUDIT_DISPLAY=private SUITE_TIMEOUT=300 tests/headless/run_suites.sh test_wave_markers
+  -> TIMEOUT | test_wave_markers run 1/1 (after 300s)
+```
+
+Three runs, all on a private Xvfb with openbox, each ended by the driver's bound. Before
+the stall the suite printed `FAIL:` rows in groups `MF9`, `MF2`, `MF10`, `MF8` and `MF7`
+and `MARKER-TEST-STALL:` lines of its own (`MF9 control could not arm a marker drag (1)
+after 3 tries`, `MF8 strip-0 empty pixel scan found nothing after 3 tries`, and the like),
+and it then stopped after row `MF11a`, the row after which S2a saw it stop (above).
+
+**It is not that work's.** One of the three runs was made with the `src/cmdmode.tcl` of
+before that repair sourced over the tree's: the same red rows and the same `TIMEOUT`. The
+suite references no `cmdmode` proc. The third review of issue 1724 noted the same reds on
+a build of that branch's HEAD (`d36cb429e`); the verifier did not run a build of HEAD
+itself.
+
+**What this does to the file.**
+
+* The table's last row (`both | private xvfb-run display | ALL PASS (983 checks)`) is the
+  record of 2026-09-18. On this tree the private display does not pass either, so the
+  "attached against private" split this issue is named for no longer separates the two
+  arms, and the candidates under "What is not known" that rest on that split (the X
+  authority, state left on a long-lived server) are weakened.
+* New, and not explained: the `MF` rows that go red BEFORE the stall. They say no marker
+  anchor was found by the suite's pixel scan and no marker drag could be armed. Whether
+  that is the suite's scan or the viewer's drawing was not looked into.
+* CLAUDE.md's sentence that the suite "passes on the private `xvfb-run` display" and that
+  `AUDIT_DISPLAY=private` takes that arm is stale by this measurement.
+
+**Not measured:** which commit the private display stopped passing at; whether the reds
+before the stall and the stall share a cause; the dev display `:99` on this tree; the
+other suites this file names.
+
+Evidence (session scratch of 2026-11-19, not kept in the repository): the verifier's
+`logs/suites2.log` and its three run logs of the suite.

@@ -531,8 +531,9 @@ learns nothing until a plot route is walked, which may be months. **Call the che
 nothing else will tell you.**
 
 > **[NGSPICE-SHAPED]** — `plots`' `select` is a glob matched against the **plot name literal**
-> your simulator writes, and the reconciliation of §7 compares recorded names positionally
-> against a sidecar. Both presume your results file is a sequence of named plots. If yours is
+> your simulator writes, and the reconciliation of §7 compares the names a sidecar recorded,
+> row by row, against these entries in the order you list them. Both presume your results file
+> is a sequence of named plots. If yours is
 > not, `results` still has to be nameable without a rawfile underneath it — **D37** says so in
 > as many words, and nothing has tested it.
 
@@ -752,6 +753,31 @@ it — which is the second reason `plots` earns its keep.
 **What you must supply:** accurate `select` globs, and a deck that writes the sidecar. An
 adapter with `plots` entries that do not match what the simulator actually names its output
 gets an `under` or `mislabel` verdict on every run, which trains the user to ignore the channel.
+
+⚠ **Two orders matter and one does not.** A sidecar record must sit immediately above the write
+it describes, because records are compared with the results file **position by position**. A
+row's `plots` must be listed in the order your deck writes them, because a row's records are
+compared with **that row's** entries in order — the first record of a row with its first
+entry. The order your deck runs the **rows** in is yours **as far as this reconciliation
+goes**: each record carries the row that wrote it, and ngspice's own deck runs the operating
+point last when it asks for per-device operating-point numbers inside its command block
+(issue 1657 is what it cost while the rows were compared in a fixed order instead).
+
+⚠ **It is not yours where a plot's name reads back as another analysis's type.** The engine's
+reader of a results file hands a caller that asks for a type the plots whose name reads as
+that type, first in file order. On ngspice the noise totals' plot, `Integrated Noise`, reads
+as `op` as well as the operating point's own. For that one name the engine decides for you
+(issue 1657): a caller that asks for `op` -- annotation, an Outputs row that reads the
+operating point, the Calculator -- is given the `Operating Point` plot wherever your deck
+wrote it, and the totals only when the file holds no operating point. Before that rule a deck
+that wrote the totals first made every one of those readers take the noise totals (measured).
+The rule needs the reader to step over the totals' block, and there is one kind it cannot:
+an ascii block whose lines end CRLF (issue 0300). A deck that writes those is not covered,
+and must still write its operating point first; a binary block is stepped over whatever the
+line ends of its header (both measured; issue 1657's list).
+The rule knows that one name and no other: if YOUR simulator names a plot so that it reads as
+another type, the first in file order still wins, so write the plot that IS of that type
+first.
 
 The full verdict set is **eight**, and the four this section has not named are as diagnostic of a
 wrong descriptor as the two it has: `ok`, `norun` (no results file), `nomap` (no sidecar),

@@ -386,3 +386,11 @@ own PDK setup still fail loudly on a path with a space — issue **1496**. A che
 longer than about 73 characters — issue **1495**. The refusal now raises mid-render rather
 than through a preflight tier (`C-impl.md` §F7.3), a deliberate silent-loss → hard-refusal
 change recorded there.
+
+**Pointer, 2026-11-19** (stamp and list above left as they were). The same class shows
+with a capital in a suite's SCRATCH path and a lower-case checkout: `test_ase_variant_1470`
+row `OT1` goes red as in item 3 above, and `test_ase_saved_results_1705`, a suite younger
+than this file, goes red at rows `SVR0` and `SVR10` and leaves its fixture's `.opinfo`
+files in a lower-cased sibling of the scratch directory. Measured by a verifier of issue
+1724's fourth repair; the record is the 2026-11-19 section of issue **1334**, which
+holds the proc that lower-cases the path.

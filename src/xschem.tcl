@@ -17467,11 +17467,32 @@ proc show_bindkeys {} {
 # user's EXTRA bindings — sequences set_bindings never touched — are carried over.
 # (issue 0020) doc/claude/specs/multi_window_detach.md
 proc clone_canvas_bindings {src dst} {
+  if {[info commands winfo] eq {}} return ;# --nogui: no Tk, nothing to copy
   if {![winfo exists $src] || ![winfo exists $dst] || $src eq $dst} return
   foreach seq [bind $src] {
     if {[bind $dst $seq] ne {}} continue ;# keep dst's own per-window binding
-    bind $dst $seq [bind $src $seq]
+    # A command mode may be holding this slot on $src (cmdmode.tcl, ordering note):
+    # copy what the slot holds underneath the mode, which may be nothing.
+    set script [bind $src $seq]
+    catch {set script [cmdmode::pristine $src $seq $script bind_seq_spelling]}
+    if {$script eq {}} continue
+    bind $dst $seq $script
   }
+}
+
+# Tk's own spelling of a binding sequence, the one `bind` lists it under
+# (`<ButtonPress-1>` is listed as `<Button-1>`). Asked of Tk itself, on a binding
+# tag that belongs to no widget, so nothing on screen is touched. A sequence Tk
+# does not accept is answered unchanged.
+proc bind_seq_spelling {seq} {
+  set tag __xschem_seq_spelling
+  if {[catch {
+    foreach q [bind $tag] { bind $tag $q {} }
+    bind $tag $seq {#}
+    set r [lindex [bind $tag] 0]
+    bind $tag $r {}
+  }]} { return $seq }
+  return $r
 }
 
 # Keep a newly-opened schematic window to a sane size. Only acts when the window

@@ -38,6 +38,11 @@
 #   L   non finite values (`nan`, `-inf`, `nan(0x1)`, ...). A C library prints
 #       these as WORDS, so bound 2 must accept them or one of them costs the
 #       whole file -- while `nancy` and `information` stay non-values.
+#   M   issue 1657: WHICH PLOT ANSWERS `op`. `Integrated Noise` reads back as
+#       `op` beside `Operating Point`; a caller that asked for `op` is given
+#       the operating point, and the noise totals only when the read took no
+#       other plot (no operating point, and no plot named `op`: the `named`
+#       cells). Hand-written files in both block forms.
 #
 # NOT covered here, on purpose: skip_raw_ascii_points(), the sibling that walks
 # past a dataset xschem did not ask for. It has the same two weaknesses this
@@ -600,6 +605,469 @@ eqcheck L13-unclosed-payload-is-not-a-value [load1 $tmp/nanopen.raw] 0
 eqcheck L14-bare-nan-in-the-same-slot-reads [load1 $tmp/nanword.raw] 1
 eqcheck L15-and-keeps-both-points [pcall xschem raw points] 2
 eqcheck L16-recovers [load1 $tmp/good.raw] 1
+
+# ---------------------------------------------------------------------------
+# M -- issue 1657: WHICH PLOT ANSWERS `op`.
+#
+#      read_dataset() takes every plot whose type is the one the caller asked
+#      for, in file order, and `Integrated Noise` (a noise run's totals, one
+#      point) reads back as `op` beside `Operating Point`. A deck
+#      that runs its operating point after its noise analysis writes the totals
+#      first, and a caller asking for `op` was handed them; the operating point
+#      itself was dropped at the variable-count mismatch. `xschem annotate_op`
+#      then published no node voltage.
+#
+#      The rule: for a caller that ASKED for `op`, an `Integrated Noise` plot
+#      answers only when the read took no other plot as `op` -- which, for
+#      every plot name a simulator writes, is "the file holds no `Operating
+#      Point` plot". A read that names no type, and a read asking for any other
+#      type, answer what they answered before.
+#
+#      HOW THE EXPECTED ANSWERS WERE MADE, because a leg that only repeats the
+#      binary under test proves nothing. m_want's `same` cells are the answers
+#      of the binary as it stood BEFORE the rule, on these same files. Its
+#      `rule` cells are the cells the rule moves; each holds the answer that
+#      older binary gave for the SAME file with its `Integrated Noise` plots
+#      taken out, which is what the rule says a caller asking for `op` must
+#      get. No cell was read off the binary that carries the rule.
+#
+#      THE OTHER KINDS OF CELL THE RULE MOVES, each derived on the older
+#      binary like a `rule` cell:
+#      `named` -- file in_pno, which holds the totals, then a plot whose whole
+#      name is the word `op`, and NO `Operating Point` plot. The reader's
+#      plot-name arm takes such a plot for a caller asking `op`, "took no other
+#      plot" is what the rule asks, and so the totals no longer answer there:
+#      the cell holds the older binary's answer for the file with its totals
+#      taken out. It is where the rule as built and "the file holds no
+#      `Operating Point` plot" part ways (issue 1657's list, "A plot whose
+#      whole name is the word asked for"); pinned so the answer cannot drift.
+#      `held` -- file op_inb, whose malformed line stands IN the totals' own
+#      header, so taking the totals out would take the malformed line with
+#      them. A held-back plot is skipped like a plot of another type, and the
+#      cell holds the older binary's answer for the operating point followed
+#      by a plot of ANOTHER type that carries the same malformed line in the
+#      same place: file op_trb, every cell of which is `same`.
+#
+#      A MALFORMED HEADER BEHIND THE OPERATING POINT (op_trb, op_inb,
+#      op_in_nsb, in_opb, and the M-wipe rows). A header line that cannot be
+#      read makes the reader refuse the file and clear every loaded database;
+#      op_trb holds that on the older binary. Before the rule a read asking
+#      `op` ENDED at the totals, at the variable-count mismatch, so a malformed
+#      header standing behind them was never met: the operating point was
+#      answered and what was loaded stayed. The totals are stepped over now,
+#      the read goes on, meets that header, is refused, and the databases
+#      loaded before it are gone (op_inb, op_in_nsb). With the totals first and
+#      the malformed header in the operating point (in_opb) the totals used to
+#      answer; that read is refused now and clears the databases too, as a read
+#      of that operating point alone always did. Hand-made files only; this is
+#      the consequence written above the `integrated noise` arm of
+#      read_dataset(), pinned as built.
+#
+#      The fixtures are built by procs so that a measurement script can lift
+#      them out of this file by name and write the very same bytes.
+# ---------------------------------------------------------------------------
+# The plots the files are made of: {plot name} {variables} {points}
+# {header lines that follow `Plotname:`} {what is wrong with the header}. The
+# operating points' numbers are not the noise totals' and their names are not
+# theirs; row M0 holds that, so a cell expecting one can never be satisfied by
+# the other. Every number is a binary fraction, so the ascii and the binary
+# form store the same doubles.
+# PNO is a plot whose whole name is the word `op` (row M0b: its numbers are
+# neither an operating point's nor the totals'). INB, OPB, NSB and TRB carry
+# `badpts`: their `No. Points:` line holds a word where the number belongs, the
+# malformed header that makes the reader refuse the file and clear every
+# loaded database.
+proc m_plots {} {
+  return {
+    OP  {{Operating Point} {v(in) v(out) i(v1)} {{1 0.75 -0.25}}}
+    OP2 {{Operating Point} {v(in) v(out) i(v1)} {{2 1.5 -0.5}}}
+    OPM {{Operating Point} {v(in) v(out) i(v1)}
+         {{0.5 0.375 -0.125} {1 0.75 -0.25} {1.5 1.125 -0.375}}}
+    IN  {{Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}}}
+    INC {{Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}}
+         {{Option: casemode=preserve}}}
+    INS {{Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625}}}
+    INQ {{Integrated Noise - V^2 or A^2} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}}}
+    OPS {{Operating Point} {v(in) v(out) i(v1)} {{1 0.75}}}
+    NSD {{Noise Spectral Density Curves} {frequency v(onoise_spectrum) v(inoise_spectrum)}
+         {{1000 0.5 0.0625} {10000 0.25 0.03125} {100000 0.125 0.0078125}}}
+    NSQ {{Noise Spectral Density Curves - (V^2 or A^2)/Hz}
+         {frequency v(onoise_spectrum) v(inoise_spectrum)}
+         {{1000 0.5 0.0625} {10000 0.25 0.03125} {100000 0.125 0.0078125}}}
+    TR  {{Transient Analysis} {time v(in) v(out) i(v1)}
+         {{0 3 2.25 -0.75} {0.5 3.5 2.5 -0.875}}}
+    PNO {{op} {v(in) v(out) i(v1)} {{4.5 4.25 -1.75}}}
+    INB {{Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}} {} badpts}
+    OPB {{Operating Point} {v(in) v(out) i(v1)} {{1 0.75 -0.25}} {} badpts}
+    NSB {{Noise Spectral Density Curves} {frequency v(onoise_spectrum) v(inoise_spectrum)}
+         {{1000 0.5 0.0625} {10000 0.25 0.03125} {100000 0.125 0.0078125}} {} badpts}
+    TRB {{Transient Analysis} {time v(in) v(out) i(v1)}
+         {{0 3 2.25 -0.75} {0.5 3.5 2.5 -0.875}} {} badpts}
+  }
+}
+# The files: key, what stands in the file in order (a plot of m_plots, or a
+# header line written as it is), and the block forms the file is made in. INS
+# and OPS are a point one value short, which only an ascii block can carry.
+# INQ and NSQ are the names `.options sqrnoise` gives the two noise plots.
+proc m_files {} {
+  return {
+    in_nsd_op       {IN NSD OP}                              {ascii bin}
+    op_in_nsd       {OP IN NSD}                              {ascii bin}
+    tr_in_nsd_op    {TR IN NSD OP}                           {ascii bin}
+    nsd_in_op       {NSD IN OP}                              {ascii bin}
+    in_nsd          {IN NSD}                                 {ascii bin}
+    nsd_in          {NSD IN}                                 {ascii bin}
+    op              {OP}                                     {ascii bin}
+    in              {IN}                                     {ascii bin}
+    op_in_nsd_op2   {OP IN NSD OP2}                          {ascii bin}
+    in_nsd_op_op2   {IN NSD OP OP2}                          {ascii bin}
+    in_op_nsd_op2   {IN OP NSD OP2}                          {ascii bin}
+    in_nsd_opm      {IN NSD OPM}                             {ascii bin}
+    opm_in_nsd      {OPM IN NSD}                             {ascii bin}
+    cm_in_nsd       {{Option: casemode=distinguish} IN NSD}  {ascii bin}
+    cm_inc_nsd      {{Option: casemode=distinguish} INC NSD} {ascii bin}
+    inc_nsd         {INC NSD}                                {ascii bin}
+    inc_nsd_op      {INC NSD OP}                             {ascii bin}
+    ins_nsd         {INS NSD}                                {ascii}
+    ins             {INS}                                    {ascii}
+    ins_nsd_op      {INS NSD OP}                             {ascii}
+    in_nsd_ops      {IN NSD OPS}                             {ascii}
+    inq_nsq_op      {INQ NSQ OP}                             {ascii bin}
+    op_inq_nsq      {OP INQ NSQ}                             {ascii bin}
+    inq_nsq         {INQ NSQ}                                {ascii bin}
+    in_pno          {IN PNO}                                 {ascii bin}
+    op_trb          {OP TRB}                                 {ascii bin}
+    op_inb          {OP INB}                                 {ascii bin}
+    op_in_nsb       {OP IN NSB}                              {ascii bin}
+    in_opb          {IN OPB}                                 {ascii bin}
+  }
+}
+# What a reader is asked for; `-` is a read that names no type.
+proc m_asked {} { return {op noise - tran dc} }
+proc m_wr {path body} {
+  set fp [open $path w]
+  fconfigure $fp -translation binary
+  puts -nonewline $fp $body
+  close $fp
+}
+# One plot, as the simulator writes it: a `Values:` block (form ascii) or a
+# `Binary:` block of native doubles (form bin).
+proc m_plot {form key} {
+  foreach {name vars rows extra wrong} [dict get [m_plots] $key] break
+  set h "Title: issue 1657 fixture\nDate: Fri Nov 20 00:00:00 2026\nPlotname: $name\n"
+  foreach x $extra { append h "$x\n" }
+  set npts [llength $rows]
+  if {$wrong eq {badpts}} { set npts several }
+  append h "Flags: real\nNo. Variables: [llength $vars]\nNo. Points: $npts\nVariables:\n"
+  set i 0
+  foreach v $vars { append h "\t$i\t$v\tvoltage\n" ; incr i }
+  if {$form eq {bin}} {
+    append h "Binary:\n"
+    foreach r $rows { append h [binary format d* $r] }
+    return $h
+  }
+  append h "Values:\n"
+  set n 0
+  foreach r $rows {
+    set lead $n
+    foreach x $r { append h "$lead\t$x\n" ; set lead {} }
+    append h "\n"
+    incr n
+  }
+  return $h
+}
+# Write every file of one form into `dir`; answers a dict key -> path.
+proc m_build {dir form} {
+  file mkdir $dir
+  set out {}
+  foreach {key items forms} [m_files] {
+    if {[lsearch -exact $forms $form] < 0} { continue }
+    set body {}
+    foreach it $items {
+      if {[dict exists [m_plots] $it]} { append body [m_plot $form $it] } else { append body "$it\n" }
+    }
+    set f [file join $dir $key.raw]
+    m_wr $f $body
+    lappend out $key $f
+  }
+  return $out
+}
+# What one read answers, as one string: the stored type, the dataset and point
+# counts, the header's case mode, the names, and every value of every name over
+# all datasets. A refused read answers what it left behind instead.
+proc m_ans {f asked} {
+  catch {xschem raw clear}
+  if {$asked eq {-}} { set r [pcall xschem raw read $f] } else { set r [pcall xschem raw read $f $asked] }
+  if {$r ne {1}} {
+    set left [pcall xschem raw points]
+    catch {xschem raw clear}
+    return "refused($r) left=<$left>"
+  }
+  set names [split [string trim [pcall xschem raw list]] "\n"]
+  set vals {}
+  foreach n $names { lappend vals [string trim [pcall xschem raw values $n -1]] }
+  set a "[pcall xschem raw sim_type] ds=[pcall xschem raw datasets] pts=[pcall xschem raw points]"
+  append a " cm=[pcall xschem raw casemode -header] names=<$names> values=<[join $vals { | }]>"
+  catch {xschem raw clear}
+  return $a
+}
+# key, asked, kind, answer. See the band's header for where each answer is from.
+proc m_want {} {
+  return {
+    in_nsd_op      op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    in_nsd_op      noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_op      -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_op      tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_op      dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsd      op    same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_in_nsd      noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    op_in_nsd      -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_in_nsd      tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsd      dc    same {refused(0) left=<ERR:No raw file loaded>}
+    tr_in_nsd_op   op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    tr_in_nsd_op   noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    tr_in_nsd_op   -     same {tran ds=1 pts=2 cm=unknown names=<time v(in) v(out) i(v1)> values=<0 0.5 | 3 3.5 | 2.25 2.5 | -0.75 -0.875>}
+    tr_in_nsd_op   tran  same {tran ds=1 pts=2 cm=unknown names=<time v(in) v(out) i(v1)> values=<0 0.5 | 3 3.5 | 2.25 2.5 | -0.75 -0.875>}
+    tr_in_nsd_op   dc    same {refused(0) left=<ERR:No raw file loaded>}
+    nsd_in_op      op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    nsd_in_op      noise same {noise ds=1 pts=3 cm=unknown names=<frequency v(onoise_spectrum) v(inoise_spectrum)> values=<1000 10000 100000 | 0.5 0.25 0.125 | 0.0625 0.03125 0.0078125>}
+    nsd_in_op      -     same {noise ds=1 pts=3 cm=unknown names=<frequency v(onoise_spectrum) v(inoise_spectrum)> values=<1000 10000 100000 | 0.5 0.25 0.125 | 0.0625 0.03125 0.0078125>}
+    nsd_in_op      tran  same {refused(0) left=<ERR:No raw file loaded>}
+    nsd_in_op      dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd         op    same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd         noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd         -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd         dc    same {refused(0) left=<ERR:No raw file loaded>}
+    nsd_in         op    same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    nsd_in         noise same {noise ds=1 pts=3 cm=unknown names=<frequency v(onoise_spectrum) v(inoise_spectrum)> values=<1000 10000 100000 | 0.5 0.25 0.125 | 0.0625 0.03125 0.0078125>}
+    nsd_in         -     same {noise ds=1 pts=3 cm=unknown names=<frequency v(onoise_spectrum) v(inoise_spectrum)> values=<1000 10000 100000 | 0.5 0.25 0.125 | 0.0625 0.03125 0.0078125>}
+    nsd_in         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    nsd_in         dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op             op    same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op             noise same {refused(0) left=<ERR:No raw file loaded>}
+    op             -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op             tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op             dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in             op    same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in             noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in             -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in             tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in             dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsd_op2  op    rule {op ds=2 pts=2 cm=unknown names=<v(in) v(out) i(v1)> values=<1 2 | 0.75 1.5 | -0.25 -0.5>}
+    op_in_nsd_op2  noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    op_in_nsd_op2  -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_in_nsd_op2  tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsd_op2  dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_op_op2  op    rule {op ds=2 pts=2 cm=unknown names=<v(in) v(out) i(v1)> values=<1 2 | 0.75 1.5 | -0.25 -0.5>}
+    in_nsd_op_op2  noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_op_op2  -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_op_op2  tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_op_op2  dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_op_nsd_op2  op    rule {op ds=2 pts=2 cm=unknown names=<v(in) v(out) i(v1)> values=<1 2 | 0.75 1.5 | -0.25 -0.5>}
+    in_op_nsd_op2  noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_op_nsd_op2  -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_op_nsd_op2  tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_op_nsd_op2  dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_opm     op    rule {dc ds=1 pts=3 cm=unknown names=<v(in) v(out) i(v1)> values=<0.5 1 1.5 | 0.375 0.75 1.125 | -0.125 -0.25 -0.375>}
+    in_nsd_opm     noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_opm     -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_opm     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_opm     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    opm_in_nsd     op    same {dc ds=1 pts=3 cm=unknown names=<v(in) v(out) i(v1)> values=<0.5 1 1.5 | 0.375 0.75 1.125 | -0.125 -0.25 -0.375>}
+    opm_in_nsd     noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    opm_in_nsd     -     same {dc ds=1 pts=3 cm=unknown names=<v(in) v(out) i(v1)> values=<0.5 1 1.5 | 0.375 0.75 1.125 | -0.125 -0.25 -0.375>}
+    opm_in_nsd     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    opm_in_nsd     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    cm_in_nsd      op    same {op ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_in_nsd      noise same {noise ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_in_nsd      -     same {op ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_in_nsd      tran  same {refused(0) left=<ERR:No raw file loaded>}
+    cm_in_nsd      dc    same {refused(0) left=<ERR:No raw file loaded>}
+    cm_inc_nsd     op    same {op ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_inc_nsd     noise same {noise ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_inc_nsd     -     same {op ds=1 pts=1 cm=distinguish names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    cm_inc_nsd     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    cm_inc_nsd     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    inc_nsd        op    same {op ds=1 pts=1 cm=preserve names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inc_nsd        noise same {noise ds=1 pts=1 cm=preserve names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inc_nsd        -     same {op ds=1 pts=1 cm=preserve names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inc_nsd        tran  same {refused(0) left=<ERR:No raw file loaded>}
+    inc_nsd        dc    same {refused(0) left=<ERR:No raw file loaded>}
+    inc_nsd_op     op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    inc_nsd_op     noise same {noise ds=1 pts=1 cm=preserve names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inc_nsd_op     -     same {op ds=1 pts=1 cm=preserve names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inc_nsd_op     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    inc_nsd_op     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd        op    same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd        noise same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd        -     same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd        tran  same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd        dc    same {refused(0) left=<ERR:No raw file loaded>}
+    ins            op    same {refused(0) left=<ERR:No raw file loaded>}
+    ins            noise same {refused(0) left=<ERR:No raw file loaded>}
+    ins            -     same {refused(0) left=<ERR:No raw file loaded>}
+    ins            tran  same {refused(0) left=<ERR:No raw file loaded>}
+    ins            dc    same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd_op     op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    ins_nsd_op     noise same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd_op     -     same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd_op     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    ins_nsd_op     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_ops     op    rule {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_ops     noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_ops     -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_nsd_ops     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_nsd_ops     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    inq_nsq_op     op    rule {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    inq_nsq_op     noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inq_nsq_op     -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inq_nsq_op     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    inq_nsq_op     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_inq_nsq     op    same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_inq_nsq     noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    op_inq_nsq     -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_inq_nsq     tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_inq_nsq     dc    same {refused(0) left=<ERR:No raw file loaded>}
+    inq_nsq        op    same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inq_nsq        noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inq_nsq        -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    inq_nsq        tran  same {refused(0) left=<ERR:No raw file loaded>}
+    inq_nsq        dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_pno         op    named {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<4.5 | 4.25 | -1.75>}
+    in_pno         noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_pno         -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_pno         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_pno         dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_trb         op    same {refused(0) left=<ERR:No raw file loaded>}
+    op_trb         noise same {refused(0) left=<ERR:No raw file loaded>}
+    op_trb         -     same {refused(0) left=<ERR:No raw file loaded>}
+    op_trb         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_trb         dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_inb         op    held {refused(0) left=<ERR:No raw file loaded>}
+    op_inb         noise same {refused(0) left=<ERR:No raw file loaded>}
+    op_inb         -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_inb         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_inb         dc    same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsb      op    rule {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsb      noise same {noise ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    op_in_nsb      -     same {op ds=1 pts=1 cm=unknown names=<v(in) v(out) i(v1)> values=<1 | 0.75 | -0.25>}
+    op_in_nsb      tran  same {refused(0) left=<ERR:No raw file loaded>}
+    op_in_nsb      dc    same {refused(0) left=<ERR:No raw file loaded>}
+    in_opb         op    rule {refused(0) left=<ERR:No raw file loaded>}
+    in_opb         noise same {refused(0) left=<ERR:No raw file loaded>}
+    in_opb         -     same {op ds=1 pts=1 cm=unknown names=<v(onoise_total) v(inoise_total)> values=<0.015625 | 0.03125>}
+    in_opb         tran  same {refused(0) left=<ERR:No raw file loaded>}
+    in_opb         dc    same {refused(0) left=<ERR:No raw file loaded>}
+  }
+}
+
+# M0 -- the comparison is not vacuous: no operating-point name is a noise-total
+# name, and no operating-point number is within a part in a thousand of a
+# noise total. The fixture row behind every `rule` cell.
+set m_op_names {} ; set m_op_vals {} ; set m_in_names {} ; set m_in_vals {}
+foreach {k d} [m_plots] {
+  foreach {name vars rows extra} $d break
+  if {$name eq {Operating Point}} {
+    set m_op_names [concat $m_op_names $vars]
+    foreach r $rows { set m_op_vals [concat $m_op_vals $r] }
+  } elseif {[string match {Integrated Noise*} $name]} {
+    set m_in_names [concat $m_in_names $vars]
+    foreach r $rows { set m_in_vals [concat $m_in_vals $r] }
+  }
+}
+set m_clash {}
+foreach n $m_op_names { if {[lsearch -exact $m_in_names $n] >= 0} { lappend m_clash name:$n } }
+foreach a $m_op_vals {
+  foreach b $m_in_vals {
+    if {abs($a - $b) <= 1e-3 * (abs($a) > abs($b) ? abs($a) : abs($b))} { lappend m_clash $a~$b }
+  }
+}
+check M0-op-and-noise-totals-differ \
+  [expr {[llength $m_clash] == 0 && [llength $m_op_vals] > 0 && [llength $m_in_vals] > 0}] \
+  "(clashes '$m_clash'; [llength $m_op_vals] operating-point numbers against [llength $m_in_vals] totals)"
+
+# M0b -- the plot whose whole name is `op` carries the operating point's NAMES,
+# so the `named` cell is told apart by its numbers alone: none of them is within
+# a part in a thousand of an operating-point number or of a noise total.
+set m_pno_vals {} ; set m_pno_names {}
+foreach {k d} [m_plots] {
+  foreach {name vars rows} $d break
+  if {$name eq {op}} {
+    set m_pno_names [concat $m_pno_names $vars]
+    foreach r $rows { set m_pno_vals [concat $m_pno_vals $r] }
+  }
+}
+set m_pclash {}
+foreach a $m_pno_vals {
+  foreach b [concat $m_op_vals $m_in_vals] {
+    if {abs($a - $b) <= 1e-3 * (abs($a) > abs($b) ? abs($a) : abs($b))} { lappend m_pclash $a~$b }
+  }
+}
+check M0b-the-plot-named-op-differs-from-both-by-its-numbers \
+  [expr {[llength $m_pclash] == 0 && [llength $m_pno_vals] > 0
+         && [lsort -unique $m_pno_names] eq [lsort -unique $m_op_names]}] \
+  "(clashes '$m_pclash'; [llength $m_pno_vals] numbers of the plot named op; its names '[lsort -unique $m_pno_names]')"
+
+set m_rule 0 ; set m_same 0
+foreach form {ascii bin} {
+  set mf [m_build [file join $tmp m_$form] $form]
+  set have {}
+  foreach {key asked kind want} [m_want] {
+    lappend have $key/$asked
+    if {![dict exists $mf $key]} { continue }
+    eqcheck M-$form-$key-asked-$asked-$kind [m_ans [dict get $mf $key] $asked] $want
+    if {$kind eq {same}} { incr m_same } else { incr m_rule }
+  }
+  # every file of this form is asked every type: a cell m_want does not hold
+  # would be a cell nothing checks
+  set miss {}
+  foreach key [dict keys $mf] {
+    foreach asked [m_asked] { if {[lsearch -exact $have $key/$asked] < 0} { lappend miss $key/$asked } }
+  }
+  check M-$form-every-cell-is-held [expr {[llength $miss] == 0 && [dict size $mf] > 0}] \
+    "(cells with no expected answer: '$miss'; [dict size $mf] files)"
+}
+check M-cells-of-both-kinds-ran [expr {$m_rule > 0 && $m_same > $m_rule}] \
+  "($m_rule cells the rule moves, $m_same it leaves alone)"
+
+# A second pass that fails must leave what was loaded before it: the noise-only
+# file whose totals block is a value short is refused, and the operating point
+# read just before is still the current database, numbers intact.
+set mf [m_build [file join $tmp m_ascii] ascii]
+catch {xschem raw clear}
+eqcheck M-keep1-op-loaded [pcall xschem raw read [dict get $mf op] op] 1
+eqcheck M-keep2-short-totals-refused [pcall xschem raw read [dict get $mf ins_nsd] op] 0
+eqcheck M-keep3-previous-still-current [pcall xschem raw rawfile] [dict get $mf op]
+eqcheck M-keep4-previous-values-intact [string trim [pcall xschem raw values v(out) -1]] 0.75
+eqcheck M-keep5-one-database-left [llength [split [string trim [pcall xschem raw info]] "\n"]] 2
+catch {xschem raw clear}
+
+# What a malformed header behind the operating point leaves loaded: nothing.
+# Two good databases are loaded, then the file is asked `op`. op_trb is the
+# standing rule (the same on the binary without issue 1657's rule); the other
+# three used to be answered, with both databases kept, because the read ended
+# at the totals. Each leg reads: the two loads, the read asked `op`, `xschem
+# raw loaded`, and the registry as `xschem raw info` prints it.
+foreach {key kind} {op_trb same op_inb held op_in_nsb rule in_opb rule} {
+  catch {xschem raw clear}
+  set two [list [pcall xschem raw read [dict get $mf op] op] \
+                [pcall xschem raw read [dict get $mf tr_in_nsd_op] tran]]
+  set r [pcall xschem raw read [dict get $mf $key] op]
+  eqcheck M-wipe-$key-asked-op-$kind \
+    [list $two $r [pcall xschem raw loaded] [string trim [pcall xschem raw info]]] {{1 1} 0 -1 {}}
+}
+catch {xschem raw clear}
+
+# The annotation's own door asks for `op` with no type argument of the
+# caller's: it must publish from the operating point when there is one and
+# from the totals when there is none.
+foreach {key first} {in_nsd_op v(in) tr_in_nsd_op v(in) in_nsd v(onoise_total)} {
+  catch {xschem raw clear}
+  catch {xschem annotate_op [dict get $mf $key]}
+  eqcheck M-annotate-$key [lindex [split [string trim [pcall xschem raw list]] "\n"] 0] $first
+}
+catch {xschem raw clear}
 
 catch {xschem raw clear}
 catch {test_scratch_drop $tmp}

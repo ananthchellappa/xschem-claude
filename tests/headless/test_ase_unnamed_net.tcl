@@ -7,7 +7,7 @@
 #   A  ase::ui::sod_click resolved the clicked net through `xschem flylines at`,
 #      whose A6 rule deliberately excludes '#' nets (src/flyline.c) -- correct
 #      for fly-lines, wrong for signal picking. The click fell through to the
-#      "v1 queues source currents only" notice.
+#      "nothing to queue there" notice.
 #   B  ase::ui::sod_expr wrapped the raw token, emitting `v(#net1)` -- a name no
 #      ngspice raw ever carries. Worse, `.save v(#net1)` makes ngspice abort the
 #      whole analysis ("no data saved for Transient analysis; analysis not run"),
@@ -19,7 +19,7 @@
 #
 # Legs (AN*):
 #   AN1-AN4   RED before the fix: clicking the unnamed wire classifies as a
-#             voltage pick, queues exactly `v(net1)`, prints no scope notice and
+#             voltage pick, queues exactly `v(net1)`, prints no miss notice and
 #             paints the wire in the trace color.
 #   AN5-AN8   controls that must NOT move: named net, vsource body, non-source
 #             device body (the test_ase_interact I6 contract), empty space.
@@ -119,7 +119,7 @@ xschem load $fxpath
 set P_UNNAMED  {0 -80}     ;# the #net1 wire      -- the bug's click target
 set P_NAMED    {0 -210}    ;# the OUT wire        -- control
 set P_VSOURCE  {0 0}       ;# V1 body             -- current-probe control
-set P_DEVICE   {0 -160}    ;# R1 body             -- v1-scope-notice control
+set P_DEVICE   {0 -160}    ;# R1 body             -- miss-notice control
 set P_SHORTED  {200 0}     ;# R2 body, one net    -- the wire-gate control
 set P_EMPTY    {300 -300}  ;# nothing there       -- select_at miss control
 
@@ -141,7 +141,7 @@ proc arm_mode {} {
 proc queue {}  { return $::ase::ui::sod($::K,queue) }
 proc qcount {} { return $::ase::ui::sod($::K,count) }
 proc noticed {} {
-  foreach l $::echoed { if {[string match {*source currents only*} $l]} { return 1 } }
+  foreach l $::echoed { if {[string match {ase: nothing to queue there*} $l]} { return 1 } }
   return 0
 }
 rename ::ciw_echo ::__real_ciw_echo
@@ -155,7 +155,7 @@ arm_mode
 eval ase::ui::sod_click $K $P_UNNAMED
 check "AN1 unnamed-net click queues the mapped voltage expression" \
   [queue] {v(net1)}
-check "AN2 unnamed-net click prints no 'source currents only' notice" [noticed] 0
+check "AN2 unnamed-net click prints no 'nothing to queue there' notice" [noticed] 0
 check "AN3 unnamed-net click counts one queued signal" [qcount] 1
 check "AN4 unnamed-net click paints the wire in its future trace color" \
   [hl_val #net1] [expr {-$col1}]
@@ -169,12 +169,12 @@ check "AN5 named-net click still paints the net" [hl_val OUT] [expr {-$col1}]
 arm_mode
 eval ase::ui::sod_click $K $P_VSOURCE
 check "AN6 vsource body still queues the source current" [queue] {i(v1)}
-check "AN6 vsource body prints no scope notice" [noticed] 0
+check "AN6 vsource body prints no miss notice" [noticed] 0
 
 arm_mode
 eval ase::ui::sod_click $K $P_DEVICE
 check "AN7 non-source device body still queues NOTHING (I6 contract)" [queue] {}
-check "AN7 non-source device body still prints the v1-scope notice" [noticed] 1
+check "AN7 non-source device body still prints the 'nothing to queue there' notice" [noticed] 1
 
 # the wire-only gate: R2's body sits on exactly ONE net, so `nets -selected`
 # returns a single row. Only the hit-TYPE test stops it being read as a
@@ -185,7 +185,7 @@ check "AN7b the shorted device really does report a single net" \
 arm_mode
 eval ase::ui::sod_click $K $P_SHORTED
 check "AN7b shorted-pin device body still queues NOTHING" [queue] {}
-check "AN7b shorted-pin device body still prints the v1-scope notice" [noticed] 1
+check "AN7b shorted-pin device body still prints the 'nothing to queue there' notice" [noticed] 1
 
 arm_mode
 eval ase::ui::sod_click $K $P_EMPTY

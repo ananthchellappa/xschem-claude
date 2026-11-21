@@ -169,7 +169,71 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_plumbing" \
                   "headless/test_startup_quiz" \
-                  "headless/test_copy_retarget"]
+                  "headless/test_copy_retarget" \
+                  "headless/test_pin_at_1724" \
+                  "headless/test_ase_probe_deck_1724" \
+                  "headless/test_ase_terminal_pick_1724" \
+                  "headless/test_pin_marker_1724" \
+                  "headless/test_cmdmode_0201"]
+## `headless/test_cmdmode_0201` IS IN BOTH LISTS. It is the contract test of
+## src/cmdmode.tcl (issue 0201): a command mode registers how it is put down and
+## picked back up, and what it holds on a canvas, so that a window made while the
+## mode is up gets what the canvas held underneath the mode and not the mode's own
+## scripts. This arm runs the legs that need no window, over stub modes the suite
+## registers itself: `cmdmode::register` with and without the callback that says
+## what a mode holds, `cmdmode::pristine` stepping down through one mode and
+## through stacked ones, a callback that raises or answers a malformed list, a ring
+## of predecessors, suspend and resume, and that every proc of the namespace
+## answers with no Tk -- which only this arm can show. The leg that copies bindings
+## between real canvases needs a display; here the suite says so in one line that
+## begins with an upper-case word, which summarize_all does not count, so this
+## entry adds nothing to `skips=`.
+## `headless/test_pin_marker_1724` IS IN BOTH LISTS, registered in the commit that
+## creates it (issue 1724, the marker: a pin whose terminal current a Select On Design
+## click took carries an upright ellipse, kept by `xschem pin_marker`). This arm runs
+## the engine and its caller with no window: the command and its list, `xschem
+## unhilight_all`, the list across a descend, an undo and a moved, rotated, flipped or
+## deleted instance, a second context, the saved file, the modified flag and the undo
+## stack, the doors that put another document in the context, the text rows over the C
+## sources and the key bindings, and band G, which goes through ASE-L's real
+## `ase::ui::select_on_design` and `ase::ui::sod_click` on a session that has no
+## window -- which picks mark and which do not, each flavour's layer and tag, the
+## mode's end, Direct Plot's markers and the colours the viewer is handed. Band P
+## reads the window, so it cannot run here, and the suite says so with a LOWERCASE
+## `skip:` line -- the spelling summarize_all counts. That is deliberate: the band is
+## named in this arm's block of the verdict, and this entry shows in `skips=` on
+## every machine. Both arms' epilogues were captured with these loops' own command
+## lines (run from tests/, the script named relative to it; the display arm on a
+## private Xvfb) and scored with `summarize_all` lifted from this file and
+## `banner_complete` SOURCED from tests/banner_rule.tcl before the entries went in.
+## `headless/test_pin_at_1724` AND `headless/test_ase_probe_deck_1724` ARE IN `hcases`
+## ALONE, AND `headless/test_ase_terminal_pick_1724` IS IN BOTH LISTS, registered in
+## the commit that creates them (issue 1724: in ASE-L's Select On Design, a click on an
+## instance pin queues that terminal's current). Every row of the three runs under
+## --nogui:
+##   test_pin_at_1724             `xschem pin_at`, the read-only door over the pin
+##                                pick's own hit rule, and the `:` lookup rung of the
+##                                results database with its Tcl mirror.
+##   test_ase_terminal_pick_1724  the pick: which click is on a device pin, what the
+##                                simulator calls the current into that pin, the
+##                                refusals and the notices. It runs no simulator.
+##   test_ase_probe_deck_1724     the deck: a terminal row becomes a `.probe` card and
+##                                never a `.save` card, and what the run says about
+##                                each card afterwards. It also holds EVERY
+##                                real-simulator row of the feature -- band PN, and
+##                                band PE, which goes from a click on a sheet to the
+##                                vector in the results -- so on a machine where no
+##                                ngspice answers `$?probe_version` = 1 the three
+##                                suites together print ONE lowercase `skip:` line,
+##                                which summarize_all counts, and `skips=` is one
+##                                higher there.
+## The first and the last run the same rows on the display arm, so a `dcases` entry
+## for them would measure nothing more. The pick suite runs the same rows there too,
+## and is in `dcases` all the same (see the note there), because that arm is where a
+## row of it can stop the run. Each epilogue was captured in exactly this loop's
+## shape -- with such an ngspice in reach and without one -- and scored with
+## `summarize_all` lifted from this file and `banner_complete` SOURCED from
+## tests/banner_rule.tcl.
 ## `headless/test_copy_retarget` IS IN `hcases` ALONE, registered in the commit that
 ## creates it (doc/claude/specs/copy_hierarchical.md): the Library Manager's copy of a
 ## set of cells whose copies point at each other. Everything it fences is files and
@@ -1033,7 +1097,70 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_selection_look_pixels" \
                   "headless/test_grid_toggle_sel_gc" \
                   "headless/test_startup_quiz" \
-                  "headless/test_copy_form"]
+                  "headless/test_copy_form" \
+                  "headless/test_pin_marker_1724" \
+                  "headless/test_cmdmode_0201" \
+                  "headless/test_cmdmode_descend_0201" \
+                  "headless/test_sod_pick_no_select_0204" \
+                  "headless/test_ase_plot" \
+                  "headless/test_rdw_keys_1245" \
+                  "headless/test_ase_terminal_pick_1724"]
+## `headless/test_cmdmode_0201` IS ALSO IN `hcases` (see the note there): this entry
+## is its display arm, where `clone_canvas_bindings` copies between two real canvases
+## while a stub mode holds slots of the source -- a slot the mode took from nothing
+## is not copied, one it took from another script gets that script, one the
+## destination already binds is kept -- and where `xschem new_schematic
+## create_window` makes a real window while a stub mode holds the main canvas's
+## press.
+## `headless/test_cmdmode_descend_0201`, `headless/test_sod_pick_no_select_0204` AND
+## `headless/test_ase_plot` ARE IN THIS LIST ALONE. Each keeps its files in a
+## directory of its own process and arms the watchdog (tests/headless/scratch.tcl).
+##   test_cmdmode_descend_0201     a descend made while ASE-L's Select On Design
+##                                 mode is up puts the mode down and brings it
+##                                 back with its queue (issue 0201): every slot
+##                                 the mode took goes back to what it held, the
+##                                 pick for the instance can receive its click,
+##                                 ESC and a click on nothing bring the mode
+##                                 back, and a descend into a new window moves
+##                                 the mode there.
+##   test_sod_pick_no_select_0204  a pick in that mode does not change the
+##                                 selection (issue 0204), a pick whose hand
+##                                 drifts with the button down included.
+##   test_ase_plot                 where the results of a finished ASE-L run are
+##                                 plotted, and Direct Plot's mode from its entry
+##                                 to its end, with the simulator found on PATH.
+## The first two drive the mode on a real canvas with real events and leave at
+## their first line when there is no window, before the completion line, so a
+## `hcases` entry would be a standing HARNESS failure. test_ase_plot has rows that
+## need no window, but each of them runs on a display as well, so a `hcases` entry
+## would measure nothing more. Where no `ngspice` is on PATH its run legs say so in
+## lines that begin with an upper-case word, which summarize_all does not count.
+## None of the three prints a lower-case `skip:` line, so none adds to `skips=`.
+## `headless/test_rdw_keys_1245` IS IN THIS LIST ALONE TOO: the keys of the Results
+## Display Window and its pick mode on a real canvas with real events, with
+## src/cadence_style_rc sourced. It leaves at its first line when there is no
+## window, before the completion line, and prints no lower-case `skip:` line. Its
+## sibling test_rdw_window_1245 is in no list (issue 1655: its tooltip rows are
+## not stable).
+## `headless/test_ase_terminal_pick_1724` IS ALSO IN `hcases` (see the note there):
+## this entry is its display arm. The rows are the same on both arms; what differs is
+## the engine. With a window, a sheet that holds an instance whose own name carries an
+## equals sign makes the engine ask Tk for a modal message box at a netlist, and a box
+## nobody answers stops the run -- the suite stood still on this arm for that reason
+## while only its counted arm was registered, and no gate saw it. The suite now puts a
+## recorder in the place of `tk_messageBox`, row TPU6 reads what the engine asked for,
+## and row TPZ1 fails on any other box asked for in the whole run. It prints no
+## lower-case `skip:` line on either arm, so this entry adds nothing to `skips=`.
+## `headless/test_pin_marker_1724` IS ALSO IN `hcases` (see the note there): this entry
+## is its display arm, where band P runs. It reads the canvas through `xschem
+## window_snapshot` -- the ellipse round the pin, taller than wide, in its layer's
+## colour, in the window and in the backing pixmap, across a redraw, an expose, a pan,
+## a zoom and a rotated instance, and gone after `xschem unhilight_all` -- opens the
+## doors that need Tk (File > Open's dialog arm, a -gui open routed to another
+## context, a detached window repainted by `clear -all`), and drives ASE-L on the
+## screen: a real click through the canvas binding Select On Design seizes, the real
+## ESC, and in Direct Plot the real waveform viewer, whose trace has the colour of the
+## layer the marker is on.
 ## `headless/test_copy_form` IS IN THIS LIST ALONE (doc/claude/specs/copy_hierarchical.md).
 ## It was in neither list: it printed `RESULT: ALL PASS` and no `OVERALL: ok`, so it
 ## could not be registered as it stood. It now presses the Copy form itself -- a name

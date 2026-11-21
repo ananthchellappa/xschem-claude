@@ -545,6 +545,7 @@ static void free_xschem_data()
   xctx->preview_sel_n = xctx->preview_sel_size = 0;
   my_free(_ALLOC_ID_, &xctx->scope_hi_type);
   my_free(_ALLOC_ID_, &xctx->scope_hi_id);
+  pin_marker_clear(NULL);     /* issue 1724: the markers' strings and their array */
   my_free(_ALLOC_ID_, &xctx->fly_shown_net);   /* hover fly-line overlay state (Track B) */
   my_free(_ALLOC_ID_, &xctx->fly_last_net);
   my_free(_ALLOC_ID_, &xctx->fly_seg);

@@ -258,19 +258,222 @@ name/expression; and if <b>both</b> checkboxes are unchecked, Save is forced on
 </ul>
 <p>The design window is raised and mouse/ESC are seized on its canvas; the CIW
 echoes <span class="msg">ase: Select On Design — click wires/net labels for
-voltages, sources for currents; ESC ends</span>. Then:</p>
+voltages, pins for terminal currents, sources for currents; ESC ends</span>.
+Then:</p>
 <ul>
-<li>Click a <b>wire, net label or labeled pin</b> &#8594; queues a voltage
-output <code>v(&lt;net&gt;)</code>.</li>
-<li>Click a <b>voltage source or ammeter instance</b> &#8594; queues a current
-output <code>i(&lt;inst&gt;)</code>.</li>
-<li>Anything else &#8594; <span class="msg">ase: v1 queues source currents only
-— click a wire, a net label or a voltage source/ammeter</span>. (Per-terminal
-currents of arbitrary devices are deferred in v1.)</li>
+<li>Click a <b>wire or a net label</b> &#8594; queues a voltage output
+<code>v(&lt;net&gt;)</code>. A wire is the wire right up to a pin.</li>
+<li>Click <b>on a pin of a device</b> (a transistor, a resistor, a block)
+&#8594; queues the current into that terminal,
+<code>i(&lt;instance&gt;:&lt;terminal&gt;)</code>, and marks the pin with a
+green ellipse. See <i>Terminal currents</i> below.</li>
+<li>Click the <b>body of a voltage source or an ammeter</b> &#8594; queues its
+current <code>i(&lt;inst&gt;)</code>.</li>
+<li>Anything else, such as the body of a transistor &#8594;
+<span class="msg">ase: nothing to queue there — click a wire or a net label
+for a voltage, an instance pin for its terminal current, or a voltage
+source/ammeter for its current</span>. A click on empty canvas says
+nothing.</li>
 </ul>
 <p>Queued rows appear in the Outputs pane immediately; duplicates are merged
-(flags ORed). Press <kbd>ESC</kbd> to end the mode — bindings are restored and
-the ASE window is raised.</p>
+(flags ORed). Press <kbd>ESC</kbd> to end the mode — bindings are restored, the
+ellipses on the picked pins are removed and the ASE window is raised.</p>
+<p>While the mode is up:</p>
+<ul>
+<li>The prompt at the bottom of the schematic window reads
+<span class="msg">select outputs on design</span>, and ends with the pin a
+click would take while the pointer is on one:
+<span class="msg">select outputs on design — pin R1:P (terminal current)</span>.
+It names a pin only while the pointer is in the window the mode is on. If you
+have a block open in a second window, a click in the window without the
+prompt is an ordinary editor click.</li>
+<li>A double click is two picks; the second says
+<span class="msg">already queued</span>. The editor's own double click does not
+run.</li>
+<li>A click is one pick even if your hand moves while the button is down: the
+pick is taken where you pressed, no selection rectangle starts, and what you
+had selected before entering the mode stays selected.</li>
+<li>A schematic window you open while the mode is up (for example with
+<kbd>Ctrl</kbd>+<kbd>N</kbd> in the Cadence-style key profile) is an ordinary
+editor window: clicks there select as usual, and <kbd>ESC</kbd> there does
+not end the mode. End the mode with <kbd>ESC</kbd> in the window it is
+on.</li>
+<li>The mode stays up while you look at another tab. A click on a sheet that is
+neither this session's design nor a block below it queues nothing and says
+<span class="msg">ase: nothing queued — this window shows neither the session's
+design &#8230; nor a sheet below it; switch to that design's window or tab and
+click there</span>. A block you opened from the design, in a new window or a
+new tab, still picks.</li>
+<li>Closing the schematic window the mode is on ends the mode
+(<span class="msg">ase: the design window the pick mode was on is gone — mode
+dropped</span>). Pressing a selector in the Calculator ends it too, as
+<kbd>ESC</kbd> does, and entering the mode cancels a Calculator selector that
+is waiting for its click.</li>
+</ul>
+
+<h4>Terminal currents</h4>
+<p><b>Click on the pin itself</b>: the small square at the end of the device's
+lead, or the lead beside it. The click is on the pin when the pointer is
+within the small on-screen distance that selects a pin in the editor (about a
+dozen pixels) and never more than 10 schematic units from the pin's point.
+The square itself is the pin at any zoom; zoomed far in, the lead beyond it
+is the pin only as far as that on-screen distance reaches.
+<b>A click on a wire is always the wire's voltage</b>, also right next to a
+pin, a pixel beside the wire, and at any zoom: on a wire, only the pin's own
+small square is the terminal. It is the mouse pointer that counts, not the
+snapped crosshair: if the crosshair sits on the pin while the pointer is on
+the wire a little further off, you get the wire. The prompt at the bottom of
+the schematic window names the pin before you click; do not go by the outline
+the editor draws under the pointer, which on a pin with a wire ending on it
+is the wire.
+<span class="menu">Options &gt; Enable pin selection</span> does not have to
+be on.</p>
+<p><b>Where two devices touch</b>, pin on pin with no wire between them, click
+the lead or the body side of the device you mean. The side of the shared point
+the pointer is on chooses the device, and the CIW says which pin the click
+took and which other pin is on that point. Two blocks placed edge to edge
+work the same way: click on the side of the block you mean, whatever the
+number of pins on each.</p>
+<p><b>A net label near a pin.</b> The pin of a net label or of a port, on its
+own, is the net's voltage. Where a label sits directly on a device pin, the
+device's terminal wins at that point and close to it. A label that is only
+near a device pin behaves the same way where its text reaches within the
+pin's range. For the voltage there, click a wire of the net, or the label's
+text more than 10 units from the pin.</p>
+<p><b>The picked pin is marked.</b> A thin green ellipse, taller than wide,
+appears round each pin you pick, so you can see what you have chosen. The
+ellipses go away when you leave the mode with <kbd>ESC</kbd>. Key
+<kbd>0</kbd> (clear all highlights, in the Cadence-style key profile;
+<kbd>Shift</kbd>+<kbd>K</kbd> otherwise) removes them at any time in the
+window you press it in, and in a window or tab opened from it by descending
+into a block (or the other way round); click a pin again to get its ellipse
+back. If you press it while you are in the middle of drawing a wire or of
+another gesture, it clears only the window you are in; press it again after
+the gesture for the other one. Only the pins you click are marked: rows that were already in the
+Outputs table when you entered the mode are not. The green is the colour of
+drawing layer 16, a light green in the dark colour scheme and a darker one in
+the light scheme. A pin picked under <b>To Be Plotted</b> gets this same green
+ellipse; its waveform, plotted after the run, has whatever colour the viewer
+gives it. Only Direct Plot draws the ellipse in the colour of its trace.</p>
+<p>The row that appears in the Outputs pane is the simulator's own name for the
+current into that pin, <code>i(&lt;instance&gt;:&lt;terminal&gt;)</code>.
+Positive is current flowing into the device. Each pin has its own row, the
+second pin of a resistor included. A voltage source's own current
+<code>i(v1)</code> is the current into its first pin, so it is the negative
+of the current into its second pin, <code>i(v1:n2)</code>.</p>
+<table>
+<tr><th>You click</th><th>The row</th></tr>
+<tr><td>the drain of a sky130 <code>M1</code> (netlisted as the subcircuit <code>XM1</code>)</td><td><code>i(xm1:d)</code></td></tr>
+<tr><td>pin <code>P</code> of the resistor <code>R1</code></td><td><code>i(r1:n1)</code></td></tr>
+<tr><td>the anode of the diode <code>D1</code></td><td><code>i(d1:a)</code></td></tr>
+<tr><td>pin <code>in</code> of your block <code>x1</code></td><td><code>i(x1:in)</code></td></tr>
+<tr><td>that drain again, picked after descending into the block <code>x1</code></td><td><code>i(x1.xm1:d)</code></td></tr>
+<tr><td>the plus pin of the voltage source <code>V1</code> (its body is still <code>i(v1)</code>)</td><td><code>i(v1:n1)</code></td></tr>
+</table>
+<p>The terminal names are ngspice's: a bare MOSFET has <code>d g s b_tj</code>,
+a bipolar <code>c b e</code>, a diode <code>a c</code>, and any other plain
+device is numbered along its netlist line, <code>n1</code>, <code>n2</code>.
+For a PDK device or a block (anything netlisted as <code>X&#8230;</code>) the
+terminal is the port name on its <code>.subckt</code> line, which is not
+always the symbol's pin name: pins <code>M</code>, <code>P</code> and
+<code>B</code> of a sky130 poly resistor come back as <code>r0</code>,
+<code>r1</code> and <code>sub</code>. ASE-L looks for that
+<code>.subckt</code> line in the netlist it last made for the design (while
+the sheet has not changed since), in the device's own
+<code>device_model</code> attribute, in the files under
+<span class="menu">Setup &gt; Model Files</span>, and in the model files that
+netlist names with <code>.lib</code> or <code>.include</code>. So if your
+models are named on the sheet itself (a <code>.lib</code> line in a code
+block, the PDK's corner symbol), netlist or run once from ASE-L before
+picking. Do not add that library to Model Files as well: the deck would then
+load it twice, and ngspice aborted on that when it was tried with the sky130
+library. If ASE-L cannot find the <code>.subckt</code> line it uses the
+symbol's pin name and says so in the CIW, with what to do about it: netlist
+the design from ASE-L (or run), or name the model file under
+<span class="menu">Setup &gt; Model Files</span>, then pick again. If it finds
+more than one <code>.subckt</code> line of that name and their ports differ,
+it does not guess which one the simulator will use: it says so and asks you
+to leave one definition.</p>
+<p>A port that is named with a number, as vendor op-amp models do
+(<code>.subckt opa 3 2 7 4 6</code>), works like any other: the row carries
+the port's number, <code>i(x1:3)</code>, and ASE-L writes the port's position
+into the deck.</p>
+<p>An instance array or a bus pin is several currents: the <b>Select Bus
+Bits</b> dialog opens and you choose which.</p>
+<p><b>To read the current as a number</b>, add a row such as
+<code>idc(xm1:d)</code> under the Outputs pane's <b>Measures</b> tab (the
+Saves tab has no Value column). Such a row needs neither box ticked: ASE-L
+asks the simulator for every terminal a Measures row or an enabled
+measurement reads.</p>
+<p><b>What the simulator must support.</b> ASE-L writes a line
+<code>.probe I(&lt;instance&gt;,&lt;pin&gt;)</code> into the deck. An ngspice
+with terminal-current probes measures any pin this way: every terminal of a
+PDK transistor, a pin of a block. To check yours, look in the simulation log
+of such a run for the line <code>ASE-PROBE-VERSION 1</code>. If your schematic
+already carries the same <code>.probe</code> term in a code block, ASE-L does
+not write it a second time. The current is in
+the operating-point, DC, AC and transient results. It is not in noise,
+transfer-function, pole-zero or sensitivity results, nor in a DC sweep over a
+design variable. After a run that made only noise, transfer-function,
+pole-zero or sensitivity analyses, with or without a DC sweep over a design
+variable beside them, the CIW names the terminal rows that have no value for
+that reason and says which analyses to enable.</p>
+<p><b>With an older ngspice</b> (the log says
+<code>ASE-PROBE-VERSION 0</code>) the run still goes ahead. Only pins of
+devices on the top sheet that are not subcircuits are measured, such as a
+plain resistor or a source. For every other pin the CIW says so after the
+run, and what to do:
+<span class="msg">ase: /usr/bin/ngspice, the simulator this run started,
+cannot save the terminal current i(x1.xm1:d): it saves terminal currents only
+on top-level devices that are not subcircuit instances. ng_w_stb can &#8212;
+pick it under Setup &gt; Simulators&#8230; and run again.</span>
+The sentence names the program that ran (the file itself when no simulator is
+picked, the picked entry and its file otherwise) and then the simulators you
+have registered that <i>can</i> save such a current, with the menu to pick
+one in. When none of them can it says to register a build that does, or to
+place <code>ammeter.sym</code> in series and click its body. Once ASE-L has
+measured the program, which it does at the first run, it says the same
+before a run starts and when you pick such a pin, and the Simulators window
+lists <i>terminal currents of subcircuit pins or of devices inside
+subcircuits</i> among what that program cannot do.</p>
+<p><b>If a run stops converging after you picked a pin.</b> To measure a pin's
+current the simulator puts a zero-volt source in series with it. On a circuit
+that only just converges that can be enough to stop a transient that ran
+before (<code>Timestep too small</code> in the log); an ammeter placed at the
+same pin does the same. ASE-L then says <span class="msg">ase: this run did
+not converge, and its deck asked for &lt;N&gt; terminal current(s)
+&#8230;</span>. Untick Save and Plot on those rows (or remove a Measures row
+that reads a pin) and run again to see whether they are the cause. ASE-L says
+this only when the simulator's log shows a convergence failure, so a healthy
+run that you stopped yourself is not told it. One case gets no such note: a
+bench whose only analysis is a transfer function can finish although its
+operating point failed. If its results look wrong, look in the simulation log
+for <code>The operating point could not be simulated successfully.</code></p>
+<p><b>When the click is refused</b> it says so in one line:
+<span class="msg">ase: cannot name the terminal current of &lt;instance&gt; pin
+&lt;pin&gt; — &lt;reason&gt;; place an ammeter (ammeter.sym) in series</span>.
+That happens when flat netlisting is on; when you have descended through a
+block instance that carries a <code>spiceprefix</code>; when the symbol's
+netlist format does not put that pin on its line exactly once; and for a
+subcircuit with a format of its own, or a <code>spice_sym_def</code>, whose
+<code>.subckt</code> line ASE-L cannot find, finds twice with different
+ports, or finds with too few ports.</p>
+<p><b>A name the simulator cannot take.</b> If the name of the instance or of
+the port holds a character such as an equals sign, a dollar sign, a quote or
+a brace, the click queues nothing and says
+<span class="msg">ase: nothing queued for &lt;instance&gt; pin &lt;pin&gt; —
+its current would be the row '&#8230;', and a terminal-current row cannot hold
+&#8230;; rename the instance or the port, or place an ammeter (ammeter.sym) in
+series</span>. Rename it, or use an ammeter. A block's port whose name ends in
+a backslash is refused the same way; the line then shows a blank where the
+backslash is and names a blank as the character. The remedy is the same:
+rename the port, or use an ammeter.</p>
+<p><b>A typed row.</b> You can type <code>i(x1.xm1:d)</code> yourself. A name
+holding <code>;</code>, <code>$</code>, <code>=</code>, <code>'</code> or a
+brace is not read as a pin's current; with Save ticked ASE-L refuses that row
+by name before the run. An expression row that reads a name holding
+<code>=</code>, <code>'</code> or a brace does not stop the run: its Value
+says that name is unknown.</p>
 
 <h4>Save All</h4>
 <p><span class="menu">Outputs &gt; Save All&#8230;</span> opens the <b>Save
@@ -360,12 +563,48 @@ an already-open viewer's auto graph is emptied). If the run produced only
 <li><b>Direct Plot</b>: <span class="menu">Results &gt; Direct Plot</span> (or
 <kbd>Ctrl-4</kbd> on the schematic) enters a Select-On-Design variant
 (<span class="msg">ase: Direct Plot — click wires/net labels for voltage traces,
-sources for current traces; ESC plots</span>). Clicks queue trace expressions
-<i>without touching the session outputs</i>. On <kbd>ESC</kbd> the queue is
-plotted, into the target strip or into one strip per signal depending on the
-viewer's plot mode. Direct-Plot graphs are never touched by subsequent
-auto-plots. If no run has produced a raw file yet the traces are recorded and
-resolve after the next run.</li>
+pins for terminal currents, sources for current traces; ESC plots</span>).
+Clicks queue trace expressions <i>without touching the session outputs</i>. On
+<kbd>ESC</kbd> the queue is plotted, into the target strip or into one strip
+per signal depending on the viewer's plot mode. Direct-Plot graphs are never
+touched by subsequent auto-plots. If no run has produced a raw file yet the
+traces are recorded and resolve after the next run. A <b>pin's current</b> is
+the exception: Direct Plot does not change the deck, so it can plot a terminal
+current only if the last run saved it. Otherwise the click queues nothing and
+says why, where ASE-L knows: when the last run's simulator cannot save such a
+current,
+<span class="msg">ase: terminal current 'i(xm1:d)' is not in this session's
+results: /usr/bin/ngspice, the simulator of the last run, cannot save it.
+ng_w_stb can &#8212; pick it under Setup &gt; Simulators&#8230; and run
+again.</span> (and once you have picked it,
+<span class="msg">&#8230; ng_w_stb is picked now &#8212; run again.</span>);
+when the last run gave another reason, that reason; when the
+row is already set to be saved,
+<span class="msg">&#8230; it is set to be saved, and these results are from
+before that &#8212; run again.</span> &#8212; or, if the simulator this
+session starts is already known to be unable to save it, that, and which
+registered one can; and when nothing is known about it,
+<span class="msg">ase: terminal current 'i(xm1:d)' is not in this session's
+results — pick it under Outputs &gt; To Be Saved &gt; Select On Design and run
+again</span>. On the pin of a voltage source or an ammeter
+whose own pin current was not saved, the click plots the source's current
+instead, exactly as a click on its body does. On the source's second pin that
+trace is the negative of the pin's own current, and the CIW says so
+(<span class="msg">ase: V1 pin m — the trace is the source's own current
+'i(v1)', which is the current into its first pin, so the current into V1 pin
+m is the negative of that trace &#8230;</span>); on a control pin of a
+controlled source the CIW says the trace is not that pin's current, and to
+place an ammeter for it; where another device's pin is
+on the same point, the CIW names it and says the click took the source's
+current. If you close the schematic window Direct Plot is on instead of
+pressing <kbd>ESC</kbd>, the queued traces are not plotted: the CIW says how
+many, and the colours their clicks left on the schematic stay until you clear
+the highlights. A pin whose current
+is plotted gets an ellipse in the colour of its trace. Like the colours on
+picked wires it stays after <kbd>ESC</kbd>, until you clear the highlights
+(key <kbd>0</kbd> in the Cadence-style key profile). If a later run replaces
+the viewer's traces, the ellipse still has the old colour: clear the
+highlights and pick again.</li>
 </ul>
 <p>Each run overwrites <code>&lt;cell&gt;_ase.raw</code> in place and
 re-attaches it, so auto-plot and Direct&nbsp;Plot graphs simply show fresh
@@ -523,9 +762,56 @@ entries (<b>Operating Point info</b>, <b>DC Node Voltages</b>) are
 disabled.</li>
 <li>op-only results have no sweep and plot nothing (auto-plot and Direct Plot
 both report it).</li>
-<li>Select On Design queues currents only for voltage-source/ammeter
-instances; per-terminal currents of other devices
-(savecurrents/<code>@m</code> names) are deferred.</li>
+<li>A terminal current picked on a pin needs an ngspice with
+terminal-current probes; an older one measures only top-level devices that
+are not subcircuits and reports the rest after the run.</li>
+<li>The ellipse on a picked pin is not drawn in SVG, PostScript or PDF
+exports.</li>
+<li>The Calculator's current selectors (<code>it</code>, <code>if</code>,
+<code>idc</code>, <code>is</code>) take a device pin too, but insert its
+current only if the loaded result already holds it: the Calculator cannot ask
+the simulator for a current. To get it there, pick the pin under
+<span class="menu">Outputs &gt; To Be Plotted &gt; Select On Design</span> and
+run again: the Calculator reads what the waveform viewer has loaded, and a run
+loads its results there when it plots something. In a session with only an
+operating point the Calculator may not see a newly saved pin.</li>
+<li>In the Calculator, after a single click has inserted a net or a current,
+a second quick click goes to the editor: a double click there opens the
+editor's property dialog, or selects the net under the Cadence-style
+profile.</li>
+<li>The pick mode of the Results Display Window (keys <kbd>1</kbd> to
+<kbd>4</kbd>) can still be up together with Select On Design or a Calculator
+selector. The status bar of the schematic window then shows the prompt of the
+mode you entered last, and that is the mode your clicks go to. Leave them
+with <kbd>ESC</kbd> on the schematic, once for each mode. <kbd>ESC</kbd>
+pressed in the Results Display Window ends that window's mode only, whichever
+mode you entered last: the other mode stays up, with its prompt on the status
+bar, and <kbd>ESC</kbd> on the schematic leaves it. That <kbd>ESC</kbd> in
+the Results Display Window can move the keyboard to the schematic; click in
+the Results Display Window again before you use the keyboard there. If you
+press a Calculator selector again, or close the Calculator, while the Results
+Display Window's mode is on top of it, that mode stays up: press
+<kbd>ESC</kbd> on the schematic to leave it. The same holds when you close
+the ASE-L window with that mode on top of Select On Design. After such a
+selector press the keyboard is on the schematic, so click in the Calculator's
+buffer before you type there again.</li>
+<li>If your design is in a tab other than the first and another xschem window
+is open (the waveform viewer, a block in its own window), the first tab can
+come to the front when you enter Select On Design, press a Calculator
+selector or move the pointer back from the other window. Click your design's
+tab and go on. Select On Design is still up, and a click on the wrong sheet
+queues nothing and says so. A Calculator selector is cancelled by a click on
+the wrong sheet: press it again after you have clicked your design's
+tab.</li>
+<li>Direct Plot cannot plot a terminal current the last run did not save
+(on the pin of a voltage source or an ammeter it plots the source's own
+current instead, which on the source's second pin is the negative of the
+pin's own).</li>
+<li>A terminal row is not checked before the run: a mistyped one is reported
+after it.</li>
+<li>The pin pick is refused under flat netlisting, below a block instance that
+carries a <code>spiceprefix</code>, and for a symbol whose netlist format
+does not put the pin on its line exactly once.</li>
 <li>Extra analysis keys from <b>Analysis Options</b> are stored and displayed
 but not yet emitted into the deck.</li>
 <li>The <b>Levels:</b> entry in <b>Save All</b> is disabled.</li>

@@ -43,6 +43,8 @@
 #     item 13  BR   ...
 #     item 14  BD   ...
 #     item 15  BP   ...
+#     issue 1724  BL   the label of a terminal current (this file, pure, both
+#                      arms; it sits after BS14, before the first fixture)
 #   Within a prefix the numbers are BLOCKED by arm: 01-19 source/pure (both
 #   arms), 20-39 the throwaway-toplevel fixture, 40-59 the REAL viewer.
 #
@@ -229,6 +231,240 @@ check {BS13 an unknown token is refused whatever the want word} \
   [pcall ::wviewer::browser_toggle bogus bs_nosuch_token] {}
 check {BS14 browser_toggle_at on a canvas in no registry is silent} \
   [pcall ::wviewer::browser_toggle_at .bs_nosuch.drw] {}
+
+# ============================================================================
+# BL01-BL06 — THE LABEL OF A TERMINAL CURRENT (issue 1724). PURE, both arms.
+#
+# `wviewer::browser_label` reads a leaf that holds `_` as MODEL-shaped and puts
+# the last path segment in its place (sky130 names the device inside a wrapper
+# after its model). A terminal current `i(<path>.<terminal>)` -- ngspice's
+# `.probe` vector, whose `:` the reader stores as `.` -- has a terminal or a
+# PORT name for a leaf, and `in_p`, `in_n`, `b_tj` are not models: two pins of
+# one block both rendered `x2:i`, and a MOS bulk rendered as its device. The
+# rule no longer applies to a PLAIN current of class `net`.
+#
+# `bl_old_label` IS THE RULE AS IT STOOD BEFORE THAT EXCEPTION, kept here as the
+# comparand: BL04 and BL05 ask of every name which rule changed its label, and
+# the answer has to come from something that is not the proc under test.
+#
+# THE CORPUS IS DERIVED, never listed: every file under tests/headless/data that
+# opens with an ngspice header and that `xschem raw read` loads, under each
+# analysis word the reader takes, plus every `*_vars.txt` name list under
+# tests/headless/fixtures. A fixture added tomorrow joins it by existing.
+# ============================================================================
+proc bl_old_label {e} {
+  set leaf  [dict get $e leaf]
+  set class [dict get $e class]
+  set type  [dict get $e type]
+  if {$class eq {digital}} { return $leaf }
+  if {$class eq {net} && $type ne {i}} { return $leaf }
+  set base $leaf
+  set param {}
+  if {[regexp {^(.*?)\[([^][]*)\]$} $leaf -> b p]} {
+    set base $b ; set param $p
+  } elseif {[regexp {^([^#]*)(#.*)$} $leaf -> b p]} {
+    set base $b ; set param $p
+  }
+  if {$param eq {}} { set param i }
+  set inst $base
+  if {[string first _ $base] >= 0} {
+    set last [lindex [split [dict get $e path] .] end]
+    if {$last ne {}} { set inst $last }
+  }
+  regsub {^@} $inst {} inst
+  return "${inst}:${param}"
+}
+proc bl_new_label {n} { return [pcall ::wviewer::browser_label_of $n] }
+# IS `n` A PLAIN CLASS-NET CURRENT UNDER A PATH WHOSE LEAF HOLDS `_`? Written
+# from the entry's fields, not from anything browser_label computes.
+proc bl_is_moved_shape {n} {
+  set e [::wviewer::signal_entry $n]
+  if {[dict get $e class] ne {net} || [dict get $e type] ne {i}} { return 0 }
+  if {[dict get $e path] eq {}} { return 0 }
+  set leaf [dict get $e leaf]
+  if {[regexp {\[[^][]*\]$} $leaf] || [string first # $leaf] >= 0} { return 0 }
+  return [expr {[string first _ $leaf] >= 0 ? 1 : 0}]
+}
+proc bl_files {dir} {
+  set out {}
+  foreach f [lsort [glob -nocomplain -directory $dir *]] {
+    if {[file isdirectory $f]} {
+      foreach g [bl_files $f] { lappend out $g }
+    } else {
+      lappend out $f
+    }
+  }
+  return $out
+}
+# The names `xschem raw list` gives for file `f`, over the bare read and each
+# analysis word read_dataset() takes; {} when the engine loads none of it.
+proc bl_raw_names {f} {
+  set out {}
+  foreach type {{} tran ac dc op noise} {
+    catch {xschem raw clear}
+    if {$type eq {}} {
+      set r [pcall xschem raw read $f]
+    } else {
+      set r [pcall xschem raw read $f $type]
+    }
+    set lv [pcall xschem raw loaded]
+    if {$r eq {1} && [string is integer -strict $lv] && $lv >= 0} {
+      foreach n [split [pcall xschem raw list] "\n"] {
+        if {$n ne {}} { lappend out $n }
+      }
+    }
+    catch {xschem raw clear}
+  }
+  return [lsort -unique $out]
+}
+
+check {BL01 two pins of one block, and a MOS bulk, are labelled by the terminal: in_p, in_n and b_tj each with the current suffix, and the two pins differ} \
+  [list [bl_new_label {i(x2.in_p)}] [bl_new_label {i(x2.in_n)}] \
+        [bl_new_label {i(x2.m1.b_tj)}] \
+        [expr {[bl_new_label {i(x2.in_p)}] ne [bl_new_label {i(x2.in_n)}]}]] \
+  [list in_p:i in_n:i b_tj:i 1]
+check {BL01 (WHAT IT REPLACES) the rule as it stood gave both pins the block's name and the bulk the device's} \
+  [list [bl_old_label [::wviewer::signal_entry {i(x2.in_p)}]] \
+        [bl_old_label [::wviewer::signal_entry {i(x2.in_n)}]] \
+        [bl_old_label [::wviewer::signal_entry {i(x2.m1.b_tj)}]]] \
+  [list x2:i x2:i m1:i]
+
+# The neighbours. Each of these keeps the label it had: a top-level source, a
+# source inside a block, two device parameters, a device internal node, a
+# voltage -- and the three shapes that sit NEXT to the exception without being
+# in it: a class-net current that carries a param, one that carries a `#node`,
+# and a plain current of another class (a source's branch, tag `v`).
+set bl_kept {
+  {i(v1)}                                       v1:i
+  {i(v.x1.v1)}                                  v1:i
+  {i(@c.x1.c1[i])}                              c1:i
+  {i(@m.xm1.msky130_fd_pr__nfet_01v8[id])}      xm1:id
+  {v(m.x1.xm1.msky130_fd_pr__nfet_01v8#body)}   xm1:#body
+  {v(x1.net5)}                                  net5
+  {i(x1.xm1.d)}                                 d:i
+  {i(x1.vp)}                                    vp:i
+  {i(@m.xm1_a[id])}                             m:id
+  {i(x1.r_a#branch)}                            x1:#branch
+  {i(v.x1.v_a)}                                 x1:i
+}
+set bl_got {} ; set bl_exp {} ; set bl_was {}
+foreach {bl_n bl_l} $bl_kept {
+  lappend bl_got [bl_new_label $bl_n]
+  lappend bl_exp $bl_l
+  lappend bl_was [bl_old_label [::wviewer::signal_entry $bl_n]]
+}
+check {BL02 every neighbour of the exception keeps its label: sources, device parameters, an internal node, a voltage, a letter terminal, and a class-net current with a param or a #node} \
+  $bl_got $bl_exp
+check {BL02 ...and those are the labels the rule gave before, name for name} \
+  $bl_was $bl_exp
+
+# --- the derived corpus -----------------------------------------------------
+set bl_data [file join $repo tests headless data]
+set bl_rawfiles {} ; set bl_rawnames {} ; set bl_empty {}
+foreach bl_f [bl_files $bl_data] {
+  set bl_fp [open $bl_f r]
+  fconfigure $bl_fp -translation binary
+  set bl_head [read $bl_fp 4096]
+  close $bl_fp
+  if {![regexp -line {^Plotname:} $bl_head]} { continue }
+  set bl_ns [bl_raw_names $bl_f]
+  if {![llength $bl_ns]} { lappend bl_empty [file tail $bl_f] ; continue }
+  lappend bl_rawfiles [file tail $bl_f]
+  foreach bl_n $bl_ns { lappend bl_rawnames $bl_n }
+}
+set bl_rawnames [lsort -unique $bl_rawnames]
+set bl_listnames {} ; set bl_lists {}
+foreach bl_f [lsort [glob -nocomplain -directory [file join $repo tests headless fixtures] *_vars.txt]] {
+  set bl_fp [open $bl_f r] ; set bl_txt [read $bl_fp] ; close $bl_fp
+  set bl_k 0
+  foreach bl_l [split $bl_txt "\n"] {
+    set bl_l [string trim $bl_l]
+    if {$bl_l ne {}} { lappend bl_listnames $bl_l ; incr bl_k }
+  }
+  if {$bl_k} { lappend bl_lists [file tail $bl_f] }
+}
+set bl_corpus [lsort -unique [concat $bl_rawnames $bl_listnames]]
+# the three raws committed with the Calculator and with issue 1724 are the floor
+# of the derivation, not its extent
+set bl_floor 1
+foreach bl_f {calc_fixture.raw probe_1724_op.raw probe_1724_tran.raw} {
+  if {[lsearch -exact $bl_rawfiles $bl_f] < 0} { set bl_floor 0 }
+}
+check {BL03 (THE CORPUS IS REAL) the derivation found the committed raw fixtures and loaded names out of every one it kept, found name lists too, and left no raw loaded behind} \
+  [list $bl_floor [expr {[llength $bl_rawnames] > 0}] \
+        [expr {[llength $bl_lists] > 0}] \
+        [expr {[llength $bl_corpus] >= [llength $bl_rawnames]}] \
+        [pcall xschem raw loaded]] \
+  [list 1 1 1 1 -1]
+
+# THE VARIANTS. The committed corpus holds no terminal whose name carries `_`
+# (BL05 is that statement), so the shape the exception exists for is derived
+# from what the corpus does hold: every PATH under which a raw fixture stores a
+# plain class-net current, with each of three underscore terminals as the leaf.
+set bl_paths {}
+foreach bl_n $bl_rawnames {
+  set bl_e [::wviewer::signal_entry $bl_n]
+  if {[dict get $bl_e class] ne {net} || [dict get $bl_e type] ne {i}} { continue }
+  if {[dict get $bl_e path] eq {}} { continue }
+  set bl_leaf [dict get $bl_e leaf]
+  if {[regexp {\[[^][]*\]$} $bl_leaf] || [string first # $bl_leaf] >= 0} { continue }
+  lappend bl_paths [dict get $bl_e path]
+}
+set bl_paths [lsort -unique $bl_paths]
+set bl_variants {}
+foreach bl_p $bl_paths {
+  foreach bl_t {in_p in_n b_tj} { lappend bl_variants "i($bl_p.$bl_t)" }
+}
+set bl_all [lsort -unique [concat $bl_corpus $bl_variants]]
+set bl_moved {} ; set bl_shape {} ; set bl_badlabel {}
+foreach bl_n $bl_all {
+  set bl_e [::wviewer::signal_entry $bl_n]
+  set bl_o [bl_old_label $bl_e]
+  set bl_a [bl_new_label $bl_n]
+  if {$bl_o ne $bl_a} { lappend bl_moved $bl_n }
+  if {[bl_is_moved_shape $bl_n]} {
+    lappend bl_shape $bl_n
+    if {$bl_a ne "[dict get $bl_e leaf]:i"} { lappend bl_badlabel $bl_n }
+  }
+}
+set bl_var_unmoved {}
+foreach bl_n $bl_variants {
+  if {[lsearch -exact $bl_moved $bl_n] < 0} { lappend bl_var_unmoved $bl_n }
+}
+check {BL04 (THE DERIVED CLAIM) over the corpus plus the derived variants, the names whose label the exception changed are EXACTLY the plain class-net currents under a path whose leaf holds an underscore; each is now labelled by its leaf; and every variant, three per fixture path, is among them} \
+  [list [expr {$bl_moved eq $bl_shape}] $bl_badlabel $bl_var_unmoved \
+        [expr {[llength $bl_paths] > 0}] \
+        [expr {[llength $bl_variants] == 3 * [llength $bl_paths]}]] \
+  [list 1 {} {} 1 1]
+
+# BL05, twice. First the statement that holds whatever is committed later: no
+# corpus name OUTSIDE the exception's shape changed its label -- with a count
+# riding along of the names the model-shaped rule is still there for (a leaf
+# holding `_` that is not a plain class-net current), so the leg cannot pass on
+# a corpus that has none. Then today's fact: the committed corpus holds no name
+# of the exception's shape at all, so no committed label moved. A fixture that
+# brings a terminal named with an underscore is listed by that second row, and
+# the list then becomes its expectation.
+set bl_moved_out {} ; set bl_in_corpus {} ; set bl_guarded 0
+foreach bl_n $bl_corpus {
+  set bl_e [::wviewer::signal_entry $bl_n]
+  if {[bl_is_moved_shape $bl_n]} { lappend bl_in_corpus $bl_n ; continue }
+  if {[string first _ [dict get $bl_e leaf]] >= 0} { incr bl_guarded }
+  if {[bl_old_label $bl_e] ne [bl_new_label $bl_n]} { lappend bl_moved_out $bl_n }
+}
+check {BL05 (NOTHING ELSE MOVED) no committed name outside the exception's shape changed its label, and the corpus does hold names whose underscore leaf the model-shaped rule still rewrites} \
+  [list $bl_moved_out [expr {$bl_guarded > 0}]] [list {} 1]
+check {BL05 (TODAY'S CORPUS) the committed fixtures hold no terminal named with an underscore, so the exception changed no committed label at all} \
+  $bl_in_corpus {}
+
+# The bars match the LABEL (browser_label_of is the Search/Filter subject), so
+# a pin name typed into one now finds its current.
+check {BL06 a pin name with an underscore, typed as a pattern, finds that pin's current and not the other pin's} \
+  [list [lindex [pcall ::wviewer::sig_match {i(x2.in_p) i(x2.in_n) v(g)} {*in_p*} \
+                   -key wviewer::browser_label_of] 1] \
+        [lindex [pcall ::wviewer::sig_match {i(x2.in_p) i(x2.in_n) v(g)} {in_n:i} \
+                   -key wviewer::browser_label_of] 1]] \
+  [list {i(x2.in_p)} {i(x2.in_n)}]
 
 # ============================================================================
 # BSF — BS20-BS37, the DISPLAY fixture group.

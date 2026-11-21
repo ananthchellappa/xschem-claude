@@ -106,6 +106,13 @@ that makes an otherwise GUI-only behavior unit-testable.
    (dropping a tab onto another window's strip, or tearing it off) builds on the
    existing `swap_tabs` / `tab_context_menu` machinery (xinit.c:1870-1872).
 
+**Known gap, 2026-11-19 (issue 1726, filed, not fixed).** `destroy` and `switch` route by
+the kind of their TARGET (`is_window_context()` in `src/xinit.c`), so a real window is
+closed as a window whatever the global flag says. `destroy_all` still routes by the
+global flag: with the tabbed interface on it goes to `destroy_all_tabs()`, which takes a
+real window's schematic away and leaves its toplevel standing. Measured; the issue has
+the probe's lines.
+
 ### Mode toggle
 
 Relax the lock (assumption 3): the "Tabbed interface" menu item stays enabled, and

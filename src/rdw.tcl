@@ -4464,8 +4464,9 @@ namespace eval rdw {
     # there is one canvas pick mode at a time, exactly as ASE Direct Plot has
     # one `sod(active)`.
     #   canvas     the widget the seize is currently on
-    #   prevpress prevrel prevesc prevmotion   the FOUR predecessors, handed
-    #              back verbatim.  The fourth is issue 1304: see rdw::_pick_seize.
+    #   prevpress prevrel prevesc prevmotion prevdbl   the predecessors,
+    #              handed back verbatim.  The fourth is issue 1304 and the fifth
+    #              the double click: see rdw::_pick_seize.
     #   suspended  set only between cmdmode's suspend and resume arms
     variable pick
     if {![info exists pick]} { array set pick {} }
@@ -4539,10 +4540,17 @@ proc rdw::_selected_instance {} {
 #
 # It arms nothing itself.  Arming here would re-arm on every hand-back and the
 # handler would then chase its own tail.
+#
+# THE CURRENT CONTEXT IS RESOLVED TO THE CANVAS THAT SHOWS IT
+# (`rdw::_pick_canvas`).  In a tab that is not the first the context's name is
+# no widget, and the canvas the keyboard belongs on is the main window's, which
+# the tabs share.  Taken as it stands the name fails the widget test below and
+# nothing is handed back: after a dump made in such a tab the keyboard stayed
+# in the results window, where in the first tab it returns to the schematic.
 proc rdw::_focus_canvas {} {
     if {![rdw::have_tk]} { return {} }
     set cv {}
-    catch {set cv [xschem get current_win_path]}
+    catch {set cv [rdw::_pick_canvas [xschem get current_win_path]]}
     if {$cv eq {} || ![winfo exists $cv]} { return {} }
     catch {focus -force $cv}
     return $cv
@@ -5116,14 +5124,14 @@ proc rdw::hint_period {} { return 80 }
 # redirecting the second there, which would put a live sentence on the wrong
 # window.  Refusing both is the only answer that is right twice.
 #
-# ⚠ AND THE TAB CASE IS UNREACHABLE TODAY FOR A REASON THAT IS ITS OWN DEFECT.
-# `rdw::pick_start` asks `winfo exists [xschem get current_win_path]`, gets 0 in
-# a tab, and returns 0 -- so 1/2/3 with nothing selected does NOTHING in a tab
-# and says nothing, not even in the CIW.  Measured in the same run and filed as
-# issue 1387.  Its fix is for the seize to hold the REAL canvas widget rather
-# than the logical path, and if it is fixed that way `pick(canvas)` is always a
-# widget and this proc is already right with no tab arm at all -- which is the
-# reason there is not one.
+# ⚠ AND THE MODE NEVER HANDS THIS PROC A TAB'S NAME.  `rdw::pick_start` and
+# `rdw::pick_resume` resolve the window context to the canvas that shows it
+# (`rdw::_pick_canvas`) before they seize, so `pick(canvas)` is always a widget:
+# in a tab that is not the first it is the main window's `.drw`, and the slot
+# this proc answers for it is the shared bar's.  That is the reason there is no
+# tab arm here.  (Before the seize held the real widget, the keys 1 to 3 with
+# nothing selected did nothing in such a tab and said nothing: the tab half of
+# issue 1387.)
 #
 # The computation was `ase::ui::sod_statusbar`'s (ase_window.tcl:1856) and is
 # NOT called across to it: that file is a peer this one must load without,
@@ -5156,7 +5164,7 @@ proc rdw::_hint_slot {cv} {
 # 1110x761 and a constant 275 at 1400x800 -- one width each, where before there
 # were two.
 #
-# ⚠ A BINDTAG, NOT `bind $cv <Motion> +...`.  `rdw::_pick_seize` latches four of
+# ⚠ A BINDTAG, NOT `bind $cv <Motion> +...`.  `rdw::_pick_seize` latches some of
 # this canvas's own binding scripts VERBATIM and hands them back byte-identical;
 # a `+` append is not removable without rewriting a script the seize is holding,
 # and row V6 exists precisely to catch a restore that is not byte-identical.  A
@@ -5164,8 +5172,8 @@ proc rdw::_hint_slot {cv} {
 # seize latched.  `bindtags` is per WIDGET, so a second window's canvas gets the
 # tag and the main window's does not.
 #
-# ⚠ THE SEIZED SEQUENCES NEVER REACH THE TAG, AND THAT IS RIGHT.  All four of
-# `_pick_seize`'s scripts end in `break`, which stops the remaining binding tags
+# ⚠ THE SEIZED SEQUENCES NEVER REACH THE TAG, AND THAT IS RIGHT.  Every one of
+# `_pick_seize`'s scripts ends in `break`, which stops the remaining binding tags
 # for that event -- so a press, a release and a B1-drag are the backstop timer's
 # and not this door's.  A press ends in `rdw::show`, which builds a window and
 # pumps its own events; re-asserting in the middle of that is the timer's job.
@@ -5288,7 +5296,17 @@ proc rdw::_hint_sync {} {
     ## 60 Hz motion stream buys the synchronous re-assert for about 1.3 ms per
     ## second of moving the mouse.
     if {[rdw::_hint_attach $cv]} { set hint(cv) $cv }
-    catch {$slot configure -state active -text $txt}
+    ## THE SENTENCE IS NOT WRITTEN WHILE ANOTHER CLICK MODE SITS ON TOP OF THIS
+    ## ONE (`rdw::_pick_covered`).  Select On Design and the Calculator's pick
+    ## can each be entered over this mode, and each keeps its own sentence on
+    ## this slot with a timer of its own: the clicks are that mode's then, and
+    ## two writers would make the slot change text on every tick.  Everything else
+    ## here goes on as before -- the tag, the tip, the record of the slot -- and
+    ## so does the timer, so this mode's sentence is back within one period of
+    ## the mode on top ending.
+    if {![rdw::_pick_covered $cv]} {
+        catch {$slot configure -state active -text $txt}
+    }
     ## THE TIP IS RE-DECIDED ONLY WHEN THE ANSWER COULD HAVE MOVED, AND THE KEY
     ## IS THE ANSWER, NOT THE PIXELS.  Three terms and each earns its place:
     ##   the SENTENCE -- `balloon` bakes it into <Enter> at bind time
@@ -5352,13 +5370,14 @@ proc rdw::_hint_start {} {
 }
 
 # ---------------------------------------------------------------------------
-# THE SEIZE.  The shape is ase::ui::select_on_design's (ase_window.tcl:1877,
-# the latch at :1897-1899):
+# THE SEIZE.  The shape is the one ase::ui::select_on_design had when this was
+# written (its seize is ase::ui::sod_seize in ase_window.tcl now):
 # latch the predecessors, take Button-1 and Escape, take the lone RELEASE too
 # (the press it pairs with was swallowed, so it must not reach C on its own),
 # and give the canvas keyboard focus or a real ESC never arrives.
 #
-# ⚠ IT TAKES A FOURTH SEQUENCE THAT ASE'S DOES NOT, AND THAT IS ISSUE 1304.
+# ⚠ IT TAKES A FOURTH SEQUENCE THAT ASE'S DID NOT TAKE THEN, AND THAT IS ISSUE
+# 1304.  (Select On Design holds the held motion too since issue 1724.)
 # Copying the three-sequence shape leaves C's rubber band with a start and no
 # end: a motion with Button1Mask calls select_rect(START,1) + unselect_all(1)
 # and sets STARTSELECT (callback.c:7250-7260), and the ONLY thing that
@@ -5380,26 +5399,145 @@ proc rdw::_hint_start {} {
 # tab-swap <B1-Motion> starts on `.tabs.x*` and is unreachable from here.
 #
 # ⚠ Measured on this tree: `.drw` is a FRAME whose shipped bindings are the
-# GENERIC <Button> and <Key>, so all four predecessors are the EMPTY STRING.
+# GENERIC <Button> and <Key>, so those four predecessors are the EMPTY STRING.
 # `bind w seq {}` DESTROYS a binding, which is what makes the restore
 # byte-identical -- a restore that writes an empty script back would leave an
 # empty-but-PRESENT binding that passes a string comparison and fails the
 # sequence-list one.  Row V6 holds both legs, and it reads the <B1-Motion> slot
 # while the mode is still LIVE, because after the release it is back at its
 # predecessor whether the seize ever took it or not.
+#
+# ⚠ AND A FIFTH: THE DOUBLE CLICK, WHOSE PREDECESSOR IS NOT EMPTY.  Tk gives the
+# SECOND press of a double click to the most specific binding that matches, and
+# the editor binds the double click on every design canvas (`set_bindings` in
+# xschem.tcl).  With only the press seized that second press went past the mode
+# to the editor, on the device the first press had just dumped: its property
+# dialog in the stock profile, its connected-select in the Cadence one -- which
+# selects, against "clicking will not change selected set".  The mode stays up
+# until ESC, so the slot is taken for as long as it is up, and its predecessor,
+# the editor's script, is handed back verbatim.
+#
+# ⚠ THE SECOND PRESS IS SWALLOWED, NOT DUMPED AGAIN.  The first press has
+# already dumped the device and the pointer has not moved, so a second dump
+# could only repeat the block.  And it would not even do that: the dump the
+# first press made re-lays the windows out, C takes the un-snapped mouse pair
+# from those layout events as well (issue 1659), and the second press would be
+# resolved at a point nobody clicked -- it would say "no device under the
+# click" about a device it had just dumped.  Row V3b of
+# tests/headless/test_rdw_keys_1245.tcl holds one block and a silent CIW.
+#
+# THE PRESS HANDS ITS OWN POSITION TO THE ENGINE BEFORE THE CLICK IS RESOLVED.
+# The click reads the engine's un-snapped pointer pair, and the engine writes
+# that pair on every event it is handed, whatever the event is.  The editor
+# binds `<Configure>` on every design canvas, and that event carries the
+# canvas's position inside its window, not a pointer position: each time the
+# canvas is laid out again, that position goes into the pair (issue 1659).
+# One of those between the last pointer motion and the press, and the click
+# would be resolved at a point nobody clicked.  So the press's script first
+# passes the press's own pixel on as a pointer motion, which is what a hand
+# moving onto that pixel would have sent, and then runs the click.
+#
+# A SLOT THAT ALREADY HOLDS ONE OF THIS MODE'S OWN SCRIPTS IS NOT KEPT AS THE
+# PREDECESSOR (`rdw::pick_own_script`).  Kept, the release would put the seize
+# straight back, and no click on that canvas would select again for the rest
+# of the session.  That is the state of a canvas this mode's scripts were left
+# on after the mode had gone: its record was dropped while the canvas stayed
+# seized, or a click mode that does not take the canvas again when this one
+# ends (`rdw::pick_end` asks the two that do) was seized over this one, this
+# one was ended first, and that mode then handed this mode's scripts back
+# (open issue 0202).  Such a
+# slot keeps the predecessor already on record for it; with none on record the
+# press, the release, Escape and the held motion fall back to nothing, which
+# is what a design canvas holds there, and the double click to the editor's
+# own script (`rdw::pick_dbl_editor`).  The release, the held motion and the
+# double click are a bare `break`, which cannot be told from anybody else's,
+# so they are judged by the press slot beside them.
+#
+# WHAT WAS BOUND IS KEPT in `pick(own)`, in the order of the slots, for
+# `rdw::pick_held`, which tells `cmdmode` what this mode holds on the canvas.
 proc rdw::_pick_seize {cv} {
     variable pick
-    set pick(canvas)     $cv
-    set pick(prevpress)  [bind $cv <ButtonPress-1>]
-    set pick(prevrel)    [bind $cv <ButtonRelease-1>]
-    set pick(prevesc)    [bind $cv <Key-Escape>]
-    set pick(prevmotion) [bind $cv <B1-Motion>]
-    bind $cv <ButtonPress-1>   "[list rdw::pick_click]; break"
+    set press "xschem callback %W 6 %x %y 0 0 0 %s; [list rdw::pick_click]; break"
+    set esc   "[list rdw::pick_end]; break"
+    set ours  [rdw::pick_own_script [bind $cv <ButtonPress-1>]]
+    if {!$ours} {
+        set pick(prevpress)  [bind $cv <ButtonPress-1>]
+    }
+    if {!$ours || [bind $cv <ButtonRelease-1>] ne {break}} {
+        set pick(prevrel)    [bind $cv <ButtonRelease-1>]
+    }
+    if {![rdw::pick_own_script [bind $cv <Key-Escape>]]} {
+        set pick(prevesc)    [bind $cv <Key-Escape>]
+    }
+    if {!$ours || [bind $cv <B1-Motion>] ne {break}} {
+        set pick(prevmotion) [bind $cv <B1-Motion>]
+    }
+    if {!$ours || [bind $cv <Double-Button-1>] ne {break}} {
+        set pick(prevdbl)    [bind $cv <Double-Button-1>]
+    }
+    foreach k {prevpress prevrel prevesc prevmotion} {
+        if {![info exists pick($k)]} { set pick($k) {} }
+    }
+    if {![info exists pick(prevdbl)]} { set pick(prevdbl) [rdw::pick_dbl_editor $cv] }
+    set pick(canvas) $cv
+    bind $cv <ButtonPress-1>   $press
     bind $cv <ButtonRelease-1> {break}
-    bind $cv <Key-Escape>      "[list rdw::pick_end]; break"
+    bind $cv <Key-Escape>      $esc
     bind $cv <B1-Motion>       {break}
+    bind $cv <Double-Button-1> {break}
+    set pick(own) [list $press {break} $esc {break} {break}]
     catch {focus -force $cv}
     return $cv
+}
+
+# Is `script` one this mode binds on a canvas: the press, or the end?  (The
+# other three slots hold a bare `break`; `rdw::_pick_seize` judges those by the
+# press slot beside them.)  The press is known by its tail, so a press script
+# is this mode's own with or without the pointer motion in front of the click.
+proc rdw::pick_own_script {script} {
+    if {[string match "*[list rdw::pick_click]; break" $script]} { return 1 }
+    return [expr {$script eq "[list rdw::pick_end]; break" ? 1 : 0}]
+}
+
+# THE EDITOR'S OWN DOUBLE-CLICK SCRIPT ON A DESIGN CANVAS, for a seize that has
+# no predecessor on record for that slot.  Handing back nothing there would
+# take the editor's double click away from that window for the rest of the
+# session.  `set_bindings` (xschem.tcl) binds the double click of all three
+# buttons with one script, and no click mode takes the middle button's, so
+# that slot still holds it.
+proc rdw::pick_dbl_editor {cv} {
+    set s {}
+    catch {set s [bind $cv <Double-Button-2>]}
+    return $s
+}
+
+# THE CANVAS WIDGET THAT SHOWS THE WINDOW CONTEXT `ctx`, or empty.
+#
+# `xschem get current_win_path`, and the name `cmdmode` hands a resume, name a
+# CONTEXT, which is a Tk widget only for a window.  With the tabbed interface a
+# schematic in a tab that is not the first answers `.x1.drw`, a name no widget
+# has, while the canvas that shows it is the main window's `.drw`, which the
+# tabs share.  So a name that is no widget is looked up in `xschem windows`,
+# whose rows hold the context's name and then its toplevel, and the canvas is
+# that toplevel's `.drw` (the main window's toplevel is `.`).  A name that is
+# neither a widget nor a context in that list -- a window that was closed --
+# answers empty, and so does every name when there is no Tk.
+#
+# `calc::pick_canvas` and `ase::ui::sod_canvas` are the same lookup.  It is
+# written out here because this file loads without either of those two.
+proc rdw::_pick_canvas {ctx} {
+    if {$ctx eq {} || ![rdw::have_tk]} { return {} }
+    if {[winfo exists $ctx]} { return $ctx }
+    set rows {}
+    if {[catch {xschem windows} rows]} { return {} }
+    foreach row $rows {
+        if {[lindex $row 0] ne $ctx} { continue }
+        set top [lindex $row 1]
+        if {$top eq {}} { continue }
+        set w [expr {$top eq {.} ? {.drw} : "$top.drw"}]
+        if {[winfo exists $w]} { return $w }
+    }
+    return {}
 }
 
 # Arm the mode.  1 when it is armed (or already was), 0 when it could not be.
@@ -5455,8 +5593,10 @@ proc rdw::pick_start {} {
         rdw::_hint_start
         return 1
     }
+    ## The current context is resolved to the canvas that shows it, so the key
+    ## arms the mode in a tab that is not the first as it does in a window.
     set cv {}
-    catch {set cv [xschem get current_win_path]}
+    catch {set cv [rdw::_pick_canvas [xschem get current_win_path]]}
     if {$cv eq {} || ![winfo exists $cv]} { return 0 }
     ## ISSUE 1305: clear the outstanding suspend as part of taking the canvas
     ## back, so resume_all finds nothing to resume.  BELOW the guard above.
@@ -5493,12 +5633,13 @@ proc rdw::pick_start {} {
 # defect, one binary mismatch away.  The grid position remains the right pair
 # for PLACING geometry and is used nowhere in this file.
 #
-# ⚠ AND THE PAIR READ HERE IS THE LAST MOTION'S POINT, NOT THE PRESS'S.  The
-# seize `break`s the press before C sees it, and C updates both mouse pairs on
-# every event it does see (callback.c:10145).  A real hand always moves the
-# pointer onto the device before pressing, so it reads the right point; a
-# caller that presses with no preceding motion reads a stale one.  The keys
-# suite generates the motion first for exactly this reason.
+# ⚠ AND THE PAIR READ HERE IS THE ENGINE'S, WHICH A REAL PRESS HAS JUST
+# WRITTEN.  The seize `break`s the press before the engine sees it, so the
+# press's script hands the press's own position to the engine first
+# (`rdw::_pick_seize`) and the pair read here is the pixel that was pressed.
+# A caller that runs this proc by itself, with no coordinates, reads whatever
+# the engine was last handed: the last pointer motion, or a later layout
+# event's position (issue 1659).  Such a caller passes the point.
 #
 # A MISS IS NOT THE END OF THE COMMAND.  Empty canvas and a wire are the same
 # answer here (the reader resolves instances only), and both keep the mode
@@ -5518,21 +5659,69 @@ proc rdw::pick_click {{x {}} {y {}}} {
     return $inst
 }
 
-# Hand all FOUR bindings back, verbatim and under catch (the canvas may be
+# Hand every seized binding back, verbatim and under catch (the canvas may be
 # dead).  ONE proc shared by the end path and the suspend path, exactly as
-# ase::ui::sod_release (ase_window.tcl:1948) is, so the two cannot drift --
-# which is the whole reason issue 1304's fourth sequence is added here and in
-# rdw::_pick_seize and nowhere else.  Row K14 fences the two against each
-# other.  Returns 1 only if it released a live mode.
+# ase::ui::sod_release is, so the two cannot drift -- which is the whole reason
+# a sequence is added here and in rdw::_pick_seize and nowhere else.  Row K14
+# fences the two against each other.
+#
+# A PAUSED MODE'S RELEASE WRITES NOTHING.  A mode that a descend has paused
+# (`rdw::pick_suspend`) handed every slot back when it was paused, and what
+# the canvas holds since then is not this mode's to overwrite.  Its record
+# still names what the slots held when it took them, and for a mode that was
+# entered over another click mode those are that mode's scripts.  That mode is
+# paused by the same descend, so writing them back would put the scripts of a
+# paused mode on the canvas: it would take the click the descend is waiting
+# for, and nothing would descend.  So when a paused mode is ended -- Escape
+# pressed in the results window while the descend waits for its instance --
+# the canvas is left as it is, and `rdw::pick_end` drops the record as for any
+# other end.
+#
+# Answers 1 when a mode was on record, live or paused, and 0 when none was.
 proc rdw::pick_release {} {
     variable pick
     if {![info exists pick(canvas)]} { return 0 }
+    if {[info exists pick(suspended)]} { return 1 }
     set cv $pick(canvas)
     catch {bind $cv <ButtonPress-1>   $pick(prevpress)}
     catch {bind $cv <ButtonRelease-1> $pick(prevrel)}
     catch {bind $cv <Key-Escape>      $pick(prevesc)}
     catch {bind $cv <B1-Motion>       $pick(prevmotion)}
+    catch {bind $cv <Double-Button-1> $pick(prevdbl)}
     return 1
+}
+
+# WHAT THIS MODE HOLDS ON THE CANVAS NOW, for `cmdmode` (the fourth argument of
+# the `cmdmode::register` call below): a flat list
+#   canvas sequence script predecessor   canvas sequence script predecessor ...
+# with one group for every slot of the seize -- the script the mode bound there
+# (`pick(own)`, written by `rdw::_pick_seize`) and the script the slot held
+# before the mode took it.  Empty when the mode is not up and while it is
+# suspended: a suspended mode has handed every slot back.
+#
+# `cmdmode::pristine` reads it for `clone_canvas_bindings` (xschem.tcl): a
+# window created while the mode is up, by a door that does not suspend the
+# modes first, copies the bindings of the main canvas, and with this list it
+# copies what the canvas holds UNDERNEATH the mode instead of the mode's own
+# scripts.  Without it the new window's canvas would carry the scripts of a
+# mode that is up on another canvas: every click there would be the mode's and
+# none would select, and the mode's Escape hands back only the canvas the mode
+# is on, so nothing would take them off that one again.
+#
+# No Tk is asked: the answer is the record alone, so it is the same list with
+# no display.
+proc rdw::pick_held {} {
+    variable pick
+    if {![info exists pick(canvas)] || [info exists pick(suspended)]} { return {} }
+    if {![info exists pick(own)]} { return {} }
+    set out {}
+    foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} \
+            rec {prevpress prevrel prevesc prevmotion prevdbl} own $pick(own) {
+        set prev {}
+        catch {set prev $pick($rec)}
+        lappend out $pick(canvas) $seq $own $prev
+    }
+    return $out
 }
 
 # Leave the mode.  Safe to call when nothing is live, on every arm.
@@ -5554,6 +5743,28 @@ proc rdw::pick_end {} {
     ## Escape (ruling DD-12) and every command path reach it -- and the pump is
     ## the second one, for an exit nobody added a door to.
     rdw::_hint_sync
+    ## A MODE SEIZED OVER THIS ONE IS ASKED TO TAKE THE CANVAS AGAIN.  Select
+    ## On Design and the Calculator's pick can each be entered while this mode
+    ## is up, and each then keeps this mode's scripts as what the canvas held
+    ## before it.  This mode ended FIRST -- Escape pressed in the results
+    ## window, which reaches this proc while the canvas's own Escape is the
+    ## other mode's -- the release above has just written the editor's scripts
+    ## over that mode's live ones: it would stay recorded as up with nothing
+    ## bound, and when it ended later it would hand this mode's scripts back to
+    ## a canvas no mode holds, which then takes no click.  Each of the two
+    ## seizes again only when that is the state it finds
+    ## (`ase::ui::sod_reseat`, `calc::pick_reseat`), so with this mode on top,
+    ## or alone, the calls change nothing.  They come AFTER the record is
+    ## gone, so that `cmdmode` no longer counts this mode among those that
+    ## are up.  They are made only when there was a mode to end (the release
+    ## answered 1), and under catch: this file also loads where those two
+    ## files are not.  When this mode was ended while a descend had it
+    ## paused, the release wrote nothing, and each of the two finds its mode
+    ## paused as well, or holding the canvas itself, and does nothing.
+    if {$r} {
+        catch {::ase::ui::sod_reseat}
+        catch {::calc::pick_reseat}
+    }
     return $r
 }
 
@@ -5573,16 +5784,26 @@ proc rdw::pick_suspend {} {
     return 1
 }
 
-# ⚠ ALL FOUR PREDECESSORS ARE RE-LATCHED FROM THE CANVAS WE ARE LANDING ON,
+# ⚠ EVERY PREDECESSOR IS RE-LATCHED FROM THE CANVAS WE ARE LANDING ON,
 # not carried over from the one the mode was seized on: a new window or tab has
 # its own binding set (set_bindings + clone_canvas_bindings), and the
 # predecessors latched on the parent do not describe it.
 # ase::ui::sod_resume (ase_window.tcl:2039-2046) records the same, and it is
 # the load-bearing half of ruling D2 of issue 0201.  It re-latches by calling
 # rdw::_pick_seize, so the count follows that proc and cannot drift from it.
+#
+# `canvas` IS THE NAME OF A WINDOW CONTEXT, as `cmdmode::resume_all` and
+# `cmdmode::rehome` hand it over, and it is resolved to the canvas that shows
+# that context (`rdw::_pick_canvas`) before anything is asked of it.  In a tab
+# that is not the first the name is no widget; taken as it stands the resume
+# would fall back to the canvas the mode was on, and a return from a block
+# opened in its own window to a parent that lives in such a tab would leave
+# the mode on the window the user has just left.  A name that resolves to
+# nothing still falls back to the canvas the mode was on.
 proc rdw::pick_resume {{canvas {}}} {
     variable pick
     if {![info exists pick(suspended)]} { return 0 }
+    if {$canvas ne {}} { set canvas [rdw::_pick_canvas $canvas] }
     if {$canvas eq {} || ![winfo exists $canvas]} {
         set canvas {}
         catch {set canvas $pick(canvas)}
@@ -5607,6 +5828,96 @@ proc rdw::pick_resume {{canvas {}}} {
     return 1
 }
 
+# TAKE THE CANVAS AGAIN AFTER ANOTHER CLICK MODE WAS ENDED UNDERNEATH THIS ONE.
+#
+# This mode nests with the Calculator's pick and with ASE-L's Select On Design:
+# entered while one of them is up, it keeps that mode's scripts as its
+# predecessors.  Those two never hold the canvas together, so starting one ends
+# the other, and each has doors of its own that end it (a selector pressed
+# again, its window closed) -- also when this mode sits on top of it.  The mode
+# that is ended then writes ITS predecessors, the editor's, over this mode's
+# live scripts:
+# this mode would stay recorded as up with nothing bound, its sentence on the
+# status bar, while clicks select and its key, which re-arms in place, takes
+# nothing.  The doors that end one of those two modes call this proc straight
+# after the end:
+#   `calc::pick_end`               every end of a Calculator pick: its selector
+#                                  pressed again, another selector pressed, the
+#                                  Calculator window closed or destroyed
+#   `calc::pick_end_sod`           a selector armed over a Select On Design
+#   `ase::ui::select_on_design`    after its Calculator line, whether or not a
+#                                  pick was ended there, and again after it has
+#                                  ended a Select On Design that was up before
+#                                  it
+#   `ase::ui::close`               the ASE-L session window closed with its
+#                                  Select On Design up
+#
+# It seizes again on the canvas the mode is on, so the predecessors are what
+# that canvas holds now, and a mode that starts next stacks on top of this
+# one: Escape, Escape unwinds the two to a free canvas.  This mode is not
+# ended; Escape stays its only exit.
+#
+# The other way round -- this mode ended first from underneath one of those
+# two -- is answered by two counterparts of this proc, `ase::ui::sod_reseat`
+# and `calc::pick_reseat`, which `rdw::pick_end` calls.
+#
+# IT DOES NOTHING unless the mode is recorded up, is not suspended, its canvas
+# is a live widget, and the press slot of that canvas holds neither one of this
+# mode's own scripts (`rdw::pick_own_script`) nor the script of another mode
+# that is up (`rdw::_pick_overlaid`).  A canvas that is gone is asked nothing:
+# `bind` on a window that no longer exists raises.  The last test is what makes
+# it safe to call when nothing was ended underneath: with this mode at the
+# BOTTOM of the stack the press slot holds the script of the mode on top of it,
+# and seizing then would put this mode over a mode that is up, with that mode's
+# scripts as the predecessors; once that mode had ended, this mode's own Escape
+# would hand those dead scripts back to a canvas no mode holds.  That test asks
+# `cmdmode`, which also knows this mode's own scripts; the test on this mode's
+# own scripts stands in front of it because this file loads without `cmdmode`
+# too, and there it is the only thing that says the canvas is already this
+# mode's.  Answers 1 when it seized, else 0.
+proc rdw::pick_reseat {} {
+    variable pick
+    if {![rdw::have_tk]} { return 0 }
+    if {![info exists pick(canvas)] || [info exists pick(suspended)]} { return 0 }
+    set cv $pick(canvas)
+    if {$cv eq {} || ![winfo exists $cv]} { return 0 }
+    set now [bind $cv <ButtonPress-1>]
+    if {[rdw::pick_own_script $now]} { return 0 }
+    if {[rdw::_pick_overlaid $cv $now]} { return 0 }
+    rdw::_pick_seize $cv
+    return 1
+}
+
+# DOES A CLICK MODE THAT IS UP HOLD `script` IN THE PRESS SLOT OF `cv`?  Every
+# click mode tells `cmdmode` what it holds on a canvas and what each slot held
+# before it (`rdw::pick_held` is this mode's answer), and `cmdmode::pristine`
+# reads those lists: handed a slot and the script it holds now, it answers what
+# the slot would hold with no mode up.  A script no mode holds comes back
+# unchanged, so an answer that is not the script itself means a mode holds it.
+# 0 where `cmdmode` cannot be asked.
+proc rdw::_pick_overlaid {cv script} {
+    if {![llength [info commands ::cmdmode::pristine]]} { return 0 }
+    set under $script
+    catch {set under [::cmdmode::pristine $cv <ButtonPress-1> $script]}
+    return [expr {$under ne $script ? 1 : 0}]
+}
+
+# IS ANOTHER CLICK MODE THAT IS UP SEIZED OVER THIS ONE ON `cv`?  1 when the
+# press slot of `cv` holds a script that is not one of this mode's own
+# (`rdw::pick_own_script`) and that a mode that is up holds there
+# (`rdw::_pick_overlaid`).  0 in every other state: this mode's own script in
+# the slot, the editor's, a script no mode says it holds, a canvas that is no
+# widget, no Tk, and where `cmdmode` cannot be asked.  `rdw::_hint_sync` asks
+# it before it writes the sentence, on every tick and every pointer motion, so
+# it reads one binding and raises nothing.
+proc rdw::_pick_covered {cv} {
+    if {$cv eq {} || ![rdw::have_tk] || ![winfo exists $cv]} { return 0 }
+    set now {}
+    if {[catch {set now [bind $cv <ButtonPress-1>]}]} { return 0 }
+    if {[rdw::pick_own_script $now]} { return 0 }
+    return [rdw::_pick_overlaid $cv $now]
+}
+
 # ⚠ AT SOURCE TIME, AND THAT IS SAFE.  cmdmode.tcl is pure Tcl and is sourced
 # at xschem.tcl:16760, BEFORE this file at :16790; ase_window.tcl:2055 already
 # registers the same way.  Nothing here touches Tk, so --nogui is unaffected --
@@ -5624,7 +5935,7 @@ proc rdw::pick_resume {{canvas {}}} {
 # what the headless arm of row K9 measures.
 proc rdw::_register_cmdmode {} {
     if {![llength [info commands ::cmdmode::register]]} { return 0 }
-    ::cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume
+    ::cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume rdw::pick_held
     return 1
 }
 rdw::_register_cmdmode

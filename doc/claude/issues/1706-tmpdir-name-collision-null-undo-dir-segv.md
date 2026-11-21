@@ -239,3 +239,80 @@ The defect comes from upstream; the fork did not introduce it.
 - The fence proposed under *Open items* still stands. Add a row driving a failed `init_undo()` through
   `xschem set no_undo 0` plus one edit, and one through a Verilog netlist. Each must exit
   cleanly.
+
+## Third sighting, 2026-11-19: one case of a full regression run, lost after all its checks had passed
+
+Seen while issue 1724 was being reviewed. It is not caused by that work, and nothing here
+changes the claim on the stamp line. What follows is read off two files the run left; the
+run was not repeated.
+
+### What was seen
+
+A full regression run in a clone (`/home/analog/g1724`, pid 1865558, started 15:02:56,
+1750 s), taken while ten review agents were starting xschem on the same machine, each
+through `tests/headless/run_suites.sh` on its own private Xvfb. Its trailer:
+
+    T1-RUN-END pid=1865558 cases=224 blocks=223 counted_failures=2 skips=13 elapsed=1750s end=2026-11-19 15:32:06
+
+Both counted lines are one case, `headless/test_wave_subwindows` on the display arm:
+
+    headless/test_wave_subwindows.disp.log
+    FATAL: signal 11
+    HARNESS: headless/test_wave_subwindows (display arm) did not complete cleanly (exit=1, OVERALL_ok=1, died=1) -- crashed, aborted mid-script, or a check failed: FAIL
+    RESULT: ALL PASS (544 checks)
+    Total num fail: 2
+
+Every other block of that verdict reads `Total num fail: 0`. The case's own log, in the
+order it printed:
+
+    create_tmpdir(): failed to create /tmp/xschem_web_cgagaegaea, aborting
+    xinit(): problems creating /tmp/xschem_web_xxxx dir
+    ...
+    create_tmpdir(): failed to create /tmp/xschem_undo_ffceaebeca, aborting
+    init_undo(): problems creating tmp undo dir, Undo will be disabled
+    init_undo(): Check permissions in /tmp
+    ...
+    OVERALL: ok (544 checks)
+    RESULT: ALL PASS (544 checks)
+    rename dir (null) to /tmp/xschem_emergencysave_untitled_bbgdbdgdbg failed
+    EMERGENCY SAVE DIR: /tmp/xschem_emergencysave_untitled_bbgdbdgdbg
+
+    FATAL: signal 11
+    while editing: untitled
+
+The first failure is at the head of the log, at startup (the `xschem_web_` directory of
+`xinit()`); the second comes while the suite is running, when a context asks for its undo
+directory. The suite then ran to its end with every check passing, printed its completion
+line, and died at teardown: the `(null)` of the emergency save's `rename` is the failed
+context's `undo_dirname`, the route "What the code does" item 3 describes.
+
+Three runs of the same suite alone afterwards, in the same clone, each ended `RESULT: ALL
+PASS (544 checks)`.
+
+### What it adds
+
+- **The collision does not need a harness that starts its own runs together.** The
+  regression driver is serial. The processes that shared its second were other sessions'
+  suite runs on the same machine. One of the review agents had started sixteen display
+  runs of one suite in one second at 15:28:52, and reports that several of them printed
+  the same two names, `xschem_web_cgagaegaea` and `xschem_undo_ffceaebeca`, before four of
+  them died the same way.
+- **The names are all from the first seven letters**, as item 2 of "What the code does"
+  predicts.
+- **A run can pass every check and still be scored as failed, or the other way round.**
+  The regression driver counts this case (a column-0 `FATAL:` line and exit 1, although
+  the completion line is there). `tests/headless/run_suites.sh` scored the review agent's
+  runs that died the same way as PASS, because it reads the result line.
+- **So a gate is exposed whenever anything else on the machine starts xschem in the same
+  second.** A red of this shape (the two `create_tmpdir(): failed` lines, a full pass,
+  then `FATAL: signal 11` at exit) is not a defect of the suite it lands on. Run the
+  suite again alone, and run a gate with nothing else starting xschem.
+
+Issue 1725, filed the same day by that review, is the crash half of this (a context whose
+undo directory could not be created crashes when it is closed), measured there with a
+missing temporary directory and no second process.
+
+Evidence: `lead4/t1_r3/results.1865558.log` and `lead4/t1_r3/test_wave_subwindows.disp.log`
+under that session's scratchpad
+(`/tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/`),
+which is session scratch and can be cleared; the lines above are copied from them.

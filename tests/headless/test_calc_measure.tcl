@@ -15973,8 +15973,11 @@ group AD {
               [mt_boolword [regexp {viewer_front} [mt_decomment [pcall info body ::calc::fn_measure]]] raises MISSING]] \
         {gates raises raises MISSING}
     # --- the pick says it where the user is looking ----------------------------
-    # The echo count is a RATCHET, not a baseline: R208e's current selectors
-    # added three (empty canvas, not a source, an empty source name) -> 11.
+    # The echo count is a RATCHET, not a baseline.  In the current selectors' arm
+    # (calculator.md R208e and R208f) the sites are the notes said before the last
+    # sentence, the plan's refusal and the lookups' failure; with the voltage arm's
+    # refusals, the no-pointer refusal and the hit itself they are the count this
+    # row expects.
     check "AD every sentence a CLICK produces goes through `calc::pick_echo`, which writes the design window's own status slot as well as the Calculator's -- because the pick now RAISES the schematic over the Calculator, so `.calc.status.msg` is behind another window for the whole gesture.  It is written through `pick(prompt)` so the 80 ms pump keeps it up against C blanking the slot" \
         [list [regexp -all {calc::status \[} [mt_decomment [pcall info body ::calc::pick_click]]] \
               [regexp -all {calc::pick_echo} [mt_decomment [pcall info body ::calc::pick_click]]] \

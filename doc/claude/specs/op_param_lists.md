@@ -310,6 +310,107 @@ turns anything off and is not a toggle; `Ctrl-6` is the only off switch.
   item B5:** Tk buttons do not take focus on X, which is the only reason the
   button column currently hands the keyboard back; an entry, a listbox, or a
   `-takefocus 1` widget changes that.
+* ⚠ **THE SEIZED SET AS OF 2026-11-19 (issue 1724), which the bullets above predate.**
+  All three click modes now hold `<Double-Button-1>` as well: Tk gives the second
+  press of a double click to the most specific binding, the editor binds that
+  sequence on every design canvas (`set_bindings`), and with only the press seized
+  the second press reached the editor in the middle of a mode. **Measured** with
+  real events and the Results window's mode up: one dump, then the editor's
+  property dialog on the device with the device selected (stock bindings), or
+  connected-select (Cadence-style profile), against "clicking will not change the
+  selected set". `rdw::_pick_seize` now takes five sequences (the press, the
+  release, Escape, the held motion, the double click) and **swallows** the second
+  press, so a double click on a device is ONE dump: the first press's dump re-lays
+  the windows out, C takes the un-snapped mouse pair from those layout events too
+  (issue 1659), and a second dump was measured to be resolved at a point nobody
+  clicked. `rdw::pick_release` hands the editor's script back verbatim.
+  ASE-L's `select_on_design` holds six, through `ase::ui::sod_seize` and the table
+  `ase::ui::sod_slots`: the press, the double click (both the pick), the release,
+  the motion with the button held (issue 1304, held since the same day), Escape and
+  the canvas's `<Destroy>`. It and the Calculator's pick now END EACH OTHER instead
+  of stacking. The Results window's mode is ended by neither and ends neither; ended
+  out of order with either, the canvas could be left seized, and entering and ending
+  the mode whose scripts were left frees it (issue 0202 has the measured sequences).
+  No door that was found leaves it seized any more: (d) and (g) below.
+  Rows B0d and V3b of `tests/headless/test_rdw_keys_1245.tcl` and K14 and HT4b of
+  `tests/headless/test_rdw_window_1245.tcl`.
+  ⚠ **AND SINCE THE SAME DAY, IN ALL THREE CLICK MODES** (the third repair of the same
+  issue), here as it reads for the Results window's mode:
+  **(a) no seize keeps its own scripts as the predecessors.** `rdw::_pick_seize` has
+  the guard its siblings had (`rdw::pick_own_script`; with no record the double
+  click falls back to the editor's script, `rdw::pick_dbl_editor`), so a canvas
+  left on this mode's dead scripts is freed by its key and ESC (rows XP3, XP4 and
+  K20);
+  **(b) issue 1307's clone route is closed.** Each mode tells `cmdmode` what it
+  holds (`rdw::pick_held`, the fourth argument of its `cmdmode::register` call) and
+  `clone_canvas_bindings` copies what the canvas holds underneath: a window made
+  with `xschem new_schematic create_window` while the mode is up carries the
+  editor's bindings and a click there selects (rows XP5, XP6 and K21). The other
+  route issue 1307 carries, a mode re-armed during a descend's wait, is unchanged;
+  **(c) the press hands its own position to the engine before the click is
+  resolved** (`xschem callback %W 6 %x %y 0 0 0 %s` in front of `rdw::pick_click`),
+  so a click no longer depends on the un-snapped pair surviving a layout event
+  between the last pointer motion and the press (issue 1659; rows XP0 to XP2 and
+  K19). The second press of a double click is still swallowed: one dump.
+  ⚠ **AND FROM THE FOURTH REPAIR OF THAT ISSUE, THE SAME DAY**, for the Results window's
+  mode:
+  **(d) it takes the canvas again when another click mode is ended underneath it.**
+  Select On Design and the Calculator's pick end each other wherever the other sits,
+  also under this mode, and the ended mode's release wrote the editor's scripts over
+  this mode's live ones: recorded as up, nothing bound, its sentence on the bar, its
+  key arming nothing. `rdw::pick_reseat` (called by `ase::ui::select_on_design` and by
+  `calc::pick_end_sod`) seizes again in exactly that state and does nothing in every
+  other, so the new mode stacks on this one and ESC, ESC unwinds (row XP7; band PG27 of
+  `tests/headless/test_calc_pick.tcl`). Since the closing pass of that issue, the same
+  day, every other door that ends one of those two modes asks it as well: the
+  Calculator's own (`calc::pick_end`: the armed selector pressed again, another selector
+  pressed, the Calculator window closed) and the ASE-L session window's close
+  (`ase::ui::close`). The seize takes the keyboard with the canvas, so after a pick was
+  ended from the Calculator window the keyboard is on the schematic, where this mode's
+  ESC is (calculator.md R307; rows of band PG27, and row I11 of
+  `tests/headless/test_ase_interact.tcl`);
+  **(e) the keys arm it in a tab that is not the first, and a resume lands on the
+  canvas that shows the tab.** `rdw::pick_start` and `rdw::pick_resume` resolve the
+  window context through `rdw::_pick_canvas` (the name itself when it is a widget, else
+  the `.drw` of the toplevel `xschem windows` lists for it), where they used to test the
+  context's name as a widget and give up: the tab half of issue 1387 (rows XP8 and
+  HT14). Since the closing pass `rdw::_focus_canvas` resolves the name the same way, so
+  after a dump made in such a tab the keyboard goes back to the schematic, as in the
+  first tab (a leg of row XP8);
+  **(f) a descend releases a stack from the top down** (`cmdmode::release_order`), so
+  this mode on top of Select On Design or of a Calculator pick comes up where the
+  descend lands as it was, and the canvases end free (issue 0202; leg DS8 of
+  `tests/headless/test_cmdmode_descend_0201.tcl`, into a new window and in the same
+  window, and a row of band PG27 for the Calculator's pick).
+  ⚠ **AND FROM THE LAST BUILD OF THAT ISSUE, THE SAME DAY**, for the Results window's
+  mode:
+  **(g) ended first from under another click mode, it asks that mode to take the canvas
+  again.** Select On Design or a Calculator selector can be entered over this mode, and
+  each then keeps this mode's scripts as what the canvas held before it. Escape pressed
+  in the Results window (`bind .rdw <Key-Escape>`, which ends the mode and leaves the
+  window open) reaches `rdw::pick_end` while the canvas's own Escape is the other
+  mode's, and the release wrote the editor's scripts over that mode's live ones: it
+  stayed recorded as up with nothing bound, and ended later it handed this mode's dead
+  scripts back to the canvas. `rdw::pick_end` now runs `catch {::ase::ui::sod_reseat}`
+  and `catch {::calc::pick_reseat}` after its record is gone, when its release released
+  a mode; each seizes again only in exactly that state (the counterparts of (d)'s
+  `rdw::pick_reseat`). The mode on top keeps its prompt, its clicks and its ESC, and one
+  ESC on the schematic leaves the canvas free. The keyboard is on the schematic
+  afterwards, also when Escape was pressed in the text pane (row E6 of
+  `tests/headless/test_rdw_keys_1245.tcl`, with Select On Design on top; rows of band
+  PG27 for a Calculator pick on top, ended by `rdw::pick_end`; row I12 of
+  `tests/headless/test_ase_interact.tcl`). Whether the keyboard should stay in the text
+  pane there is the user's to rule on;
+  **(h) its sentence is not written while another click mode sits on top of it.**
+  `rdw::_hint_sync` writes the slot only while `rdw::_pick_covered` answers 0 (the press
+  slot of the mode's canvas holds no script that is not this mode's own and that a mode
+  that is up declares to `cmdmode`); Select On Design's and the Calculator's prompt
+  timers have the same guard. Before it the two modes' sentences took turns on the
+  slot on every tick; now the slot shows the top mode's, and this mode's is back when
+  the mode on top ends (band PG28 of `tests/headless/test_calc_pick.tcl`). Everything
+  else `rdw::_hint_sync` does goes on while the mode is underneath: the tag on the
+  canvas, the record of the slot, the blanking of what it last wrote, and the tooltip,
+  which therefore still holds this mode's sentence over a slot that shows another's.
 
 ### 2.6 Namespace already taken
 
@@ -1204,7 +1305,9 @@ shipped editing action for cadence-profile users only. Question Q5.
 > own" and it was backwards. A tab's `current_win_path` is `.x1.drw`, which is
 > **not a Tk widget** — tabs share the one real `.drw` — and its `top_path` is
 > empty, so C writes the shared bar. `rdw::_hint_slot` asks `winfo toplevel`;
-> and the pick mode does not arm in a tab at all, which is issue **1387**.)
+> and the pick mode does not arm in a tab at all, which is issue **1387**.
+> Since 2026-11-19 it does arm there, on the shared canvas with its sentence on
+> the shared bar: §2.5, item (e).)
 > `.statusbar.1`, the wide field, was **measured and refused**: it is C's
 > `statusmsg()` slot and `callback.c:10177` rewrites it on every event with no
 > `ui_state` guard, so one hover motion destroyed the sentence, and
@@ -1229,7 +1332,9 @@ shipped editing action for cadence-profile users only. Question Q5.
 > paths), `pick_end` after its `array unset`, `pick_resume`'s rehome and drop
 > path — plus the binding tag and the backstop timer, because a stale *click on
 > instance* after the mode has ended is an instruction for a click that will do
-> nothing.
+> nothing. (Since the last build of issue 1724 it does not write the sentence
+> while another click mode sits on top of this one, whose clicks the presses
+> then are; the tag, the record and the tip go on: §2.5, item (h).)
 >
 > The overflow tooltip the user asked for is `balloon_clipped` /
 > `balloon_off` / `label_clipped`, new beside `balloon` in `src/xschem.tcl`: a
@@ -3105,6 +3210,15 @@ Still open:
     A **real computed 0.0** is none of these and must still render `0`: a
     transistor that is off has `id = 0` and that is a measurement, not a hole.
     Collapsing absent and zero in **either** direction is a defect.
+    ⚖ **This landmine is about `savecurrents` and `@dev[param]`, not about every
+    way to read a terminal (issue 1724, 2026-11-19).** A `.probe I(<path>,<pin>)`
+    card puts a 0 V source in series with the pin, so the gate, source and bulk of
+    a sky130 FET each come back as a real vector, `i(x1.xm1:g)`, `i(x1.xm1:s)`,
+    `i(x1.xm1:b)`, on an ngspice that has terminal probes (`$?probe_version` = 1).
+    ASE-L writes that card for an Outputs row of that name, which Select On Design
+    queues for a click on the device's pin (`doc/claude/specs/ase_l.md` R-OUT17).
+    The operating-point annotation still reads `@dev[param]`, so everything above
+    stands for it unchanged.
 12. **`save m`, `save @m*[*]` and friends do not merely fail — they destroy the
     plot.** A card that matches nothing takes the whole operating point with it
     (R5's all-bogus case), so an over-eager wildcard is worse than no wildcard.

@@ -559,20 +559,62 @@ int find_closest_instance(double mx, double my, int override_lock)
  return -1;
 }
 
-/* Pin selection (doc/claude/specs/pin_selection.md): find the instance pin whose
- * point is within a tight pick radius of (mx,my). On hit, fill *r with
- * type=INST_PIN, n=instance index, col=pin index and return 1; else return 0.
- *
- * Deliberately NOT part of the find_closest_obj() cascade: it is invoked only from
- * the en_pin_select-gated click gesture (callback.c), so the other find_closest_obj
- * callers (hover, move-start, net-highlight) are unaffected. The radius equals the
- * ordinary wire/box pick distance (CADWIREMINDIST), scaled by zoom so it stays a
- * fixed on-screen tolerance; because a pin is a point, the cursor must sit
- * essentially on the pin for it to win. */
-int find_closest_pin(double mx, double my, Selected *r)
+/* One instance pin inside the pin pick radius of a point: instance index, pin
+ * index and the SQUARED distance from the point (the walk never takes a root). */
+typedef struct
 {
-  double t, threshold, d, best = DBL_MAX, xx, yy;
-  int i, j, rects, bestn = -1, bestp = -1;
+  int n;
+  int pin;
+  double d;
+} Pin_near;
+
+/* 1 when (mx,my) lies inside the drawn rectangle of pin j of instance i, edges
+ * included. The rectangle is the symbol's PINLAYER rect carried through the
+ * instance's rotation, flip and origin, the way get_inst_pin_coord() carries its
+ * centre. A coordinate that is not a number is outside: every comparison with a
+ * NaN is false. */
+static int point_in_inst_pin_rect(int i, int j, double mx, double my)
+{
+  const xRect *rct = (xctx->inst[i].ptr + xctx->sym)->rect[PINLAYER] + j;
+  const int rot = xctx->inst[i].rot, flip = xctx->inst[i].flip;
+  double x1, y1, x2, y2, tmp;
+
+  ROTATION(rot, flip, 0.0, 0.0, rct->x1, rct->y1, x1, y1);
+  ROTATION(rot, flip, 0.0, 0.0, rct->x2, rct->y2, x2, y2);
+  x1 += xctx->inst[i].x0; y1 += xctx->inst[i].y0;
+  x2 += xctx->inst[i].x0; y2 += xctx->inst[i].y0;
+  if(x1 > x2) { tmp = x1; x1 = x2; x2 = tmp; }
+  if(y1 > y2) { tmp = y1; y1 = y2; y2 = tmp; }
+  return mx >= x1 && mx <= x2 && my >= y1 && my <= y2;
+}
+
+/* THE ONE PIN HIT RULE, shared by find_closest_pin() and find_pins_at() so the two
+ * cannot disagree about which pins a point reaches: walk every instance pin within
+ * the pick radius of (mx,my). The radius equals the ordinary wire/box pick distance
+ * (CADWIREMINDIST), scaled by zoom so it stays a fixed on-screen tolerance, and it
+ * is inclusive.
+ *
+ * A point inside a pin's own drawn rectangle reaches that pin as well, whatever
+ * the zoom (issue 1724). The radius is a distance on the screen, so zoomed far
+ * in it is smaller than the pin's square, and a click on the square's corner
+ * then missed the pin it was plainly on. The distance recorded for such a pin is
+ * still the one to its centre, so the nearest-first order is unchanged.
+ *
+ * *best gets the nearest pin (n = -1 when no pin is in range); on an exact tie the
+ * lowest instance index, then the lowest pin index, because the walk is in that
+ * order and only a strictly smaller distance replaces the holder.
+ * With `all` non-NULL every pin in range is also appended to *all, in walk order
+ * (instance, then pin), and *nall counts them; the array is my_realloc'd as it
+ * grows and the caller frees it. `all` NULL allocates nothing, which is what the
+ * click gestures calling find_closest_pin() need.
+ * Returns the number of pins in range. */
+static int pins_in_pick_radius(double mx, double my, Pin_near *best, Pin_near **all, int *nall)
+{
+  double t, threshold, d, xx, yy;
+  int i, j, rects, count = 0, size = 0;
+
+  best->n = -1; best->pin = -1; best->d = DBL_MAX;
+  if(all) { *all = NULL; *nall = 0; }
   /* pins live on PINLAYER: if that layer is disabled the pins are not drawn, so
    * (like find_closest_box/find_closest_arc) do not hit-test invisible pins */
   if(!xctx->enable_layer[PINLAYER]) return 0;
@@ -591,14 +633,90 @@ int find_closest_pin(double mx, double my, Selected *r)
     for(j = 0; j < rects; ++j) {
       get_inst_pin_coord(i, j, &xx, &yy);
       d = (mx - xx) * (mx - xx) + (my - yy) * (my - yy);
-      if(d <= threshold && d < best) { best = d; bestn = i; bestp = j; }
+      /* IN RANGE is "d could become the best AND (d <= threshold OR the point is
+       * inside the pin's own rectangle)", spelled so a distance that is not a
+       * number is OUT: every comparison with a NaN is false, so the plain
+       * `d > threshold` let a pin at a NaN coordinate through, counted but never
+       * the holder, and find_closest_pin() answered instance -1. The first test
+       * also keeps a pin out when both d and the threshold overflowed. */
+      if(!(d < DBL_MAX)) continue;
+      if(!(d <= threshold) && !point_in_inst_pin_rect(i, j, mx, my)) continue;
+      if(d < best->d) { best->d = d; best->n = i; best->pin = j; }
+      if(all) {
+        if(count >= size) {
+          size = size ? 2 * size : 8;
+          my_realloc(_ALLOC_ID_, all, (size_t)size * sizeof(Pin_near));
+        }
+        (*all)[count].n = i; (*all)[count].pin = j; (*all)[count].d = d;
+      }
+      ++count;
     }
   }
-  if(bestn >= 0) {
-    r->type = INST_PIN; r->n = bestn; r->col = (unsigned int)bestp;
-    return 1;
-  }
+  if(all) *nall = count;
+  return count;
+}
+
+/* Pin selection (doc/claude/specs/pin_selection.md): find the instance pin whose
+ * point is within a tight pick radius of (mx,my). On hit, fill *r with
+ * type=INST_PIN, n=instance index, col=pin index and return 1; else return 0.
+ *
+ * Deliberately NOT part of the find_closest_obj() cascade: its callers are the
+ * en_pin_select-gated click gestures (callback.c), the same-net pick (select.c) and
+ * the read-only `xschem pin_at` probe, so the other find_closest_obj callers (hover,
+ * move-start, net-highlight) are unaffected. Because a pin is a point, the cursor
+ * must sit essentially on the pin for it to win; the radius and the tie-break are
+ * pins_in_pick_radius()'s. */
+int find_closest_pin(double mx, double my, Selected *r)
+{
+  Pin_near best;
+
+  if(!pins_in_pick_radius(mx, my, &best, NULL, NULL)) return 0;
+  r->type = INST_PIN; r->n = best.n; r->col = (unsigned int)best.pin;
+  return 1;
+}
+
+/* qsort order for find_pins_at(): nearest first; at equal distance the lowest
+ * instance index, then the lowest pin index -- find_closest_pin()'s own tie-break,
+ * spelled out because qsort() is not stable. */
+static int pin_near_cmp(const void *a, const void *b)
+{
+  const Pin_near *pa = (const Pin_near *)a;
+  const Pin_near *pb = (const Pin_near *)b;
+
+  if(pa->d < pb->d) return -1;
+  if(pa->d > pb->d) return 1;
+  if(pa->n != pb->n) return pa->n < pb->n ? -1 : 1;
+  if(pa->pin != pb->pin) return pa->pin < pb->pin ? -1 : 1;
   return 0;
+}
+
+/* EVERY instance pin find_closest_pin() could have answered for (mx,my) -- the same
+ * radius, lock and PINLAYER rule, because it is the same walk -- nearest first, so
+ * element 0 is find_closest_pin()'s answer. For a caller that must choose among
+ * pins sharing a point (a device pin abutting a label's), which the single nearest
+ * pin cannot express. Read-only: it writes neither .sel nor sel_array.
+ *
+ * Returns the number of pins and sets *hits to a my_malloc'd array of that many
+ * Selected (type=INST_PIN, n=instance, col=pin) which the caller my_free's; with
+ * no pin in range it returns 0 and *hits is NULL. */
+int find_pins_at(double mx, double my, Selected **hits)
+{
+  Pin_near best, *all = NULL;
+  int i, n = 0;
+
+  *hits = NULL;
+  pins_in_pick_radius(mx, my, &best, &all, &n);
+  if(n > 0) {
+    qsort(all, (size_t)n, sizeof(Pin_near), pin_near_cmp);
+    *hits = my_malloc(_ALLOC_ID_, (size_t)n * sizeof(Selected));
+    for(i = 0; i < n; ++i) {
+      (*hits)[i].type = INST_PIN;
+      (*hits)[i].n = all[i].n;
+      (*hits)[i].col = (unsigned int)all[i].pin;
+    }
+  }
+  my_free(_ALLOC_ID_, &all);
+  return n;
 }
 
 

@@ -42,7 +42,8 @@
 #
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. NEW AT 57 with all three
 # binaries present, both arms, AND RAISED 57 -> 76 by issue 1472, which wired
-# section CS's two checks to a user: sections SD (8) and CD (11). EX1-EX3, M21b,
+# section CS's two checks to a user: sections SD (8) and CD (11), AND RAISED
+# AGAIN by issue 1724, which added rows VS3c, VS3d, VS4a2 and EX4. EX1-EX4, M21b,
 # CS4/apt, CS4/fork and SD7/apt, SD7/fork self-skip, uncounted, when their binary
 # or installed tree is absent. The sabotage campaigns are in
 # doc/claude/ase_analyses_batch/receipts/46-stage-16-deck.md and
@@ -141,24 +142,31 @@ v_wr $STUB "#!/bin/sh\necho ran >> '$MARK'\nexit 0\n" 0755
 set P /zz/bin/ngspice
 set AN_ALL   {op dc ac tran noise tf pz sens disto sp pss}
 set AN_NOPSS {op dc ac tran noise tf pz sens disto sp}
+## `hier_probes` (issue 1724) joined the shapes on 2026-11-20, each as the real
+## probe answered that day: 1 on the fork's ver_53 build, which is the complete
+## answer D_FORK stands for, and 0 on apt 45.2, on stock 47 and on the fork's
+## own older ver_50 build (D_V50) -- section EX re-takes all four.
 set D_FORK [dict create known 1 usable 1 appendwrite 1 blanket_op_save 0 \
   hier_op_names 1 casemode_detected {fold preserve distinguish} \
-  altshow_op_dump 1 analyses_available $AN_ALL analyses_probed $AN_ALL \
+  altshow_op_dump 1 hier_probes 1 analyses_available $AN_ALL analyses_probed $AN_ALL \
   one_vector_write 1 keyword_case 1 gnd_literal 1 \
   version_line ngspice-46+ build_date {Fri Sep 11 03:44:45 UTC 2026}]
 set D_APT [dict merge $D_FORK [dict create casemode_detected fold \
-  altshow_op_dump 0 one_vector_write 0 keyword_case 0 gnd_literal 0 \
+  altshow_op_dump 0 hier_probes 0 one_vector_write 0 keyword_case 0 gnd_literal 0 \
   version_line ngspice-45.2 build_date {Fri Sep 12 11:58:13 UTC 2025}]]
 set D_UP47 [dict merge $D_FORK [dict create casemode_detected fold \
-  one_vector_write 0 keyword_case 0 gnd_literal 0 \
+  hier_probes 0 one_vector_write 0 keyword_case 0 gnd_literal 0 \
   analyses_available $AN_NOPSS build_date {Thu Sep 10 21:51:07 UTC 2026}]]
+set D_V50 [dict replace $D_FORK hier_probes 0]
 
 set W_OP {Its fast dump prints wrong numbers, so operating points are saved one device at a time; no ngspice release has the fix yet.}
 set W_TWO {Two kinds of command line are misread by it; ASE-L warns before a run that uses one.}
 set W_DOOR {Press Detect in the Simulators window to try again.}
+set W_HIER {terminal currents of subcircuit pins or of devices inside subcircuits}
 set S_FORK "$P can do everything ASE-L offers."
-set S_APT  "$P can do everything ASE-L offers except case-sensitive net names and the fast operating-point dump. $W_OP $W_TWO"
-set S_UP47 "$P can do everything ASE-L offers except case-sensitive net names. $W_TWO"
+set S_APT  "$P can do everything ASE-L offers except case-sensitive net names, the fast operating-point dump and $W_HIER. $W_OP $W_TWO"
+set S_UP47 "$P can do everything ASE-L offers except case-sensitive net names and $W_HIER. $W_TWO"
+set S_V50  "$P can do everything ASE-L offers except $W_HIER."
 
 proc v_frame {caps}  { return [v_ans ase::variant_frame ngspice $caps] }
 proc v_sent {caps}   { global P ; return [v_ans ase::variant_sentence ngspice $P $caps] }
@@ -178,13 +186,24 @@ check {VS1 nothing measured -- no answer, an empty one, a timed-out one -- is th
 check {VS2 the fork's shape: measured and nothing missing -- the delta shrinks to nothing} \
   [list [v_frame $D_FORK] [v_keep [v_sent $D_FORK]]] [list complete $S_FORK]
 
-check {VS3 apt 45.2's shape: case-sensitive names and the fast dump are named, the dump's reason and the command-line door follow} \
+check {VS3 apt 45.2's shape: case-sensitive names, the fast dump and terminal currents below the top level are named, the dump's reason and the command-line door follow} \
   [list [v_frame $D_APT] [v_keep [v_sent $D_APT]]] [list missing $S_APT]
 
-check {VS3b stock 47's shape: only case-sensitive names are missing, and its absent PSS is not mentioned} \
+check {VS3b stock 47's shape: case-sensitive names and terminal currents below the top level are missing, and its absent PSS is not mentioned} \
   [list [v_frame $D_UP47] [v_keep [v_sent $D_UP47]] \
         [expr {[string first PSS [string toupper [v_sent $D_UP47]]] < 0}]] \
   [list missing $S_UP47 1]
+
+## ISSUE 1724: the clause for a build that probes top-level devices only. It is
+## the LAST gap named, behind the fast dump, and the asides follow it.
+check {VS3c the fork's older build, which saves no terminal current below the top level: that one gap is named, alone, and the sentence is not the complete one} \
+  [list [v_frame $D_V50] [v_keep [v_sent $D_V50]] [expr {[v_sent $D_V50] ne $S_FORK}]] \
+  [list missing $S_V50 1]
+check {VS3d the clause stands after the fast dump's and before the asides: in apt 45.2's sentence the dump, the terminal currents, the dump's reason and the command-line door come in that order} \
+  [list [expr {[string first {the fast operating-point dump and terminal currents} [v_sent $D_APT]] > 0}] \
+        [expr {[string first $W_HIER [v_sent $D_APT]] < [string first $W_OP [v_sent $D_APT]]}] \
+        [expr {[string first $W_OP [v_sent $D_APT]] < [string first $W_TWO [v_sent $D_APT]]}]] \
+  {1 1 1}
 
 ## ⚠ THE FOURTH FRAME. Driven by the ABSENCE the probe reports -- the slow box
 ## whose budget killed one leg must not be told "can do everything".
@@ -193,6 +212,16 @@ dict set D_PART unmeasured_keys {altshow_op_dump timeout}
 check {VS4 THE FOURTH FRAME: measured, but one measurement did not finish -- never "can do everything"} \
   [list [v_frame $D_PART] [v_keep [v_sent $D_PART]]] \
   [list partial "$P can do everything ASE-L offers, except that one measurement did not finish: the fast operating-point dump. $W_DOOR"]
+
+## The same cut takes `hier_probes` with it in a real probe (both ride deck C);
+## taken alone here, it is its own unfinished measurement and never a gap.
+set D_HIERCUT [dict remove $D_FORK hier_probes]
+dict set D_HIERCUT unmeasured_keys {hier_probes timeout}
+check {VS4a2 a build whose answer about terminal currents below the top level did not come back is the fourth frame, said as an unfinished measurement -- with a reason token and with the key simply absent -- and is never told it cannot} \
+  [list [v_frame $D_HIERCUT] [v_keep [v_sent $D_HIERCUT]] \
+        [expr {[v_sent [dict remove $D_FORK hier_probes]] eq [v_sent $D_HIERCUT]}] \
+        [expr {[string first $W_HIER [v_sent $D_HIERCUT]] < 0}]] \
+  [list partial "$P can do everything ASE-L offers, except that one measurement did not finish: whether it saves terminal currents inside subcircuits. $W_DOOR" 1 1]
 
 set D_LEGD_F [dict remove $D_FORK one_vector_write keyword_case gnd_literal]
 dict set D_LEGD_F unmeasured_keys {one_vector_write timeout keyword_case timeout gnd_literal timeout}
@@ -205,7 +234,7 @@ set D_LEGD_A [dict remove $D_APT one_vector_write keyword_case gnd_literal]
 dict set D_LEGD_A unmeasured_keys {one_vector_write timeout keyword_case timeout gnd_literal timeout}
 check {VS4c the slow box on apt 45.2: the measured gaps AND the unfinished measurement, in one sentence} \
   [list [v_frame $D_LEGD_A] [v_keep [v_sent $D_LEGD_A]]] \
-  [list partial "$P can do everything ASE-L offers except case-sensitive net names and the fast operating-point dump, and one measurement did not finish: how it reads two kinds of command line. $W_OP $W_DOOR"]
+  [list partial "$P can do everything ASE-L offers except case-sensitive net names, the fast operating-point dump and $W_HIER, and one measurement did not finish: how it reads two kinds of command line. $W_OP $W_DOOR"]
 
 set D_TWO [dict remove $D_FORK casemode_detected altshow_op_dump]
 dict set D_TWO unmeasured_keys {casemode_detected timeout altshow_op_dump timeout}
@@ -287,7 +316,7 @@ set VS12 {} ; set VSREAL 0
 foreach s $VSALL {
   if {$s eq {} || $s eq {NOPROC} || [string match RAISED:* $s]} { continue }
   incr VSREAL
-  foreach w {basic 47 46 45 version pss altshow keyword_case gnd_literal casemode appendwrite hier_op unmeasured known} {
+  foreach w {basic 47 46 45 version pss altshow keyword_case gnd_literal casemode appendwrite hier_op hier_probes probe_version unmeasured known} {
     if {[string match -nocase "*$w*" $s]} { lappend VS12 [list $w $s] }
   }
 }
@@ -1052,10 +1081,24 @@ if {![file executable $FORK]} {
 ## ⚠ THE ORDINARY CAPABILITY PROBE, which Detect already runs: seven short -b
 ## decks, none of which crashes any of the three binaries. No linter pattern is
 ## ever run on a real binary.
+## ISSUE 1724 moved the fork's ver_50 row and added a fourth. ver_50 used to
+## read the complete sentence; measured 2026-11-20 it saves no terminal current
+## below the top level, as apt 45.2 and stock 47 do not, so it now names that
+## one gap. The complete sentence is ver_53's, the fork build the feature went
+## into -- probed from a COPY taken into this suite's scratch, never in place:
+## that build tree is rebuilt under its own session.
+set EXV53 [file join [test_real_home] dev ngspice-ver_53 build-ver_53 src ngspice]
+set EXV53C [file join $scratch ex_ngspice_v53]
+if {[file executable $EXV53]} {
+  ## `file normalize` follows every link of a path but one in its LAST
+  ## component, so one more component is put behind it and taken off again.
+  catch {file copy -force [file dirname [file normalize [file join $EXV53 __ex__]]] $EXV53C}
+}
 set EXBINS [list \
   apt  /usr/bin/ngspice missing $S_APT \
-  fork /home/analog/dev/ngspice/build-ver_50/src/ngspice complete $S_FORK \
-  up47 /home/analog/.claude/projects/-home-analog-dev-ngspice/workpad/builds/upstream47/src/ngspice missing $S_UP47]
+  fork /home/analog/dev/ngspice/build-ver_50/src/ngspice missing $S_V50 \
+  up47 /home/analog/.claude/projects/-home-analog-dev-ngspice/workpad/builds/upstream47/src/ngspice missing $S_UP47 \
+  v53  $EXV53C complete $S_FORK]
 set exn 0
 foreach {extag exbin exframe exsent} $EXBINS {
   incr exn

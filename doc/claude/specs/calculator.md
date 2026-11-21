@@ -511,7 +511,7 @@ analysis of the current result's raw file whatever analysis is current.
 | id | row | Label | ngspice / xschem source | Emits into buffer | v1 |
 |---|---|---|---|---|---|
 | `vt` | 1 | vt | tran raw, node voltage | `vt(<net>)` (R208c) | ✔ |
-| `it` | 2 | it | tran raw, source branch current | `it(<src>)` (R208c; picked since R208e) | ✔ |
+| `it` | 2 | it | tran raw, a device terminal's current or a source's branch current | a pin: `it(<the raw's name of the terminal>)` (R208f); a source: `it(<src>)` (R208c; picked since R208e) | ✔ |
 | `vf` | 1 | vf | ac raw, node voltage (complex) | `vf(<net>)` (R208c) | ✔ |
 | `if` | 2 | if | ac raw, terminal current | `if(<dev>)`, as `it` | ✔ |
 | `vdc` | 1 | vdc | op raw / `.op` values | `vdc(<net>)` (R208c) | ✔ |
@@ -542,10 +542,11 @@ analysis of the current result's raw file whatever analysis is current.
   tree's one tooltip mechanism.
 - **R203** Voltage selectors pick a **net**; current selectors pick an **instance
   terminal**. The two use different pick modes and different hit tests.
-  ⚠ **Amended by R208e (2026-10-12)**: the current selectors pick a **voltage source or
-  ammeter instance by its body**, not a terminal; device terminal currents are refused
-  naming them as not supported, because a pin hit test has no Tcl door. A voltage selector
-  must refuse a terminal-only click and vice versa, with a status message — not silently.
+  ⚠ **Amended by R208e (2026-10-12) and R208f (issue 1724)**: the current selectors pick a
+  **device pin**, for that terminal's current (R208f), or a **voltage source or ammeter
+  instance by its body**, for its branch current (R208e). A voltage selector must refuse a
+  terminal-only click, and a current selector a click that is on neither, with a status
+  message — not silently.
   The classification is `calc::pick_classify {hit net at}`, a **pure** function of three
   values already measured at the click site, so every refusal is drivable with no
   schematic and no canvas:
@@ -569,6 +570,10 @@ analysis of the current result's raw file whatever analysis is current.
   offset 0.0001), so it is asked at the snapped pair where it can answer at all, and all
   it can do is turn `body` into `terminal` — i.e. choose between two refusals. No
   insertion and no outcome turns on it.
+  ⚠ **The un-snapped pair a real click reads is the one its own press has just written**
+  (issue 1724, 2026-11-19): the press's script hands the press's position to the engine
+  before `calc::pick_click` runs, because the engine also takes that pair from the
+  canvas's `<Configure>` events (issue 1659). R307 has the measurement.
 - **R204** The emitted name is exactly what `xschem raw index <name>` resolves. **Before
   inserting, the Calculator verifies the name resolves in the current raw**; if it does
   not, it inserts nothing and reports which name failed. (This is the guard against L3/§3.1
@@ -653,8 +658,8 @@ analysis of the current result's raw file whatever analysis is current.
   ⚠ **Superseded by R208b**: the mode used to stay armed after a successful pick. Its
   other exits are `Escape` (R306), a re-click on the armed
   selector (R201), a click on another selector, the design window going away, a
-  navigation that takes the design out of that window's hierarchy stack, and closing the
-  Calculator (R307). A miss — empty canvas, a device body, a terminal, an unresolvable
+  navigation that takes the design out of that window's hierarchy stack, closing the
+  Calculator, and ASE-L's Select On Design being entered (both R307). A miss — empty canvas, a device body, a terminal, an unresolvable
   name, a wire with no resolvable name — refuses **with a sentence** and leaves the mode
   live, because a mode that ended on a mis-click would be unusable.
 - **R208b** **A pick that resolves a net is ONE-SHOT** — the user's correction of R208's
@@ -663,7 +668,7 @@ analysis of the current result's raw file whatever analysis is current.
   click on multiple nets in the schematic. so, ESC should not be required to exit that
   "mode"."* The name is inserted, the success sentence is written to both status
   channels, and the mode ends **on the release of that same click**: `::calc::selmode`
-  clears, the four seized slots are handed back byte-identically, and the design window's
+  clears, the five seized slots are handed back byte-identically, and the design window's
   slot keeps the success sentence in its neutral state until C next blanks it. The end
   waits for the release, not the press, because the press never reached C — handing the
   slots back mid-click would let a held drift reach C as a rubber band (`select_rect`
@@ -760,8 +765,8 @@ analysis of the current result's raw file whatever analysis is current.
     bracket (`calc::aq_run`), same guard (`calc::aq_guard`), same mixed refusal (*"Cannot
     evaluate: it() and vf() read different analyses"*), same case rule (`IT(v1)` and
     `Idc("v1")` are accepted). `calc::aq_analyses` is the eight-entry table the evaluator
-    reads; `calc::pick_analyses` keeps the four voltage ids the net pick serves, because the
-    current SELECTORS are not armed yet (picking a terminal is PLAN phase 6). `calc::aq_strip`
+    reads, and since R208e it IS `calc::pick_analyses`: the current selectors are armed
+    (a source by R208e, a device pin by R208f). `calc::aq_strip`
     rewrites a current token to `i(name)` for the engine and the save list
     (`ase::output_signal`, `calc::eval_text_signals`), and the infix translator reads all
     eight as signals (`calc::ix_wrappers`). The user's ruling that prompted them: *"in
@@ -848,26 +853,150 @@ analysis of the current result's raw file whatever analysis is current.
   the body** of an instance whose `cell::type` is `vsource` or `ammeter` inserts
   `it(<inst>)` (or `if`/`idc`/`is`), exactly as ASE-L's Select-On-Design maps such a click
   to `i(<inst>)`. The rule is **one proc**, `ase::ui::sod_source_at {hit}`, called by both
-  `ase::ui::sod_click` and `calc::pick_click`, so the two gestures cannot disagree about
+  `ase::ui::sod_click` and the Calculator's click (through `calc::pick_imeasure`, R208f),
+  so the two gestures cannot disagree about
   which devices have a current to pick. Everything else mirrors the voltage selectors:
-  the same arm (raise and focus the design, four seized slots, the prompt on the design
+  the same arm (raise and focus the design, five seized slots, the prompt on the design
   window's slot), the same analysis gate (`calc::pick_analyses` now holds all eight ids and
   `calc::aq_analyses` IS that table), R204's verify-then-insert read-back (the raw spells a
   branch current `i(vsq)`, so the token is `it(vsq)`), one-shot on success (R208b), a
   miss refusing with a sentence and leaving the mode armed, ESC, and the Cadence path on
   the status line (`selector it: it(vsq) (transient) from /Vsq`). The hierarchical name is
   `ase::ui::sod_qualify current`'s branch-prefix rule (`i(v.x1.v1)`).
-  - Sentences: arm *"selector it: click a voltage source or ammeter; ESC cancels"*;
-    prompt *"Calculator it: click a voltage source or ammeter for its current; ESC
-    cancels"*; empty canvas *"selector it: nothing under the click; click a voltage source
-    or ammeter"*; any other object — a MOSFET body, a wire, a terminal — *"selector it:
-    pick a voltage source or ammeter; terminal currents not supported"*.
-  - **Declared limit:** device **terminal** currents (`@m1[id]`-style) are not picked —
-    the tree's only zoom-scaled pin hit test (`find_closest_pin`) has no Tcl door.
+  - Sentences: R208f reworded the four this requirement gave the current selectors (arm,
+    prompt, empty canvas, a click on something with no current) and lists them.
+  - **The limit this requirement declared is closed by R208f**: a device **terminal**'s
+    current is picked by a click on its pin.
   - Code: `calc::pick_kind`, `calc::pick_iclassify` (pure), `calc::pick_iname`,
     `ase::ui::sod_source_at`. Fences: band PK12 of
     `tests/headless/test_calc_selector_names.tcl` (decision, `hcases`) and band PG18 of
     `tests/headless/test_calc_pick.tcl` (gesture, `dcases`).
+- **R208f** **The current selectors pick a device pin: that terminal's current** (issue
+  1724, the sibling of ASE-L's Select On Design learning the same click). With `it`, `if`,
+  `idc` or `is` armed, a click on an instance pin inserts the current into that terminal,
+  when the loaded result holds its vector.
+  - **One pin rule and one naming rule, ASE-L's.** Which pin is under the cursor is
+    `ase::ui::sod_terminal_at <session> <x> <y>` at the **un-snapped** cursor: the pin
+    radius plus its 10-unit bound, a click on a wire off the pin's own square is the wire,
+    and where two devices share a point the device on the cursor's side wins (ase_l.md, the
+    terminal-current rules). Whether that terminal may be named, and what the simulator
+    calls its current, is `ase::ui::sod_terminal_resolve <session> <pin>`. The Calculator
+    calls both — and the source rule — from one proc, `calc::pick_imeasure`, and re-spells
+    neither. The session is the one the pick was armed for; a result with no ASE-L session
+    never arms (`nodesign`), so a click always has one.
+  - **Order, as in Select On Design:** a device pin first, then the source rule. The pin of
+    a voltage source is its terminal; its body is its branch current.
+  - **The Calculator writes no deck and cannot add a probe.** So:
+    - a terminal the result **holds** is inserted (verify-then-insert, R204);
+    - a terminal it does **not** hold inserts nothing and says where to ask for it:
+      *"selector it: i(M1:d) is not in this result; ASE-L Outputs: To Be Plotted, rerun"*.
+      The sentence names the path after which the same click resolves. The Calculator
+      reads the database the session's viewer has LOADED (`calc::require_result`), and a
+      finished run loads its results there only when it plots a row
+      (`ase::ui::auto_plot`). A pin picked under Outputs > To Be Plotted > Select On
+      Design is saved AND plotted, so that run is seen here; one picked under To Be Saved
+      is in the results file and not yet in the loaded database. **Measured** on a real
+      session with real runs: after a To Be Saved pick and a rerun the same click still
+      said the sentence; Results > Direct Plot then ESC, or the `~` button with a
+      Plot-ticked row, made it resolve; doing nothing, `~` with no Plot-ticked row, Tools >
+      Waveform Viewer, the viewer's Location bar on the same file and Results > Select of
+      the same file did not. Followed literally (To Be Plotted, Select On Design, the
+      pin, rerun), the click then inserted `it(ra.n1)`, also for a pin that was already
+      saved, whose row gains Plot. The whole menu path does not fit the status line's
+      room, so the sentence stops at the cascade that holds Select On Design. ⚠ Declared:
+      in a session with only an operating point, with the viewer on the op slot, nothing
+      that was tried reloads it and the path does not complete; and a selector whose
+      analysis is not the one the viewer shows reads the results file anew at each click
+      (`calc::aq_run`), so only the selector of the shown analysis can be stale;
+    - **on the pin of a voltage source or an ammeter**, a terminal the result does not
+      hold — or one the naming rule refuses — falls back to the source's own branch
+      current, as a click on its body (Direct Plot does the same). If the result holds
+      neither, the refusal is the source's (*"… i(Vam) is not in this result; nothing
+      inserted"*) and nothing is said about a sign.
+      **The sign.** A source's branch current is the current into its FIRST node:
+      `i(v1)` equals `i(v1:n1)` and is the negative of `i(v1:n2)` (measured, ase_l.md
+      R-OUT17). On the first node the stand-in is the pin's own number and nothing
+      more is said. On the source's SECOND node it has the opposite sign, and the click
+      says so before its last sentence: *"selector it: V1 pin m: inserted the source's
+      current, the negative of this pin's"* (arm `srcneg`). Once that pin is probed the
+      same click inserts `it(v1.n2)`, of the opposite sign, and says nothing. On a pin
+      that is NEITHER of the first two nodes the stand-in says nothing about that pin at
+      all: the current into a controlling node of a controlled source is zero, and a pin
+      the netlist line does not carry is no node of the element. There the click says
+      *"selector it: E1 pin cp: inserted the source's current, which is not this pin's"*
+      (arm `srcother`; the controlling pins of the stock `vsource_pwl.sym`, a pin of
+      `filesource.sym`). Which node the pin is comes from ASE-L's rule,
+      `ase::ui::sod_term_pin_place`, the one Direct Plot's stand-in asks, so the two
+      gestures cannot disagree: the position in the naming rule's own token when it ends
+      in `:n<position>`, else the pin's place on the instance's netlist line.
+      `calc::pick_iplace {term res}` asks it and answers `first`, `second` or `other`.
+      Without that rule it asks the older one, `ase::ui::sod_term_first_pin`, which knows
+      the first pin from the rest. A rule that raises, or a word that is none of the
+      three, leaves the pin taken for the first, and no sign is said. A click on the
+      source's BODY carries no pin and says nothing.
+  - **What is inserted.** The candidate is `i(<path>:<terminal>)` with the token's case
+    kept; the name inserted is the raw's own, read back from `xschem raw list` (R207), with
+    the selector's id. The reader stores every `:` of a vector name as `.`, so a click on
+    `R9`'s first pin inserts `it(r9.n1)` and the terminal `x1.xm1:d` inserts
+    `it(x1.xm1.d)`. Typed by hand, the file's colon spelling (`it(x1.xm1:d)`) reads the
+    same column. ⚠ **Declared limit:** ASE-L spells the same vector with the colon in an
+    Outputs row, and only that spelling gets a `.probe` card (`ase::probe_split`): the
+    Calculator's inserted token is for the Calculator (a row of band PK13 measures both
+    predicates' answers).
+  - **Refused, with a sentence, the mode left armed:** a pin that is several vectors (a bus
+    instance or a bus pin), listing them — *"selector it: Rbus[1]:n1, Rbus[0]:n1 is a bus;
+    pick one bit"* — because the buffer takes one token per click and a pick has no bit
+    dialog; a pin the naming rule refuses, with that rule's reason — *"selector it: cannot
+    name the current of M1 pin d: flat netlisting renames every device; use an ammeter in
+    series"*; a click with no current to pick — *"selector it: no current there; click a
+    device pin, voltage source or ammeter"*; empty canvas — *"selector it: nothing there;
+    click a device pin, voltage source or ammeter"*.
+  - **Said before the click's last sentence**, into the status history and the CIW: the
+    other device pins on the same point (*"selector it: that point is also Rb pin P; the
+    click took Ra pin M"*) and the naming rule's caution (a subcircuit port named from the
+    symbol's pin for want of a `.subckt` header that names the port). When the source's
+    current stood in and was inserted, the shared point is said in the stand-in's own
+    words (*"selector it: that point is also R7 pin P; the click took the current of
+    V1"*), then the sign note above; the caution is not. A pin test that raises is said
+    the same way and the click is read as one off any pin.
+  - **Sentences of the arm:** *"selector it: click a device pin, voltage source or ammeter;
+    ESC cancels"*, and on the design window *"Calculator it: click a device pin, voltage
+    source or ammeter; ESC cancels"*. The success sentence names the analysis and the
+    instance's path with the pin as the symbol spells it: *"selector it: it(r9.n1)
+    (transient) from /R9:P"*.
+  - **The prompt names the pin.** While `it`, `if`, `idc` or `is` is armed and the pointer
+    is on a device pin, the design window's prompt ends with that pin, by the rule the
+    click itself uses: *"Calculator it: click a device pin, voltage source or ammeter;
+    ESC cancels — pin R9:P"*. After a miss the slot shows the miss sentence followed by
+    the same words; the status line and the history get the sentence alone.
+    `calc::pick_hover` asks `ase::ui::sod_terminal_at` at the un-snapped pointer for the
+    armed session, behind the click's own `calc::pick_base` test and only on the pick's
+    canvas, never raises, and keeps its answer with the pointer, the zoom, the window,
+    the sheet and its instance and wire counts; `calc::pick_hover_text` is its words.
+    `calc::pick_pump` and `calc::pick_echo`, the two writers of that slot, both append
+    it. A voltage selector's prompt names no pin. The editor's hover outline cannot say
+    this: on a pin with a wire ending on it the outline is the wire, and the click takes
+    the terminal. Select On Design's prompt says the same for its own mode, with
+    *"(terminal current)"* behind the pin, which is left out here because every click
+    under a current selector is a current.
+  - Unchanged: one-shot on success (R208b), a miss leaves the mode armed, ESC, the analysis
+    gate, the context loan for the lookup (R204), and the voltage selectors, which still
+    refuse a device terminal.
+  - Code: `calc::pick_imeasure` (what the cursor is on), `calc::pick_iplan` (pure: a
+    refusal, or the candidates in order; the stand-in step records the pin it stands in
+    for, which node of the source it is (the key `place`, from `calc::pick_iplace`), and
+    the pins that share its point),
+    `calc::pick_iresolve` (the lookups), `calc::pick_inotes`, `calc::pick_hover`,
+    `calc::pick_hover_text`, and arms `noterm`, `absent`, `also`, `caution`, `srcneg`,
+    `srcother`, `pinerr` of `calc::pick_msg`. `absent` and `srcneg` fill the status line's
+    room exactly at the shortest selector id; with a longer id and pin name the line elides the
+    note, and the history and the CIW hold it whole, as for `also` and `caution`. Fences:
+    bands PK13 and PK14 of `tests/headless/test_calc_selector_names.tcl` (decision,
+    `hcases`; the committed results `tests/headless/data/probe_1724_tran.raw` and
+    `probe_1724_op.raw`) and bands PG19 and PG22 of `tests/headless/test_calc_pick.tcl`
+    (real clicks and real pointer motion, `dcases`). The path the `absent` sentence names
+    needs a simulator and was followed on a bench; no registered row runs it. The
+    shared-point note of a stand-in is fenced on the counted arm only.
 - **R208d** **An unqualified signal names no analysis, and the Calculator refuses it.** The
   user, 2026-10-12: *"in Cadence ADE, there is no such thing as v(signal_name). It always has to
   be VT, VF, etc. VT is a waveform. value(VT("blahblah") time_point) is a number that ADE-L can
@@ -961,11 +1090,46 @@ analysis of the current result's raw file whatever analysis is current.
   and needs none: the pick creates no placement and no paste, which is the only thing that
   exclusion protects against.
   What the pick *does* register with is **`cmdmode`** (`src/cmdmode.tcl`, issue 0201):
-  `cmdmode::register calc_pick calc::pick_suspend calc::pick_resume`, at source time,
-  guarded on `info commands ::cmdmode::register`. That is the contract a **descend
-  mid-pick** needs — suspend releases the canvas and keeps the record, resume re-latches on
-  the canvas actually landed on (ruling D2), and suspended still counts as running
-  (issue 1308).
+  `cmdmode::register calc_pick calc::pick_suspend calc::pick_resume calc::pick_held`, at
+  source time, guarded on `info commands ::cmdmode::register`. That is the contract a
+  **descend mid-pick** needs — suspend releases the canvas and keeps the record, resume
+  re-latches on the canvas actually landed on (ruling D2), and suspended still counts as
+  running (issue 1308).
+  ⚠ **The name a resume is handed is a window CONTEXT, not always a widget** (issue 1724,
+  2026-11-19). `cmdmode::resume_all` and `cmdmode::rehome` hand `calc::pick_resume` the
+  context a descend or a return landed on, and with the tabbed interface a schematic in a
+  tab other than the first has a name no widget has. `calc::pick_resume` therefore
+  resolves it to the canvas that shows it first (`calc::pick_canvas {{ctx {}}}`, which
+  takes the context as an optional argument and reads the current one without it); a
+  name that resolves to nothing still falls back to the canvas the pick was on.
+  **Measured before it**, with the profile's real return (`cadence::return_one_level`,
+  Ctrl-E) from a block's own window to a parent in the second tab: the pick stayed armed
+  on the window the user had just left, and a click on the parent's sheet was no pick at
+  all. `rdw::pick_resume` and `rdw::pick_start` do the same through `rdw::_pick_canvas`,
+  so the Results Display Window's keys 1 to 3 with nothing selected arm its mode in such
+  a tab, where they did nothing and said nothing (the tab half of issue 1387). Fences: a
+  row of band PK15 (stand-ins for `calc::has_win` and `xschem windows`) and row XP8 of
+  `tests/headless/test_rdw_keys_1245.tcl` (a real second tab). Declared: the Calculator's
+  half has no display row with real tabs; it was driven once by a scratch probe.
+  ⚠ **The fourth argument is what the pick HOLDS** (issue 1724, 2026-11-19).
+  `calc::pick_held` answers, from the record alone and with no Tk, one group `canvas
+  sequence script predecessor` for each seized slot: the script the pick bound
+  (`pick(own)`, written by `calc::_pick_seize` and kept up to date by `calc::pick_done`
+  for the release slot) and the script the slot held before. It is empty with no pick
+  armed and while one is suspended. `clone_canvas_bindings` (`src/xschem.tcl`) copies the
+  main canvas's bindings onto every new canvas and asks `cmdmode::pristine` for each
+  script first, which steps down through these lists. So a window made while a pick is
+  armed by a door that does not suspend the modes (`xschem new_schematic create_window`,
+  which the Cadence-style profile's Ctrl-N runs) carries the editor's bindings and none of
+  the pick's, and clicks there select, during the pick and after it. **Measured before
+  it**: the new canvas carried the pick's press, release and held-motion scripts, no click
+  there selected, and the pick's end handed back only the canvas the pick was on.
+  `rdw::pick_held` does the same for the Results Display Window's mode. The sequences are
+  declared as the seize spells them (`<ButtonPress-1>`); `clone_canvas_bindings` hands
+  `cmdmode::pristine` Tk's own spelling of both sides. Fences: band PK15 of
+  `tests/headless/test_calc_selector_names.tcl` (the list's shape, on the counted arm) and
+  band PG25 of `tests/headless/test_calc_pick.tcl` (a real new window while a pick is
+  armed); rows K21, XP5 and XP6 for the Results Display Window's.
   ⚠ **"Do not survive a window close" needs TWO doors, because `calc::close` is only the
   `WM_DELETE_WINDOW` handler.** `destroy .calc` cannot remove the pick's bindings: they
   live on the design window's `.drw`, which is not a descendant of `.calc`. So `calc::build`
@@ -978,6 +1142,188 @@ analysis of the current result's raw file whatever analysis is current.
   schematic window closed". `calc::pick_pump` answers it by checking `winfo exists` on the
   seized canvas every 80 ms, which it is already running to keep the prompt up against C's
   `update_statusbar()` blanking `.statusbar.10`.
+  ⚠ **ONE CLICK MODE ON THE CANVAS AT A TIME, with ASE-L's Select On Design** (issue 1724,
+  2026-11-19). Select On Design (Outputs > To Be Saved or To Be Plotted > Select On
+  Design, From Design…, Results > Direct Plot) seizes the same canvas slots, and each of
+  the two keeps ONE set of predecessors. Stacked and ended out of order they left the
+  canvas on a dead script: a schematic window that took no left click, with nothing
+  saying why (**measured**, issue 0202 has the sequences; the Calculator's own `absent`
+  sentence used to send an armed user into that stack). So:
+  - `calc::pick_arm`, once it has decided to arm and before it raises the design window,
+    ends a live Select On Design the way its own ESC ends it (`calc::pick_end_sod`, through
+    `ase::ui::sod_end`, under `catch`): the outputs it queued stay queued, its ellipses go,
+    a Direct Plot plots what it had queued. A selector that refuses to arm leaves that
+    mode up;
+  - `ase::ui::select_on_design` ends a live pick of this window as its first act
+    (`calc::pick_end cancel`: *"selector it: pick cancelled"*).
+
+  The Results Display Window's own pick mode (`rdw::pick_start`) is NOT ended by either:
+  it nests, by its own rulings (ESC is its only exit, keys 1 to 4 are always live).
+  **Measured**: ended last-entered first, every such stack leaves the canvas free; ended
+  out of order, three of four leave it seized and the fourth leaves a Calculator pick
+  recorded as armed with no binding (issue 0202). Each of those states can be left from
+  inside the session: a canvas left on the Calculator's dead scripts is freed by arming
+  any selector and pressing ESC, and one left on the Results Display Window's by that
+  window's key and ESC, since `rdw::_pick_seize` no longer keeps its own scripts as the
+  predecessors (`rdw::pick_own_script`; issue 0202 has the sequences measured again).
+  That is how it stood after the third repair of issue 1724. **Since its closing pass
+  and its last build no door of the product that was found reaches any of those four
+  states**: see below (that mode on top of the mode that is ended, the Calculator's own
+  doors, and the pick on top of that mode when it is ended first).
+  ⚠ **WHEN THAT MODE SITS ON TOP OF THE MODE THAT IS ENDED, IT TAKES THE CANVAS AGAIN**
+  (issue 1724, the fourth repair). The two doors above end the mode UNDERNEATH the
+  Results window's mode, and the ended mode's release writes the editor's scripts over
+  that mode's live ones. So `calc::pick_end_sod` runs `catch {rdw::pick_reseat}` after
+  `ase::ui::sod_end`, and `ase::ui::select_on_design` after each mode it ends.
+  `rdw::pick_reseat` seizes again only when its mode is recorded up, is not paused, its
+  canvas is a live widget and the press slot holds neither one of its own scripts nor
+  the script of another mode that is up (`rdw::_pick_overlaid`, which asks
+  `cmdmode::pristine`); otherwise it does nothing. The Results window's mode stays up,
+  the new mode stacks on it, and one ESC for each unwinds them. **Measured before it**,
+  with real events: Select On Design, key 1 with nothing selected, then a selector (and
+  the mirror, and Select On Design entered twice) left the Results window's mode recorded
+  as up with nothing bound. The last test of the proc was found by a fourth order:
+  the Results window's key FIRST, then Select On Design twice, ended with Select On
+  Design's dead scripts on the canvas when the proc seized over a mode that was up.
+  Fences: band PG27 of `tests/headless/test_calc_pick.tcl` (the three orders and that
+  control) and row XP7 of `tests/headless/test_rdw_keys_1245.tcl`.
+  ⚠ **THE CALCULATOR'S OWN DOORS ASK TOO** (issue 1724, the closing pass after the fourth
+  repair; until then this was declared, measured and not built). Every end of a pick
+  goes through `calc::pick_end`: the armed selector pressed again (`disarm`), another
+  selector pressed (`switch`), the Calculator window closed or destroyed (`close`),
+  Select On Design entered (`cancel`). Directly after its release that proc runs `if {$r}
+  { catch {rdw::pick_reseat} }`: when a pick was really released, the Results window's
+  mode is asked to take the canvas again. **Measured before it**, with a selector armed
+  and the Results window's key pressed on top of it: pressing another selector, the same
+  one again, or closing the Calculator window left that mode recorded as up with nothing
+  bound, its sentence on the status bar, clicks selecting, its key arming nothing; and
+  after the armed selector had been pressed again, no further selector press or key
+  press freed it. **Measured after it**, the same orders, real presses and real ESC, one
+  process each: that mode holds the canvas, one ESC ends it, and the canvas is the
+  editor's. With the line taken out in memory the three rows below go red.
+  ⚠ **A consequence, declared: the keyboard goes to the schematic.** Taking the canvas
+  again takes the keyboard too (`rdw::_pick_seize` forces the focus onto the canvas,
+  where that mode's ESC is bound). **Measured**: with the buffer focused, the armed
+  selector pressed again under that mode moves the focus from `.calc.buf` to the design
+  canvas. Keys typed next go to the schematic until the buffer is clicked. Whether the
+  keyboard should stay in the Calculator there is the user's to rule on.
+  ⚠ **Not fenced:** the `if {$r}` condition. With the call made every time the suites
+  still pass, because `rdw::pick_reseat`'s own tests absorb it.
+  ⚠ **Observed, older than this work, not judged:** a selector the loaded result cannot
+  serve (`vf` on a result with no ac analysis), pressed while another is armed, ends the
+  armed pick, refuses to arm and stays lit in the grid with no pick running; the canvas
+  is free. That is `calc::sel_click`'s own rule (Tk's write stands on a refusal).
+  Fences: three rows of band PG27 of `tests/headless/test_calc_pick.tcl` (a selector,
+  the key, another selector; the same selector again; the Calculator window closed by
+  the script its close button runs).
+  ⚠ **THE OTHER WAY ROUND, THE PICK TAKES THE CANVAS AGAIN** (issue 1724, its last build;
+  until then this was the one order left, with three recoveries documented for it). With
+  a selector armed OVER the Results window's mode, that mode can be ended first: Escape
+  pressed in the Results window runs `rdw::pick_end` while the canvas's own Escape is
+  the pick's. Its release writes the editor's scripts over the pick's live ones.
+  **Measured before it**: the pick stayed armed in the grid with nothing bound, its
+  prompt on the design window, through four ESC on the canvas; pressing that selector
+  again then handed the Results window's dead scripts back to the canvas. Now
+  `rdw::pick_end`, once its record is gone and when its release released a mode, runs
+  `catch {::calc::pick_reseat}` (and `catch {::ase::ui::sod_reseat}` for Select On
+  Design in the same place). `calc::pick_reseat` seizes again through
+  `calc::_pick_seize` only when a pick is armed, is not suspended, its canvas is a live
+  widget, and the press slot holds neither one of the pick's own scripts
+  (`calc::pick_own_script`) nor the script of another mode that is up
+  (`calc::pick_overlaid`, which asks `cmdmode::pristine`); in every other state it does
+  nothing. The predecessors on record are then the editor's, the selector stays lit,
+  the prompt and its one timer stay, and one ESC ends the pick on an unseized canvas. A
+  pick whose click has resolved and that is waiting for its release gets its end put
+  back on the release slot (`calc::pick_done`), so the release still ends the one-shot
+  pick. **Measured after it**, real presses and real ESC, one process an order: the
+  key, a selector, that mode ended, one ESC: no mode recorded, the canvas the editor's,
+  a click selects.
+  ⚠ **The same consequence: the keyboard goes to the schematic.** The seize focuses the
+  canvas, as every seize of the pick does. With the keyboard in the Calculator's buffer
+  when the Results window's mode is ended, it is on the canvas afterwards; so is it
+  after the real Escape in the Results window's text pane (driven with Select On Design
+  on top, row E6 of `tests/headless/test_rdw_keys_1245.tcl`). The user's to rule on,
+  with the paragraph above.
+  ⚠ **Not driven:** the Results window's real Escape key with a pick on top. The rows end
+  that mode by `rdw::pick_end`, the command the key runs.
+  Fences: rows of band PG27 (the mode ended first under a pick; the same with a
+  resolved click; the same under Select On Design; the end that released no mode asking
+  the pick nothing; the states in which `calc::pick_reseat` does nothing, with
+  `cmdmode`'s reader taken away among them). Band PG26, which used to drive the stranded
+  state through the doors, is one row now, with the Results window's scripts written
+  onto the canvas by hand.
+  ⚠ **ONE SENTENCE ON THE DESIGN WINDOW'S SLOT WHILE TWO MODES ARE STACKED** (issue 1724,
+  its last build). `calc::pick_pump` re-asserts the pick's prompt every 80 ms, and the
+  Results window's mode keeps its own sentence on the same slot with a timer of its
+  own. **Measured before**: with the two stacked, in either order, the slot showed the
+  two sentences in turn, changing many times a second. Now `calc::pick_pump` writes
+  only while `calc::pick_covered` answers 0: no other mode that is up holds the press
+  slot of the pick's canvas over it. The pump keeps running, and keeps watching for
+  the design window going away, so the prompt is back within one tick of the mode on
+  top ending. `rdw::_hint_sync` and `ase::ui::sod_prompt_pump` have the same guard.
+  Where the question cannot be asked (a canvas that is no widget, no `cmdmode`), and
+  for the editor's script or a script no mode declares in the slot, the pump writes as
+  before. **Measured after**: one sentence, the top mode's; after one ESC the lower
+  mode's alone. A selector armed over the Results window's mode shows a blank for an
+  instant before its prompt, as a selector armed alone does. Fence: band PG28 (the four
+  stacks of two that mode makes with Select On Design and with `vt`; the slot sampled
+  with no event sent, then both writers run once by hand, because the sampling alone
+  did not always catch a missing guard). Declared: the tooltip the Results window's
+  mode arms on the slot keeps that mode's sentence while it is underneath.
+  ⚠ **Across a descend a stack keeps its order** (`cmdmode::release_order`, issue 0202):
+  the top is released first and put back last, so a pick with the Results window's mode
+  on top comes up where the descend lands as it was, and both canvases end free. Fence:
+  a row of band PG27 (a selector, the key, a descend in the same window, ESC, ESC, a
+  click that selects), which goes red with the release order of before the fourth
+  repair put back.
+  ⚠ **THE SEIZE HOLDS FIVE SLOTS: the press, the release, Escape, the held motion and the
+  double click** (`calc::_pick_seize`, handed back by `calc::pick_release`). Tk gives the
+  second press of a double click to the most specific binding, and the editor binds the
+  double click on every design canvas (`set_bindings`). **Measured before the fifth slot**
+  with real events: with a pick armed and a miss, the second press reached the editor,
+  which opened its property dialog and selected the object (stock bindings) or ran
+  connected-select (Cadence-style profile), against "a pick must not change the selection"
+  (issue 0204). Now both presses of a double click are the pick's: a miss is answered
+  twice and nothing reaches the editor. The slot's predecessor is the editor's own script
+  and is handed back verbatim; a seize that finds no record for it falls back to that
+  script (`calc::pick_dbl_editor`), not to nothing, which would take the editor's double
+  click away from that window. The RDW's seize holds the slot too and SWALLOWS the second
+  press (`rdw::_pick_seize`): the first press has already dumped the device, and its
+  layout events overwrite the un-snapped mouse pair (issue 1659), so a second dump was
+  measured to be resolved at a point nobody clicked.
+  ⚠ **THE PRESS HANDS ITS OWN POSITION TO THE ENGINE BEFORE THE CLICK IS RESOLVED** (issue
+  1724, 2026-11-19). The click reads the engine's un-snapped pointer pair (R203), and the
+  engine writes that pair for every event it is handed. The editor binds `<Configure>` on
+  every design canvas, and that event carries the canvas's position inside its window,
+  not a pointer position; one of those between the last pointer motion and the press, and
+  the click was resolved at a point nobody clicked. **Measured** with a real motion onto
+  an object, the canvas's own `<Configure>` generated with its real geometry, then a press
+  with no motion: a voltage selector on a wire answered *"nothing under the click"* and
+  stayed armed, a current selector on a pin answered *"nothing there"*, and the Results
+  Display Window's mode answered *"no device under the click"*. So the script bound on the
+  press, and on the double click, is `xschem callback %W 6 %x %y 0 0 0 %s; calc::pick_click;
+  break`: the press's own pixel goes to the engine as a pointer motion first.
+  `rdw::_pick_seize` binds the same in front of `rdw::pick_click` on its press; its
+  double-click slot stays `break`. `calc::pick_click` and `rdw::pick_click` keep their
+  signatures and their scripted default (no coordinates: the engine's pair). Fences: band
+  PG24 of `tests/headless/test_calc_pick.tcl` (a pin, both presses of a double click, a
+  wire) and rows XP0 to XP2 of `tests/headless/test_rdw_keys_1245.tcl`; the scripts' text
+  on the counted arm in band PK15 and row K19.
+  ⚠ **Declared limit: the second press AFTER a pick that resolved.** That pick is one-shot
+  and ended on the first release (R208b), so by the second press the canvas is the
+  editor's again: in the stock bindings the property dialog of the wire or device under
+  the cursor opens and the object is selected; under the Cadence-style profile
+  connected-select runs there. Curing it needs a time window after the mode has ended,
+  which is a trade-off for the user and is not built.
+  Fences: bands PG20 (the two modes ending each other), PG21 and PG23 (the double click
+  and the latched predecessor) of `tests/headless/test_calc_pick.tcl`, band PK14 and row
+  PK10 of `tests/headless/test_calc_selector_names.tcl`; band PG26 (the Results Display
+  Window's scripts on a canvas no mode holds, written there by hand, and the recovery by
+  that window's key and ESC; since the last build of issue 1724 the mode ended first
+  under a pick is rows of band PG27); for the RDW, rows B0d, V3b,
+  XP3 and XP4 of `tests/headless/test_rdw_keys_1245.tcl` and row K20 of
+  `tests/headless/test_rdw_window_1245.tcl` (`tests/run_regression.tcl` says whether those
+  two suites are in a gate list).
 
 ---
 

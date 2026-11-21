@@ -8293,6 +8293,11 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
              * its hilights/selection must not be touched */
             if(!route_newwin) {
               clear_all_hilights();
+              /* issue 1724: another document is about to fill this context, so its
+               * pin markers go too -- a marker at path "." would otherwise sit on a
+               * same-named instance of the new sheet. Here and not in
+               * clear_all_hilights(), which also runs on borrowed contexts. */
+              pin_marker_clear(NULL);
               unselect_all(1);
             }
             /* no implicit undo: if needed do it before loading */
@@ -10123,6 +10128,80 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* pin_at <x> <y> [-all]
+     *   The instance pin under the schematic-coordinate point (x,y), or "" if there
+     *   is none. Answers by the pin-select click's own rule, find_closest_pin(): the
+     *   pin's point must lie within the pick radius of (x,y), a lock=true instance's
+     *   pins do not answer, and no pin answers while the pin layer is disabled.
+     *   Returns one row
+     *     <inst> <pin> <instname> <pinname> <px> <py>
+     *   the instance and pin indexes, their names, and the pin's own point.
+     *   With -all it returns a LIST of such rows, one per pin within the radius,
+     *   nearest first (at equal distance the lowest instance index, then the lowest
+     *   pin index), so its first row is the plain form's answer. That is for a caller
+     *   that must choose among pins sharing a point -- a device pin abutting a net
+     *   label's -- which the single nearest pin cannot express.
+     *   READ-ONLY: it selects nothing, draws nothing and logs nothing; this is the
+     *   probe half of a pin click, as `object_at` is of an object click. Unlike the
+     *   click it does not depend on en_pin_select.
+     *   Example, at the P pin of a resistor R1 that a net label l3 sits on:
+     *     xschem pin_at 0 -30      --> 1 0 R1 P 0 -30
+     *     xschem pin_at 0 -30 -all --> {1 0 R1 P 0 -30} {3 0 l3 p 0 -30} */
+    else if(!strcmp(argv[1], "pin_at"))
+    {
+      Selected one, *hits = NULL;
+      Tcl_DString ds;
+      char num[60];
+      char *endx = NULL, *endy = NULL;
+      double mx = 0.0, my = 0.0, px, py;
+      int k, n, all, bad;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      all = (argc == 5 && !strcmp(argv[4], "-all"));
+      bad = (argc < 4 || argc > 5 || (argc == 5 && !all));
+      /* each coordinate must be a number and nothing else: strtod has to consume
+       * the word up to its NUL. atof() read `-all` in the y slot (a forgotten y),
+       * `foo`, an empty word and `500x` as a coordinate and answered a pin for a
+       * point the caller never asked about. */
+      if(!bad) {
+        mx = strtod(argv[2], &endx);
+        my = strtod(argv[3], &endy);
+        bad = (endx == argv[2] || *endx != '\0' || endy == argv[3] || *endy != '\0');
+      }
+      if(bad) {
+        Tcl_SetResult(interp, "usage: xschem pin_at x y [-all]", TCL_STATIC);
+        return TCL_ERROR;
+      }
+      if(all) {
+        n = find_pins_at(mx, my, &hits);
+      } else {
+        n = find_closest_pin(mx, my, &one);
+        hits = &one;
+      }
+      /* the names go out through Tcl_DStringAppendElement so an instance or pin
+       * called `x17[1:0]` / `A[3:0]`, or one holding a space, stays ONE list element */
+      Tcl_DStringInit(&ds);
+      for(k = 0; k < n; ++k) {
+        int i = hits[k].n, p = (int)hits[k].col;
+        if(all) Tcl_DStringStartSublist(&ds);
+        my_snprintf(num, S(num), "%d", i);
+        Tcl_DStringAppendElement(&ds, num);
+        my_snprintf(num, S(num), "%d", p);
+        Tcl_DStringAppendElement(&ds, num);
+        Tcl_DStringAppendElement(&ds, xctx->inst[i].instname ? xctx->inst[i].instname : "");
+        Tcl_DStringAppendElement(&ds,
+          get_tok_value((xctx->inst[i].ptr + xctx->sym)->rect[PINLAYER][p].prop_ptr, "name", 0));
+        get_inst_pin_coord(i, p, &px, &py);
+        my_snprintf(num, S(num), "%.16g", px);
+        Tcl_DStringAppendElement(&ds, num);
+        my_snprintf(num, S(num), "%.16g", py);
+        Tcl_DStringAppendElement(&ds, num);
+        if(all) Tcl_DStringEndSublist(&ds);
+      }
+      if(all) my_free(_ALLOC_ID_, &hits);
+      Tcl_ResetResult(interp);
+      Tcl_DStringResult(interp, &ds);
+    }
+
     /* pin_escape_normal inst attr value
      *   Return the outward escape normal (a unit axis vector "nx ny") of the pin whose
      *   attribute 'attr' equals 'value' on instance 'inst' (nice_drag_rerouting §6,
@@ -10155,6 +10234,200 @@ static int xschem_cmds_p(Tcl_Interp *interp, int argc, const char *argv[], int *
       get_pin_escape_normal(i, p, &nx, &ny);
       my_snprintf(num, S(num), "%g %g", nx, ny);
       Tcl_SetResult(interp, num, TCL_VOLATILE);
+    }
+
+    /* pin_marker add [-fast] [-layer N] [-tag T] inst pin
+     * pin_marker remove [-fast] inst pin
+     * pin_marker clear [-fast] [-tag T] [-all]
+     * pin_marker list
+     *   The markers on chosen instance pins (issue 1724): a thin upright ellipse
+     *   round the pin, in the colour of layer N. The list belongs to the current
+     *   window/tab context and is keyed by (hierarchy path, instance name, pin
+     *   index), so a marker survives descend and return, undo and redo. It is not
+     *   saved with the file, takes no undo slot and does not set the modified flag.
+     *   'inst' is an instance name or index, as other commands take it. 'pin' is a
+     *   pin index (any all-digit word is an index) or a pin name.
+     *   add: mark the pin; default layer 16, default tag {}. Marking a pin that is
+     *     already marked replaces its layer and tag. Returns 1 for a new marker, 0
+     *     for a replaced one. An unknown instance, an unknown or out-of-range pin
+     *     and a layer outside 1 .. (number of layers - 1) are errors.
+     *   remove: unmark the pin. Returns 1 if a marker was removed, else 0.
+     *   clear: drop every marker of the current context, or with -tag only those
+     *     carrying tag T; -all does so in every window and tab. Returns the number
+     *     of markers dropped.
+     *   list: one row per marker of the current context, oldest first:
+     *       {path instname pin layer tag x y}
+     *     x y is the pin's point, or {} {} when the marker is not on the sheet being
+     *     shown (another hierarchy level, or its instance is gone).
+     *   add redraws; remove and clear redraw when they dropped a marker; with
+     *   -fast none of them draws.
+     *   Not written to the action log: a marker is a cue derived from a pick.
+     *   Example: xschem pin_marker add -layer 16 -tag save R1 P --> 1
+     *            xschem pin_marker list --> {. R1 0 16 save 0 -30}
+     *   Loading another file and `xschem clear` drop the current context's
+     *   markers too; `xschem unhilight_all` drops them and those of the windows
+     *   linked to this one by a descend. */
+    else if(!strcmp(argv[1], "pin_marker"))
+    {
+      static const char pm_usage[] =
+        "usage: xschem pin_marker add [-fast] [-layer N] [-tag T] inst pin | "
+        "remove [-fast] inst pin | clear [-fast] [-tag T] [-all] | list";
+      const char *sub;
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      sub = argc > 2 ? argv[2] : "";
+
+      if(!strcmp(sub, "add") || !strcmp(sub, "remove")) {
+        int is_add = !strcmp(sub, "add");
+        int fast = 0, layer = 16, i, k, p = -1, rects = 0, res, bad = 0;
+        const char *tag = "", *iname, *path;
+        char *end;
+        long lv;
+        char msg[PATH_MAX];
+
+        /* the last two words are the instance and the pin, whatever they look like;
+         * every word between the verb and them must be an option */
+        if(argc < 5) bad = 1;
+        for(k = 3; !bad && k < argc - 2; ++k) {
+          if(!strcmp(argv[k], "-fast")) fast = 1;
+          else if(is_add && !strcmp(argv[k], "-layer") && k + 1 < argc - 2) {
+            lv = strtol(argv[++k], &end, 10);
+            if(end == argv[k] || *end != '\0' || lv < 1 || lv >= cadlayers) {
+              my_snprintf(msg, S(msg), "xschem pin_marker: layer %s is not in 1 .. %d",
+                          argv[k], cadlayers - 1);
+              Tcl_SetResult(interp, msg, TCL_VOLATILE);
+              return TCL_ERROR;
+            }
+            layer = (int)lv;
+          }
+          else if(is_add && !strcmp(argv[k], "-tag") && k + 1 < argc - 2) tag = argv[++k];
+          else bad = 1;
+        }
+        if(bad) { Tcl_SetResult(interp, (char *)pm_usage, TCL_STATIC); return TCL_ERROR; }
+        /* the default layer is out of range too when the user runs with few layers */
+        if(is_add && layer >= cadlayers) {
+          my_snprintf(msg, S(msg), "xschem pin_marker: layer %d is not in 1 .. %d",
+                      layer, cadlayers - 1);
+          Tcl_SetResult(interp, msg, TCL_VOLATILE);
+          return TCL_ERROR;
+        }
+        path = xctx->sch_path[xctx->currsch] ? xctx->sch_path[xctx->currsch] : ".";
+        i = get_instance(argv[argc - 2]);
+        if(i >= 0 && xctx->inst[i].ptr >= 0) {
+          rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+          if(isonlydigit(argv[argc - 1])) {
+            lv = strtol(argv[argc - 1], &end, 10);
+            p = (lv >= 0 && lv < rects) ? (int)lv : -1;
+          } else {
+            xRect *rct = (xctx->inst[i].ptr + xctx->sym)->rect[PINLAYER];
+            for(p = 0; p < rects; ++p) {
+              if(!strcmp(get_tok_value(rct[p].prop_ptr, "name", 0), argv[argc - 1])) break;
+            }
+            if(p >= rects) p = -1;
+          }
+        }
+        if(is_add) {
+          if(i < 0) {
+            my_snprintf(msg, S(msg), "xschem pin_marker: instance not found: %s", argv[argc - 2]);
+            Tcl_SetResult(interp, msg, TCL_VOLATILE);
+            return TCL_ERROR;
+          }
+          iname = xctx->inst[i].instname;
+          if(!iname || !iname[0]) {
+            /* the key is the NAME: an instance without one cannot be found again */
+            my_snprintf(msg, S(msg), "xschem pin_marker: instance %s has no name", argv[argc - 2]);
+            Tcl_SetResult(interp, msg, TCL_VOLATILE);
+            return TCL_ERROR;
+          }
+          if(p < 0) {
+            my_snprintf(msg, S(msg), "xschem pin_marker: instance %s has no pin %s (it has %d)",
+                        iname, argv[argc - 1], rects);
+            Tcl_SetResult(interp, msg, TCL_VOLATILE);
+            return TCL_ERROR;
+          }
+          res = pin_marker_add(path, iname, p, layer, tag);
+          if(!fast) draw();
+        } else {
+          /* a marker whose instance was renamed or deleted since is still in the
+           * list, so an instance word that resolves to nothing is taken as the
+           * marker's own name, and an all-digit pin word as its index */
+          iname = (i >= 0 && xctx->inst[i].instname) ? xctx->inst[i].instname : argv[argc - 2];
+          if(p < 0 && isonlydigit(argv[argc - 1])) {
+            lv = strtol(argv[argc - 1], &end, 10);
+            p = (lv >= 0 && lv <= INT_MAX) ? (int)lv : -1;
+          }
+          res = p >= 0 ? pin_marker_remove(path, iname, p) : 0;
+          if(res && !fast) draw();
+        }
+        Tcl_SetResult(interp, my_itoa(res), TCL_VOLATILE);
+      }
+
+      else if(!strcmp(sub, "clear")) {
+        int fast = 0, all = 0, k, n, others = 0, bad = 0;
+        const char *tag = NULL;
+
+        for(k = 3; !bad && k < argc; ++k) {
+          if(!strcmp(argv[k], "-fast")) fast = 1;
+          else if(!strcmp(argv[k], "-all")) all = 1;
+          else if(!strcmp(argv[k], "-tag") && k + 1 < argc) tag = argv[++k];
+          else bad = 1;
+        }
+        if(bad) { Tcl_SetResult(interp, (char *)pm_usage, TCL_STATIC); return TCL_ERROR; }
+        n = pin_marker_clear(tag);
+        if(all) {
+          /* every other window/tab context, by editing its own fields: no borrow of
+           * the global xctx, so nothing of the current window is disturbed */
+          for(k = 0; k < MAX_NEW_WINDOWS; ++k) {
+            Xschem_ctx *ctx = get_window_ctx(k, NULL);
+            if(!ctx || ctx == xctx) continue;
+            others += pin_marker_clear_in(ctx, tag);
+          }
+        }
+        if(!fast) {
+          if(n) draw();
+          /* the other windows are repainted the way a net-highlight style edit
+           * repaints them: each visible one borrowed and drawn, a hidden tab left
+           * for its next switch */
+          if(others) net_hilight_redraw_other_windows();
+        }
+        Tcl_SetResult(interp, my_itoa(n + others), TCL_VOLATILE);
+      }
+
+      else if(!strcmp(sub, "list") && argc == 3) {
+        Tcl_DString ds;
+        char num[60];
+        double px, py;
+        int k;
+
+        Tcl_DStringInit(&ds);
+        for(k = 0; k < xctx->pin_markers; ++k) {
+          const Pin_marker *m = &xctx->pin_marker[k];
+          Tcl_DStringStartSublist(&ds);
+          Tcl_DStringAppendElement(&ds, m->path);
+          Tcl_DStringAppendElement(&ds, m->instname);
+          my_snprintf(num, S(num), "%d", m->pin);
+          Tcl_DStringAppendElement(&ds, num);
+          my_snprintf(num, S(num), "%d", m->layer);
+          Tcl_DStringAppendElement(&ds, num);
+          Tcl_DStringAppendElement(&ds, m->tag);
+          if(pin_marker_resolve(m, &px, &py) >= 0) {
+            my_snprintf(num, S(num), "%.16g", px);
+            Tcl_DStringAppendElement(&ds, num);
+            my_snprintf(num, S(num), "%.16g", py);
+            Tcl_DStringAppendElement(&ds, num);
+          } else {
+            Tcl_DStringAppendElement(&ds, "");
+            Tcl_DStringAppendElement(&ds, "");
+          }
+          Tcl_DStringEndSublist(&ds);
+        }
+        Tcl_ResetResult(interp);
+        Tcl_DStringResult(interp, &ds);
+      }
+
+      else {
+        Tcl_SetResult(interp, (char *)pm_usage, TCL_STATIC);
+        return TCL_ERROR;
+      }
     }
 
     /* pinlist inst [attr]
@@ -14984,7 +15257,8 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
 
     /* unhilight_all [fast]
      *   if 'fast' is given do not redraw
-     *   Clear all highlights */
+     *   Clear all highlights, and the pin markers of the current window and
+     *   of the windows linked to it by a descend (see pin_marker) */
     else if(!strcmp(argv[1], "unhilight_all"))
     {
       int fast = 0;
@@ -14992,6 +15266,16 @@ static int xschem_cmds_u(Tcl_Interp *interp, int argc, const char *argv[], int *
       if(argc > 2 && !strcmp(argv[2], "fast")) fast = 1;
       xctx->enable_drill=0;
       clear_all_hilights();
+      /* issue 1724: this context's pin markers are highlights to the user, so the
+       * clear-all key takes them too, whatever their tag and whether or not a net
+       * was highlighted. Before the draw(), which is what erases them. The
+       * windows linked to this one by a descend lose theirs with it: the sync
+       * below clears their net colours and repaints them. In the middle of a
+       * gesture that sync leaves the linked windows alone, so their markers
+       * are left with their net colours: a list emptied here would leave an
+       * ellipse on a screen nothing repaints. */
+      pin_marker_clear(NULL);
+      if(!net_hilight_ctx_gesturing()) pin_marker_clear_linked_windows();
       /* undraw_hilight_net(1); */
       if(!fast) draw();
       net_hilight_anim_update(); /* Pass 2a: clearing all highlights stops the tick */

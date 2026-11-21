@@ -31,7 +31,12 @@ Mechanism (verified): `xschem new_schematic create_window {}`
   → a blank untitled schematic.
 - `create_new_window()` already **clones the `.drw` cadence bindings** into the new
   window (`clone_canvas_bindings`, xinit.c:1832), so the scratchpad has the same
-  shortcuts (including this Ctrl-N).
+  shortcuts (including this Ctrl-N). Since 2026-11-19 (issue 1724) the scripts of a
+  click mode that is up on the source canvas (ASE-L's Select On Design, a Calculator
+  selector's pick, the Results Display Window's pick mode) are NOT cloned: the copy
+  takes what the canvas holds underneath the mode (`cmdmode::pristine`), so the new
+  window is an ordinary editor window. Measured with the command itself; the key was
+  not pressed with a mode up. Issue 1307.
 - It is **additive**: the source window keeps its schematic and edits (no save prompt,
   nothing discarded).
 
@@ -85,9 +90,11 @@ Headless (`xschem --nogui --pipe -q --script`):
   `[llength [xschem windows]]` == 2.
 - Switch back to the original window; assert it still has `a.sch` (1 instance) — proves
   non-destructive.
-(The `clone_canvas_bindings … winfo` message under `--nogui` is a Tk-absent artifact and
-non-fatal; the window is still created. The actual key-press→helper and focus are
-manual GUI.)
+(Until 2026-11-19 `clone_canvas_bindings` raised `invalid command name "winfo"` under
+`--nogui` and the engine printed that on stderr; the window was still created. The proc
+now leaves at once when there is no Tk, and row CR7c of
+`tests/headless/test_cmdmode_0201.tcl` holds it. The actual key-press→helper and focus
+are manual GUI.)
 
 ## 7. Acceptance criteria
 

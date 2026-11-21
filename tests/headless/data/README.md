@@ -387,3 +387,81 @@ real operating point (`tools/migrate/op_measures_vars.tcl`, registry ngspice). R
 `tests/headless/test_ase_op_measures.tcl` (all bands) and by bands TM and TR of
 `tests/headless/test_ase_outputs_tabs.tcl`, which exempt a converted row at exactly its `new`.
 Edit a converted bench row and its line here together.
+
+## `probe_1724_op.raw` + `probe_1724_tran.raw` + `probe_1724.cir`
+
+Results holding **device terminal currents** written by ngspice `.probe I(...)` cards, for issue
+1724 (terminal currents through Select On Design). `probe_1724.cir` is the deck that produced
+both files. Bands **LR\*** of `tests/headless/test_pin_at_1724.tcl` read them; they are read-only
+for every other suite of that issue too. Those read the files in place or copy one into their
+own scratch: the Value rows of `test_ase_probe_deck_1724.tcl`, the Direct Plot rows of
+`test_ase_terminal_pick_1724.tcl`, the Direct Plot display group of
+`test_pin_marker_1724.tcl`, band PK13 of `test_calc_selector_names.tcl`, band PG19 of
+`test_calc_pick.tcl` (the bands that stand behind it in the file, PG20 to PG27, run with the
+result it loaded), and the label rows of `test_wave_sigbrowser.tcl`.
+
+**The deck cannot overwrite the fixtures:** it writes `op.raw` and `tran.raw`, not the committed
+names, so a run in this directory leaves two untracked siblings and the fixtures alone.
+
+**Generator.** The `.probe`-capable ngspice fork at
+`$XSCHEM_TEST_REAL_HOME/dev/ngspice-ver_53/build-ver_53/src/ngspice`; both files state it in
+their own `Command:` line, `ngspice-46+, Build Thu Nov 19 07:29:19 UTC 2026`, and the deck's
+`echo pv=$?probe_version` answers `pv=1` on it. The fork is needed, not preferred: the same deck
+on `/usr/bin/ngspice` (`ngspice-45.2`) answers `pv=0`, warns `.probe i(x1.xm1,d) will be ignored`
+for every term that reaches into the subcircuit or names a subcircuit port, and writes one probe
+vector, `i(r9:n1)`, instead of six.
+
+**Structure.** One plot per file:
+
+| file | `Plotname:` | flags | `No. Variables` | `No. Points` | read with |
+|---|---|---|---|---|---|
+| `probe_1724_op.raw` | `Operating Point` | real | 8 | 1 | `xschem raw read <f> op` |
+| `probe_1724_tran.raw` | `Transient Analysis` | real | 9 | 59 | `xschem raw read <f> tran` |
+
+Vector names as the files spell them, in file order (the transient plot has `time` first and
+`i(r9:n1)` after `v(out)`):
+
+```
+i(r9:n1)  v(out)  i(v1)  i(x1.r1:n1)  i(x1.xm1:d)  i(x1.xm1:g)  i(x1.xm1:s)  i(x1:in)
+```
+
+`v(out)` and `i(v1)` come from the deck's `.save`; the other six from its `.probe` line, whose
+terms are `I(<instance path>,<pin>)` and whose vectors are `i(<instance path>:<terminal>)` — a
+pin given by position comes back by name (`I(x1.xm1,3)` is `i(x1.xm1:s)`, `I(x1.r1,1)` is
+`i(x1.r1:n1)`), and a subcircuit port keeps its name (`I(x1,in)` is `i(x1:in)`). The seventh term,
+`I(x1.nope,d)`, names an instance the circuit does not have: ngspice prints
+`probe: I(x1.nope:d) not inserted: no instance named x1.nope`, writes no vector for it and
+exits 0.
+
+⚠ **The colon is the file's spelling, not xschem's.** `read_dataset()` in `src/save.c` stores
+every `:` of a variable name as `.`, so after `xschem raw read` the list is `i(r9.n1)`,
+`i(x1.xm1.d)`, … and that is what `xschem raw list` shows. The lookup ladder's rung 5
+(`get_raw_index_in()`, mirrored by `wviewer::name_rungs`) is what makes the file's spelling
+resolve to the stored one. ASE-L's own Tcl readers of a results file (`ase::raw_scalars`,
+`ase::raw_vectors_present`) do not rewrite the name and see the colon.
+
+⚠ **The circuit is at rest, so the transient plot is 59 copies of the operating point.** Every
+column but `time` holds one value at all 59 points, and three of the currents are zero —
+`i(v1)`, `i(x1.xm1:g)` and `i(x1:in)`. A row that has to tell one column from another, or data
+from a column of zeros, must use `i(x1.xm1:d)`, `i(x1.xm1:s)`, `i(x1.r1:n1)` or `i(r9:n1)`,
+whose four values are pairwise distinct (row `LR7b` asserts it). No row can use this fixture to
+tell one time point from another.
+
+⚠ **`i(v1)` is zero here, and V1's own terminals are not in the files.** So no row can use this
+fixture to check the sign of a source's branch current against its terminal currents (`i(v1)` is
+`i(v1:n1)` and the negative of `i(v1:n2)`): the rows about a click on V1's second pin (band PK13,
+band PG19, band TPP of `test_ase_terminal_pick_1724.tcl`) fence which vector is taken and what
+the click says, not a number. The numbers are measured on a real run by row `PN11` of
+`test_ase_probe_deck_1724.tcl`.
+
+**Reproducibility.** Measured: the committed deck, copied to a scratch directory and run with
+`timeout 60 <fork> -b probe_1724.cir`, writes an `op.raw` and a `tran.raw` that `cmp -l` shows
+differing from the committed files only inside the `Date:` header line. A different ngspice build
+is expected to differ in the low-order bits and must be compared numerically.
+
+The committed files' sizes, which row `LR0` asserts together with the two name lists above:
+
+```
+probe_1724_op.raw     435 bytes
+probe_1724_tran.raw  4636 bytes
+```

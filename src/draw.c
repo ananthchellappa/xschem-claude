@@ -11955,6 +11955,233 @@ void draw_scope_highlight(void)
 }
 
 /* ===========================================================================
+ * Pin markers (issue 1724): a cue on each instance pin a caller has CHOSEN.
+ *
+ * A marker is a thin, unfilled ellipse centred on the pin's point, taller than
+ * wide and upright on the screen whatever the instance's rotation or flip,
+ * stroked in the colour of a layer. ASE-L's "Select On Design" puts one on each
+ * terminal whose current it queues; the engine only keeps the list and draws it.
+ * The door is `xschem pin_marker add|remove|clear|list` (scheduler.c).
+ *
+ * THE LIST IS PER CONTEXT (xctx->pin_marker) and each entry is keyed by
+ * (sheet path, instance NAME, pin index) -- see Pin_marker in xschem.h. It is
+ * DERIVED STATE: it is not written to the file, takes no undo slot, is not part
+ * of the selection and never sets the modified flag. It survives a descend and
+ * the way back up, an undo and a redo, because none of those touch it and the
+ * instance is found again by name when the marker is drawn or listed.
+ *
+ * WHO CLEARS IT: `xschem pin_marker clear`; `xschem unhilight_all` (the clear-
+ * all-highlights key), here and in the windows linked to this one by a descend
+ * (pin_marker_clear_linked_windows() in hilight.c); and the doors that put a DIFFERENT document into this
+ * context -- the `xschem load` branch, ask_new_file() and clear_schematic() --
+ * because a marker at path "." would otherwise sit on a same-named instance of
+ * the new document. NOT clear_drawing(), which also runs for descend, go_back
+ * and an undo restore, and NOT clear_all_hilights(), which the highlight code
+ * calls on borrowed contexts.
+ *
+ * DRAWN by draw_pin_markers(), which draw() calls right after the net
+ * highlights and before the pixmap is copied to the window -- so a marker is in
+ * the backing pixmap like any other stroke, and every window-only overlay that
+ * erases itself by copying the pixmap back restores it for free.
+ * =========================================================================== */
+
+/* index in ctx's list of the marker keyed (path, instname, pin), or -1 */
+static int pin_marker_find(const Xschem_ctx *ctx, const char *path, const char *instname, int pin)
+{
+  int k;
+
+  for(k = 0; k < ctx->pin_markers; ++k) {
+    const Pin_marker *m = &ctx->pin_marker[k];
+    if(m->pin == pin && !strcmp(m->instname, instname) && !strcmp(m->path, path)) return k;
+  }
+  return -1;
+}
+
+/* Mark pin `pin` of the instance named `instname` on the sheet at `path`, in the
+ * current context. A key already in the list keeps its place and takes the new
+ * layer and tag (returns 0); a new key is appended (returns 1). The caller has
+ * validated instance, pin and layer; nothing here draws. */
+int pin_marker_add(const char *path, const char *instname, int pin, int layer, const char *tag)
+{
+  Pin_marker *m;
+  int k = pin_marker_find(xctx, path, instname, pin);
+
+  if(k >= 0) {
+    m = &xctx->pin_marker[k];
+    m->layer = layer;
+    my_strdup2(_ALLOC_ID_, &m->tag, tag ? tag : "");
+    return 0;
+  }
+  if(xctx->pin_markers >= xctx->pin_marker_alloc) {
+    xctx->pin_marker_alloc = xctx->pin_marker_alloc ? 2 * xctx->pin_marker_alloc : 8;
+    my_realloc(_ALLOC_ID_, &xctx->pin_marker, (size_t)xctx->pin_marker_alloc * sizeof(Pin_marker));
+  }
+  m = &xctx->pin_marker[xctx->pin_markers];
+  m->path = NULL; m->instname = NULL; m->tag = NULL;
+  my_strdup2(_ALLOC_ID_, &m->path, path);
+  my_strdup2(_ALLOC_ID_, &m->instname, instname);
+  my_strdup2(_ALLOC_ID_, &m->tag, tag ? tag : "");
+  m->pin = pin;
+  m->layer = layer;
+  ++xctx->pin_markers;
+  return 1;
+}
+
+/* Drop the marker keyed (path, instname, pin) from the current context; the ones
+ * after it keep their order. Returns 1 if there was one, else 0. */
+int pin_marker_remove(const char *path, const char *instname, int pin)
+{
+  int j, k = pin_marker_find(xctx, path, instname, pin);
+
+  if(k < 0) return 0;
+  my_free(_ALLOC_ID_, &xctx->pin_marker[k].path);
+  my_free(_ALLOC_ID_, &xctx->pin_marker[k].instname);
+  my_free(_ALLOC_ID_, &xctx->pin_marker[k].tag);
+  for(j = k + 1; j < xctx->pin_markers; ++j) xctx->pin_marker[j - 1] = xctx->pin_marker[j];
+  --xctx->pin_markers;
+  if(!xctx->pin_markers) {
+    my_free(_ALLOC_ID_, &xctx->pin_marker);
+    xctx->pin_marker_alloc = 0;
+  }
+  return 1;
+}
+
+/* Drop from context `ctx` every marker whose tag equals `tag`, or EVERY marker
+ * when `tag` is NULL; the survivors keep their order. Returns the number
+ * dropped. An emptied list gives its array back, so a context with no marker
+ * holds no memory for the feature. It edits the context's fields and nothing
+ * else -- no global xctx swap, no draw -- so it is safe on a context that is
+ * not the current one (the `-all` sweep) and on one being torn down. */
+int pin_marker_clear_in(Xschem_ctx *ctx, const char *tag)
+{
+  int k, keep = 0, dropped = 0;
+
+  if(!ctx || !ctx->pin_marker) return 0;
+  for(k = 0; k < ctx->pin_markers; ++k) {
+    Pin_marker *m = &ctx->pin_marker[k];
+    if(!tag || !strcmp(m->tag, tag)) {
+      my_free(_ALLOC_ID_, &m->path);
+      my_free(_ALLOC_ID_, &m->instname);
+      my_free(_ALLOC_ID_, &m->tag);
+      ++dropped;
+    } else {
+      if(keep != k) ctx->pin_marker[keep] = *m;
+      ++keep;
+    }
+  }
+  ctx->pin_markers = keep;
+  if(!keep) {
+    my_free(_ALLOC_ID_, &ctx->pin_marker);
+    ctx->pin_marker_alloc = 0;
+  }
+  return dropped;
+}
+
+/* pin_marker_clear_in() on the current context */
+int pin_marker_clear(const char *tag)
+{
+  return pin_marker_clear_in(xctx, tag);
+}
+
+/* Where is marker `m` on the sheet the current context shows? Returns the
+ * instance index and sets (*x,*y) to the pin's point, or returns -1 (x and y
+ * untouched) when the marker is not on this sheet: another level's path, no
+ * instance of that name here, an instance whose symbol is not bound, or a pin
+ * index the symbol does not have.
+ * The instance is found by a plain strcmp walk over instname. Deliberately NOT
+ * get_instance(): that reads an all-digit word as an array index, so a marker
+ * on an instance NAMED `3` would land on whatever sits at index 3. The pin test
+ * comes before get_inst_pin_coord(), which answers the world origin for a pin
+ * index out of range. */
+int pin_marker_resolve(const Pin_marker *m, double *x, double *y)
+{
+  int i;
+
+  if(!m || !m->path || !m->instname) return -1;
+  if(!xctx->sch_path[xctx->currsch] || strcmp(m->path, xctx->sch_path[xctx->currsch])) return -1;
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].instname && !strcmp(xctx->inst[i].instname, m->instname)) break;
+  }
+  if(i >= xctx->instances) return -1;
+  if(xctx->inst[i].ptr < 0) return -1;
+  if(m->pin < 0 || m->pin >= (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER]) return -1;
+  get_inst_pin_coord(i, m->pin, x, y);
+  return i;
+}
+
+/* Stroke the current context's markers that sit on the sheet it shows; a marker
+ * that does not resolve here is skipped and KEPT (it is on another level, or its
+ * instance was renamed or deleted and may come back with an undo).
+ *
+ * SIZE, in schematic units: half-width a = the larger of 5 units and 3 scaled
+ * screen pixels' worth (3 * zoom * tk scaling), half-height b = 2a. At ordinary
+ * zooms that is a 10 x 20 unit ellipse round the usual 5 x 5 pin box; zoomed
+ * far out it stops shrinking, so a chosen pin can still be found on a
+ * whole-chip view.
+ * STROKE: solid, a FIXED width on the screen (1 pixel, 2 from a tk scaling of
+ * 1.25 up) rather than the zoom-following line width, set on the layer's GC and
+ * put back as drawrect() does for its dash and bus widths.
+ * The arc goes to the window and to the pixmap under the same two flags every
+ * other stroke of draw() obeys, through the layer GC, so a clip rectangle set by
+ * a bbox-limited redraw applies to it too.
+ * Its own drawer and not drawrect()'s ellipse arm: that one casts unclipped
+ * doubles to unsigned. Here an ellipse wholly outside the drawing area is not
+ * sent, and neither is one whose box does not fit the 16 bit coordinates of the
+ * X protocol (it would wrap round and paint an arc somewhere else). The second
+ * is out of reach of the editor's own zoom limit, CADMINZOOM, and is there for a
+ * zoom set by a script.
+ * Costs one integer test when the list is empty. */
+void draw_pin_markers(void)
+{
+  int k, width, drawn_layer = -1;
+
+  if(!has_x || xctx->pin_markers <= 0) return;
+  width = tk_scaling >= 1.25 ? 2 : 1;
+  for(k = 0; k < xctx->pin_markers; ++k) {
+    const Pin_marker *m = &xctx->pin_marker[k];
+    double x, y, a, b, sx1, sy1, sx2, sy2;
+    int ix, iy, iw, ih;
+
+    /* the command refuses a layer out of range, but the user can lower cadlayers
+     * afterwards, and gc[] is that long */
+    if(m->layer < 0 || m->layer >= cadlayers) continue;
+    if(pin_marker_resolve(m, &x, &y) < 0) continue;
+    a = 3.0 * xctx->zoom * tk_scaling;
+    if(a < 5.0) a = 5.0;
+    b = 2.0 * a;
+    sx1 = X_TO_SCREEN(x - a);
+    sy1 = Y_TO_SCREEN(y - b);
+    sx2 = X_TO_SCREEN(x + a);
+    sy2 = Y_TO_SCREEN(y + b);
+    /* visible at all? Written so that a coordinate that is not a number fails it */
+    if(!(sx2 >= xctx->areax1 && sx1 <= xctx->areax2 &&
+         sy2 >= xctx->areay1 && sy1 <= xctx->areay2)) continue;
+    if(sx1 < -32000.0 || sy1 < -32000.0 || sx2 > 32000.0 || sy2 > 32000.0) continue;
+    ix = (int)floor(sx1 + 0.5);
+    iy = (int)floor(sy1 + 0.5);
+    iw = (int)floor(sx2 - sx1 + 0.5);
+    ih = (int)floor(sy2 - sy1 + 0.5);
+    if(iw < 1 || ih < 1) continue;
+    if(m->layer != drawn_layer) {
+      if(drawn_layer >= 0)
+        XSetLineAttributes(display, xctx->gc[drawn_layer], XLINEWIDTH(xctx->lw),
+                           LineSolid, LINECAP, LINEJOIN);
+      XSetLineAttributes(display, xctx->gc[m->layer], width, LineSolid, LINECAP, LINEJOIN);
+      drawn_layer = m->layer;
+    }
+    if(xctx->draw_window)
+      XDrawArc(display, xctx->window, xctx->gc[m->layer], ix, iy,
+               (unsigned int)iw, (unsigned int)ih, 0, 360 * 64);
+    if(xctx->draw_pixmap)
+      XDrawArc(display, xctx->save_pixmap, xctx->gc[m->layer], ix, iy,
+               (unsigned int)iw, (unsigned int)ih, 0, 360 * 64);
+  }
+  if(drawn_layer >= 0)
+    XSetLineAttributes(display, xctx->gc[drawn_layer], XLINEWIDTH(xctx->lw),
+                       LineSolid, LINECAP, LINEJOIN);
+}
+
+/* ===========================================================================
  * Hover (awareness) highlight — outline ONE object (the one under the tracking
  * cursor) in its natural shape with the GC <g>. Mirrors draw_scope_highlight()'s
  * per-type dispatch, but takes a live {type, index, layer} (the object is
@@ -12441,6 +12668,11 @@ void draw(void)
       xctx->lw = xctx->save_lw;
       change_linewidth(xctx->save_lw);
     }
+    /* pin markers (issue 1724): after the net highlights and the line-width
+     * restore above, before the pixmap reaches the window. Its own call and not
+     * part of draw_hilight_net(), which returns at once when no net is
+     * highlighted. No-op when this context has no marker. */
+    draw_pin_markers();
     /* do_copy_area is zero only when doing png hardcopy to avoid video flickering */
     if(xctx->do_copy_area) {
       if(!xctx->draw_window && xctx->draw_pixmap) {

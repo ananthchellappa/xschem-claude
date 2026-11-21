@@ -86,9 +86,9 @@
 #                              `notinst {}`
 #   rdw::show <instname>     open the window, rdw::dump, hand focus back
 #   rdw::pick_start          arm the command mode; 1 if armed, 0 if it could not
-#   rdw::pick_click ?x? ?y?  resolve ONE click, coordinates defaulting to
-#                            mousex_snap / mousey_snap; the mode STAYS LIVE
-#   rdw::pick_release        hand the three bindings back; 1 if it released one
+#   rdw::pick_click ?x? ?y?  resolve ONE click, coordinates defaulting to the
+#                            engine's pointer pair; the mode STAYS LIVE
+#   rdw::pick_release        hand the bindings back; 1 if it released one
 #   rdw::pick_end            leave the mode
 #   rdw::pick_suspend        cmdmode arm; 1 only if it released a LIVE mode
 #   rdw::pick_resume <cv>    cmdmode arm; re-latch on the canvas it LANDS on
@@ -98,7 +98,8 @@
 #   rdw::_ciw <msg>          the ONE refusal channel
 #   and, at SOURCE time (safe: cmdmode.tcl is pure Tcl and is sourced BEFORE
 #   rdw.tcl, exactly as ase_window.tcl:2055 already does),
-#     cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume
+#     cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume rdw::pick_held
+#   rdw::pick_held           what the mode holds on the canvas now, for cmdmode
 #
 # ============================================================================
 # THE FOUR MEASUREMENTS THIS FILE IS BUILT ON. ALL RE-RUN 2026-09-04, AT HEAD
@@ -219,6 +220,63 @@ check {FX0 the canvas is mapped and really sized before anything is measured - e
   {1 1}
 
 # ============================================================================
+# WHICH WINDOW MANAGER, AND THE ROWS THAT NEED ONE
+# ============================================================================
+# Rows F3 and RA4 are about what a window manager does: F3 parks the pointer
+# off every window and reads the focus a window is granted when it is mapped,
+# and RA4 iconifies a window. On a display with no window manager the main
+# window lies in the corner the pointer is parked in and `wm iconify` does
+# nothing, so neither row can say anything about its subject there. They
+# are run when a window manager is up and left out, under a line that says so,
+# when there is none. Every other row runs either way.
+#
+# THE MANAGER IS NAMED BY THE ROOT WINDOW'S OWN RECORD OF IT, and that record
+# is checked against something this application can see for itself: a window
+# manager puts a frame round a window it manages, and Tk knows whether the
+# main window has one.
+#
+# A MANAGER THAT HAS DIED LEAVES ITS RECORD BEHIND. The root window goes on
+# naming the manager's own window after the manager is gone, and that window
+# then answers nothing. So a record that names a manager with no name to give
+# is not taken as a manager being up: the frame decides, as it does where the
+# record could not be read at all, and a main window with no frame round it
+# means there is no manager.
+#
+# its name; `none` when the root names no manager, `unnamed` when it names one
+# that gives no name or is no longer there, `not read` when xprop gave no
+# answer
+proc kx_wm_name {} {
+  if {[catch {exec timeout 5 xprop -root _NET_SUPPORTING_WM_CHECK 2>@1} r]} { return {not read} }
+  if {![regexp {window id # (0x[0-9a-fA-F]+)} $r -> wid]} { return none }
+  if {[catch {exec timeout 5 xprop -id $wid _NET_WM_NAME 2>@1} r] || ![regexp {= "(.*)"} $r -> name]} { return unnamed }
+  regsub -all {[^A-Za-z0-9 ._-]} $name {} name
+  if {[string trim $name] eq {}} { return unnamed }
+  return $name
+}
+## 1 when the main window sits inside a frame: `wm frame` answers the window's
+## own id when nothing was put round it. The two are compared as NUMBERS: Tk
+## writes one id with leading zeros and the other without.
+proc kx_framed {} {
+  set r 0
+  catch {set r [expr {[wm frame .] != [winfo id .] ? 1 : 0}]}
+  return $r
+}
+set KX_WM [kx_wm_name]
+set KX_FRAMED [kx_framed]
+## no window manager: the main window has no frame round it, and the root
+## names no manager, names one that gives no name, or could not be read
+set KX_NOWM [expr {!$KX_FRAMED && [lsearch -exact {none unnamed {not read}} $KX_WM] >= 0 ? 1 : 0}]
+check "WM0 FIXTURE the window manager on this display, by the root window's own record of it: $KX_WM. The main window agrees with that record - it sits inside a frame when a manager is named and has none when the root names no manager; where the record could not be read, or names a manager that gives no name or is no longer there, the frame alone decides. Rows F3 and RA4 run when a manager is up and are left out, under a line of their own, when there is none" \
+  [list [expr {$KX_NOWM ? {nomanager} : {manager}}] $KX_FRAMED] \
+  [expr {$KX_WM eq {none} ? {nomanager 0} : ($KX_WM eq {not read} || $KX_WM eq {unnamed} ? [list [expr {$KX_FRAMED ? {manager} : {nomanager}}] $KX_FRAMED] : {manager 1})}]
+## ONE line for a row that is left out. Upper case, and it ends in a full stop:
+## the regression driver counts lower-case `skip:` lines and lines that end in
+## a verdict word, and this is neither.
+proc kx_left_out {row why} {
+  puts "SKIPPED: row $row is left out - no window manager on this display ($why)."
+}
+
+# ============================================================================
 # THE ANSWER DISCIPLINE — AN ABSENT MODE MUST NEVER SATISFY A ROW
 # ============================================================================
 # Same two rules as B3's suite. A bare call to a proc that does not exist
@@ -290,10 +348,9 @@ proc kx_centre {n} {
 # exposure: it is the only point at which foreign events get processed between
 # the motion and the press, and what it processes is the toplevel's WM settle --
 # a `<Configure>` BURST.  `src/xschem.tcl` binds
-# `bind $topwin <Configure> "xschem callback %W %T %x %y 0 %w %h 0"` on a
-# TOPLEVEL, so every descendant's bindtags include it and it fires for
-# `.statusbar.1`, `.`, `.statusbar`, `.toolbar`, `.tabs` and `.drw` alike,
-# handing each widget's position INSIDE ITS PARENT as `%x %y`.  `callback()`
+# `bind $topwin <Configure> "xschem callback %W %T %x %y 0 %w %h 0"` on the
+# design canvas (`set_bindings`), handing the canvas's position INSIDE ITS
+# WINDOW as `%x %y`.  `callback()`
 # (src/callback.c) then runs `xctx->mousex = X_TO_XSCHEM(mx)` UNCONDITIONALLY,
 # above its `switch(event)` -- so a ConfigureNotify writes a widget POSITION
 # into the mouse pair.  Instrumented here: the motion set 136.2803/-170.01365
@@ -303,18 +360,75 @@ proc kx_centre {n} {
 # window, no block, which is why all six rows read `NO-BLOCK` and none of them
 # raises.  The rows were RIGHT and the product was RIGHT; the helper was racing.
 #
-# ⚠ THE PRODUCT HALF IS A SEPARATE, UNCONFIRMED FINDING AND IS NOT FIXED HERE:
-# that `callback()` clobber is reachable by any `<Configure>` on any descendant,
-# including `.statusbar.1` on a status-text reflow, and `rdw::pick_click` is not
-# its only un-snapped reader -- `calc::pick_click` (R208) reads the same pair.
-# Whether a real hand gesture can see it was NOT established.  Filed; do not
-# treat this helper fix as closing it.
+# ⚠ THE ENGINE STILL OVERWRITES THE PAIR (issue 1659); THE MODE NO LONGER
+# DEPENDS ON IT.  The mode's press hands its own position to the engine before
+# the click is resolved (`rdw::_pick_seize`), and section XP below presses with
+# the pair overwritten and no motion in between.  What this helper's pump order
+# still protects is the EDITOR's clicks, which the engine reads from the pair.
 proc kx_click {ux uy {cv .drw}} {
   update
   event generate $cv <Motion>          -x [sx $ux] -y [sy $uy] -when now
   event generate $cv <ButtonPress-1>   -x [sx $ux] -y [sy $uy] -when now
   event generate $cv <ButtonRelease-1> -x [sx $ux] -y [sy $uy] -when now
   update
+}
+
+## ONE REAL DOUBLE CLICK through the canvas's bindings: a motion, then press,
+## release, press, release on one pixel, stamped well inside Tk's double-click
+## time. It answers three things the row needs and cannot get afterwards:
+##   how many double clicks Tk ITSELF recognised -- a binding tag of this
+##     helper's own, put in FRONT of the canvas's, counts them, so two presses
+##     Tk took for two single clicks cannot pass as a double;
+##   what the EDITOR saw -- the event type of every `xschem callback` a binding
+##     made during the gesture, kept to presses (4), releases (5) and the double
+##     click (-3), read off the interpreter's own record of the calls;
+##   which window came up -- the editor's answer to a double click in the stock
+##     profile is a property dialog that WAITS, so a timer that runs inside that
+##     wait takes down whatever appeared and names it. A press that got through
+##     is then a named red and not a stalled suite.
+set ::KX_T 900000
+set ::KX_CB {} ; set ::KX_DBL 0 ; set ::KX_POPPED {}
+proc kx_cbtrace {cmd op} {
+  if {[lindex $cmd 1] ne {callback}} return
+  set ev [lindex $cmd 3]
+  if {$ev eq {4} || $ev eq {5} || $ev eq {-3}} { lappend ::KX_CB $ev }
+}
+proc kx_tops {} {
+  set out {}
+  foreach w [winfo children .] {
+    if {[winfo toplevel $w] eq $w && [winfo ismapped $w]} { lappend out $w }
+  }
+  return [lsort $out]
+}
+proc kx_dismiss {before} {
+  foreach w [kx_tops] {
+    if {[lsearch -exact $before $w] >= 0 || $w eq {.rdw}} continue
+    lappend ::KX_POPPED "$w '[wm title $w]'"
+    catch {destroy $w}
+  }
+}
+proc kx_dblclick {ux uy {cv .drw}} {
+  update
+  set ::KX_CB {} ; set ::KX_DBL 0 ; set ::KX_POPPED {}
+  set tags0 [bindtags $cv]
+  bind KxDblProbe <Double-Button-1> {incr ::KX_DBL}
+  bindtags $cv [linsert $tags0 0 KxDblProbe]
+  trace add execution xschem enter kx_cbtrace
+  incr ::KX_T 5000
+  set before [kx_tops]
+  set deadman [after 1500 [list kx_dismiss $before]]
+  event generate $cv <Motion>          -x [sx $ux] -y [sy $uy] -when now
+  event generate $cv <ButtonPress-1>   -x [sx $ux] -y [sy $uy] -time $::KX_T -when now
+  event generate $cv <ButtonRelease-1> -x [sx $ux] -y [sy $uy] -time [expr {$::KX_T + 70}] -when now
+  event generate $cv <ButtonPress-1>   -x [sx $ux] -y [sy $uy] -time [expr {$::KX_T + 180}] -when now
+  event generate $cv <ButtonRelease-1> -x [sx $ux] -y [sy $uy] -time [expr {$::KX_T + 250}] -when now
+  update
+  after cancel $deadman
+  kx_dismiss $before
+  trace remove execution xschem enter kx_cbtrace
+  bindtags $cv $tags0
+  bind KxDblProbe <Double-Button-1> {}
+  return [list $::KX_DBL $::KX_CB $::KX_POPPED]
 }
 
 
@@ -592,10 +706,19 @@ event generate .rdw.p.t <ButtonRelease-1> -x 4 -y 4 -when now
 for {set _f 0} {$_f < 20} {incr _f} { update ; after 25 }
 set F3_FOCUS1 [focus]
 set F3_PEND1 [kx_pending]
+## ⚠ THIS ROW NEEDS A WINDOW MANAGER, AND SAYS SO WHEN THERE IS NONE. With
+## none the main window lies in the corner of the screen the pointer was just
+## parked in, so the first leg -- the pointer is off every window -- cannot
+## hold. The gesture above is made either way: row F4 runs on the state it
+## leaves.
+if {$KX_NOWM} {
+  kx_left_out F3 {the pointer cannot be parked off the main window}
+} else {
 check {F3 ISSUE 1306, THE USER'S HEADLINE REQUIREMENT: with the pointer parked off every window, a real first-of-session dump made, its post-dump focus read back on the CANVAS and the one-shot RE-ARMED ON PURPOSE - so the state the row names is guaranteed to exist rather than inherited - a real click into the text pane leaves the keyboard ON THE PANE, and (issue 1369) SPENDS the one-shot rather than leaving it armed, because a landing test that can see the whole window can no longer tell this click from the window manager's grant and the press is what tells them apart. The %W guard can tell neither, because X delivers a FocusIn to .rdw for both} \
   [list [expr {![string match {.drw*} $F3_PARK] && ![string match {.rdw*} $F3_PARK] ? 1 : 0}] \
         $F3_PRE0 $F3_PANE $F3_FOCUS0 $F3_REARM $F3_FOCUS1 $F3_PEND1] \
   {1 0 1 .drw 1 .rdw.p.t 0}
+}
 
 ## F4 RUNS ON THE STATE F3 LEFT, DELIBERATELY: this is the user's requirement
 ## stated as the gesture they actually make. <<Copy>> is delivered to WHATEVER
@@ -850,7 +973,19 @@ set PRE_E [bind .drw <Key-Escape>]
 ## one is the empty string like the other three, so the destroy-versus-empty
 ## distinction applies to it identically.
 set PRE_M [bind .drw <B1-Motion>]
+## ⚠ THE FIFTH SLOT, AND ITS PREDECESSOR IS NOT EMPTY. The editor binds the
+## double click on every design canvas (set_bindings in src/xschem.tcl), and
+## Tk hands the SECOND press of a double click to the most specific binding
+## that matches -- so with only the press seized that press went past the mode
+## to the editor. The seize takes this slot too and must hand the editor's own
+## script back byte for byte; a restore that emptied it would take the editor's
+## double click away for the rest of the session. Row B0d reads it here, before
+## any mode is armed, so the rows below compare against a script that was seen.
+set PRE_D [bind .drw <Double-Button-1>]
 set PRE_SEQ [lsort [bind .drw]]
+check {B0d FIXTURE the design canvas holds the editor's own double-click script before any mode is armed - a real script, which is what makes the fifth seized slot different from the other four, whose predecessors are empty} \
+  [list $PRE_D [expr {[lsearch -exact $PRE_SEQ <Double-Button-1>] >= 0 ? 1 : 0}]] \
+  [list {xschem callback %W -3 %x %y 0 %b 0 %s} 1]
 
 set B1_POST {} ; set B1_BRK {}
 foreach k {1 2 3 4} {
@@ -1202,7 +1337,7 @@ check {V2 THE USER'S OWN REQUIREMENT: a real Motion+ButtonPress+ButtonRelease ov
 ## V2b — ISSUE 1304. THE ROW THE USER'S OWN SENTENCE OWES, AND THE ONE GESTURE
 ## NEITHER SUITE MAKES: A DRAG.
 ## ---------------------------------------------------------------------------
-## The seize was copied from ase::ui::select_on_design, which takes the press,
+## The seize was copied from ase::ui::select_on_design, which then took the press,
 ## the release and Escape and NOT <B1-Motion>. So C's rubber band STARTS -- a
 ## motion with Button1Mask calls select_rect(START,1) + unselect_all(1) and sets
 ## STARTSELECT (callback.c:7250-7260) -- and NEVER TERMINATES, because the only
@@ -1287,6 +1422,38 @@ check {V3 the mode stays live across a click: a second click on a second device 
   [list [seized] [expr {[kx_nblocks] == $V3_N0 + 1 ? 1 : 0}] [kx_top_hdr]] \
   {1 1 M1:/}
 
+## V3b -- THE SECOND PRESS OF A DOUBLE CLICK. Tk hands it to the most specific
+## binding that matches, and the editor binds the double click on every design
+## canvas. With only the press seized that second press went past the mode to
+## the editor, on the device the first press had just dumped: under this
+## profile the editor's connected-select, which SELECTS -- against the user's
+## own "clicking will not change selected set" -- and in the stock profile its
+## property dialog. The seize takes the slot and swallows the press: the first
+## press has dumped the device and the pointer has not moved.
+##
+## ⚠ SWALLOWED, NOT DUMPED AGAIN, AND THE ROW HOLDS THAT TOO. Given the press's
+## own script the second press is resolved at a point nobody clicked and says
+## "no device under the click" right after the dump: the dump re-lays the
+## windows out, and C takes the mouse pair from those layout events as well
+## (issue 1659). So one block, and not one CIW line.
+set V3B_N0 [kx_nblocks]
+xschem select wire 0
+set V3B_SEL0 [kx_sel]
+set ::KX_CIW {}
+lassign [kx_centre M2] V3BX V3BY
+set V3B [kx_dblclick $V3BX $V3BY]
+set V3B_SEL1 [kx_sel]
+## Read before the cleanup below: with the action log on, as the display list
+## of the regression driver runs its cases, that command is echoed into the CIW.
+set V3B_CIW [llength $::KX_CIW]
+xschem unselect_all
+check {V3b a real DOUBLE click on a device with the mode live is ONE dump and nothing else: Tk itself recognised one double click, the editor saw no press, no release and no double click, no window came up, the store gained exactly one block and it is the device under the cursor, the selection - a wire selected by hand beforehand - is byte-identical, the CIW says nothing, and the mode is still live} \
+  [list [lindex $V3B 0] [lindex $V3B 1] [lindex $V3B 2] \
+        [expr {[kx_nblocks] - $V3B_N0}] [kx_top_hdr] \
+        [expr {$V3B_SEL0 ne {} ? 1 : 0}] [expr {$V3B_SEL1 eq $V3B_SEL0 ? 1 : 0}] \
+        $V3B_CIW [seized]] \
+  {1 {} {} 1 M2:/ 1 1 0 1}
+
 ## The four inputs most likely to break this change, driven rather than
 ## reasoned about: empty canvas, a wire, a subcircuit with no descriptor, and a
 ## device with no descriptor at all.
@@ -1327,15 +1494,19 @@ set V6_PRE [seized]
 ## the hole shipped. This leg says the seize TOOK it; the leg below says the
 ## release GAVE IT BACK.
 set V6_MSEIZE [expr {[bind .drw <B1-Motion>] ne $PRE_M ? 1 : 0}]
+## ...and the fifth, for the same reason: read while the mode is live it is the
+## mode's own script; read after the ESC it must be the editor's again.
+set V6_DSEIZE [bind .drw <Double-Button-1>]
 focus -force .drw ; update idletasks
 event generate .drw <Key-Escape> -when now
 update
-check {V6 a real Key-Escape on the canvas ends the mode and hands ALL FOUR bindings back BYTE-IDENTICALLY, and returns the whole sequence list of .drw to its pre-entry value - an empty-but-present binding passes the first leg and fails the second, and the <B1-Motion> slot is asserted taken while the mode was live and given back after it} \
-  [list $V6_PRE $V6_MSEIZE [seized] \
+check {V6 a real Key-Escape on the canvas ends the mode and hands ALL FIVE bindings back BYTE-IDENTICALLY, and returns the whole sequence list of .drw to its pre-entry value - an empty-but-present binding passes the first leg and fails the second, the <B1-Motion> slot is asserted taken while the mode was live and given back after it, and the double-click slot holds the mode's own swallowing script while the mode is live and the editor's script again after it} \
+  [list $V6_PRE $V6_MSEIZE $V6_DSEIZE [seized] \
         [bind .drw <ButtonPress-1>] [bind .drw <ButtonRelease-1>] \
         [bind .drw <Key-Escape>] [bind .drw <B1-Motion>] \
+        [bind .drw <Double-Button-1>] \
         [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}]] \
-  [list 1 1 0 $PRE_P $PRE_R $PRE_E $PRE_M 1]
+  [list 1 1 break 0 $PRE_P $PRE_R $PRE_E $PRE_M $PRE_D 1]
 
 ## A list key pressed while the mode is live must RE-ARM IN PLACE. ASE's own
 ## select_on_design self-serialises by ENDING the previous mode first
@@ -1471,11 +1642,12 @@ set D1_SUSP   [expr {$::KX_SUSP >= 1 ? 1 : 0}]
 set D1_RESCV  $::KX_RESUME_CV
 set D1_UNSUSP [kx_ans ::cmdmode::is_suspended]
 set D1_SEIZED [seized $D1_CV]
-## ⚠ THE RESUME ARM RE-LATCHES FOUR SEQUENCES NOW, NOT THREE, AND IT RE-LATCHES
+## ⚠ THE RESUME ARM RE-LATCHES EVERY SEQUENCE OF THE SEIZE, AND IT RE-LATCHES
 ## THEM FROM THE CANVAS IT LANDS ON. Captured here for the same reason as the
 ## rest of this block: a leg written bare inside the `check` argument list is
 ## evaluated AFTER the ESC below and would read the released state.
 set D1_MSEIZE [expr {[bind $D1_CV <B1-Motion>] ne $PRE_M ? 1 : 0}]
+set D1_DSEIZE [bind $D1_CV <Double-Button-1>]
 set D1_LK2    [kx_listkind]
 set D1_SEL0 [kx_sel]
 lassign [kx_centre M3] D1MX D1MY
@@ -1486,13 +1658,13 @@ set D1_SEL1 [kx_sel]
 focus -force $D1_CV ; update idletasks
 event generate $D1_CV <Key-Escape> -when now
 update
-check {D1 the descend round trip: a descend with the mode live SUSPENDS and RESUMES it on the canvas that is current NOW, the store and the list survive untouched, a click on the DESCENDED canvas dumps the descended device with the selection still byte-identical, and ESC then restores ALL FOUR of that canvas's own predecessors} \
-  [list $D1_OK $D1_DESC $D1_SUSP $D1_RESCV $D1_UNSUSP $D1_SEIZED $D1_MSEIZE \
+check {D1 the descend round trip: a descend with the mode live SUSPENDS and RESUMES it on the canvas that is current NOW, the store and the list survive untouched, a click on the DESCENDED canvas dumps the descended device with the selection still byte-identical, and ESC then restores ALL FIVE of that canvas's own predecessors - the double click's among them, which the resumed mode held with its own script} \
+  [list $D1_OK $D1_DESC $D1_SUSP $D1_RESCV $D1_UNSUSP $D1_SEIZED $D1_MSEIZE $D1_DSEIZE \
         $D1_LK $D1_LK2 [expr {$D1_N1 > $D1_N0 ? 1 : 0}] $D1_H \
         [expr {$D1_SEL1 eq $D1_SEL0 ? 1 : 0}] [seized $D1_CV] \
         [bind $D1_CV <ButtonPress-1>] [bind $D1_CV <Key-Escape>] \
-        [bind $D1_CV <B1-Motion>]] \
-  [list 0 1 1 $D1_CV 0 1 1 annotation annotation 1 M3:/X1 1 0 $PRE_P $PRE_E $PRE_M]
+        [bind $D1_CV <B1-Motion>] [bind $D1_CV <Double-Button-1>]] \
+  [list 0 1 1 $D1_CV 0 1 1 break annotation annotation 1 M3:/X1 1 0 $PRE_P $PRE_E $PRE_M $PRE_D]
 
 ## TODAY'S BEHAVIOUR, PINNED SO THE FIX WILL RED IT. The cadence profile's OWN
 ## descend - Ctrl-x, cadence::descend_into_inst, utils/cadence_nav.tcl:260 -
@@ -1585,6 +1757,7 @@ set D3_FLAG0 [expr {[info exists ::rdw::pick(suspended)] ? 1 : 0}]
 set D3_SUSP_P [bind .drw <ButtonPress-1>]
 set D3_SUSP_E [bind .drw <Key-Escape>]
 set D3_SUSP_M [bind .drw <B1-Motion>]
+set D3_SUSP_D [bind .drw <Double-Button-1>]
 ## THE USER'S KEY PRESS, DURING THE WAIT. %s is 0, so cadence_style_rc's
 ## `%s & 0x4c` modifier guard routes it to rdw::key rather than forwarding it.
 focus -force .drw ; update idletasks
@@ -1608,16 +1781,17 @@ set D3_END_P [bind .drw <ButtonPress-1>]
 set D3_END_R [bind .drw <ButtonRelease-1>]
 set D3_END_E [bind .drw <Key-Escape>]
 set D3_END_M [bind .drw <B1-Motion>]
+set D3_END_D [bind .drw <Double-Button-1>]
 set D3_SEQOK [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}]
-check {D3 ISSUE 1305: with the mode live and a descend's suspend outstanding, a real bare 2 on the canvas re-arms the pick AND clears the suspend, so the later resume finds nothing to resume and a real ESC hands ALL FOUR of the canvas's own predecessors back. Without the clear the resume seizes a canvas that is already seized, latches the seize's own scripts as the predecessors, and ESC restores them - a PERMANENT seize with no key left that ends it} \
+check {D3 ISSUE 1305: with the mode live and a descend's suspend outstanding, a real bare 2 on the canvas re-arms the pick AND clears the suspend, so the later resume finds nothing to resume and a real ESC hands ALL FIVE of the canvas's own predecessors back. Without the clear the resume would seize a canvas that is already seized; when issue 1305 was measured that seize kept its own scripts as the predecessors and ESC put them straight back - a PERMANENT seize with no key left that ends it. The seize no longer keeps them (row XP3), so this row is the fence on the clear and that one on the seize} \
   [list $D3_CV $D3_BIND2 [kx_bad $D3_LK0] $D3_ARMED $D3_LKA \
-        $D3_NSUS $D3_FLAG0 $D3_SUSP_P $D3_SUSP_E $D3_SUSP_M \
+        $D3_NSUS $D3_FLAG0 $D3_SUSP_P $D3_SUSP_E $D3_SUSP_M $D3_SUSP_D \
         $D3_LKB $D3_FLAG1 $D3_SEIZED1 $D3_SEIZED2 \
-        $D3_SEIZED3 $D3_END_P $D3_END_R $D3_END_E $D3_END_M $D3_SEQOK] \
+        $D3_SEIZED3 $D3_END_P $D3_END_R $D3_END_E $D3_END_M $D3_END_D $D3_SEQOK] \
   [list .drw 1 0 1 annotation \
-        1 1 $PRE_P $PRE_E $PRE_M \
+        1 1 $PRE_P $PRE_E $PRE_M $PRE_D \
         summary 0 1 1 \
-        0 $PRE_P $PRE_R $PRE_E $PRE_M 1]
+        0 $PRE_P $PRE_R $PRE_E $PRE_M $PRE_D 1]
 
 ## ⚠ REPAIR THE CANVAS BY HAND, AND THAT IS PART OF THE MEASUREMENT. With the
 ## defect present the state this row just drove is UNRECOVERABLE within the
@@ -1630,9 +1804,469 @@ check {D3 ISSUE 1305: with the mode live and a descend's suspend outstanding, a 
 kx_ans ::rdw::pick_end
 array unset ::rdw::pick
 foreach {_sq _vv} [list <ButtonPress-1> $PRE_P <ButtonRelease-1> $PRE_R \
-                        <Key-Escape> $PRE_E <B1-Motion> $PRE_M] {
+                        <Key-Escape> $PRE_E <B1-Motion> $PRE_M \
+                        <Double-Button-1> $PRE_D] {
   catch {bind .drw $_sq $_vv}
 }
+kx_ans ::rdw::set_list annotation
+kx_reset
+xschem unselect_all
+update idletasks
+
+# ============================================================================
+# SECTION XP — THE PRESS'S OWN POSITION, THE MODE'S OWN SCRIPTS, A NEW WINDOW
+# ============================================================================
+# Three properties of the seize, each driven with real events on the real
+# canvas under this profile:
+#
+#   XP0-XP2  The click is resolved at the pixel that was pressed. The engine
+#            overwrites its pointer pair on every event it is handed: the
+#            editor binds <Configure> on the design canvas, and that event
+#            carries the canvas's position inside its window (issue 1659). The
+#            drive is a real motion onto a device, the canvas's own <Configure>
+#            as a layout pass sends it, and a real press WITH NO MOTION IN
+#            BETWEEN. That the pair really was overwritten is a leg of each row.
+#   XP3-XP4  The seize never keeps the mode's own scripts as the predecessors,
+#            and does keep another mode's.
+#   XP5-XP6  A window created while the mode is up gets none of its scripts,
+#            because the mode tells cmdmode what it holds.
+proc kx_pair {} { return [list [xschem get mousex] [xschem get mousey]] }
+## is that pair more than a unit away from the user point of pixel (px,py)?
+proc kx_away {pair px py} {
+  return [expr {abs([lindex $pair 0] - [ux $px]) > 1.0 || abs([lindex $pair 1] - [uy $py]) > 1.0 ? 1 : 0}]
+}
+## the canvas's own <Configure>, with the geometry the canvas really has
+proc kx_clobber {{cv .drw}} {
+  event generate $cv <Configure> -x [winfo x $cv] -y [winfo y $cv] \
+    -width [winfo width $cv] -height [winfo height $cv] -when now
+  return [kx_pair]
+}
+## ONE press and release at a pixel with NO motion first
+proc kx_pressonly_px {px py {cv .drw}} {
+  incr ::KX_T 5000
+  event generate $cv <ButtonPress-1>   -x $px -y $py -time $::KX_T -when now
+  event generate $cv <ButtonRelease-1> -x $px -y $py -time [expr {$::KX_T + 80}] -when now
+  update
+}
+## ONE double click at a pixel with no motion and the pair overwritten before
+## each press; bounded and observed as kx_dblclick is. Answers kx_dblclick's
+## three things and then the two pairs as they stood before the presses.
+proc kx_dblclick_clobbered_px {px py {cv .drw}} {
+  update
+  set ::KX_CB {} ; set ::KX_DBL 0 ; set ::KX_POPPED {}
+  set tags0 [bindtags $cv]
+  bind KxDblProbe <Double-Button-1> {incr ::KX_DBL}
+  bindtags $cv [linsert $tags0 0 KxDblProbe]
+  trace add execution xschem enter kx_cbtrace
+  incr ::KX_T 5000
+  set before [kx_tops]
+  set deadman [after 1500 [list kx_dismiss $before]]
+  set p1 [kx_clobber $cv]
+  event generate $cv <ButtonPress-1>   -x $px -y $py -time $::KX_T -when now
+  event generate $cv <ButtonRelease-1> -x $px -y $py -time [expr {$::KX_T + 70}] -when now
+  set p2 [kx_clobber $cv]
+  event generate $cv <ButtonPress-1>   -x $px -y $py -time [expr {$::KX_T + 180}] -when now
+  event generate $cv <ButtonRelease-1> -x $px -y $py -time [expr {$::KX_T + 250}] -when now
+  update
+  after cancel $deadman
+  kx_dismiss $before
+  trace remove execution xschem enter kx_cbtrace
+  bindtags $cv $tags0
+  bind KxDblProbe <Double-Button-1> {}
+  return [list $::KX_DBL $::KX_CB $::KX_POPPED $p1 $p2]
+}
+## the five slots of a canvas, in the seize's own order
+proc kx_slots {{cv .drw}} {
+  return [list [bind $cv <ButtonPress-1>] [bind $cv <ButtonRelease-1>] [bind $cv <Key-Escape>] \
+               [bind $cv <B1-Motion>] [bind $cv <Double-Button-1>]]
+}
+proc kx_prevs {} {
+  set out {}
+  foreach k {prevpress prevrel prevesc prevmotion prevdbl} {
+    set v NOKEY ; catch {set v $::rdw::pick($k)} ; lappend out $v
+  }
+  return $out
+}
+proc kx_esc {{cv .drw}} {
+  focus -force $cv ; update idletasks
+  event generate $cv <Key-Escape> -when now
+  update
+}
+set KX_PRESS {xschem callback %W 6 %x %y 0 0 0 %s; rdw::pick_click; break}
+set KX_OWN   [list $KX_PRESS break {rdw::pick_end; break} break break]
+set KX_FREE  [list $PRE_P $PRE_R $PRE_E $PRE_M $PRE_D]
+
+kx_reset
+catch {xschem update_all_sym_bboxes}
+kx_ans ::rdw::key annotation
+update idletasks
+lassign [kx_centre M1] XP_M1X XP_M1Y
+lassign [kx_centre M2] XP_M2X XP_M2Y
+set XP_M1PX [sx $XP_M1X] ; set XP_M1PY [sy $XP_M1Y]
+set XP_M2PX [sx $XP_M2X] ; set XP_M2PY [sy $XP_M2Y]
+
+## XP0 -- THE FIXTURE: THE OVERWRITE IS REAL, AND IT MOVES NOTHING BUT THE PAIR.
+set XP0_VIEW [list [xschem get zoom] [xschem get xorigin] [xschem get yorigin]]
+update
+event generate .drw <Motion> -x $XP_M1PX -y $XP_M1PY -when now
+set XP0_M [kx_pair]
+set XP0_C [kx_clobber]
+check {XP0 FIXTURE the engine's pointer pair really is overwritten by the canvas's own layout event: with the mode live, after a real motion onto M1 the pair is the point of the pixel the motion was sent to, and after the canvas's <Configure>, sent with the geometry the canvas has, it is more than a unit away from that point - with the zoom and the origin unmoved, the pixel still on M1, and the script that did it the editor's own binding on the canvas} \
+  [list [seized] [kx_away $XP0_M $XP_M1PX $XP_M1PY] [kx_away $XP0_C $XP_M1PX $XP_M1PY] \
+        [expr {[list [xschem get zoom] [xschem get xorigin] [xschem get yorigin]] eq $XP0_VIEW ? 1 : 0}] \
+        [xschem instance_at [ux $XP_M1PX] [uy $XP_M1PY]] \
+        [string match {xschem callback *} [bind .drw <Configure>]]] \
+  {1 0 1 1 M1 1}
+
+## XP1 -- A PRESS WITH THE PAIR OVERWRITTEN SINCE THE LAST MOTION.
+kx_reset
+update
+event generate .drw <Motion> -x $XP_M1PX -y $XP_M1PY -when now
+set XP1_C [kx_clobber]
+set XP1_SEL0 [kx_sel]
+kx_pressonly_px $XP_M1PX $XP_M1PY
+check {XP1 a real press on a device with the pair overwritten since the last motion DUMPS THAT DEVICE: one block whose header names M1, the CIW says nothing - resolved at the overwritten point it said there is no device under the click and pushed no block - the selection is untouched and the mode is still live} \
+  [list [kx_away $XP1_C $XP_M1PX $XP_M1PY] [kx_nblocks] [kx_top_hdr] [llength $::KX_CIW] \
+        [expr {[kx_sel] eq $XP1_SEL0 ? 1 : 0}] [seized]] \
+  {1 1 M1:/ 0 1 1}
+
+## XP2 -- THE SAME ON A SECOND DEVICE, AS THE FIRST PRESS OF A DOUBLE CLICK.
+## The second press is swallowed whatever the pair holds (row V3b), so what
+## this row adds is that the FIRST press of a double click lands on the device
+## although the pair was overwritten before it and no motion preceded it.
+kx_reset
+set XP2 [kx_dblclick_clobbered_px $XP_M2PX $XP_M2PY]
+check {XP2 a real DOUBLE click on a second device, the pair overwritten before each press and no motion at all: Tk recognised one double click, the first press dumped the device under it - one block, headed M2 - the second was swallowed, the editor saw no press, no release and no double click, no window came up, the CIW says nothing, and the mode is still live} \
+  [list [lindex $XP2 0] [lindex $XP2 1] [lindex $XP2 2] \
+        [kx_away [lindex $XP2 3] $XP_M2PX $XP_M2PY] [kx_away [lindex $XP2 4] $XP_M2PX $XP_M2PY] \
+        [kx_nblocks] [kx_top_hdr] [llength $::KX_CIW] [seized]] \
+  {1 {} {} 1 1 1 M2:/ 0 1}
+
+## XP3 -- THE MODE'S OWN SCRIPTS, LEFT ON THE CANVAS WITH NO RECORD. The record
+## is dropped while the canvas stays seized: the state a lost record leaves,
+## and the one a click mode that does not take the canvas again when this mode
+## ends can leave (open issue 0202) -- this mode's scripts on a canvas after
+## the mode has gone. The key then arms again on that canvas.
+set XP3_FIX [list $PRE_P $PRE_R $PRE_E $PRE_M [bind .drw <Double-Button-2>]]
+array unset ::rdw::pick
+kx_ans ::rdw::_hint_sync
+set XP3_DEAD [list [kx_slots] [kx_ans ::rdw::pick_running]]
+kx_reset
+set XP3_ARM [kx_ans ::rdw::key annotation]
+update idletasks
+set XP3_PREV [kx_prevs]
+kx_esc
+set XP3_AFTER [list [kx_slots] [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}] [kx_ans ::rdw::pick_running]]
+kx_click $XP_M1X $XP_M1Y
+set XP3_SEL [expr {[kx_sel] ne {} ? 1 : 0}]
+xschem unselect_all
+check {XP3 the key pressed on a canvas that was LEFT HOLDING THE MODE'S OWN FIVE SCRIPTS with no mode up and no record: the seize does not keep them as the predecessors - it records nothing for the press, the release, Escape and the held motion, which is what this canvas held there before any mode, and the editor's own double-click script, which the middle button's slot still holds - so a real Escape leaves all five slots and the canvas's whole sequence list as they were before any mode, and an ordinary click selects again. Kept as the predecessors, the Escape would have put the seize straight back with no mode up to end} \
+  [list $XP3_FIX $XP3_DEAD [kx_bad $XP3_ARM] $XP3_PREV $XP3_AFTER $XP3_SEL] \
+  [list [list {} {} {} {} $PRE_D] [list $KX_OWN 0] 0 [list {} {} {} {} $PRE_D] \
+        [list $KX_FREE 1 0] 1]
+
+## XP4 -- ANOTHER MODE'S SCRIPTS ARE KEPT, its bare `break` slots too, so the
+## guard does not reach further than this mode's own scripts.
+set XP4_FOREIGN {{kxf::click; break} break {kxf::end; break} break {kxf::click; break}}
+foreach _sq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} _vv $XP4_FOREIGN {
+  bind .drw $_sq $_vv
+}
+kx_reset
+kx_ans ::rdw::key annotation
+update idletasks
+set XP4_PREV [kx_prevs]
+set XP4_ON [kx_slots]
+kx_ans ::rdw::pick_end
+set XP4_BACK [kx_slots]
+foreach _sq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} _vv $KX_FREE {
+  bind .drw $_sq $_vv
+}
+check {XP4 the key pressed on a canvas ANOTHER click mode holds records that mode's five scripts as the predecessors - the bare `break` of its release, its held motion and whatever stands beside a press that is not this mode's included - takes the five slots, and hands exactly those five back when it ends; the row then puts the canvas back by hand and reads the sequence list} \
+  [list $XP4_PREV $XP4_ON $XP4_BACK [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}]] \
+  [list $XP4_FOREIGN $KX_OWN $XP4_FOREIGN 1]
+
+## XP5 XP6 -- A WINDOW CREATED WHILE THE MODE IS UP. A new schematic window
+## copies the bindings of the main canvas (clone_canvas_bindings). A descend
+## suspends the click modes before it makes one; `xschem new_schematic
+## create_window` and a profile's new-window key do not, and the copy carried
+## the mode's own scripts onto a canvas the mode is not on. The control is a
+## window made the same way with NO mode up.
+##
+## kx_allbinds reads every binding of a canvas as {sequence script}, with the
+## canvas's own path and its window's written out of each script: the editor's
+## scripts name both, and two windows made one after the other need not be
+## given the same name.
+proc kx_allbinds {cv} {
+  set out {}
+  set names [list $cv @CV@]
+  catch {lappend names [winfo toplevel $cv] @TOP@}
+  foreach q [lsort [bind $cv]] { lappend out [list $q [string map $names [bind $cv $q]]] }
+  return $out
+}
+proc kx_win_open {file} {
+  catch {xschem new_schematic create_window {} $file}
+  update
+  set w [xschem get current_win_path]
+  for {set i 0} {$i < 200} {incr i} {
+    if {[winfo exists $w] && [winfo ismapped $w] && [winfo width $w] > 100} break
+    update ; after 10
+  }
+  catch {xschem zoom_full}
+  update
+  return $w
+}
+proc kx_win_close {w first} {
+  catch {xschem new_schematic switch $w}
+  catch {xschem unselect_all}
+  catch {xschem set modified 0}
+  catch {xschem new_schematic destroy $w {}}
+  catch {xschem new_schematic switch $first}
+  update
+}
+## an ordinary click on M1's body in window `w`: 1 if the editor selected something
+proc kx_win_sel {w} {
+  catch {xschem new_schematic switch $w}
+  update
+  catch {xschem unselect_all}
+  lassign [kx_centre M1] x y
+  kx_click $x $y $w
+  set r [expr {[kx_sel] ne {} ? 1 : 0}]
+  catch {xschem unselect_all}
+  return $r
+}
+set XP5_FIRST [xschem get current_win_path]
+set XP5_COPY [file join $scratch b4second.sch]
+file copy -force $KX_SCH $XP5_COPY
+set XP5_W0 [kx_win_open $XP5_COPY]
+set XP5_CTL [kx_allbinds $XP5_W0]
+set XP5_CTLSEL [kx_win_sel $XP5_W0]
+set XP5_CTLOWN 0
+foreach _b $XP5_CTL { if {[string match *pick_click* [lindex $_b 1]]} { incr XP5_CTLOWN } }
+kx_win_close $XP5_W0 $XP5_FIRST
+kx_reset
+kx_ans ::rdw::key annotation
+update idletasks
+set XP6_HELD [kx_ans ::rdw::pick_held]
+set XP6_OFF {} ; set XP6_PRIST {}
+if {![catch {llength $XP6_HELD} _n] && $_n % 4 == 0} {
+  foreach {_hc _hq _hs _hp} $XP6_HELD {
+    if {$_hc ne {.drw} || [bind .drw $_hq] ne $_hs} { lappend XP6_OFF $_hq }
+    lappend XP6_PRIST [kx_ans ::cmdmode::pristine .drw [bind_seq_spelling $_hq] [bind .drw $_hq] bind_seq_spelling]
+  }
+}
+set XP5_SEIZED [kx_slots]
+set XP5_W1 [kx_win_open $XP5_COPY]
+set XP5_GOT [kx_allbinds $XP5_W1]
+set XP5_DURING [kx_win_sel $XP5_W1]
+set XP5_STILL [list [kx_ans ::rdw::pick_running] [expr {[kx_slots] eq $XP5_SEIZED ? 1 : 0}] [kx_nblocks]]
+catch {xschem new_schematic switch $XP5_FIRST}
+update
+kx_esc
+set XP5_ENDED [list [kx_ans ::rdw::pick_running] [kx_slots]]
+set XP5_AFTER [kx_win_sel $XP5_W1]
+set XP5_GOTAFTER [kx_allbinds $XP5_W1]
+kx_win_close $XP5_W1 $XP5_FIRST
+xschem unselect_all
+check {XP5 a window made with `xschem new_schematic create_window` WHILE THE MODE IS UP carries exactly the bindings of a window made the same way with no mode up - a live canvas of its own with the profile's keys and none of the mode's scripts - and an ordinary click on a device there SELECTS it, while the mode is up and after a real Escape on the mode's own canvas has ended it; the mode stayed live on its own canvas with its five slots as they were and dumped nothing, and both windows are closed again with the first one current} \
+  [list [expr {$XP5_W0 ne {.drw} && $XP5_W0 ne {} ? 1 : 0}] $XP5_CTLOWN $XP5_CTLSEL \
+        [expr {$XP5_SEIZED eq $KX_OWN ? 1 : 0}] \
+        [expr {$XP5_GOT eq $XP5_CTL ? {ascontrol} : $XP5_GOT}] $XP5_DURING $XP5_STILL \
+        $XP5_ENDED [expr {$XP5_GOTAFTER eq $XP5_CTL ? {ascontrol} : $XP5_GOTAFTER}] $XP5_AFTER \
+        [expr {[winfo exists $XP5_W1] ? 1 : 0}] \
+        [expr {[xschem get current_win_path] eq $XP5_FIRST ? 1 : 0}]] \
+  [list 1 0 1 1 ascontrol 1 {1 1 0} [list 0 $KX_FREE] ascontrol 1 0 1]
+check {XP6 with the mode up, what it tells cmdmode it holds is what the canvas holds: one group for each of the five slots, each naming this canvas and the very script `bind` reads back from that slot - and asked under Tk's own spelling of each sequence, as the window copy asks, cmdmode::pristine answers for every slot what the canvas held there before any mode} \
+  [list [expr {[catch {llength $XP6_HELD} _n] ? -1 : $_n}] $XP6_OFF $XP6_PRIST] \
+  [list 20 {} $KX_FREE]
+kx_ans ::rdw::pick_end
+kx_ans ::rdw::set_list annotation
+kx_reset
+xschem unselect_all
+update idletasks
+
+## XP7 -- TAKING THE CANVAS AGAIN AFTER A MODE WAS ENDED UNDERNEATH
+## (rdw::pick_reseat). This mode nests: entered while another click mode is up
+## it keeps that mode's scripts as its predecessors. When that mode is then
+## ended from underneath, its end writes what IT held before over this mode's
+## live scripts, and this mode is left recorded as up with nothing bound. The
+## doors that end a mode from underneath ask this mode to take the canvas
+## again. The row drives the case it acts in and the cases it must leave
+## alone, as these legs:
+##   alone      the mode holds the canvas itself
+##   bare       the same, with cmdmode's reader of what the modes hold taken
+##              away for the length of the leg: this mode's file also loads
+##              without cmdmode, and there the mode's own script in the press
+##              slot is the only thing that says the canvas is already its own
+##   suspended  it was paused, as a descend pauses it
+##   none       it is not up
+##   lost/re    it was entered over another mode's five scripts, and the canvas
+##              is then written back to what that mode held before, as its end
+##              writes it: recorded as up, nothing bound -- and it takes the
+##              canvas again, with what the canvas holds NOW on record
+##   over       a mode that is UP holds the canvas over this one. That mode is
+##              a stand-in registered with cmdmode for the length of this row,
+##              which says what it holds as every click mode does
+##   back       that mode ends in order and hands this mode's scripts back
+##   gone       the mode's record names a canvas that has been destroyed:
+##              nothing is asked of a window that is not there
+##
+## ⚠ THE OTHER MODE'S SCRIPTS ARE REAL COMMANDS FOR THE LENGTH OF THIS ROW, and
+## the canvas is put back by hand after the last leg is read. A leg that goes
+## wrong leaves those scripts on the canvas, and the rows after this one click
+## and press Escape there: a script naming a command that does not exist raises
+## in the event loop, and Tk's answer to an error there is a dialog that waits.
+set XP7_SEQS {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>}
+set XP7_EDITOR [list {} {} {} {} $PRE_D]
+namespace eval ::kxf {}
+proc ::kxf::click {args} { return {} }
+proc ::kxf::end {args} { return {} }
+kx_reset
+kx_ans ::rdw::key annotation
+update idletasks
+set XP7_ALONE [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $KX_OWN ? 1 : 0}] [kx_prevs]]
+set XP7_BARE NOREADER
+if {[llength [info commands ::cmdmode::pristine]]} {
+  rename ::cmdmode::pristine ::cmdmode::kx_pristine_kept
+  set XP7_BARE [list [llength [info commands ::cmdmode::pristine]] [kx_ans ::rdw::pick_reseat] \
+                     [expr {[kx_slots] eq $KX_OWN ? 1 : 0}] [kx_prevs]]
+  rename ::cmdmode::kx_pristine_kept ::cmdmode::pristine
+}
+kx_ans ::rdw::pick_suspend
+set XP7_SUSP [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $KX_FREE ? 1 : 0}] \
+                   [expr {[info exists ::rdw::pick(suspended)] ? 1 : 0}]]
+kx_ans ::rdw::pick_resume .drw
+kx_ans ::rdw::pick_end
+set XP7_NONE [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $KX_FREE ? 1 : 0}] \
+                   [kx_ans ::rdw::pick_running]]
+foreach _sq $XP7_SEQS _vv $XP4_FOREIGN { bind .drw $_sq $_vv }
+kx_ans ::rdw::key annotation
+update idletasks
+set XP7_UNDER [kx_prevs]
+foreach _sq $XP7_SEQS _vv $KX_FREE { bind .drw $_sq $_vv }
+set XP7_LOST [list [seized] [kx_ans ::rdw::pick_running]]
+set XP7_RE [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $KX_OWN ? 1 : 0}] [kx_prevs]]
+set ::KXF_HELD {}
+proc kxf_held {} { return $::KXF_HELD }
+proc kxf_zero {args} { return 0 }
+kx_ans ::cmdmode::register kxf_mode kxf_zero kxf_zero kxf_held
+foreach _sq $XP7_SEQS _vv $XP4_FOREIGN _ow $KX_OWN {
+  bind .drw $_sq $_vv
+  lappend ::KXF_HELD .drw $_sq $_vv $_ow
+}
+set XP7_OVER [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $XP4_FOREIGN ? 1 : 0}] [kx_prevs]]
+foreach _sq $XP7_SEQS _vv $KX_OWN { bind .drw $_sq $_vv }
+set ::KXF_HELD {}
+kx_ans ::cmdmode::unregister kxf_mode
+set XP7_BACK [list [kx_ans ::rdw::pick_reseat] [expr {[kx_slots] eq $KX_OWN ? 1 : 0}] [kx_prevs]]
+set XP7_GONE NOTUP
+set XP7_CV0 {} ; catch {set XP7_CV0 $::rdw::pick(canvas)}
+if {$XP7_CV0 ne {}} {
+  catch {frame .kxgone}
+  catch {destroy .kxgone}
+  set ::rdw::pick(canvas) .kxgone
+  set XP7_GONE [list [winfo exists .kxgone] [catch {rdw::pick_reseat} _kr] $_kr]
+  set ::rdw::pick(canvas) $XP7_CV0
+}
+kx_esc
+set XP7_END [list [expr {[kx_slots] eq $KX_FREE ? 1 : 0}] [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}] \
+                  [kx_ans ::rdw::pick_running] \
+                  [expr {[lsearch -exact [kx_ans ::cmdmode::registered] kxf_mode] >= 0 ? 1 : 0}]]
+kx_ans ::rdw::pick_end
+catch {array unset ::rdw::pick}
+kx_ans ::rdw::_hint_sync
+catch {::cmdmode::unregister kxf_mode}
+foreach _sq $XP7_SEQS _vv $KX_FREE { catch {bind .drw $_sq $_vv} }
+check {XP7 rdw::pick_reseat TAKES THE CANVAS AGAIN ONLY WHEN THE MODE WAS LEFT WITH NOTHING BOUND. It does nothing while the mode holds the canvas itself - also with cmdmode's reader of what the modes hold taken away, where the mode's own script in the press slot is all there is to go by - while it is suspended - the canvas stays released and the suspend stays on record - and when it is not up. Entered over another mode's five scripts, which it has on record, and the canvas then written back to what that mode held before, the mode is recorded as up with nothing bound: it seizes again, and what it has on record is what the canvas holds NOW, nothing for the first four slots and the editor's script for the double click. With a mode that is UP holding the canvas over it - a stand-in registered with cmdmode - it leaves the canvas alone and its record as it was; and when that mode has handed its scripts back there is nothing to do. With its record naming a canvas that has been destroyed it asks nothing of that window: it answers 0 and raises nothing. A real Escape then leaves the five slots and the canvas's whole sequence list as they were before any mode, and the stand-in is gone from cmdmode} \
+  [list $XP7_ALONE $XP7_BARE $XP7_SUSP $XP7_NONE $XP7_UNDER $XP7_LOST $XP7_RE $XP7_OVER $XP7_BACK $XP7_GONE $XP7_END] \
+  [list [list 0 1 $XP7_EDITOR] [list 0 0 1 $XP7_EDITOR] {0 1 1} {0 1 0} $XP4_FOREIGN {0 1} [list 1 1 $XP7_EDITOR] \
+        [list 0 1 $XP7_EDITOR] [list 0 1 $XP7_EDITOR] {0 0 0} {1 1 0 0}]
+catch {rename kxf_held {}}
+catch {rename kxf_zero {}}
+catch {namespace delete ::kxf}
+if {[llength [info commands ::cmdmode::kx_pristine_kept]]} { catch {rename ::cmdmode::kx_pristine_kept ::cmdmode::pristine} }
+kx_reset
+xschem unselect_all
+update idletasks
+
+## XP8 -- THE SHEET IN A TAB THAT IS NOT THE FIRST. With the tabbed interface a
+## schematic in a second tab is a window CONTEXT whose name, `.x1.drw`, is no
+## widget: the canvas that shows it is the main window's `.drw`, which the tabs
+## share. The key reads the current context's name, and a resume is handed one,
+## so both resolve it to the canvas that shows it (rdw::_pick_canvas). Taken as
+## it stands the name is no widget: the key armed nothing and said nothing, and
+## a resume fell back to the canvas the mode was on. The hand-back of the
+## keyboard after a dump reads the current context's name as well
+## (rdw::_focus_canvas) and resolves it the same way: taken as it stands, the
+## keyboard stayed in the results window after a dump made in such a tab.
+##
+## The second half is the way back from a window of its own to a parent in
+## such a tab, by the two steps the profile's return makes: the parent's
+## context is made current, and cmdmode moves the modes to it by its name.
+kx_ans ::rdw::pick_end
+kx_reset
+set XP8_FIRST [xschem get current_win_path]
+set XP8_NWIN0 [llength [xschem windows]]
+catch {xschem new_schematic create {} $XP5_COPY}
+update
+set XP8_TAB [xschem get current_win_path]
+catch {xschem zoom_full}
+update
+catch {xschem update_all_sym_bboxes}
+set XP8_FIX [list [expr {$XP8_TAB ne $XP8_FIRST ? 1 : 0}] [winfo exists $XP8_TAB] \
+                  [kx_ans ::rdw::_pick_canvas $XP8_TAB] [file tail [xschem get schname]] \
+                  [kx_ans ::rdw::_pick_canvas .kxnosuch.drw]]
+kx_reset
+kx_ans ::rdw::key annotation
+update idletasks
+set XP8_REC {} ; catch {set XP8_REC $::rdw::pick(canvas)}
+set XP8_UP [list [kx_ans ::rdw::pick_running] $XP8_REC [seized .drw]]
+lassign [kx_centre M1] XP8_X XP8_Y
+set XP8_SEL0 [kx_sel]
+kx_click $XP8_X $XP8_Y
+set XP8_DUMP [list [kx_nblocks] [kx_top_hdr] [expr {[kx_sel] eq $XP8_SEL0 ? 1 : 0}] \
+                   [expr {[xschem get current_win_path] eq $XP8_TAB ? 1 : 0}]]
+## the dump raises the results window; the keyboard must come back to the canvas
+## that shows the tab, as it does in the first tab (bounded pump: the hand-back
+## answers the window's own FocusIn)
+for {set _f 0} {$_f < 20} {incr _f} { update ; after 25 }
+set XP8_FOCUS [focus]
+## a window of its own, made from the tab and showing a copy of its own file;
+## the mode is moved into it, as a descend into a new window lands it there
+set XP8_COPY [file join $scratch b4third.sch]
+file copy -force $KX_SCH $XP8_COPY
+set XP8_W [kx_win_open $XP8_COPY]
+kx_ans ::cmdmode::rehome $XP8_W
+set XP8_REC {} ; catch {set XP8_REC $::rdw::pick(canvas)}
+set XP8_INWIN [list [expr {$XP8_W ne {.drw} && [winfo exists $XP8_W] ? 1 : 0}] \
+                    [expr {$XP8_REC eq $XP8_W ? 1 : 0}] [seized $XP8_W] [seized .drw]]
+## ...and back: the parent's context current again, the modes moved to it by name
+catch {xschem new_schematic switch $XP8_TAB}
+update
+set XP8_CTX [xschem get current_win_path]
+kx_ans ::cmdmode::rehome $XP8_CTX
+update idletasks
+set XP8_REC {} ; catch {set XP8_REC $::rdw::pick(canvas)}
+set XP8_BACK [list [expr {$XP8_CTX eq $XP8_TAB ? 1 : 0}] $XP8_REC [seized .drw] [seized $XP8_W]]
+kx_reset
+catch {xschem update_all_sym_bboxes}
+lassign [kx_centre M2] XP8_X XP8_Y
+kx_click $XP8_X $XP8_Y
+set XP8_DUMP2 [list [kx_nblocks] [kx_top_hdr]]
+kx_esc
+set XP8_ENDED [list [kx_ans ::rdw::pick_running] [expr {[kx_slots] eq $KX_FREE ? 1 : 0}]]
+kx_win_close $XP8_W $XP8_TAB
+catch {xschem new_schematic switch $XP8_TAB}
+catch {xschem unselect_all}
+catch {xschem set modified 0}
+catch {xschem new_schematic destroy $XP8_TAB {}}
+update
+check {XP8 THE KEY AND THE RESUME IN A TAB THAT IS NOT THE FIRST: a second tab is a context whose name is no widget, and the canvas that shows it is the main window's - a name that is neither a widget nor a context resolves to nothing. With that tab current the key with nothing selected ARMS the mode: it is up, recorded on the main window's canvas, and that canvas is seized; a real click on a device there dumps it, with the selection untouched and the tab still current, and the keyboard is back on that canvas after the dump as it is in the first tab, so the next key pressed is the schematic's and not the results window's. Moved into a window of its own the mode is on that window's canvas and the main canvas is released; and after the way back - the tab's context made current, the modes moved to it by its name - the mode is on the main window's canvas again, the other window's canvas is released, and a real click on a second device dumps that one. A real Escape ends it, and the window and the tab are closed with the first tab current, the canvas's sequence list as it was before any mode} \
+  [list $XP8_FIX $XP8_UP $XP8_DUMP $XP8_FOCUS $XP8_INWIN $XP8_BACK $XP8_DUMP2 $XP8_ENDED \
+        [xschem get current_win_path] [expr {[llength [xschem windows]] == $XP8_NWIN0 ? 1 : 0}] \
+        [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}]] \
+  [list [list 1 0 .drw [file tail $XP5_COPY] {}] {1 .drw 1} {1 M1:/ 1 1} .drw {1 1 1 0} {1 .drw 1 0} \
+        {1 M2:/} {0 1} $XP8_FIRST 1 1]
+kx_ans ::rdw::pick_end
 kx_ans ::rdw::set_list annotation
 kx_reset
 xschem unselect_all
@@ -1800,20 +2434,31 @@ set S1_CTL [string trim [.kxctl.t get 1.0 end]]
 catch {destroy .kxctl}
 update idletasks
 
-check {S1 HYGIENE and the CONTROL in one row: the suite creates no untitled* anywhere, leaves no window and no seize behind on any of the FOUR sequences, ends unsuspended - and the event-generate mechanism every binding row above depends on really does deliver, so B2..B5 cannot pass by delivering nothing} \
+check {S1 HYGIENE and the CONTROL in one row: the suite creates no untitled* anywhere, leaves no window and no seize behind on any of the FIVE sequences, ends unsuspended - and the event-generate mechanism every binding row above depends on really does deliver, so B2..B5 cannot pass by delivering nothing} \
   [list [expr {[lsort [glob -nocomplain -directory $repo -tails untitled*]] eq $S1_ROOT0 ? 1 : 0}] \
         [llength [glob -nocomplain -directory $scratch -tails untitled*]] \
         [llength [glob -nocomplain -directory $here -tails untitled*]] \
         [expr {[winfo exists .rdw] ? 1 : 0}] \
         [seized] \
         [bind .drw <B1-Motion>] \
+        [bind .drw <Double-Button-1>] \
         [expr {[lsort [bind .drw]] eq $PRE_SEQ ? 1 : 0}] \
         [kx_ans ::cmdmode::is_suspended] \
         $S1_CTL] \
-  [list 1 0 0 0 0 $PRE_M 1 0 x]
+  [list 1 0 0 0 0 $PRE_M $PRE_D 1 0 x]
 
 # --- clean up ---------------------------------------------------------------
+# The recorder goes and the PRODUCT's ciw_echo comes straight back. The rest of
+# this file runs with the CIW mapped when the action log is on, and the CIW's
+# own <FocusIn> binding says "window activated" through ciw_echo: with the
+# command missing that binding raises in the event loop, and Tk's answer to an
+# error there is a dialog that waits for a click nobody is going to make.
 catch {rename ciw_echo {}}
+catch {rename kx_ciw_echo_real ciw_echo}
+set ::last_active_window 0
+check {S1b the recorder is gone and the PRODUCT's ciw_echo is back for the rest of the file: a window-activation notice for the CIW, which is what its <FocusIn> binding runs, answers instead of raising} \
+  [list [llength [info commands ciw_echo]] [llength [info commands kx_ciw_echo_real]] \
+        [catch {notify_window_active 1 CIW}]] {1 0 0}
 # ============================================================================
 # SECTION ESC — ISSUE 1308 / RULING DD-12: ESCAPE WORKS FROM THE TEXT PANE
 # ============================================================================
@@ -1856,6 +2501,83 @@ if {[rdw::have_tk]} {
   event generate .rdw.p.t <Key-Escape> ; update
   check {E5 a STRAY Escape with no mode running does nothing at all - never a destructive default} \
     [list [rdw::pick_running] [expr {[winfo exists .rdw] ? 1 : 0}]] {0 1}
+
+  ## E6 -- ESCAPE PRESSED HERE WHILE SELECT ON DESIGN SITS ON TOP OF THIS MODE.
+  ## This mode nests with ASE-L's Select On Design: entered over it, Select On
+  ## Design keeps this mode's scripts as what the canvas held before. Escape
+  ## in this window then ends THIS mode from underneath -- the canvas's own
+  ## Escape is Select On Design's by then -- and the release writes the
+  ## editor's scripts over Select On Design's live ones. rdw::pick_end
+  ## therefore asks Select On Design to take the canvas again
+  ## (ase::ui::sod_reseat): it holds its scripts with the editor's own on
+  ## record, the keyboard goes to the canvas, and ONE real Escape there ends it
+  ## and leaves every binding of the canvas as it was before any mode.
+  ##
+  ## Select On Design is entered by the proc its menu entries call, for a key
+  ## that has no session window to bring forward. The Escape is the real key on
+  ## the text pane, through this window's own binding.
+  proc e6_sodup {} { return [expr {[info exists ::ase::ui::sod(active)] ? 1 : 0}] }
+  ## whose press script the canvas holds
+  proc e6_press {} {
+    set p [bind .drw <ButtonPress-1>]
+    if {$p eq $::KX_PRESS} { return rdw }
+    if {[string match "*[list ase::ui::sod_click kxsod]; break" $p]} { return sod }
+    return [expr {$p eq $::PRE_P ? {editor} : $p}]
+  }
+  ## what Select On Design has on record as the canvas's own, in this suite's
+  ## order of the five slots, and then for the canvas's destruction
+  proc e6_sodprev {} {
+    return [lmap r {prevpress prevrel prevesc prevmotion prevdbl prevdestroy} {
+      expr {[info exists ::ase::ui::sod(kxsod,$r)] ? $::ase::ui::sod(kxsod,$r) : {NOKEY}}
+    }]
+  }
+  ## the keyboard once it has come to rest on window `w`, or after a bounded
+  ## wait wherever it is
+  proc e6_focus {w} {
+    for {set i 0} {$i < 40} {incr i} {
+      update
+      if {[focus] eq $w} break
+      after 25
+    }
+    return [focus]
+  }
+  catch {rdw::pick_end}
+  catch {xschem unselect_all}
+  update
+  set E6_BASE [kx_allbinds .drw]
+  set E6_DESTROY [bind .drw <Destroy>]
+  set E6_START [rdw::pick_start]
+  update
+  set E6_ARM [kx_ans ::ase::ui::select_on_design kxsod {save 1 plot 0} outputs 0]
+  update
+  set E6_STACK [list $E6_START $E6_ARM [rdw::pick_running] [e6_sodup] [e6_press] \
+                     [expr {[e6_sodprev] eq [concat $KX_OWN [list $E6_DESTROY]] ? {this mode's} : [e6_sodprev]}]]
+  focus -force .rdw.p.t ; update
+  set E6_KB0 [focus]
+  event generate .rdw.p.t <Key-Escape> ; update
+  set E6_MID [list [rdw::pick_running] [e6_sodup] [e6_press] \
+                   [expr {[e6_sodprev] eq [concat $KX_FREE [list $E6_DESTROY]] ? {the editor's} : [e6_sodprev]}] \
+                   [expr {[winfo exists .rdw] ? 1 : 0}] [e6_focus .drw]]
+  ## ONE real Escape on the canvas, sent where the keyboard now is
+  event generate .drw <Key-Escape> -when now
+  update
+  set E6_END [list [e6_sodup] [rdw::pick_running] \
+                   [expr {[kx_allbinds .drw] eq $E6_BASE ? {as before any mode} : [kx_allbinds .drw]}]]
+  set E6_SEL NO-M1
+  catch {
+    catch {xschem update_all_sym_bboxes}
+    lassign [kx_centre M1] _ex _ey
+    kx_click $_ex $_ey
+    set E6_SEL [expr {[kx_sel] ne {} ? 1 : 0}]
+  }
+  catch {xschem unselect_all}
+  check {E6 ESCAPE IN THIS WINDOW WHILE SELECT ON DESIGN SITS ON TOP OF THE MODE: with the mode up and Select On Design entered over it - the press slot Select On Design's, this mode's five scripts what it has on record - and the keyboard in the text pane, the real Escape there ends THIS mode, and Select On Design takes the canvas again: it is still up, the press slot is its own, what it has on record is the editor's own, the window is still open, and the keyboard is on the canvas. ONE real Escape sent to the canvas then ends Select On Design: no mode is up, every binding of the canvas is as before any mode, and an ordinary click on a device selects it} \
+    [list $E6_STACK $E6_KB0 $E6_MID $E6_END $E6_SEL] \
+    [list {1 1 1 1 sod {this mode's}} .rdw.p.t {0 1 sod {the editor's} 1 .drw} {0 0 {as before any mode}} 1]
+  catch {ase::ui::sod_end kxsod}
+  catch {rdw::pick_end}
+  catch {xschem unselect_all}
+  update
 }
 
 # ============================================================================
@@ -3285,6 +4007,12 @@ if {[kx_ans ::rdw::have_tk] eq {1}} {
   set RA4_R2 [kx_ans ::rdw::push [ra_blk]]
   catch {update}
   ra_settle 600
+  ## ⚠ THIS ROW NEEDS A WINDOW MANAGER, AND SAYS SO WHEN THERE IS NONE: with
+  ## none `wm iconify` does nothing, so there is no iconified window to bring
+  ## back. The pushes above are made either way.
+  if {$KX_NOWM} {
+    kx_left_out RA4 {wm iconify does nothing}
+  } else {
   check {RA4 A DUMP WITH NO WINDOW BUILDS NONE - rdw::open is the one constructor and the dumps survive a close, so a push into a closed window still just stores the block - and a dump into an ICONIFIED window brings it back the way Ctrl-Alt-S brings the Library Manager back: mapped again, in the normal state, on top, and still without taking the keyboard off the schematic} \
     [list [kx_bad $RA4_R1] $RA4_EX $RA4_N1 \
           $RA4_OK $RA4_M0 $RA4_ST0 \
@@ -3292,6 +4020,7 @@ if {[kx_ans ::rdw::have_tk] eq {1}} {
           [ra_w winfo ismapped .rdw] [ra_w wm state .rdw] [ra_above] \
           [ra_w focus] $::RA_ACT] \
     [list 0 0 1 1 0 iconic 0 1 normal 1 .drw 0]
+  }
 
   # --- RA5  FENCE the four other callers still ACTIVATE ---------------------
   ## GREEN BEFORE AND AFTER. Ruling DD-6 drops the LAST LINE of
@@ -5006,7 +5735,12 @@ catch {xschem raw clear}
 ## of test_rdw_window_1245.tcl, whose RW_FLOOR moves 193 -> 197 in the same
 ## commit.  A floor is raised when rows are added and NEVER lowered to make a
 ## run pass.
-set KX_FLOOR 92
+## ...and by seven for section XP's rows.
+## ...and for the rows added since that run on every display: WM0, XP7, XP8
+## and S1b. Rows F3 and RA4 are left out on a display with no window manager
+## (row WM0 says which display this is), and the floor is the count such a run
+## reaches: with a manager up those rows run on top of it.
+set KX_FLOOR 103
 set KX_RAN [expr {$npass + $fail}]
 if {$KX_RAN < $KX_FLOOR} {
   puts "FAIL: KXFLOOR the suite ran only $KX_RAN checks, below its floor of\
@@ -5014,5 +5748,10 @@ $KX_FLOOR — rows were SKIPPED, and a skipped row is not a passing one : FAIL"
   incr fail
 }
 
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)"; exit 0 } \
-else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }
+## The completion sentinel tests/banner_rule.tcl's banner_complete requires of a
+## registered case, printed only when every check passed. The verdict line stays
+## last: the regression driver carries a case's last verdict line into its block.
+if {$fail == 0} {
+  puts "OVERALL: ok ($npass checks)"
+  puts "RESULT: ALL PASS ($npass checks)"; exit 0
+} else { puts "RESULT: $fail FAILED ($npass passed)"; exit 1 }

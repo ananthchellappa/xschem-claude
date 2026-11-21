@@ -179,7 +179,14 @@ Analogous `-style` extension for `xschem hilight` / `hilight_instname` where it 
 sense.
 
 ### 5.3 Existing commands reused unchanged
-- `xschem unhilight_all` — clear all highlights (bound to key `0`).
+- `xschem unhilight_all` — clear all highlights (bound to key `0`). Since issue 1724 it
+  also clears the pin markers (`xschem pin_marker`, `doc/claude/specs/pin_selection.md`
+  §4.7) of the current window and of the windows and tabs linked to it by a descend, which
+  are the ones whose net colours it clears through into (issue 0073), whether or not a net
+  is highlighted. A window showing another document keeps its markers. Given while the
+  current window is in the middle of a gesture, the clear-through stands down, and the
+  linked windows keep their markers with their net colours until the command is given
+  again.
 - `xschem unhilight` — clear highlights on the current selection.
 
 ### 5.4 Style cursor / increment semantics
@@ -219,7 +226,11 @@ Both "net" forms are supported: a **wire** (`xctx->wire[n].node`) and a **label*
 handles wires, labels, pins, and propagation).
 
 ### 6.2 Key `0` — Unhighlight all
-Bound directly to `xschem unhilight_all`. Removes all net highlights.
+Bound directly to `xschem unhilight_all`. Removes all net highlights, and the ellipses on
+picked pins (issue 1724), in the window the key is pressed in and in the windows and tabs
+linked to it by a descend. Pressed in the middle of a gesture (a wire being drawn) it
+clears the window it is pressed in only; pressed again after the gesture it clears the
+linked ones.
 
 ### 6.3 Key `8` — Remove specific net highlight (noun-verb AND verb-noun)
 - **Noun-verb** (selection contains net/label): remove highlight on the selected net(s)

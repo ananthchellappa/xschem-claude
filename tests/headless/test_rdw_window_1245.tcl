@@ -2008,7 +2008,8 @@ check {ND4 and the not_op refusal uses it, so the sentence reads "an op analysis
 #   rdw::show <inst>   rdw::keep_latest   rdw::_ciw <msg>
 #   rdw::pick_start / pick_click / pick_release / pick_end
 #   rdw::pick_suspend / pick_resume   rdw::_refresh_pick_gate / rdw::_pick_at
-#   cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume, at SOURCE
+#   cmdmode::register rdw_pick rdw::pick_suspend rdw::pick_resume rdw::pick_held,
+#   at SOURCE
 #   time (safe: cmdmode.tcl is pure Tcl and is sourced BEFORE rdw.tcl)
 #
 # ⚠ THE REFUSAL WORDING IS NOT LOCKED BYTE-FOR-BYTE HERE, AND THAT IS
@@ -2385,7 +2386,7 @@ check {K13 STRUCTURAL (issue 1303) rdw::pick_click defaults its coordinates from
   {0 1 1 0 0}
 
 # --- K14  STRUCTURAL, ISSUE 1304: THE SEIZE AND THE HAND-BACK AGREE ----------
-## The seize was copied from ase::ui::select_on_design, which takes the press,
+## The seize was copied from ase::ui::select_on_design, which then took the press,
 ## the release and Escape and NOT <B1-Motion> -- so C's rubber band starts on
 ## the first motion with Button 1 held (callback.c:7250-7260) and never
 ## terminates, because its only terminator is the ButtonRelease the seize eats
@@ -2410,8 +2411,8 @@ check {K13 STRUCTURAL (issue 1303) rdw::pick_click defaults its coordinates from
 ##   PAIRING  the element the seize LATCHED for a sequence is the element the
 ##            release GIVES BACK for that same sequence.
 ##
-## ⚠ THE PAIRING LEG IS NOT DECORATION. Measured on this tree: all four of
-## .drw's predecessors are the EMPTY STRING, so a crossed restore -- Escape
+## ⚠ THE PAIRING LEG IS NOT DECORATION. Measured on this tree: four of the five
+## predecessors of .drw are the EMPTY STRING, so a crossed restore -- Escape
 ## handed back the motion's predecessor and vice versa -- is byte-invisible to
 ## every behavioural row in the sibling suite, which compares the restored
 ## slots against those same empty strings. This is the only fence that sees it.
@@ -2424,7 +2425,7 @@ set K14_SZ [rw_body ::rdw::_pick_seize]
 set K14_RL [rw_body ::rdw::pick_release]
 set K14_MT [format %c%c 123 125]
 set K14_TAKE 0 ; set K14_GIVE 0 ; set K14_PAIR 0
-foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion>} {
+foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} {
   set re_latch [string map [list SEQ $seq] {set pick\((\w+)\)\s+\[bind \$cv SEQ\]}]
   set re_take  [string map [list SEQ $seq] {^[ \t]*bind \$cv SEQ[ \t]+(.*)$}]
   set re_give  [string map [list SEQ $seq] {bind \$cv SEQ\s+\$pick\((\w+)\)}]
@@ -2437,8 +2438,8 @@ foreach seq {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion>} {
   if {$gname ne {}} { incr K14_GIVE }
   if {$lname ne {} && $lname eq $gname} { incr K14_PAIR }
 }
-check {K14 STRUCTURAL (issue 1304) the seize takes FOUR sequences with a REAL script - not an emptied one, which destroys the binding and is the pre-1304 hole - the ONE shared hand-back gives all four back from a stored predecessor, and the element latched for a sequence is the element given back for that same sequence. B4-2 asserted only that the sequence NAMES appeared in both bodies, and stayed green under `bind $cv <B1-Motion> {}`} \
-  [list [rw_bad $K14_SZ] [rw_bad $K14_RL] $K14_TAKE $K14_GIVE $K14_PAIR] {0 0 4 4 4}
+check {K14 STRUCTURAL (issue 1304) the seize takes FIVE sequences with a REAL script - the press, the release, Escape, the held motion and the double click - not an emptied one, which destroys the binding and is the pre-1304 hole - the ONE shared hand-back gives all five back from a stored predecessor, and the element latched for a sequence is the element given back for that same sequence. B4-2 asserted only that the sequence NAMES appeared in both bodies, and stayed green under `bind $cv <B1-Motion> {}`. The fifth is there because the editor binds the double click on every design canvas, so the second press of a double click went past the mode to the editor; the keys suite presses it (row V3b)} \
+  [list [rw_bad $K14_SZ] [rw_bad $K14_RL] $K14_TAKE $K14_GIVE $K14_PAIR] {0 0 5 5 5}
 
 # --- K15  STRUCTURAL: THE DUMP OPENS FIRST, AND DOES NOT KEEP THE KEYBOARD ---
 ## TWO HOLES IN ONE ROW, both invisible to every behavioural row on this arm.
@@ -2633,6 +2634,160 @@ check {K17 STRUCTURAL (issue 1305) rdw::pick_start clears the outstanding suspen
         [expr {$K17_IW >= 0 && $K17_IZ >= 0 && $K17_IU > $K17_IW && $K17_IU < $K17_IZ ? 1 : 0}] \
         [rw_has $K17_PS {![info exists pick(suspended)]}]] \
   {0 1 1 1}
+
+# --- K19 K20 K21  THE SEIZE, RUN AGAINST A STAND-IN FOR Tk's BINDING TABLE ----
+## The keys suite drives the seize on a real canvas and self-skips under
+## --nogui, so on the headless arm the seize itself was fenced by text scans
+## alone (rows K14 and K17). These three rows RUN it -- the seize, the
+## hand-back, the list of what the mode holds -- against a table that stands in
+## for Tk's: `bind w seq` reads a slot, `bind w seq script` writes it and an
+## empty script removes it, as Tk's does.
+##
+## ⚠ THE STAND-IN IS THIS NAMESPACE'S ALONE. It is a `bind` defined INSIDE
+## `rdw`, which is the one this file's procs reach first, so no global command
+## is invented on the headless arm and Tk's own `bind` is untouched on the
+## display arm -- the same rows run on both. It is put in place for these rows
+## and taken away after them, with no `update` in between, and row K21's last
+## legs read that it is gone.
+##
+## ⚠ EVERY SLOT IS SEEDED WITH A PREDECESSOR OF ITS OWN, all five different: on
+## a real design canvas four of the five are the empty string, so a record
+## paired with the wrong slot is invisible there.
+proc rw_tab {w args} {
+  if {[llength $args] == 0} {
+    set out {}
+    foreach k [lsort [array names ::RW_TAB]] {
+      if {[string match "$w,*" $k]} { lappend out [string range $k [string length "$w,"] end] }
+    }
+    return $out
+  }
+  set seq [lindex $args 0]
+  if {[llength $args] == 1} {
+    if {[info exists ::RW_TAB($w,$seq)]} { return $::RW_TAB($w,$seq) }
+    return {}
+  }
+  if {[lindex $args 1] eq {}} {
+    unset -nocomplain ::RW_TAB($w,$seq)
+  } else {
+    set ::RW_TAB($w,$seq) [lindex $args 1]
+  }
+  return {}
+}
+set RW_SEQS {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>}
+proc rw_tab_slots {w} {
+  set out {}
+  foreach q $::RW_SEQS { lappend out [rw_tab $w $q] }
+  return $out
+}
+proc rw_tab_seed {w scripts} {
+  array unset ::RW_TAB
+  foreach q $::RW_SEQS sc $scripts { rw_tab $w $q $sc }
+}
+proc rw_prevs {} {
+  set out {}
+  foreach k {prevpress prevrel prevesc prevmotion prevdbl} {
+    set v NOKEY ; catch {set v $::rdw::pick($k)} ; lappend out $v
+  }
+  return $out
+}
+## a held list read against the table: its length, its sequences in order, the
+## groups whose canvas or script is not what the table holds, its predecessors
+proc rw_held_read {w held} {
+  set seqs {} ; set off {} ; set prevs {}
+  if {[catch {llength $held} n] || $n % 4} { return [list MALFORMED $held] }
+  foreach {hc hq hs hp} $held {
+    lappend seqs $hq
+    if {$hc ne $w || [rw_tab $w $hq] ne $hs} { lappend off $hq }
+    lappend prevs $hp
+  }
+  return [list $n $seqs $off $prevs]
+}
+rw_ans ::rdw::pick_end
+array unset ::RW_TAB
+proc ::rdw::bind {w args} { return [rw_tab $w {*}$args] }
+proc ::rdw::focus {args} { return {} }
+set K19_CV .rwk19canvas
+set RW_PRESS  {xschem callback %W 6 %x %y 0 0 0 %s; rdw::pick_click; break}
+set RW_OWN    [list $RW_PRESS break {rdw::pick_end; break} break break]
+set RW_EDITOR {xschem callback %W -3 %x %y 0 %b 0 %s}
+set K19_SEED  {{rwk was press} {rwk was release} {rwk was escape} {rwk was motion} {rwk was double}}
+
+# --- K19: what the seize binds, what it records, what the hand-back gives ----
+rw_tab_seed $K19_CV $K19_SEED
+set K19_SZ    [rw_ans ::rdw::_pick_seize $K19_CV]
+set K19_SLOTS [rw_tab_slots $K19_CV]
+set K19_PREV  [rw_prevs]
+# --- K21's first half is read here, while this seize is up -------------------
+set K21_HELD  [rw_held_read $K19_CV [rw_ans ::rdw::pick_held]]
+set K21_PRIST {}
+foreach _q $RW_SEQS { lappend K21_PRIST [rw_ans ::cmdmode::pristine $K19_CV $_q [rw_tab $K19_CV $_q]] }
+set K21_OTHER [list [rw_ans ::cmdmode::pristine $K19_CV <ButtonPress-1> {rwk somebody else}] \
+                    [rw_ans ::cmdmode::pristine .rwk19other <ButtonPress-1> $RW_PRESS]]
+set K21_SUS   [rw_ans ::rdw::pick_suspend]
+set K21_SUSP  [list [rw_tab_slots $K19_CV] [rw_ans ::rdw::pick_held] [rw_ans ::rdw::pick_running] \
+                    [rw_ans ::cmdmode::pristine $K19_CV <ButtonPress-1> $RW_PRESS]]
+## the seize a resume makes, on the canvas it lands on
+unset -nocomplain ::rdw::pick(suspended)
+rw_ans ::rdw::_pick_seize $K19_CV
+set K21_BACK  [rw_held_read $K19_CV [rw_ans ::rdw::pick_held]]
+set K19_REL   [rw_ans ::rdw::pick_release]
+set K19_BACK  [rw_tab_slots $K19_CV]
+rw_ans ::rdw::pick_end
+set K21_END   [list [rw_ans ::rdw::pick_held] [rw_ans ::rdw::pick_running] [rw_tab_slots $K19_CV]]
+check {K19 THE SEIZE, RUN: the press's script first hands the press's own position to the engine as a pointer motion and then runs the click, so the click is resolved at the pixel that was pressed whatever the engine's pointer pair held before; the release and the held motion are swallowed, Escape ends the mode, and the second press of a double click is swallowed, not dumped again. Each of five different predecessors is recorded beside its own slot and the hand-back puts each one back in its own slot} \
+  [list $K19_SZ $K19_SLOTS $K19_PREV $K19_REL $K19_BACK] \
+  [list $K19_CV $RW_OWN $K19_SEED 1 $K19_SEED]
+
+# --- K20: the seize never keeps its own scripts as the predecessors ----------
+## (a) a canvas the mode's scripts were left on, with no record: the state open
+## issue 0202's out-of-order endings leave. A free design canvas holds nothing
+## in the first four slots and the editor's script for the double click of all
+## three buttons; it is seized, the record is dropped, and it is seized again.
+array unset ::RW_TAB
+rw_tab $K19_CV <Double-Button-1> $RW_EDITOR
+rw_tab $K19_CV <Double-Button-2> $RW_EDITOR
+rw_ans ::rdw::_pick_seize $K19_CV
+array unset ::rdw::pick
+set K20_DEAD  [list [rw_tab_slots $K19_CV] [rw_ans ::rdw::pick_running]]
+rw_ans ::rdw::_pick_seize $K19_CV
+set K20_APREV [rw_prevs]
+rw_ans ::rdw::pick_release
+set K20_ABACK [list [rw_tab_slots $K19_CV] [rw_tab $K19_CV]]
+array unset ::rdw::pick
+## (b) another mode's scripts ARE kept, its bare `break` slots included
+set K20_FOREIGN {{rwk::click; break} break {rwk::end; break} break {rwk::click; break}}
+rw_tab_seed $K19_CV $K20_FOREIGN
+rw_ans ::rdw::_pick_seize $K19_CV
+set K20_BPREV [rw_prevs]
+## (c) seized AGAIN with that record on file, as a resume onto a canvas that is
+## still seized does: the record on file stays
+rw_ans ::rdw::_pick_seize $K19_CV
+set K20_CPREV [rw_prevs]
+rw_ans ::rdw::pick_release
+set K20_CBACK [rw_tab_slots $K19_CV]
+array unset ::rdw::pick
+## (d) which scripts count as the mode's own
+set K20_OWN {}
+foreach _s [list $RW_PRESS {rdw::pick_click; break} {rdw::pick_end; break} break {} \
+                 {xschem callback %W 6 %x %y 0 0 0 %s; calc::pick_click; break} $RW_EDITOR] {
+  lappend K20_OWN [rw_ans ::rdw::pick_own_script $_s]
+}
+check {K20 THE SEIZE NEVER KEEPS ITS OWN SCRIPTS AS THE PREDECESSORS: a canvas left holding the mode's five scripts with no record on file - seized, the record dropped, seized again - records NOTHING for the press, the release, Escape and the held motion and the EDITOR's script for the double click, taken from the middle button's slot, so the hand-back leaves the four slots absent and the editor's double click in place instead of putting the seize back; another mode's scripts ARE recorded, its bare `break` slots too, and stay on record when the canvas is seized a second time, so the hand-back returns them; and the mode's own scripts are known as the press with or without the pointer motion in front of the click and the end - a bare `break`, the empty script, another mode's press and the editor's double click are not} \
+  [list $K20_DEAD $K20_APREV $K20_ABACK $K20_BPREV $K20_CPREV $K20_CBACK $K20_OWN] \
+  [list [list $RW_OWN 0] [list {} {} {} {} $RW_EDITOR] \
+        [list [list {} {} {} {} $RW_EDITOR] {<Double-Button-1> <Double-Button-2>}] \
+        $K20_FOREIGN $K20_FOREIGN $K20_FOREIGN {1 1 1 0 0 0 0}]
+
+# --- K21: what the mode tells `cmdmode` it holds ----------------------------
+catch {rename ::rdw::bind {}}
+catch {rename ::rdw::focus {}}
+array unset ::RW_TAB
+check {K21 WHAT THE MODE TELLS cmdmode IT HOLDS: with the canvas seized, one group of four for each of the five slots in the seize's own order - this canvas, the sequence, the very script the table holds in that slot and the predecessor that slot was seeded with - and the list is REGISTERED, read off what cmdmode::pristine answers: each slot's seeded predecessor, with a script the mode does not hold and the mode's script on another canvas left unchanged. SUSPENDED it holds nothing - the slots are back, the list is empty although the mode still counts as running, and pristine leaves the mode's script alone; seized again as a resume seizes, the list is whole; ENDED it is empty with the slots back. The stand-in is gone from this namespace afterwards and no record is left} \
+  [list $K21_HELD $K21_PRIST $K21_OTHER $K21_SUS $K21_SUSP $K21_BACK $K21_END \
+        [info commands ::rdw::bind] [info commands ::rdw::focus] [info exists ::rdw::pick]] \
+  [list [list 20 $RW_SEQS {} $K19_SEED] $K19_SEED [list {rwk somebody else} $RW_PRESS] 1 \
+        [list $K19_SEED {} 1 $RW_PRESS] [list 20 $RW_SEQS {} $K19_SEED] \
+        [list {} 0 $K19_SEED] {} {} 0]
 
 # ============================================================================
 # SECTION BS — ISSUE 1322: A BLOCK MUST CARRY WHAT IT WAS ABOUT
@@ -9241,7 +9396,7 @@ check {HT4 STRUCTURAL one proc decides what the slot says and every exit is a do
 ## from a script `.drw`'s own binding invoked, so a later binding tag runs in the
 ## same invocation and the blank never reaches a relayout.
 ##
-## ⚠ WHY A TAG AND NOT `bind $cv <Motion> +...`: `rdw::_pick_seize` latches four
+## ⚠ WHY A TAG AND NOT `bind $cv <Motion> +...`: `rdw::_pick_seize` latches some
 ## of this canvas's binding scripts VERBATIM and row V6 asserts the restore is
 ## byte-identical, so an append is not removable without rewriting a script the
 ## seize is holding.  A tag is ONE `bindtags` write each way -- which is what
@@ -9249,11 +9404,29 @@ check {HT4 STRUCTURAL one proc decides what the slot says and every exit is a do
 ## the two records of what was attached can disagree, and that is invariant I1
 ## one widget out.
 ##
-## ⚠ AND THE FOUR SEIZED SEQUENCES NEVER REACH THE TAG, BY CONSTRUCTION: every
+## ⚠ AND THE SEIZED SEQUENCES NEVER REACH THE TAG, BY CONSTRUCTION: every
 ## one of `_pick_seize`'s scripts ends in `break`, which stops the remaining
 ## binding tags for that event.  That is the standing reason the timer is kept,
 ## so the `break` count is a leg here and not a comment.
-check {HT4b STRUCTURAL THE SYNCHRONOUS RE-ASSERT IS ONE TAG, ONE SCRIPT AND ONE EVENT LIST, AND IT REFUSES SAFELY WITH NOTHING TO ATTACH TO: _hint_attach and _hint_detach answer 0 for an empty and for a non-existent canvas and on the headless arm, the tag's only script anywhere is rdw::_hint_sync, the event list has exactly one definition and only the attach reads it, `bindtags` is written from those two procs and nowhere else, the tag name is not a widget path so it can never be mistaken for one, and all four seized sequences end in `break` - which is why the tag is never reached for them and the backstop timer still has a job} \
+## The scripts the seize binds are read off its own `bind` lines, the way row
+## K14 reads them, with a `$name` resolved through the `set name` line above
+## it: a count of the word in the body would count the seize's guards and its
+## record of what it bound as well.
+set HT4B_SZ [rw_body ::rdw::_pick_seize]
+set HT4B_ENDS [list "break\"" "break[format %c 125]"]
+set HT4B_BRK 0
+foreach _q {<ButtonPress-1> <ButtonRelease-1> <Key-Escape> <B1-Motion> <Double-Button-1>} {
+  set _sc {}
+  catch {regexp -line [string map [list SEQ $_q] {^[ \t]*bind \$cv SEQ[ \t]+(.*)$}] $HT4B_SZ -> _sc}
+  set _sc [string trim $_sc]
+  if {[regexp {^\$(\w+)$} $_sc -> _vn]} {
+    set _sc {}
+    catch {regexp -line [string map [list VN $_vn] {^[ \t]*set VN[ \t]+(.*)$}] $HT4B_SZ -> _sc}
+    set _sc [string trim $_sc]
+  }
+  if {[lsearch -exact $HT4B_ENDS [string range $_sc end-5 end]] >= 0} { incr HT4B_BRK }
+}
+check {HT4b STRUCTURAL THE SYNCHRONOUS RE-ASSERT IS ONE TAG, ONE SCRIPT AND ONE EVENT LIST, AND IT REFUSES SAFELY WITH NOTHING TO ATTACH TO: _hint_attach and _hint_detach answer 0 for an empty and for a non-existent canvas and on the headless arm, the tag's only script anywhere is rdw::_hint_sync, the event list has exactly one definition and only the attach reads it, `bindtags` is written from those two procs and nowhere else, the tag name is not a widget path so it can never be mistaken for one, and all five seized sequences end in `break` - which is why the tag is never reached for them and the backstop timer still has a job} \
   [list [rw_ans ::rdw::_hint_attach {}] \
         [rw_ans ::rdw::_hint_detach {}] \
         [rw_ans ::rdw::_hint_attach .nosuchcanvas] \
@@ -9267,8 +9440,8 @@ check {HT4b STRUCTURAL THE SYNCHRONOUS RE-ASSERT IS ONE TAG, ONE SCRIPT AND ONE 
                       [rw_count [rw_body ::rdw::_hint_attach] {bindtags}] +
                       [rw_count [rw_body ::rdw::_hint_detach] {bindtags}] ? 1 : 0}]}] \
         [expr {[string index [rw_ans ::rdw::_hint_tag] 0] eq {.} ? 0 : 1}] \
-        [rw_count [rw_body ::rdw::_pick_seize] {break}]] \
-  [list 0 0 0 0 1 2 1 0 1 1 4]
+        $HT4B_BRK] \
+  [list 0 0 0 0 1 2 1 0 1 1 5]
 
 ## ---------------------------------------------------------------------------
 ## HT5..HT10 — THE LIVE HALF.  A real status bar, a real `font measure` and a
@@ -9855,15 +10028,18 @@ if {$live_tk} {
   ## real tab and asserts the four facts, so the claim can never be re-derived
   ## from the comment again.
   ##
-  ## ⚠ AND IT ALSO PINS A HOLE THAT IS NOT THIS FEATURE'S: `rdw::pick_start`
-  ## asks `winfo exists [xschem get current_win_path]`, which is 0 in a tab, so
-  ## 1/2/3 with nothing selected does NOTHING in a tab and says nothing, not
-  ## even in the CIW.  Issue 1387.  The row asserts the SILENCE that follows
-  ## from it -- no sentence on any bar, no timer, no tag, no recorded slot --
-  ## so the day 1387 is fixed by giving the seize the real canvas widget, this
-  ## row goes red and whoever fixes it is told the hint has to follow.  Fixing
-  ## it that way also makes `rdw::_hint_slot` right with no tab arm at all,
-  ## which is why there is not one.
+  ## AND THE MODE ARMS THERE, WITH ITS SENTENCE ON THE SHARED BAR.  A second
+  ## tab's `current_win_path` is the name of a context and no widget;
+  ## `rdw::pick_start` resolves it to the canvas that shows it, the main
+  ## window's, and seizes that.  So the record holds a real widget, the slot
+  ## `rdw::_hint_slot` answers for it is the bar the tabs share, and there is
+  ## no tab arm in that proc: asked about the tab's own name it still answers
+  ## a slot that does not exist, which the second leg reads.  (Before the
+  ## seize held the real widget the key did nothing in such a tab and this row
+  ## held the silence that followed from it: the tab half of issue 1387.)
+  ##
+  ## Both halves are read: the hint UP, while the tab is current, and the hint
+  ## DOWN again after the mode is ended, before the tab is closed.
   ht_reset
   set HT14_OPEN [rw_ans xschem schematic_in_new_window force]
   ht_settle 8
@@ -9872,17 +10048,21 @@ if {$live_tk} {
                        [rw_w xschem get top_path] \
                        [rw_ans ::rdw::_hint_slot $HT14_CV] \
                        [rw_w winfo exists [rw_ans ::rdw::_hint_slot $HT14_CV]]]
+  rw_ans ::rdw::set_list annotation
   set HT14_START [rw_ans ::rdw::pick_start]
   ht_settle 6
-  set HT14_QUIET [list [ht_txt] [ht_st] [ht_pumping] [ht_recorded] [ht_tagged]]
+  set HT14_REC {} ; catch {set HT14_REC $::rdw::pick(canvas)}
+  set HT14_UP [list $HT14_REC [ht_txt] [ht_st] [ht_pumping] [ht_recorded] [ht_tagged]]
   rw_ans ::rdw::pick_end
+  set HT14_DOWN [list [rw_ans ::rdw::pick_running] [ht_txt] [ht_st] [ht_pumping] [ht_recorded] [ht_tagged]]
   set HT14_CLOSE [rw_ans xschem new_schematic destroy $HT14_CV]
   ht_settle 8
   set HT14_BACK [list [rw_w xschem get current_win_path] [llength [rw_w xschem windows]]]
   ht_reset
-  check {HT14 IN A TAB THE CANVAS PATH IS NOT A WIDGET, THE STATUS BAR IS THE SHARED ONE, AND THE PICK MODE SAYS NOTHING ANYWHERE: a real second tab reports current_win_path .x1.drw with winfo exists 0 - tabs share the one real .drw - and an EMPTY top_path, which is the prefix C itself writes .statusbar.10 with, so the string arithmetic answers a widget that does not exist; rdw::pick_start refuses there (issue 1387, a hole in the seize and not in the hint), and the refusal is TOTAL - no sentence on the shared bar, no backstop timer, no recorded slot and no binding tag - and the tab closes back to the main canvas} \
-    [list $HT14_OPEN $HT14_FACTS $HT14_START $HT14_QUIET $HT14_CLOSE $HT14_BACK] \
-    [list 1 [list 0 {} .x1.statusbar.10 0] 0 [list { } normal 0 NO-SLOT 0] 0 [list .drw 1]]
+  check {HT14 IN A TAB THE CANVAS PATH IS NOT A WIDGET, THE STATUS BAR IS THE SHARED ONE, AND THE PICK MODE ARMS ON THE SHARED CANVAS WITH ITS SENTENCE ON THAT BAR: a real second tab reports current_win_path .x1.drw with winfo exists 0 - tabs share the one real .drw - and an EMPTY top_path, which is the prefix C itself writes .statusbar.10 with, so the string arithmetic on the tab's own name answers a widget that does not exist; rdw::pick_start resolves that name to the canvas that shows the tab and arms there - the mode is recorded on .drw, the annotation sentence is on the shared bar in its active state, the backstop timer runs, the slot on record is the shared one and the binding tag is on .drw - and ended, all of it is taken off again: no mode, the bar blank and normal, no timer, no recorded slot, no tag; and the tab closes back to the main canvas} \
+    [list $HT14_OPEN $HT14_FACTS $HT14_START $HT14_UP $HT14_DOWN $HT14_CLOSE $HT14_BACK] \
+    [list 1 [list 0 {} .x1.statusbar.10 0] 1 [list .drw $HT_ANN active 1 .statusbar.10 1] \
+          [list 0 { } normal 0 NO-SLOT 0] 0 [list .drw 1]]
 
   ## THE SECTION LEAVES THE PROCESS AS IT FOUND IT: no mode, no hint, the store
   ## and the list identity back, the main window back at the geometry it was
@@ -10255,7 +10435,9 @@ else { set ::ev_precision $RW_EVP_SAVE }
 ## state this feature actually shipped in -- reds those six AND HT12, the user's
 ## gesture.  Each half alone leaves the tooltip working, which is why neither
 ## half is fenced by HT12 on its own and both have a row of their own.
-set RW_FLOOR 198
+## ...and by three for rows K19, K20 and K21, which run the seize against a
+## stand-in binding table on both arms.
+set RW_FLOOR 201
 set RW_RAN [expr {$npass + $fail}]
 if {$RW_RAN < $RW_FLOOR} {
   puts "FAIL: RWFLOOR the suite ran only $RW_RAN checks, below its floor of\

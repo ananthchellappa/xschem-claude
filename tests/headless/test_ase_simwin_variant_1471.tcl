@@ -23,8 +23,11 @@
 #   WR  the release note held to its rules -- the file only
 #   ST  the 104 committed .state files round-trip byte for byte
 #   WG  the row editor itself, on a display: the real menu, the real widgets.
-#       WG7 starts the two real binaries through Detect -- the ordinary
-#       capability probe, which crashes nothing (receipt 46)
+#       WG7 starts the real binaries through Detect -- the ordinary
+#       capability probe, which crashes nothing (receipt 46).  WG8 (issue
+#       1724) takes the steps one sentence of the terminal-current cure names
+#       -- select the entry under Setup > Simulators…, press Edit… and then
+#       Detect -- finding each widget by the label the sentence gives it
 #
 # ⚠ NOTHING HERE STARTS A PROGRAM EXCEPT THROUGH DETECT. Every stand-in program
 # writes a MARK file when started, and the backend's probe hook is wrapped with a
@@ -32,8 +35,9 @@
 # zero, and WG5 is the positive control that the counter really counts.
 #
 # THE COUNT IS A FLOOR AND IT ONLY EVER GOES UP. NEW AT 12 on the headless arm and
-# 21 on the display arm with both binaries present; WG7/apt and WG7/fork
-# self-skip, uncounted, when their binary is absent. The sabotage campaign is in
+# 21 on the display arm with both binaries present; issue 1724 added WG7/v53
+# and WG8 to the display arm. Each WG7 row self-skips, uncounted, when its
+# binary is absent. The sabotage campaign is in
 # doc/claude/ase_analyses_batch/receipts/47-stage-16-gui.md.
 #
 # Arms:
@@ -199,12 +203,14 @@ proc prime {path caps} {
 # answered on 2026-09-15 (receipt 46); WG7 re-takes two of them from the binaries.
 # ============================================================================
 set AN_ALL {op dc ac tran noise tf pz sens disto sp pss}
+## `hier_probes` (issue 1724) is in both, as the real probe answered on
+## 2026-11-20: 1 for the complete answer D_FORK stands for, 0 on apt 45.2.
 set D_FORK [dict create known 1 usable 1 appendwrite 1 blanket_op_save 0 \
   hier_op_names 1 casemode_detected {fold preserve distinguish} \
-  altshow_op_dump 1 analyses_available $AN_ALL analyses_probed $AN_ALL \
+  altshow_op_dump 1 hier_probes 1 analyses_available $AN_ALL analyses_probed $AN_ALL \
   one_vector_write 1 keyword_case 1 gnd_literal 1 version_line ngspice-46+]
 set D_APT [dict merge $D_FORK [dict create casemode_detected fold \
-  altshow_op_dump 0 one_vector_write 0 keyword_case 0 gnd_literal 0 \
+  altshow_op_dump 0 hier_probes 0 one_vector_write 0 keyword_case 0 gnd_literal 0 \
   version_line ngspice-45.2]]
 set D_PART [dict remove $D_FORK altshow_op_dump]
 
@@ -213,7 +219,12 @@ set W_TWO {Two kinds of command line are misread by it; ASE-L warns before a run
 set W_DOOR {Press Detect in the Simulators window to try again.}
 proc s_fork {p} { return "$p can do everything ASE-L offers." }
 proc s_apt {p} {
-  return "$p can do everything ASE-L offers except case-sensitive net names and the fast operating-point dump. $::W_OP $::W_TWO"
+  return "$p can do everything ASE-L offers except case-sensitive net names, the fast operating-point dump and terminal currents of subcircuit pins or of devices inside subcircuits. $::W_OP $::W_TWO"
+}
+## The fork's older ver_50 build (issue 1724): complete but for terminal
+## currents below the top level.
+proc s_v50 {p} {
+  return "$p can do everything ASE-L offers except terminal currents of subcircuit pins or of devices inside subcircuits."
 }
 proc s_part {p} {
   return "$p can do everything ASE-L offers, except that one measurement did not finish: the fast operating-point dump. $::W_DOOR"
@@ -640,13 +651,26 @@ C {devices/lab_wire} 300 -330 0 0 {name=lG lab=G}
             $::HOOKN [file exists $MARK]] \
       [list [s_apt $STUB_A] [s_fork $STUB_F] {} 1 {} [s_apt $STUB_A] {} 1 0 0]
 
-    # --- WG7: THE TWO REAL BINARIES -------------------------------------------
+    # --- WG7: THE REAL BINARIES -----------------------------------------------
     ## ⚠ THE ORDINARY CAPABILITY PROBE, through the real Detect button: the same
     ## seven short -b decks test_ase_variant_1470's EX rows run, none of which
-    ## crashes either binary. This is the look debt's fixture, as a row.
+    ## crashes any of them. This is the look debt's fixture, as a row.
+    ##
+    ## ISSUE 1724 moved the fork's ver_50 row and added a third. ver_50 read the
+    ## complete sentence until `hier_probes` was measured; it now names that one
+    ## gap. The complete sentence is ver_53's, which is started from a COPY in
+    ## this suite's scratch: that build tree is rebuilt under its own session.
+    set WG7V53 [file join [test_real_home] dev ngspice-ver_53 build-ver_53 src ngspice]
+    set WG7V53C [file join $scratch wg7_ngspice_v53]
+    if {[file executable $WG7V53]} {
+      ## `file normalize` follows every link of a path but one in its LAST
+      ## component, so one more component is put behind it and taken off again.
+      catch {file copy -force [file dirname [file normalize [file join $WG7V53 __wg7__]]] $WG7V53C}
+    }
     set WG7BINS [list \
       apt  /usr/bin/ngspice apt \
-      fork /home/analog/dev/ngspice/build-ver_50/src/ngspice fork]
+      fork /home/analog/dev/ngspice/build-ver_50/src/ngspice v50 \
+      v53  $WG7V53C fork]
     foreach {tag bin shape} $WG7BINS {
       if {![file executable $bin]} {
         puts "ok:   WG7/$tag SKIPPED -- no binary at $bin"
@@ -665,11 +689,127 @@ C {devices/lab_wire} 300 -330 0 0 {name=lG lab=G}
       open_editor $top 0
       set warm [wtext $top.simrow.variant]
       set n3 $::HOOKN
-      if {$shape eq {apt}} { set exp [s_apt $bin] } else { set exp [s_fork $bin] }
+      switch -- $shape {
+        apt     { set exp [s_apt $bin] }
+        v50     { set exp [s_v50 $bin] }
+        default { set exp [s_fork $bin] }
+      }
       check "WG7/$tag the real $bin: opened cold the line says it is not measured and nothing starts; Detect probes it once and the line reads its worked sentence; reopened, the line reads it again from memory and nothing starts" \
         [list $cold [expr {$n1 - $n0}] [expr {$n2 - $n1 >= 1}] $det [expr {$n3 - $n2}] $warm] \
         [list [s_unmeas $bin] 0 1 $exp 0 $exp]
     }
+
+    # --- WG8: THE WAY TO DETECT, TAKEN AS THE CURE'S SENTENCE SAYS IT (issue 1724) --
+    ## When the simulator a session starts is known to save no terminal current
+    ## below the top level and a registered entry has not been tried, a pick is
+    ## told so, and how to find out without a run: select the entry under
+    ## Setup > Simulators…, press Edit… and then Detect (ase::probe_cure).  The
+    ## window that menu entry opens has no Detect button; Detect is in the row
+    ## editor.  So the menu, its entry and the two buttons are READ OFF THE
+    ## SENTENCE and each is looked up among the real widgets BY ITS LABEL: a
+    ## word the sentence gets wrong finds no widget.  The probe is stood in for
+    ## (HOOK_BODY), as in WG5; the session's own state is not edited -- it
+    ## carries no choice, so what it starts is the first entry registered.
+    proc wg8_menu_index {m label} {
+      if {![wex $m]} { return -1 }
+      if {[catch {$m index end} last] || $last eq {none}} { return -1 }
+      for {set i 0} {$i <= $last} {incr i} {
+        if {![catch {$m entrycget $i -label} l] && $l eq $label} { return $i }
+      }
+      return -1
+    }
+    ## every button at or below `w` whose label is `text`
+    proc wg8_buttons {w text} {
+      set out {}
+      if {![wex $w]} { return $out }
+      set todo [list $w]
+      while {[llength $todo]} {
+        set c [lindex $todo 0]
+        set todo [lrange $todo 1 end]
+        foreach k [winfo children $c] { lappend todo $k }
+        if {[winfo class $c] in {Button TButton} && ![catch {$c cget -text} t] && $t eq $text} { lappend out $c }
+      }
+      return $out
+    }
+    ## `script` with ase::echo recording instead of speaking -> what was said,
+    ## as {tag sentence} pairs.  The real one is parked inside its own
+    ## namespace, for the reason hook_install gives.
+    proc wg8_said {script} {
+      set ::WG8ECHO {}
+      if {![llength [info commands ::ase::echo]]} { return NOECHO }
+      rename ::ase::echo ::ase::zz_w1471_echo
+      proc ::ase::echo {msg {tag {}}} { lappend ::WG8ECHO [list $tag $msg] ; return 1 }
+      catch {uplevel #0 $script}
+      rename ::ase::echo {}
+      rename ::ase::zz_w1471_echo ::ase::echo
+      return $::WG8ECHO
+    }
+    set WG8LIMIT {it saves terminal currents only on top-level devices that are not subcircuit instances.}
+    catch {test_sim_registry_isolate}
+    set ::HOOK_BODY {}
+    v_ans ase::sim_register wgin $STUB_A
+    v_ans ase::sim_register wgnew $STUB_D
+    prime $STUB_A $D_APT
+    zero
+    catch {destroy $top.simrow}
+    catch {destroy $top.simdlg}
+    set ::WG8ST [v_ans ase::session_state $key]
+    set WG8FIX [v_total {
+      set v [ase::probe_session_verdict $::WG8ST]
+      list [dict get $v entry] [dict get $v verdict] [ase::probe_cure_entries ngspice peek]
+    }]
+    set WG8P0 [wg8_said {ase::probe_pick_report $::WG8ST {i(x1:a)}}]
+    set WG8CURE [v_ans ase::probe_cure $::WG8ST peek before]
+    foreach v {w8e w8m w8i w8b1 w8b2} { set $v ZZNOWORD }
+    regexp {^(\S+) has not been tried yet — the next run finds out whether it can, or select it under (\S+) > (\S+), press (\S+) and then (\S+)\.$} $WG8CURE -> w8e w8m w8i w8b1 w8b2
+    ## 1. the menu, and its entry
+    set w8mi [wg8_menu_index $top.mb $w8m]
+    set w8sub {}
+    if {$w8mi >= 0} { catch {set w8sub [$top.mb entrycget $w8mi -menu]} }
+    set w8ii [wg8_menu_index $w8sub $w8i]
+    if {$w8ii >= 0} { winv $w8sub $w8ii }
+    set WG8A [list [expr {$w8mi >= 0}] [expr {$w8ii >= 0}] [wex $top.simdlg]]
+    ## 2. the window it opened: the entry's row, the first button -- and no
+    ## button with the second one's label
+    set w8row {}
+    catch {
+      foreach id [$top.simdlg.tv children {}] {
+        if {[$top.simdlg.tv set $id name] eq $w8e} { lappend w8row $id }
+      }
+    }
+    if {[llength $w8row] == 1} {
+      catch {$top.simdlg.tv selection set [lindex $w8row 0]}
+      catch {update}
+    }
+    set w8ed [wg8_buttons $top.simdlg $w8b1]
+    set w8nodet [llength [wg8_buttons $top.simdlg $w8b2]]
+    if {[llength $w8ed] == 1} { winv [lindex $w8ed 0] }
+    set WG8B [list [llength $w8row] [llength $w8ed] $w8nodet [wex $top.simrow] \
+                   [v_total {$::top.simrow.name get}]]
+    ## 3. the row editor: the second button, pressed -- the one step that asks
+    ## a program -- and then OK
+    set w8det [wg8_buttons $top.simrow $w8b2]
+    set w8n0 $::HOOKN
+    set ::HOOK_BODY {set ::D_FORK}
+    if {[llength $w8det] == 1} { winv [lindex $w8det 0] }
+    set ::HOOK_BODY {}
+    set w8n1 $::HOOKN
+    set w8line [wtext $top.simrow.variant]
+    set w8ok [winv $top.simrow.btns.proceed]
+    set WG8C [list [llength $w8det] $w8n0 [expr {$w8n1 - $w8n0}] $w8line $w8ok [wex $top.simrow]]
+    ## 4. the next pick
+    set WG8P1 [wg8_said {ase::probe_pick_report [ase::session_state $::key] {i(x1:a)}}]
+    set WG8D [list [v_ans ase::probe_cure_entries ngspice peek] $WG8P1 $::HOOKN [file exists $MARK]]
+    set WG8WHO "wgin ([file normalize $STUB_A])"
+    check {WG8 THE WAY TO DETECT, TAKEN AS THE SENTENCE SAYS IT: with the session's own simulator known to save no terminal current below the top level and one registered entry nobody has asked, a pick of a subcircuit instance's pin is told that entry has not been tried yet and to select it under Setup > Simulators…, press Edit… and then Detect; those five words are read off the sentence and looked up among the real widgets by label -- the menubar has that menu and the menu that entry, which opens the Simulators window; the window lists the entry, has exactly one button with the first label and NONE with the second; that button opens the row editor on the entry; the editor has exactly one button with the second label, nothing has asked a program until it is pressed, and pressing it asks once; OK closes the editor -- and the next pick names the entry as the one that can, with nothing further asked (fixture: the entry the session starts, what is known of it, what a click reads of the two entries; what the pick said, and its tag; the five words; the menu, its entry, the window up; the entry's rows, buttons with the first label, with the second, the editor up, the name in it; buttons with the second label in the editor, programs asked before it, by it, the editor's line, OK, the editor gone; what a click reads of the two entries afterwards, what the next pick said, programs asked in all, a stand-in started)} \
+      [list $WG8FIX $WG8P0 [list $w8e $w8m $w8i $w8b1 $w8b2] $WG8A $WG8B $WG8C $WG8D] \
+      [list {wgin cannot {{wgin cannot} {wgnew untried}}} \
+            [list [list error "ase: $WG8WHO, the simulator this session starts, cannot save that current: $WG8LIMIT wgnew has not been tried yet — the next run finds out whether it can, or select it under Setup > Simulators…, press Edit… and then Detect."]] \
+            [list wgnew Setup Simulators… Edit… Detect] \
+            {1 1 1} {1 1 0 1 wgnew} [list 1 0 1 [s_fork $STUB_D] OK 0] \
+            [list {{wgin cannot} {wgnew can}} \
+                  [list [list error "ase: $WG8WHO, the simulator this session starts, cannot save that current: $WG8LIMIT wgnew can — pick it under Setup > Simulators… before you run."]] \
+                  1 0]]
 
     catch {destroy $top.simrow}
     catch {destroy $top.simdlg}

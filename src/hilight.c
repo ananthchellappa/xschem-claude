@@ -3640,6 +3640,27 @@ static int net_hilight_prefix_related(Xschem_ctx *a, Xschem_ctx *b)
   return !strcmp(a->sch[minc], b->sch[minc]);         /* same design on the shared branch */
 }
 
+/* issue 1724: the clear-all-highlights key takes the pin markers of the windows
+ * LINKED to the current one as well -- the windows net_hilight_prefix_related()
+ * answers 1 for, which are the ones net_hilight_sync_descend_windows() clears
+ * the net colours of. One key press therefore removes both cues of a pick in
+ * every window on this hierarchy branch, where clearing the current context
+ * alone left the ellipses of the other window standing beside nets that had
+ * just lost their colour. A window that is not on this branch keeps its
+ * markers. Only the lists are touched here: the caller's sync repaints the
+ * windows it reaches. Answers how many markers went. */
+int pin_marker_clear_linked_windows(void)
+{
+  int i, n = 0;
+  for(i = 0; i < MAX_NEW_WINDOWS; ++i) {
+    Xschem_ctx *ctx = get_window_ctx(i, NULL);
+    if(!ctx || ctx == xctx) continue;
+    if(!net_hilight_prefix_related(xctx, ctx)) continue;
+    n += pin_marker_clear_in(ctx, NULL);
+  }
+  return n;
+}
+
 /* Direction/depth-agnostic reconcile for a linked window `wp` MORE than one level from `src` with
  * no intermediate window to relay through: clear it, then copy only `src`'s ancestor-or-self
  * entries (net_hilight_copy_table_from with the target path as filter), propagate, guarded redraw.
