@@ -12706,9 +12706,14 @@ proc ase::ui::model_files_dialog {key} {
 # text to its caller, with only "Save a copy"; `viewdata` shows data with only
 # Save As. `textwindow` takes a FILE NAME, shows it in XSCHEM's own text widget,
 # and its Save writes back to that file -- read or edit, which is what the
-# ruling asked for. A file ase::include_edit_verdict would not let Apply
-# Corrections touch (under the PDK, in a model folder, read-only) opens READ
-# ONLY, so this door cannot do by hand what the press refuses to do.
+# ruling asked for. ⚠ ONLY A FILE THE USER CANNOT WRITE OPENS READ ONLY (fix
+# round 2, finding 5). The first cut opened every file Apply Corrections may
+# not touch (under the PDK, in a model file's folder) without Save, while the
+# refusal sent the user here to "change it by hand": the door it named could
+# not save the change it asked for. "Never touched" is the press's rule (item
+# 6), not the user's: what they change by hand is theirs. A read-only file
+# still opens without Save, and the refusal says to make it writable first
+# (ase::include_hand_first).
 #
 # ⚠ THE RESOLVED PATH NEVER CALLS ase::rundir (ase::include_rundir_peek): a
 # relative entry is shown against the folder the run would use, without
@@ -12850,7 +12855,7 @@ proc ase::ui::incdlg_remove {key} {
 }
 
 # Open: the first selected file in XSCHEM's own text window, read only when
-# Apply Corrections may not touch it either. -> the text window, or {}.
+# the user cannot write it (ase::include_edit_facts). -> the text window, or {}.
 proc ase::ui::incdlg_open {key} {
   set sel [ase::ui::incdlg_selection $key]
   if {![llength $sel]} { return {} }
@@ -12868,8 +12873,7 @@ proc ase::ui::incdlg_open {key} {
     return {}
   }
   set ro {}
-  if {[ase::include_edit_verdict $p [ase::include_edit_facts $p] \
-         [ase::include_protected_roots $st $rd]] ne {}} { set ro ro }
+  if {![dict get [ase::include_edit_facts $p] writable]} { set ro ro }
   ase::ui::incdlg_status $key {}
   if {[catch {textwindow $p $ro} e]} {
     ase::ui::incdlg_status $key $e
@@ -17229,7 +17233,7 @@ proc ase::ui::repair_offer {err state scan {incs {}} {plan {}}} {
   }
   set parts [list {The run was refused.}]
   set rn {}
-  catch {set rn [dict get $scan renames]}
+  catch {set rn [ase::preflight_rename_said [dict get $scan renames] [dict get $scan cs]]}
   foreach g $rn {
     if {[dict get $g fit] ne {unique} || [dict get $g to] eq {}} { continue }
     lappend parts "The netlist has no instance '[dict get $g prefix]'; it looks\

@@ -14978,20 +14978,73 @@ proc textwindow {filename {ro {}}} {
   bind $textwindow_w <Escape> "$textwindow_w.buttons.dismiss invoke"
   ## one open, inside the catch: a second bare `open` here leaked a channel on
   ## every call and raised out of the proc on a file it cannot read
+  set was [list 0 {}]
   if {[catch {open $filename r} textwindow_fileid]} {
     puts "textwindow: $textwindow_fileid"
   } else {
-    $textwindow_w.text insert insert [read $textwindow_fileid]
+    set data [read $textwindow_fileid]
     close $textwindow_fileid
+    $textwindow_w.text insert insert $data
+    set was [list 1 $data]
+  }
+  ## issue 1723 fix round 2, finding 13: WHAT THIS WINDOW READ, so its Save can
+  ## tell a file that changed under it (textwindow_save). Kept only for a window
+  ## that can save, and dropped with the window.
+  if { $ro eq {} } {
+    set ::textwindow_read($textwindow_w) $was
+    bind $textwindow_w <Destroy> [list textwindow_forget %W $textwindow_w]
   }
   return {}
+}
+
+proc textwindow_forget {W w} {
+  if {$W eq $w} { unset -nocomplain ::textwindow_read($w) }
+}
+
+# Has FILENAME changed since a text window read it? WAS is what textwindow kept:
+# {1 <the text read>} or {0 {}} for a file it could not read. -> 1|0. It reads
+# the file the way textwindow does (text mode) and changes nothing.
+proc textwindow_disk_changed {filename was} {
+  lassign $was had text
+  set now 0
+  set cur {}
+  if {![catch {open $filename r} fid]} {
+    if {![catch {read $fid} cur]} { set now 1 }
+    close $fid
+  }
+  if {$now != $had} { return 1 }
+  return [expr {$now && $cur ne $text}]
+}
+
+# The question Save asks before it writes over a file that changed since the
+# window read it. -> 1 to write anyway. A suite redefines it to answer.
+proc textwindow_ask_overwrite {w filename} {
+  set a [tk_messageBox -parent $w -icon warning -type yesno -default no \
+    -title {File changed on disk} \
+    -message "$filename changed on disk after this window read it (another\
+ program, or ASE-L's Apply Corrections, may have rewritten it).\n\nSave anyway,\
+ replacing what is in the file now with this window's text?"]
+  return [expr {$a eq {yes}}]
 }
 
 # Save for the text window W, writing FILENAME: the pair textwindow bound at
 # creation. A failed write keeps the window, so the text is not lost with it.
 # -> 1 when the file was written, 0 when not.
+#
+# ⚠ IT ASKS BEFORE IT WRITES OVER A FILE THAT CHANGED SINCE THE WINDOW READ IT
+# (issue 1723 fix round 2, finding 13). ASE-L's Setup > Include Files… opens a
+# nodeset include here, and Apply Corrections rewrites that same file at its
+# OK; a Save in the window still holding the old text then put the stale names
+# back with no word, the backup holding the same stale text, so the correction
+# existed nowhere and the next Run was refused again. A "no" keeps the window
+# and its text, and writes nothing.
 proc textwindow_save {w filename} {
   if {![winfo exists $w.text]} { return 0 }
+  if {[info exists ::textwindow_read($w)] &&
+      [textwindow_disk_changed $filename $::textwindow_read($w)] &&
+      ![textwindow_ask_overwrite $w $filename]} {
+    return 0
+  }
   if {[catch {open $filename w} fid]} {
     puts "textwindow: $fid"
     return 0

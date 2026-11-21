@@ -84,7 +84,7 @@ file**: the graph record carries axis keys `x1 0 x2 9 y1 -78 y2 36`.
 
 ## Status (crew R, 2026-11-19)
 
-Items 1, 2 and 3 are built by the commit that adds this section (its parent is the stamp's `tree=`):
+Items 1, 2 and 3 are built by `e73fb41ae` (its parent is `777efaf24`):
 
 1. `ase::netlist_map_resolve` records where a path stops at a missing instance (`miss`);
    `ase::preflight_rename_try` and `ase::preflight_rename_solve` fill the scan row's existing
@@ -197,7 +197,8 @@ an open question, not a defect.
 
 ## Items 5-7 as built (crew 1723i, 2026-11-21)
 
-Built by the commit that adds this section (its parent is the stamp's `tree=`).
+Built by `ed635d969` (its parent is `a464b7f6b`). The first fix round below is `2f1b8bca7`; the second
+is its child, the commit that adds the "Fix round 2" section.
 
 **7. The gate.** `ase::preflight_gate` reads the include files once (`ase::include_texts`: binary,
 deduplicated by resolved path) and hands them to the scan. `ase::include_card_idents` (pure) gives every
@@ -234,7 +235,9 @@ with a unique rename, and only the stale prefix in the name's own spelling (`X1.
 under `fold`). `ase::include_rewrite_text` (pure) applies them at byte offsets and raises on a span
 that no longer reads as scanned. The console command for the file half is
 `ase::preflight_fix_includes <key>`; `ase::preflight_fix_session <key>` is unchanged in what it does
-(it is now `ase::preflight_session_commit` of a fresh scan). `ase::ui::repair_offer` stays pure and
+(it is now `ase::preflight_session_commit` of a fresh scan). *(⚠ That was false under `fold`, in this
+commit and the first fix round: two spellings of a stale prefix were one rename group, which changed
+what the command does for a session with no include file. Fix round 2, finding 7, put it back.)* `ase::ui::repair_offer` stays pure and
 gains the plan's counts (`incnames`, `incfiles`, `incblocked`).
 
 **5. Setup > Include Files….** `ase::ui::include_files_dialog`, labelled by
@@ -247,7 +250,8 @@ goes unsaved. **Open uses `textwindow`**: `edit_file` hands the file to an exter
 is executable, which is not XSCHEM's own window; `editdata` is modal and returns text to its caller,
 with only "Save a copy"; `viewdata` shows data with only Save As. `textwindow` takes a file name, shows
 it in XSCHEM's text widget, and its Save writes back to that file. A file Apply Corrections may not
-touch opens without Save. **Found and fixed while building:** `textwindow`'s Save was a braced script
+touch opens without Save. *(Fix round 2, finding 5: now only a file the user cannot write does; the
+refusal had sent the user to this window to change such a file by hand.)* **Found and fixed while building:** `textwindow`'s Save was a braced script
 reading the globals of whichever text window opened last, so with two open, Save in the first wrote the
 second's text and closed the second (row `FX1723If`; now `textwindow_save`, bound per window). Its
 duplicate `open` before the guarded one, which leaked a channel per call and raised on an unreadable
@@ -278,11 +282,14 @@ model file's folder, so its press stays the session-only one. The sabotage sweep
   `PF1723s3`). Before item 7 the outputs alone decided.
 - Only `v(...)` names are read; a card inside a `.subckt` body of an include names that subcircuit's
   own nodes and is not read; an inline `;` or ` $` comment ends what is read of a line. *(The fix
-  round below made the comment rule ngspice's own, `//` and `#` lines included.)*
+  round below made the comment rule ngspice's own, `//` and `#` lines included; fix round 2 added `$`
+  comment lines, `v (...)` with a blank, and the `\\` continuation.)*
 - An absent top-level node is a caution, not a refusal: an include file may add it, and the scan stands
   down only when an include file's own element card connects it.
 - Open goes through the stock `textwindow`: its Save writes in text mode, so a CRLF file comes back
   LF, and "read only" means no Save button (the text can still be typed into, but not written).
+  *(Fix round 2: read only now means a file the user cannot write, and Save asks before it writes over
+  a file that changed since the window read it.)*
 - The Include Files window is refilled when it opens and after its own Add and Remove; a Session >
   Revert while it is open leaves its rows stale until it is reopened.
 - Apply Corrections writes the files before the session; the session half is in-memory and is undone
@@ -387,6 +394,110 @@ The fixes:
 - The stdcell deck in the user's bench (`$::SKYWATER_HVL_STDCELLS/...`) lies under neither PDK root nor
   a models folder, so it is judged by its permissions alone, and Open shows it with Save. Apply never
   writes it, because it carries no `.nodeset`/`.ic` card.
+
+## Fix round 2 (2026-11-21): the second review's confirmed findings
+
+A review of the first fix round (`2f1b8bca7`) confirmed fourteen findings, thirteen distinct (8 and 10
+are one defect). Twelve are fixed below. Finding 14 was this file's own commit pointers, fixed in the
+two "built by" sentences above.
+Each code defect is a row first, watched red on `2f1b8bca7`'s code (10 FAILED of 328 on the counted
+arm; `FX1723Ie` and `FX1723Ih` red on the display arm), then fixed. The rows that cover an arm the
+code already had right were proved by sabotage instead. The sweep is
+`doc/claude/issue_1723/receipts/sabotage_sweep_fix_round_2.md`.
+
+**Measured for this round** (hand decks, `HOME` throwaway, `DISPLAY` unset). The netlist has `xdut`
+with an internal node `m`, and the deck `.include`s a file holding the card. On `/usr/bin/ngspice`
+45.2 unless the row names the fork (ver_53, with `-D casemode=distinguish -D casemodewrite`, the flags
+ASE-L passes):
+
+| the include holds | what ngspice does | rc |
+|---|---|---|
+| `.nodeset v(b)=0.5`, `$ a note about x1`, `+ v(x1.q)={0.4}` | joined across the `$` line ("Please check line .nodeset v(b)=0.5 v(x1.q)=…"), the warning, then `.nodeset syntax error` | 1 |
+| the same with the `$` line indented | the same | 1 |
+| `$ x1 was the dut before the rename`, `.nodeset v(x1.a1)={0.4}` | "Unusual leading characters like '$'" (a warning only), then the same | 1 |
+| `.nodeset v(b)=0.5`, `$ a note`, `+ v(xdut.nosuch)=0.4` | joined: "Nodeset on non-existent node - xdut.nosuch" | 0 |
+| `.nodeset v (x1.q)={0.4}` / `.ic v (x1.q)={0.4}` | the warning naming `x1.q`, then the syntax error | 1 |
+| `.nodeset v ( x1.q ) = 0.4` | the warning, the name dropped | 0 |
+| `.nodeset v (xdut.m)={0.4}` | clean | 0 |
+| `.nodeset v(b)=0.5 \\` then `v(x1.q)={0.4}` | joined, the warning, then the syntax error | 1 |
+| the same with `; a note` before the `\\`, or blanks after it | joined, rc as above | 1 |
+| `.nodeset v(b)=0.5`, `# a hash note \\`, `v(xdut.nosuch)=1` | joined (a `#` line's `\\` continues) | 0 |
+| `.nodeset v(b)=0.5`, `* a star note \\`, `+ v(xdut.nosuch)=1` | the `*` line continues nothing; the `+` line joins `.nodeset` | 0 |
+| `.nodeset v(b)=0.5 \\` then `* now a continuation` | the `*` line is joined into the card, and the syntax error | 1 |
+| fork: `v(xdut.M)={0.4}`, `v(XDUT.m)={0.4}` | the warning, then the syntax error | 1 |
+| fork: `v(xdut.m)={0.4}` | clean | 0 |
+| a top-level node `out.p` (`xdut in out.p amp`, `R2 out.p 0 1k`) and `.nodeset v(out.p)=0.5` or `={0.5}` | applied, no warning (`out.p = 5.000000e-01`) | 0 |
+
+Read against ngspice's source (ver_53, `src/frontend/inpcom.c` and `src/spicelib/parser/inppas3.c`):
+`chk_for_line_continuation` blanks a trailing `\\` (not on a line whose column 0 is `*` or `$`) and
+prefixes `+` to the next line, before comments are stripped; `inp_stripcomments_line` never cuts a `$`
+at column 0; `inp_stitch_continuation_lines` skips any line whose first non-blank character is `#`, `$`
+or `*` without ending the card; INPpas3 reads a card as tokens split on blanks, `=`, `(`, `)` and `,`.
+
+The fixes:
+
+1. **A `$` comment line cut the card, and its words stood item 7 down** (finding 1). The readers now
+   share one line reader, `ase::spice_lines` (pure), a port of the three passes above in their order.
+   A `$` line is transparent to `ase::include_card_idents` and adds no word to `ase::include_top_words`.
+   `ase::include_top_nests` reads the same card lines. Row `PF1723r6`.
+2. **`v (x1.q)` was never read** (finding 2). `ase::preflight_ident_spans` takes `gap`, and the card
+   reader passes 1, so blanks may stand between `v` and its paren. Output expressions keep the old
+   reading: nothing measured says the frontend reads `v (out)` as a vector. Row `PF1723r7`.
+3. **The `\\` continuation was not followed** (finding 3). It is pass 1 of `ase::spice_lines`, and the
+   offsets stay the file's own. Row `PF1723r8`.
+4. **Under `distinguish` the press wrote only the prefix** (finding 4). `x1.A1`'s correction is `xdut.a1`,
+   but the edit wrote `xdut.A1`, which the case-keeping fork dies on. `ase::include_name_fix` (pure) now
+   writes the whole name as the row's correction when the rest is mis-cased too (`whole 1`). The
+   refusal offers that spelling (`ase::include_name_fixed`), and the confirmation says "1 × x1.A1 →
+   xdut.a1". Under `fold` only the prefix moves, as before. Row `PF1723s9`.
+5. **The refusal sent the user to a window that could not save** (finding 5). Open now opens a file
+   read-only only when the user cannot write it: "never touched" is the press's rule, not the user's.
+   A plan record carries `writable`, and for a read-only file the refusal and the console command say
+   "make it writable, then change it by hand (Setup > Include Files…)" (`ase::include_hand_first`).
+   Rows `PF1723t5` and `FX1723Ie` (moved), plus `FX1723Ie3`.
+6. **A node whose own name holds a dot was refused, and Apply would have "corrected" it** (finding 6).
+   Where the instance walk misses, `ase::netlist_map_resolve` first asks whether the rest of the name
+   is a node of that scope. An instance path that resolves is unchanged. Row `PF1723s8`.
+7. **`ase::preflight_fix_session` had changed under `fold`** (finding 7). `ase::preflight_rename_solve`
+   groups by the stale prefix as written again, as it did at `a464b7f6b`. `ase::preflight_rename_said`
+   (pure) lets one sentence speak for spellings that fold together and agree, so the refusal and the
+   banner do not say the same rename twice. Row `PF1723s10`.
+8. **`ase::preflight_fix_includes` said there was no correction right after naming one** (findings 8
+   and 10). When every correction sits in a file ASE-L may not edit, it now says so: "the 2
+   .nodeset/.ic names with a correction are in 1 include file ASE-L may not edit, named above". Row
+   `PF1723af3`.
+9. **The refusal's not-editable, mixed, resolved-only and door-only arms had no row** (finding 9). Row
+   `PF1723t4` asserts each whole line, and that none of them carries the banned sentence. Each arm's
+   sabotage reddens it.
+10. **`PF1723ag3` could not see a folder being created** (finding 11). It now peeks at a missing run
+    directory and, for an empty `rundir`, a missing `::netlist_dir`. Both must still be missing
+    afterwards, and `::netlist_dir` must not have moved.
+11. **Remove's "marks the session unsaved" was never measured** (finding 12). Row `FX1723Id2` saves the
+    session first and then presses Remove.
+12. **A text window from Include Files silently undid Apply Corrections** (finding 13).
+    `textwindow` keeps what it read, and `textwindow_save` asks (`textwindow_ask_overwrite`) before it
+    writes over a file that changed since: `textwindow_disk_changed` decides it. A "no" keeps the
+    window and writes nothing. This is the stock text window, so every XSCHEM door that opens one
+    with Save gets the question. Rows `PF1723ai` (the decision, counted) and `FX1723Ih` (the presses).
+13. **End to end** (`PF1723ah3`, `/usr/bin/ngspice`): an include holding a `$` line inside its card,
+    `v (x1.d1)` and a `\\` continuation is refused before ngspice. With the check off, ngspice dies on
+    the syntax error. After `ase::preflight_fix_includes`, all three names are rewritten and the run
+    finishes with no nodeset warning.
+
+## Known limits of fix round 2 (accepted)
+
+- **Under `fold`, two spellings of one stale prefix are decided apart**, as before items 5-7. So
+  `x1.a1` → `xdut.a1` and `X1.b1` → `xother.b1` can both be offered, although ngspice sees one
+  instance. This is the behaviour the ruling kept for the console command.
+- **A dotted node name is looked up only where the instance walk misses**, and only for a voltage. If
+  a scope has both an instance `out` with a node `p` and a node `out.p`, the instance path wins.
+- **The line reader models ngspice outside `.control` and with PS compatibility off**, as the comment
+  port already did. A `*` line joined into a card by a `\\` before it is read like any continuation;
+  ngspice dies on such a card anyway.
+- **The text window's question compares the file's text as read in text mode.** A change in line ends
+  alone (CRLF ↔ LF) is not seen. The window keeps a copy of what it read while it is open.
+- **`G2sens` in `test_ase_dialogs` is red on the display arm**, the same row and values at
+  `a464b7f6b`, at `2f1b8bca7` and here. That is issue 1436, not this one.
 
 Still open: **item 4** (unscheduled); **the pixels** of the Include Files window and the confirmation
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question

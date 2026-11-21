@@ -14752,10 +14752,20 @@ proc ase::preflight_notes {state netlist_text} {
 # `vi`/`vdb`/`vm`/`vp`/`vr` family their pre-flight, which is a MISS (defences
 # (b) and (c) still catch it) and never a false refusal — the direction every
 # ruling in this file leans.
-proc ase::preflight_ident_spans {ex} {
+#
+# GAP (issue 1723 fix round 2, finding 2): 1 lets blanks stand between the
+# letter and its paren, `v (x1.q)`, which is how ngspice's INPpas3 reads a
+# `.nodeset`/`.ic` card -- it splits the card on blanks, `=`, `(`, `)` and `,`
+# (measured on 45.2: `.nodeset v (x1.q)={0.4}` names `x1.q`, warns that it is
+# not there, and dies on the syntax error). ase::include_card_idents passes it.
+# An OUTPUT expression keeps 0: nothing measured says the frontend's vector
+# parser reads `v (out)` as `v(out)`, and a reading it does not share could
+# only refuse a run that works.
+proc ase::preflight_ident_spans {ex {gap 0}} {
   set out {}
-  foreach {wp kp ip} [regexp -all -inline -indices -nocase \
-                        {(?:^|[^A-Za-z0-9_])([vi])\(([^()]*)\)} $ex] {
+  set re [expr {$gap ? {(?:^|[^A-Za-z0-9_])([vi])[ \t]*\(([^()]*)\)}
+                     : {(?:^|[^A-Za-z0-9_])([vi])\(([^()]*)\)}}]
+  foreach {wp kp ip} [regexp -all -inline -indices -nocase $re $ex] {
     set kind [expr {[string tolower [string index $ex [lindex $kp 0]]] eq {v}
                     ? {voltage} : {current}}]
     lassign $ip is ie
@@ -16819,6 +16829,28 @@ proc ase::netlist_map_resolve {map kind name cs} {
     }
     set hit [ase::preflight_pick $insts $s $cs]
     if {[dict get $hit real] eq {}} {
+      ## ⚠ A NODE WHOSE OWN NAME HOLDS A DOT (issue 1723 fix round 2, finding
+      ## 6). xschem allows `.` in a net name and ngspice keeps it, so the rest
+      ## of the name from this segment on may be a NODE of this scope, not an
+      ## instance path: `out.p` at the top level beside an instance `xdut`.
+      ## MEASURED 2026-11-21 on 45.2: `.nodeset v(out.p)=0.5` on such a node is
+      ## applied with no warning, rc 0. Walking `out` as an instance made it
+      ## `absent` with a `miss`, so the include gate refused a bench that runs
+      ## and the rename search offered `xdut.p`. Asked only where the walk has
+      ## already missed, so an instance path that resolves is unchanged; a
+      ## voltage only (a device name with a dot is not a shape xschem writes).
+      if {$kind eq {voltage}} {
+        set tail [join [lrange $segs $segi end] .]
+        set ntbl [dict merge [dict get $map globals] [dict get $scopes $scope nodes]]
+        set nh [ase::preflight_pick $ntbl $tail $cs]
+        if {[dict get $nh real] ne {}} {
+          lappend real [dict get $nh real]
+          set st [dict get $nh status]
+          if {$segstale} { set st absent }
+          return [dict create status $st real [join $real .] \
+                              ambiguous [dict get $nh ambiguous] why {}]
+        }
+      }
       if {![dict get $hit ambiguous] && [dict exists $includes $scope]} {
         dict set unk why "nothing in this netlist is named '$s', but an\
  .include'd file can add cards to this scope"
@@ -17093,28 +17125,31 @@ proc ase::preflight_rename_try {map kind name cs miss} {
 # a run as output rows do, so they DECIDE as output rows do (the ruling: "these
 # rows join the rename search like output rows"). -> {orows mrows renames
 # irows}, and every rename record counts them as `includes`.
+#
+# ⚠ ONE GROUP PER STALE PREFIX AS WRITTEN, under `fold` too (fix round 2,
+# finding 7). The first cut of items 5-7 folded `x1` and `X1` into one group
+# under `fold`, which changed what ase::preflight_fix_session does for a session
+# with no include file at all -- the ruling kept that command "working exactly
+# as before": `v(x1.a1)` (only xdut has a1) and `v(X1.b1)` (only xother has b1)
+# were two unique renames at a464b7f6b, and the fold made them one `partial`
+# with nothing offered. Row PF1723s10. An include row joins the group of its
+# own spelling; ase::preflight_include_hits and the sentences that name a
+# rename speak once for spellings that fold together.
 proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
   set grp [dict create]
-  set gname [dict create]
   set tries [dict create]
   foreach w {o m i} rows [list $orows $mrows $irows] {
     set i -1
     foreach row $rows {
       incr i
       if {![dict exists $row miss]} { continue }
-      ## under `fold` two spellings of one stale prefix (`x1`, `X1`) are one
-      ## instance, so one group; the record keeps the first spelling seen
-      set gk [dict get $row miss prefix]
-      if {!$cs} { set gk [string tolower $gk] }
-      if {![dict exists $gname $gk]} { dict set gname $gk [dict get $row miss prefix] }
-      dict lappend grp $gk [list $w $i]
+      dict lappend grp [dict get $row miss prefix] [list $w $i]
       dict set tries $w,$i [ase::preflight_rename_try $map [dict get $row kind] \
                               [dict get $row ident] $cs [dict get $row miss]]
     }
   }
   set renames {}
-  dict for {gk members} $grp {
-    set p [dict get $gname $gk]
+  dict for {p members} $grp {
     set deciders {}
     foreach mb $members {
       if {[lindex $mb 0] in {o i}} { lappend deciders $mb }
@@ -17178,6 +17213,25 @@ proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
                        outputs $no measurements $nm includes $ni]
   }
   return [list $orows $mrows $renames $irows]
+}
+
+# The rename records a sentence names, once each. Pure. Under `fold` two
+# spellings of one stale prefix (`x1`, `X1`) are one instance to ngspice and
+# have their own records (ase::preflight_rename_solve decides each spelling
+# apart, as it did before items 5-7); when they agree -- the same fit, the same
+# correction, the same candidates -- the first speaks for both.
+proc ase::preflight_rename_said {renames cs} {
+  set out {}
+  set seen [dict create]
+  foreach g $renames {
+    set p [dict get $g prefix]
+    if {!$cs} { set p [string tolower $p] }
+    set k [list $p [dict get $g fit] [dict get $g to] [dict get $g candidates]]
+    if {[dict exists $seen $k]} { continue }
+    dict set seen $k 1
+    lappend out $g
+  }
+  return $out
 }
 
 # Quoted names for a sentence: 'a' / 'a' and 'b' / 'a', 'b' and 'c'.
@@ -17323,6 +17377,90 @@ proc ase::spice_comment_at {line} {
   return -1
 }
 
+# THE PHYSICAL LINES OF ONE SPICE FILE, AS NGSPICE READS THEM. Pure.
+# -> {{n <line, 1-based> pos <offset of its first byte in TEXT>
+#      kind skip|cont|card  body <the line as read>  from <index in BODY>} ...}
+# `body` is the physical line with its comment cut off and a continuation's
+# trailing backslashes blanked, so every index into it is an index into the
+# line as it sits in TEXT. `from` is where a `cont` line's text starts (past its
+# `+`) or a `card` line's first word; it is -1 for `skip`.
+#
+# A port of the three passes ngspice's inp_read makes over a file outside a
+# `.control` block (src/frontend/inpcom.c, read 2026-11-21 in the ver_53 tree),
+# in their order:
+#   1. chk_for_line_continuation: a line whose last two non-blank characters
+#      are two backslashes, and whose COLUMN 0 is neither `*` nor `$`, has them
+#      blanked, and the NEXT physical line is read as if it began with `+`
+#      (fix round 2, finding 3);
+#   2. inp_stripcomments_line (ase::spice_comment_at): a line whose column 0 is
+#      `*` or `#` is a comment line; otherwise its inline comment is cut, and a
+#      line that is blank once cut is a comment line too;
+#   3. inp_stitch_continuation_lines: a line whose first non-blank character is
+#      `#`, `$` or `*` is skipped WITHOUT ending the card before it, so a `+`
+#      line after it still continues that card (fix round 2, finding 1: a `$` at
+#      column 0 is never cut by pass 2, whose `$` rule wants a blank, a comma or
+#      a tab before it, so it reaches this pass whole); a `+` line continues the
+#      card; anything else is a card.
+# MEASURED 2026-11-21 on /usr/bin/ngspice 45.2, a `{...}` value on a missing
+# node after each joint: `$ a note` at column 0 and indented, `; a note \\`,
+# `\\` with blanks after it, a `#` line ending in `\\` -- all joined, all rc 1
+# on the syntax error; `* a note \\` continues nothing.
+proc ase::spice_lines {text} {
+  set out {}
+  set pos 0
+  set n 0
+  set shell 0
+  foreach raw [split $text "\n"] {
+    incr n
+    ## pass 1, on the line as ngspice holds it: a shell continuation's `+`
+    ## is in front of it, and is taken off again below
+    set sh $shell
+    set v [expr {$sh ? "+$raw" : $raw}]
+    set shell 0
+    set c0 [string index $v 0]
+    if {$c0 ne "*" && $c0 ne "\$"} {
+      set e [string length [string trimright $v]]
+      if {$e >= 2 && [string range $v [expr {$e - 2}] [expr {$e - 1}]] eq "\\\\"} {
+        set v [string replace $v [expr {$e - 2}] [expr {$e - 1}] "  "]
+        set shell 1
+      }
+    }
+    ## pass 2
+    set kind {}
+    set from -1
+    set body $v
+    if {$c0 eq "*" || $c0 eq "#"} {
+      set kind skip
+    } else {
+      set cut [ase::spice_comment_at $v]
+      if {$cut >= 0} { set body [string range $v 0 [expr {$cut - 1}]] }
+      if {[string trim $body] eq {}} { set kind skip }
+    }
+    ## pass 3
+    if {$kind eq {}} {
+      set t [string trimleft $body]
+      set lead [expr {[string length $body] - [string length $t]}]
+      set c [string index $t 0]
+      if {$c eq "#" || $c eq "\$" || $c eq "*"} {
+        set kind skip
+      } elseif {$c eq "+"} {
+        set kind cont
+        set from [expr {$lead + 1}]
+      } else {
+        set kind card
+        set from $lead
+      }
+    }
+    if {$sh} {
+      set body [string range $body 1 end]
+      if {$from > 0} { incr from -1 }
+    }
+    lappend out [dict create n $n pos $pos kind $kind body $body from $from]
+    incr pos [expr {[string length $raw] + 1}]
+  }
+  return $out
+}
+
 # THE NAMES A `.nodeset`/`.ic` CARD OF ONE INCLUDE FILE GIVES A VALUE TO. Pure.
 # -> {{line <n> card nodeset|ic ident <name> start <s> end <e> value <v>} ...}
 # `line` is the 1-based physical line the name sits on (a `+` continuation is
@@ -17331,15 +17469,18 @@ proc ase::spice_comment_at {line} {
 # whole.
 #
 # A card is a line whose first word is `.nodeset` or `.ic` (any case), plus the
-# `+` lines that continue it; comment (`*` or `#`) and blank lines between them
-# do not end it, because ngspice drops those before it joins continuations. The
-# keyword may stand alone on its line with every name on `+` lines. Only cards
-# at the file's top level count: one inside a `.subckt` block names that
-# subcircuit's own nodes. An inline comment ends what is read of a line, where
-# ngspice's own stripper ends it (ase::spice_comment_at: `;`, `//`, or `$`
-# after a blank, a tab or a comma, outside quotes), and a line that is only a
-# comment is as transparent as a `*` line. Only voltage names: `i(...)` is not
-# a node.
+# lines that continue it; comment and blank lines between them do not end it.
+# The keyword may stand alone on its line with every name on continuation
+# lines. Which lines are which is ase::spice_lines' answer, a port of ngspice's
+# own reading: a `+` line or the line after a trailing `\\` continues; a line
+# whose first non-blank character is `*`, `#` or `$`, a blank line, and a line
+# that is only an inline comment are transparent; an inline comment (`;`,
+# `//`, `$` after a blank, a tab or a comma, outside quotes) ends what is read
+# of a line. Only cards at the file's top level count: one inside a `.subckt`
+# block names that subcircuit's own nodes. Only voltage names: `i(...)` is not
+# a node. A name is `v` and a parenthesised name with any blanks between them
+# (`v (x1.q)`, `v ( x1.q )`), as ngspice's INPpas3 reads a card (fix round 2,
+# finding 2): ase::preflight_ident_spans with GAP.
 #
 # ⚠ THE EARLY OUT ENDS ON `\s`, NOT `[ \t\r]|$` (fix round, finding 1): this
 # regexp runs without -line, so `$` is the end of the TEXT, and `.nodeset`
@@ -17350,56 +17491,45 @@ proc ase::include_card_idents {text} {
   if {![regexp -nocase {(?:^|\n)[ \t]*\.(?:nodeset|ic)(?:\s|$)} $text]} {
     return {}
   }
-  set pos 0
-  set lineno 0
   set card {}
   set depth 0
-  foreach raw [split $text "\n"] {
-    incr lineno
-    set len [string length $raw]
-    ## the comment is cut off the PHYSICAL line first, as ngspice does, so every
-    ## offset below still counts from the start of RAW
-    set line $raw
-    set cut [ase::spice_comment_at $raw]
-    if {$cut >= 0} { set line [string range $raw 0 [expr {$cut - 1}]] }
-    set t [string trimleft $line]
-    set lead [expr {[string length $line] - [string length $t]}]
-    set c [string index $t 0]
+  foreach L [ase::spice_lines $text] {
+    set body [dict get $L body]
     set from -1
-    if {[string trim $t] eq {} || $c eq {*} || $c eq {#}} {
-      ## transparent: neither starts nor ends a card (a `#` line is a comment
-      ## line to ngspice, indented or not -- measured 2026-11-21 on 45.2)
-    } elseif {$c eq {+}} {
-      if {$card ne {}} { set from [expr {$lead + 1}] }
-    } else {
-      set card {}
-      set kw {}
-      regexp {^\S+} $t kw
-      set kw [string tolower $kw]
-      if {$kw eq {.subckt}} {
-        incr depth
-      } elseif {$kw eq {.ends}} {
-        if {$depth > 0} { incr depth -1 }
-      } elseif {$depth == 0 && ($kw eq {.nodeset} || $kw eq {.ic})} {
-        set card [string range $kw 1 end]
-        set from [expr {$lead + [string length $kw]}]
+    switch -- [dict get $L kind] {
+      skip { continue }
+      cont {
+        if {$card ne {}} { set from [dict get $L from] }
+      }
+      default {
+        set card {}
+        set kw {}
+        regexp {^\S+} [string range $body [dict get $L from] end] kw
+        set kw [string tolower $kw]
+        if {$kw eq {.subckt}} {
+          incr depth
+        } elseif {$kw eq {.ends}} {
+          if {$depth > 0} { incr depth -1 }
+        } elseif {$depth == 0 && ($kw eq {.nodeset} || $kw eq {.ic})} {
+          set card [string range $kw 1 end]
+          set from [expr {[dict get $L from] + [string length $kw]}]
+        }
       }
     }
-    if {$from >= 0} {
-      set seg [string range $line $from end]
-      foreach s [ase::preflight_ident_spans $seg] {
-        lassign $s kind nm st en
-        if {$kind ne {voltage}} { continue }
-        ## the value: past `)`, blanks, `=`, blanks; a {...} expression whole
-        set v {}
-        set rest [string range $seg [expr {$en + 1}] end]
-        regexp {^[^)]*\)\s*=\s*(\{[^\}]*\}|\S*)} $rest -> v
-        lappend out [dict create line $lineno card $card ident $nm \
-                       start [expr {$pos + $from + $st}] \
-                       end [expr {$pos + $from + $en}] value $v]
-      }
+    if {$from < 0} { continue }
+    set pos [dict get $L pos]
+    set seg [string range $body $from end]
+    foreach s [ase::preflight_ident_spans $seg 1] {
+      lassign $s kind nm st en
+      if {$kind ne {voltage}} { continue }
+      ## the value: past `)`, blanks, `=`, blanks; a {...} expression whole
+      set v {}
+      set rest [string range $seg [expr {$en + 1}] end]
+      regexp {^[^)]*\)\s*=\s*(\{[^\}]*\}|\S*)} $rest -> v
+      lappend out [dict create line [dict get $L n] card $card ident $nm \
+                     start [expr {$pos + $from + $st}] \
+                     end [expr {$pos + $from + $en}] value $v]
     }
-    incr pos [expr {$len + 1}]
   }
   return $out
 }
@@ -17416,20 +17546,24 @@ proc ase::include_card_idents {text} {
 # connects (`V5 vsup 0 1.8`, then `.nodeset v(vsup)=1.8`) -- the
 # include-bearing-scope ruling of ase::netlist_map_resolve, applied to the
 # scope these files really add cards to.
+#
+# The lines are ase::spice_lines' (fix round 2, finding 1): a `$` line at
+# column 0 is a comment line, so `$ x1 was the dut before the rename` adds no
+# word `x1` -- it used to, and that word stood a stale `.nodeset v(x1.a1)`
+# down while ngspice died on it. A line after a trailing `\\` continues the
+# element card before it, as a `+` line does.
 proc ase::include_top_words {itexts} {
   set out [dict create]
   foreach it $itexts {
     set depth 0
     set elem 0
-    foreach raw [split [dict get $it text] "\n"] {
-      set cut [ase::spice_comment_at $raw]
-      if {$cut >= 0} { set raw [string range $raw 0 [expr {$cut - 1}]] }
-      set t [string trimleft $raw]
+    foreach L [ase::spice_lines [dict get $it text]] {
+      set k [dict get $L kind]
+      if {$k eq {skip}} { continue }
+      set t [string range [dict get $L body] [dict get $L from] end]
       set c [string index $t 0]
-      if {[string trim $t] eq {} || $c eq {*} || $c eq {#}} { continue }
-      if {$c eq {+}} {
+      if {$k eq {cont}} {
         if {!$elem} { continue }
-        set t [string range $t 1 end]
       } elseif {$c eq {.}} {
         set elem 0
         set kw [string tolower [lindex [regexp -inline {^\S+} $t] 0]]
@@ -17467,10 +17601,11 @@ proc ase::include_top_nests {itexts} {
     set path {}
     catch {set path [dict get $it path]}
     set depth 0
-    set n 0
-    foreach raw [split [dict get $it text] "\n"] {
-      incr n
-      set t [string trimleft $raw]
+    ## the CARD lines as ngspice reads them (ase::spice_lines): a keyword on a
+    ## line continuing another card, or behind a comment, is no card
+    foreach L [ase::spice_lines [dict get $it text]] {
+      if {[dict get $L kind] ne {card}} { continue }
+      set t [string range [dict get $L body] [dict get $L from] end]
       if {[string index $t 0] ne {.}} { continue }
       set kw [string tolower [lindex [regexp -inline {^\S+} $t] 0]]
       if {$kw eq {.subckt}} {
@@ -17478,7 +17613,7 @@ proc ase::include_top_nests {itexts} {
       } elseif {$kw eq {.ends} || $kw eq {.eom}} {
         if {$depth > 0} { incr depth -1 }
       } elseif {$depth == 0 && ($kw eq {.include} || $kw eq {.inc} || $kw eq {.lib})} {
-        lappend out [dict create path $path line $n card $kw]
+        lappend out [dict create path $path line [dict get $L n] card $kw]
       }
     }
   }
@@ -17595,13 +17730,57 @@ proc ase::include_backup_name {path} {
   return $b
 }
 
+# ONE INCLUDE ROW'S REWRITE, given TO, the corrected prefix of its rename.
+# Pure. -> {start <s> end <e> old <the text replaced> new <its replacement>
+# from <said> to <said> whole 0|1 prefix <the stale prefix as written>}, or {}
+# when the row does not spell the stale prefix it was grouped under.
+#
+# The stale PREFIX alone is replaced, and the name's own spelling of the rest
+# is kept, so "7 × x1. → xdut." is the whole of what changes -- EXCEPT under
+# `distinguish` when the rest is mis-cased too (fix round 2, finding 4):
+# `x1.A1` beside `xdut`'s `a1` is accepted by the rename search because
+# `xdut.A1` resolves with a case correction, so the row's correction is
+# `xdut.a1`; writing `v(xdut.A1)` left a name the case-keeping fork dies on
+# (MEASURED 2026-11-21, ver_53, `-D casemode=distinguish -D casemodewrite`:
+# `v(xdut.M)={0.4}` is `Nodeset on non-existent node`, then the syntax error,
+# rc 1). There the WHOLE NAME is replaced by the row's correction, the
+# netlist's own spelling end to end, and `whole` says so. Under `fold` the
+# case of the rest cannot matter to ngspice, so it is never touched.
+proc ase::include_name_fix {row to cs} {
+  set p [dict get $row stale]
+  set id [dict get $row ident]
+  set n [string length $p]
+  set old [string range $id 0 [expr {$n - 1}]]
+  if {$old ne $p && ($cs || ![string equal -nocase $old $p])} { return {} }
+  set st [dict get $row start]
+  set rest [string range $id $n end]
+  set corr [ase::state_get $row correction]
+  if {$cs && $corr ne {} && "$to$rest" ne $corr} {
+    return [dict create start $st end [dict get $row end] old $id new $corr \
+              from $id to $corr whole 1 prefix $old]
+  }
+  return [dict create start $st end [expr {$st + $n - 1}] old $old new $to \
+            from $old to $to whole 0 prefix $old]
+}
+
+# The whole name an include row is rewritten to, or {} (ase::include_name_fix).
+proc ase::include_name_fixed {row to cs} {
+  set fx [ase::include_name_fix $row $to $cs]
+  if {$fx eq {}} { return {} }
+  if {[dict get $fx whole]} { return [dict get $fx new] }
+  return "$to[string range [dict get $row ident] [string length [dict get $fx old]] end]"
+}
+
 # EVERY REWRITE THE SCAN OFFERS IN THE INCLUDE FILES, per file. Pure.
 # -> {{path <resolved> file <as stored> edits {{start <s> end <e> old <o>
-#      new <n> line <l> ident <i>} ...} changes {{from <p> to <t> n <k>} ...}} ...}
+#      new <n> line <l> ident <i>} ...} changes {{from <f> to <t> n <k>
+#      whole 0|1 prefix <p>} ...}} ...}
 # Only `.nodeset`/`.ic` names whose rename was UNIQUE (`fixkind rename` with a
-# correction) are edits, and an edit replaces the stale PREFIX alone -- the
-# name's own spelling of the rest is kept, so "7 × x1. → xdut." is the whole
-# of what changes. Files in first-appearance order.
+# correction) are edits, each as ase::include_name_fix makes it: the stale
+# prefix alone (`from`/`to` are the prefixes, `whole` 0), or under
+# `distinguish` the whole name when its rest is mis-cased too (`from`/`to` are
+# the names, `whole` 1). `prefix` is the stale prefix as written either way.
+# Files in first-appearance order.
 proc ase::preflight_include_edits {scan} {
   set cs 0
   catch {set cs [dict get $scan cs]}
@@ -17621,22 +17800,20 @@ proc ase::preflight_include_edits {scan} {
         [ase::state_get $r correction] eq {}} { continue }
     set p [ase::state_get $r stale]
     if {![dict exists $to $p]} { continue }
-    ## the name's OWN spelling of the prefix: under `fold` a group's record
-    ## keeps its first spelling, and `X1.tail` is still rewritten as written
-    set old [string range [dict get $r ident] 0 [expr {[string length $p] - 1}]]
-    if {$old ne $p && ($cs || ![string equal -nocase $old $p])} { continue }
+    set fx [ase::include_name_fix $r [dict get $to $p] $cs]
+    if {$fx eq {}} { continue }
     set path [dict get $r path]
     if {![dict exists $byfile $path]} {
       dict set byfile $path [dict create path $path file [dict get $r file] \
                                edits {} changes [dict create]]
     }
     set f [dict get $byfile $path]
-    set st [dict get $r start]
-    dict lappend f edits [dict create start $st \
-      end [expr {$st + [string length $p] - 1}] old $old new [dict get $to $p] \
+    dict lappend f edits [dict create start [dict get $fx start] \
+      end [dict get $fx end] old [dict get $fx old] new [dict get $fx new] \
       line [dict get $r line] ident [dict get $r ident]]
     set ch [dict get $f changes]
-    dict incr ch "$old\n[dict get $to $p]"
+    dict incr ch [join [list [dict get $fx from] [dict get $fx to] \
+                         [dict get $fx whole] [dict get $fx prefix]] "\n"]
     dict set f changes $ch
     dict set byfile $path $f
   }
@@ -17644,8 +17821,8 @@ proc ase::preflight_include_edits {scan} {
   dict for {path f} $byfile {
     set ch {}
     dict for {k n} [dict get $f changes] {
-      lassign [split $k "\n"] a b
-      lappend ch [dict create from $a to $b n $n]
+      lassign [split $k "\n"] a b w pr
+      lappend ch [dict create from $a to $b n $n whole $w prefix $pr]
     }
     dict set f changes $ch
     lappend out $f
@@ -17673,7 +17850,11 @@ proc ase::include_rewrite_text {text edits} {
 # THE FILE HALF OF APPLY CORRECTIONS, as a plan: what the press would write.
 # -> {{path file edits changes text <the bytes the scan read> editable 0|1
 #      why <ase::include_edit_verdict's clause> backup <name, editable only>
-#      n <names rewritten>} ...}
+#      n <names rewritten> writable 0|1} ...}
+# `writable` is the disk's answer alone (ase::include_edit_facts): a file the
+# press may not touch can still be one the user can change by hand, in Setup >
+# Include Files… or anywhere else, and the sentences say which (fix round 2,
+# finding 5).
 # ITEXTS is the list the scan read (ase::include_texts); RUNDIR resolves a
 # relative `models` entry the way the deck does.
 proc ase::preflight_include_plan {state scan itexts rundir} {
@@ -17686,8 +17867,10 @@ proc ase::preflight_include_plan {state scan itexts rundir} {
     if {![dict exists $texts $p]} { continue }
     dict set f text [dict get $texts $p]
     dict set f n [llength [dict get $f edits]]
-    set why [ase::include_edit_verdict $p [ase::include_edit_facts $p] $roots]
+    set facts [ase::include_edit_facts $p]
+    set why [ase::include_edit_verdict $p $facts $roots]
     dict set f why $why
+    dict set f writable [dict get $facts writable]
     dict set f editable [expr {$why eq {} ? 1 : 0}]
     dict set f backup [expr {$why eq {} ? [ase::include_backup_name $p] : {}}]
     lappend out $f
@@ -17695,11 +17878,16 @@ proc ase::preflight_include_plan {state scan itexts rundir} {
   return $out
 }
 
-# "7 × x1. → xdut." for one plan record's changes. Pure.
+# "7 × x1. → xdut." for one plan record's changes, or "1 × x1.A1 → xdut.a1"
+# for a whole-name change (ase::include_name_fix). Pure.
 proc ase::include_change_words {f} {
   set w {}
   foreach c [dict get $f changes] {
-    lappend w "[dict get $c n] × [dict get $c from]. → [dict get $c to]."
+    if {[ase::state_get $c whole 0]} {
+      lappend w "[dict get $c n] × [dict get $c from] → [dict get $c to]"
+    } else {
+      lappend w "[dict get $c n] × [dict get $c from]. → [dict get $c to]."
+    }
   }
   return [join $w {, }]
 }
@@ -17916,6 +18104,16 @@ proc ase::preflight_include_door {} {
   return $d
 }
 
+# What has to come before a hand edit of plan record F, as the head of a
+# clause: {} for a file the user can write, else "make it writable, then ".
+# Pure. Setup > Include Files… opens a read-only file without Save
+# (ase::ui::incdlg_open), so a sentence naming that door for a read-only file
+# says this first (fix round 2, finding 5).
+proc ase::include_hand_first {f} {
+  if {[ase::state_get $f writable 1]} { return {} }
+  return "make it writable, then "
+}
+
 # THE FILE HALF'S CONSOLE COMMAND (item 6): rewrite the `.nodeset`/`.ic` names
 # the pre-flight resolved in session KEY's include files, backing each up
 # first. The session itself is NOT touched -- that is ase::preflight_fix_session,
@@ -17926,10 +18124,16 @@ proc ase::preflight_fix_includes {key} {
   set scan [ase::preflight_session_scan $key]
   set plan [ase::preflight_include_plan $state $scan [dict get $scan itexts] \
               [ase::rundir $state]]
+  set nblk 0
+  set nbf 0
   foreach f $plan {
     if {![dict get $f editable]} {
+      incr nblk [dict get $f n]
+      incr nbf
+      set hand "[string totitle [ase::include_hand_first $f] 0 0]"
+      set verb [expr {$hand eq {} ? {Change} : "${hand}change"}]
       ::ase::echo "ase: include file '[dict get $f path]' is not edited:\
- [dict get $f why]. Change [ase::include_change_words $f] there by hand\
+ [dict get $f why]. $verb [ase::include_change_words $f] there by hand\
  ([ase::preflight_include_door])." note
     }
   }
@@ -17939,7 +18143,15 @@ proc ase::preflight_fix_includes {key} {
     return 0
   }
   foreach l [ase::include_apply_said $r] { ::ase::echo $l }
-  if {![dict get $r n]} {
+  ## NOTHING WRITTEN IS SAID TRUTHFULLY (fix round 2, findings 8 and 10): when
+  ## the corrections exist but sit in files ASE-L may not edit, the lines above
+  ## have just named them, and "no name has a correction" contradicted them
+  if {![dict get $r n] && $nblk} {
+    ::ase::echo "ase: pre-flight — nothing was rewritten in the include files of\
+ session '$key': the $nblk .nodeset/.ic name[expr {$nblk == 1 ? {} : {s}}] with a\
+ correction [expr {$nblk == 1 ? {is} : {are}}] in $nbf include\
+ file[expr {$nbf == 1 ? {} : {s}}] ASE-L may not edit, named above." note
+  } elseif {![dict get $r n]} {
     ::ase::echo "ase: pre-flight — nothing was rewritten in the include files of\
  session '$key': no .nodeset/.ic name in them has a correction to offer." note
   }
@@ -18704,15 +18916,19 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       set g [dict get $rnof [dict get $r stale]]
       set p [dict get $g prefix]
       incr nirn
+      ## the name ase::preflight_include_edits writes: the prefix replaced, or
+      ## under `distinguish` the whole name when its rest is mis-cased too
+      set fixed [ase::include_name_fixed $r [dict get $g to] [dict get $scan cs]]
       append l ". Instance '$p' looks renamed to '[dict get $g to]': '$id' ->\
- '[dict get $g to][string range $id [string length $p] end]'"
+ '$fixed'"
     }
     ::ase::echo $l error
     lappend lines $l
   }
   ## A stale prefix with no single correction says why, once, naming the
   ## instances that came closest -- the user picks; ASE-L does not guess.
-  foreach g [dict get $scan renames] {
+  set rsaid [ase::preflight_rename_said [dict get $scan renames] [dict get $scan cs]]
+  foreach g $rsaid {
     if {[dict get $g outputs] + [dict get $g includes] == 0} { continue }
     set who [ase::preflight_name_list [dict get $g candidates]]
     set many [expr {[llength [dict get $g candidates]] > 1}]
@@ -18770,8 +18986,8 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     if {[dict exists $pk [dict get $ih path]]} {
       set f [dict get $pk [dict get $ih path]]
       foreach c [dict get $f changes] {
-        if {[dict get $c from] eq $pre ||
-            (![dict get $scan cs] && [string equal -nocase [dict get $c from] $pre])} {
+        set cp [ase::state_get $c prefix [dict get $c from]]
+        if {$cp eq $pre || (![dict get $scan cs] && [string equal -nocase $cp $pre])} {
           incr k [dict get $c n]
         }
       }
@@ -18779,8 +18995,8 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     set l "ase:   include file '[dict get $ih path]' names '$pre.' $nn\
  time[expr {$nn == 1 ? {} : {s}}]"
     if {$f ne {} && ![dict get $f editable]} {
-      append l "; '$btn' will not rewrite it, because [dict get $f why]: change it\
- by hand ($door)"
+      append l "; '$btn' will not rewrite it, because [dict get $f why]:\
+ [ase::include_hand_first $f]change it by hand ($door)"
     } elseif {$k > 0 && $k >= $nn} {
       append l ", all in .nodeset/.ic cards: '$btn' rewrites them to '$to.' after\
  asking"
@@ -18804,7 +19020,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     ::ase::echo $l error
     lappend lines $l
   }
-  foreach g [dict get $scan renames] {
+  foreach g $rsaid {
     if {[dict get $g fit] ne {unique} ||
         [dict get $g outputs] + [dict get $g includes] == 0} { continue }
     set l "ase: the netlist has no instance '[dict get $g prefix]', and every\

@@ -4919,6 +4919,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     rename ::fi_saved_echo ::ase::echo
 
     # --- Remove: the selected row, and nothing with nothing selected ---------
+    ## FX1723Id2 (fix round 2, finding 12): the session is SAVED first, so
+    ## Remove's own "marks the session unsaved" is measured -- the Add above had
+    ## already dirtied it, and a Remove that saved behind itself stayed green.
+    ase::session_save $fikey
+    update
+    set fi_sf [fi_read $fipath]
+    set fi_cl [list [ase::session_dirty $fikey] [string match {* \*} [wm title $fitop]]]
     $fiw.tv selection set {}
     update
     set fi_p4 [fi_press $fiw.btns.remove]
@@ -4930,6 +4937,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list $fi_p4 $fi_none $fi_p5 [fi_stored $fikey] [llength [fi_rows $fiw]]] \
       [list ok [list 5 [ase::ui::lbl_rdel_none]] ok \
          [list ns_rel.spice {$::FX1723IDIR/ns_var.spice} $fi_mod {$::FX1723IDIR/added.spice}] 4]
+    check "FX1723Id2 Remove marks a clean session unsaved, as Add does, and writes nothing to its state file" \
+      [list $fi_cl [ase::session_dirty $fikey] [string match {* \*} [wm title $fitop]] \
+            [expr {[fi_read $fipath] eq $fi_sf}]] \
+      [list {0 0} 1 1 1]
 
     # --- Open: XSCHEM's own text window; read only where Apply may not write -
     foreach c [fi_textwins] { destroy $c }
@@ -4941,13 +4952,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     fi_press $fiw.btns.open
     set fi_twm [lindex [fi_textwins] end]
-    check "FX1723Ie Open shows the file in XSCHEM's text window with Save, and a model folder's file with no Save" \
+    ## ⚠ MOVED in fix round 2 (finding 5): a model folder's file opened with no
+    ## Save, while the refusal told the user to change it by hand in this very
+    ## window. Apply Corrections never writes it; the user may.
+    check "FX1723Ie Open shows the file in XSCHEM's text window with Save, a model folder's file too (the press may not write it, the user may)" \
       [list $fi_p6 [expr {$fi_tw1 ne {}}] [wm title $fi_tw1] \
             [expr {[$fi_tw1.text get 1.0 {end - 1 chars}] eq $fi_reltxt}] \
             [winfo exists $fi_tw1.buttons.save] [expr {$fi_twm ne $fi_tw1}] [wm title $fi_twm] \
             [winfo exists $fi_twm.buttons.save]] \
-      [list ok 1 $fi_rel 1 1 1 $fi_mod 0]
+      [list ok 1 $fi_rel 1 1 1 $fi_mod 1]
     destroy $fi_twm
+    ## a file the user cannot write still opens with no Save
+    file attributes $fi_var -permissions 0444
+    if {[file writable $fi_var]} {
+      puts "skip: FX1723Ie3 (this user can write a 0444 file)"
+    } else {
+      $fiw.tv selection set 1
+      update
+      fi_press $fiw.btns.open
+      set fi_twr [lindex [fi_textwins] end]
+      check "FX1723Ie3 Open shows a file the user cannot write with no Save" \
+        [list [wm title $fi_twr] [winfo exists $fi_twr.buttons.save]] [list $fi_var 0]
+      destroy $fi_twr
+    }
+    file attributes $fi_var -permissions 0644
     $fiw.tv selection set 3
     update
     set fi_nw [llength [fi_textwins]]
@@ -4970,6 +4998,43 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     foreach c [fi_textwins] { destroy $c }
     w_hier_write $fi_rel $fi_reltxt
 
+    # --- Save over a file that changed since its window read it asks first ---
+    ## (fix round 2, finding 13): Apply Corrections' OK rewrites the very file an
+    ## Open window shows; that window's Save used to write the old text back
+    ## with no word. The question is textwindow_ask_overwrite, answered here.
+    $fiw.tv selection set 0
+    update
+    fi_press $fiw.btns.open
+    set fi_tw3 [lindex [fi_textwins] end]
+    set fi_new ".nodeset v(xdut.a1)=1\n"
+    w_hier_write $fi_rel $fi_new
+    set ::fi_asked {}
+    set ::fi_answer 0
+    if {[info commands ::textwindow_ask_overwrite] ne {}} {
+      rename ::textwindow_ask_overwrite ::fi_saved_ask
+    }
+    proc ::textwindow_ask_overwrite {w f} { lappend ::fi_asked $f ; return $::fi_answer }
+    set fi_p8 [fi_press $fi_tw3.buttons.save]
+    set fi_no [list $fi_p8 [llength $::fi_asked] [fi_read $fi_rel] [winfo exists $fi_tw3]]
+    set ::fi_answer 1
+    set fi_p9 [fi_press $fi_tw3.buttons.save]
+    set fi_yes [list $fi_p9 [llength $::fi_asked] [fi_read $fi_rel] [winfo exists $fi_tw3]]
+    ## the control: a file nothing changed is saved without a question
+    fi_press $fiw.btns.open
+    set fi_tw4 [lindex [fi_textwins] end]
+    set ::fi_asked {}
+    set fi_p10 [fi_press $fi_tw4.buttons.save]
+    set fi_ctl [list $fi_p10 [llength $::fi_asked] [winfo exists $fi_tw4]]
+    rename ::textwindow_ask_overwrite {}
+    if {[info commands ::fi_saved_ask] ne {}} {
+      rename ::fi_saved_ask ::textwindow_ask_overwrite
+    }
+    check "FX1723Ih Save over a file that changed since its window read it asks first: no keeps the file and the window, yes writes; an unchanged file is saved without a question" \
+      [list $fi_no $fi_yes $fi_ctl] \
+      [list [list ok 1 $fi_new 1] [list ok 2 $fi_reltxt 0] {ok 0 0}]
+    foreach c [fi_textwins] { destroy $c }
+    w_hier_write $fi_rel $fi_reltxt
+
     fi_press $fiw.btns.close
     check "FX1723Ig Close takes the window down" [winfo exists $fiw] 0
     ase::session_revert $fikey
@@ -4987,6 +5052,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       catch {rename ::ase::echo {}} ; rename ::fi_saved_echo ::ase::echo
     }
   }
+  catch {
+    if {[info commands ::fi_saved_ask] ne {}} {
+      catch {rename ::textwindow_ask_overwrite {}}
+      rename ::fi_saved_ask ::textwindow_ask_overwrite
+    }
+  }
+  catch {file attributes $fi_var -permissions 0644}
  }
 } else {
   puts "FX1723I legs skipped (no DISPLAY)"
