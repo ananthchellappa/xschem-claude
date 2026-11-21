@@ -1,11 +1,14 @@
 # 1723 — renaming an instance leaves ASE-L's saved expressions naming the old path, and the refusal offers no correction
 
-**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-21 fix=taken open=3 by=crew-1723i`
+**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-21 fix=taken open=3 by=port-1723`
 
 Asked by the user on 2026-11-19: build a way out for a user who has no Claude Code to edit the state
 files for them. Items 1 to 3 below are the agreed scope. Item 4 is recorded, not scheduled. Items 5
 to 7 were ruled on 2026-11-21, after the user hit the include-file half of the same rename (see
 "The user's second report" below).
+
+This file and its code were built in `~/private/xschem-private` and ported to this branch at the
+user's request: see "Ported from the private clone" at the foot before reading a commit id here.
 
 ## What happened
 
@@ -624,3 +627,24 @@ The fixes:
 Still open: **item 4** (unscheduled); **the pixels** of the Include Files window and the confirmation
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question
 above.
+
+## Ported from the private clone (2026-11-21)
+
+The user asked on 2026-11-21 that this tree be able to take ASE-L's rename corrections and Apply
+Corrections from `~/private/xschem-private`. Its six 1723 commits were replayed here with
+`git am -3`, keeping their subjects, plus this note. The number is kept: this branch's
+`NUMBERING.md` left 1721 to 1723 to that clone, and its 1723 line says the number came with the port.
+
+- **Commit ids in this file and in `doc/claude/issue_1723/receipts/` name the private clone's
+  history**, which this one does not hold: `777efaf24`, `e73fb41ae`, `ed635d969`, `2f1b8bca7`,
+  `96c8ec091` and `3db2f8fd1` are the private commits of the same subjects here, in that order, and
+  `a464b7f6b` was the private base of items 5 to 7. The receipts are dated records of that tree.
+- **The stamp's `tree=` names the commit this branch stood at when the port was made.** `git am`
+  gives every port commit a new id, so no port commit's id survives into the branch that takes the
+  patches; that base does, as an ancestor. The claims were re-checked on top of it:
+  `test_ase_preflight` and `test_ase_window` on both arms, and this tree's own suites that read the
+  changed procs.
+- **One merge was adapted.** In the private clone `ase::ui::run_started` also clears the state of a
+  feature this tree does not have, next to the 1723 lines. The port keeps only the 1723 lines there:
+  the repair banner and an open confirmation end when a run starts. Every other added or removed
+  line is the private commits' own.
