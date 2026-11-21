@@ -78,10 +78,13 @@ is shown anyway after a few seconds of waiting.
 
 The decision is kept in `startup_quiz::launch` as `{show reason}`.
 
-Measured, with one child process per row (band `L` of the suite): a bare launch
-and a `--script` launch are asked; `--pipe`, `--nolog`, `-q`, a saved "off" and
-`--command {set startup_quiz 0}` are not; `--nogui` never reaches the hook and
-never opens the question bank.
+Measured, with one child process per command line (band `L` of the suite; every
+child is given a `--script` file, which is how it reports what it saw): a launch
+with nothing else and a `--norecent` launch are asked; `--pipe`, `--nolog`, `-q`,
+a saved "off" and `--command {set startup_quiz 0}` are not; `--nogui` never
+reaches the hook and never opens the question bank. A launch with no `--script`
+file at all is measured by no row: that it is asked is read in `Tcl_AppInit`,
+which skips the `--script` step when no file was given.
 
 No other test is ever asked. A census taken over one full regression run
 (2026-11-18, a line appended by `at_launch` for the duration of that run) found
