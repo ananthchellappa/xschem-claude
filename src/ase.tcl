@@ -17029,13 +17029,24 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
           ident $ident expr $ident start [dict get $ci start] end [dict get $ci end] \
           value [dict get $ci value] correction {} spelled [dict get $r real] \
           ambiguous [dict get $r ambiguous] why [dict get $r why] fixkind {}]
+        set cond [ase::state_get $ci cond 0]
+        dict set row cond $cond
         if {[dict exists $r miss]} {
           set mz [dict get $r miss]
           if {[dict get $mz scope] eq {} && ($topnest ||
               [dict exists $topdef [string tolower [dict get $mz prefix]]])} {
             continue
           }
-          dict set row miss $mz
+          ## ⚠ A CARD INSIDE A `.if` BLOCK NEVER REFUSES (fix round 3, finding
+          ## 6): ASE-L cannot tell whether ngspice takes its branch, so the
+          ## missing instance is kept as `condmiss` for the caution, and the row
+          ## carries no `miss` -- it neither refuses, nor joins the rename
+          ## search, nor is rewritten
+          if {$cond} {
+            dict set row condmiss $mz
+          } else {
+            dict set row miss $mz
+          }
         } elseif {[string first . $ident] < 0 && ($topnest ||
                   [dict exists $topdef [string tolower $ident]])} {
           ## a top-level node only an include file connects, or may
@@ -17266,21 +17277,59 @@ proc ase::preflight_include_hits {state renames cs {rundir {}} {itexts -}} {
   if {$itexts eq {-}} { set itexts [ase::include_texts $state $rundir] }
   foreach it $itexts {
     set txt [dict get $it text]
-    ## under `fold` the count is case-blind, so two stale prefixes differing
-    ## only in case (`x1`, `X1`) would count the same hits twice: the first
-    ## spelling speaks for both
-    set seen [dict create]
-    foreach g $renames {
-      set pre [dict get $g prefix]
-      if {!$cs} {
-        if {[dict exists $seen [string tolower $pre]]} { continue }
-        dict set seen [string tolower $pre] 1
+    if {$cs} {
+      foreach g $renames {
+        set pre [dict get $g prefix]
+        set q [regsub -all {[][{}()*+?.\\^$|]} $pre {\\&}]
+        set n [regexp {*}$opts -- "(?:^|\[^A-Za-z0-9_.\])$q\\." $txt]
+        if {$n} {
+          lappend out [dict create path [dict get $it path] file [dict get $it file] \
+                         prefix $pre to [dict get $g to] count $n]
+        }
       }
-      set q [regsub -all {[][{}()*+?.\\^$|]} $pre {\\&}]
-      set n [regexp {*}$opts -- "(?:^|\[^A-Za-z0-9_.\])$q\\." $txt]
-      if {$n} {
+      continue
+    }
+    ## ⚠ UNDER `fold` THE HITS ARE FOUND CASE-BLIND AND SAID IN THE FILE'S OWN
+    ## SPELLING (fix round 3, finding 9). Two stale prefixes differing only in
+    ## case (`x1`, `X1`) are two rename records (ase::preflight_rename_solve
+    ## decides each spelling apart), and they need not agree. The first record
+    ## used to speak for both, its spelling and its target with it: an output
+    ## `v(X1.n1)` (`several`, no target) and a `.nodeset v(x1.a1)` (`unique`,
+    ## `xdut`) gave "names 'X1.' 1 time ... rewrites them to '.'" for a file
+    ## holding only `x1.`. Now, as in ase::preflight_rename_said, the spellings
+    ## of one folded group speak as one only when their records AGREE (one
+    ## target): one record, counted case-blind, quoting the first spelling the
+    ## file itself holds. When they disagree, each spelling the file holds is
+    ## its own record, with the target of the record of that exact spelling
+    ## ({} when no record has it).
+    set groups [dict create]
+    foreach g $renames { dict lappend groups [string tolower [dict get $g prefix]] $g }
+    dict for {lp recs} $groups {
+      set q [regsub -all {[][{}()*+?.\\^$|]} $lp {\\&}]
+      set spell [dict create]
+      foreach {w sp} [regexp -all -inline -nocase -- "(?:^|\[^A-Za-z0-9_.\])($q)\\." $txt] {
+        dict incr spell $sp
+      }
+      if {![dict size $spell]} { continue }
+      set tos [lsort -unique [lmap g $recs {dict get $g to}]]
+      if {[llength $tos] == 1} {
+        set sp [lindex [dict keys $spell] 0]
+        foreach g $recs {
+          if {[dict exists $spell [dict get $g prefix]]} { set sp [dict get $g prefix] ; break }
+        }
+        set n 0
+        foreach c [dict values $spell] { incr n $c }
         lappend out [dict create path [dict get $it path] file [dict get $it file] \
-                       prefix $pre to [dict get $g to] count $n]
+                       prefix $sp to [lindex $tos 0] count $n]
+        continue
+      }
+      dict for {sp n} $spell {
+        set to {}
+        foreach g $recs {
+          if {[dict get $g prefix] eq $sp} { set to [dict get $g to] ; break }
+        }
+        lappend out [dict create path [dict get $it path] file [dict get $it file] \
+                       prefix $sp to $to count $n]
       }
     }
   }
@@ -17405,6 +17454,30 @@ proc ase::spice_comment_at {line} {
 # node after each joint: `$ a note` at column 0 and indented, `; a note \\`,
 # `\\` with blanks after it, a `#` line ending in `\\` -- all joined, all rc 1
 # on the syntax error; `* a note \\` continues nothing.
+#
+# ⚠ EVERY PASS SEES THE LINE WITH ITS LEADING BLANKS GONE (fix round 3,
+# finding 1). Before the three passes, ngspice's readline() drops the blanks,
+# tabs and carriage returns a line starts with, so "column 0" above is the
+# first character AFTER them. This port used to test the raw column 0, and so
+# read `  ; note` as a comment-only line (its `;` at index 2 was cut, leaving a
+# blank) -- but to ngspice it is `; note`, whose `;` at index 0 the stripper
+# never cuts: a regular CARD, which ends the `.nodeset` card before it and
+# swallows the `+` line after it (inp_check_syntax then makes it a `*`
+# comment). Likewise an indented `* note \\` or `$ note \\` continues nothing.
+# MEASURED 2026-11-21 on 45.2 and ver_53: `.nodeset v(b)=0.3`, `  ; note` (or a
+# tab before `;`, or ` ;note`), `+ v(x1.r)={2}` runs at rc 0 with no warning;
+# `  * note` in its place draws the warning and the syntax error, rc 1; an
+# indented `* note \\` before an element card leaves it unjoined, rc 0.
+# The blanks stay in `body` (so its indices are still the file's), and `from`
+# is past them.
+#
+# ⚠ AND A UTF-8 BYTE ORDER MARK OPENING THE FILE IS DROPPED (fix round 3,
+# finding 5): the fork's inp_read strips EF BB BF from the first line after
+# readline(), so blanks behind it stay. MEASURED 2026-11-21: ver_53 reads
+# `<BOM>.nodeset v(b)=0.3 v(x1.r)={2}` as the card ("encoding: UTF-8 with
+# BOM", the warning, the syntax error, rc 1); 45.2 does not strip it and dies
+# on "unknown device type", rc 1. TEXT is the file read binary, so the mark is
+# the three characters \xef\xbb\xbf. A UTF-16 file is not modelled.
 proc ase::spice_lines {text} {
   set out {}
   set pos 0
@@ -17412,10 +17485,18 @@ proc ase::spice_lines {text} {
   set shell 0
   foreach raw [split $text "\n"] {
     incr n
+    ## readline(): the leading blanks go first; then a BOM on line 1
+    if {$n == 1 && [string range $raw 0 2] eq "\xef\xbb\xbf"} {
+      set rl 3
+    } else {
+      regexp {^[ \t\r]*} $raw ws
+      set rl [string length $ws]
+    }
+    set s [string range $raw $rl end]
     ## pass 1, on the line as ngspice holds it: a shell continuation's `+`
     ## is in front of it, and is taken off again below
     set sh $shell
-    set v [expr {$sh ? "+$raw" : $raw}]
+    set v [expr {$sh ? "+$s" : $s}]
     set shell 0
     set c0 [string index $v 0]
     if {$c0 ne "*" && $c0 ne "\$"} {
@@ -17455,6 +17536,11 @@ proc ase::spice_lines {text} {
       set body [string range $body 1 end]
       if {$from > 0} { incr from -1 }
     }
+    ## back to the file's own indices: what readline() dropped is blanks here
+    if {$rl} {
+      set body "[string repeat { } $rl]$body"
+      if {$from >= 0} { incr from $rl }
+    }
     lappend out [dict create n $n pos $pos kind $kind body $body from $from]
     incr pos [expr {[string length $raw] + 1}]
   }
@@ -17462,11 +17548,22 @@ proc ase::spice_lines {text} {
 }
 
 # THE NAMES A `.nodeset`/`.ic` CARD OF ONE INCLUDE FILE GIVES A VALUE TO. Pure.
-# -> {{line <n> card nodeset|ic ident <name> start <s> end <e> value <v>} ...}
+# -> {{line <n> card nodeset|ic ident <name> start <s> end <e> value <v>
+#      cond 0|1} ...}
 # `line` is the 1-based physical line the name sits on (a `+` continuation is
 # its own line); `start`/`end` are offsets into TEXT, inclusive, of the name
 # inside `v(...)`; `value` is the text after its `=`, a `{...}` expression kept
-# whole.
+# whole, read across continuation lines (ase::include_card_names). Names after
+# `.nodeset all=<v>` on the same card are not read: ngspice never reads them.
+#
+# ⚠ `cond` IS 1 FOR A CARD INSIDE A `.if` ... `.endif` BLOCK (fix round 3,
+# finding 6), nested blocks included. ngspice evaluates the condition and
+# comments out every branch not taken (inp.c, recifeval); ASE-L does not
+# evaluate it, so it cannot say whether ngspice reads such a card. MEASURED
+# 2026-11-21 on 45.2: `.if (sel == 1)` / `.nodeset v(xalt.a1)={vs-0.1}` /
+# `.else` / ... with sel=0 runs at rc 0 with no warning, and the gate refused it
+# -- and Apply offered to rewrite the other variant's own nodeset. The scan makes
+# such a name a caution, never a refusal or a rewrite (ase::preflight_scan).
 #
 # A card is a line whose first word is `.nodeset` or `.ic` (any case), plus the
 # lines that continue it; comment and blank lines between them do not end it.
@@ -17485,51 +17582,144 @@ proc ase::spice_lines {text} {
 # ⚠ THE EARLY OUT ENDS ON `\s`, NOT `[ \t\r]|$` (fix round, finding 1): this
 # regexp runs without -line, so `$` is the end of the TEXT, and `.nodeset`
 # followed by a bare LF matched neither -- a keyword-alone card was never read,
-# and the user's crash went through the gate untouched.
+# and the user's crash went through the gate untouched. It also lets a UTF-8
+# byte order mark stand before a first-line card (fix round 3, finding 5: the
+# mark sat between `^` and `.`, so a Windows editor's file was never read while
+# the fork, which strips the mark, died on it).
 proc ase::include_card_idents {text} {
-  set out {}
-  if {![regexp -nocase {(?:^|\n)[ \t]*\.(?:nodeset|ic)(?:\s|$)} $text]} {
+  if {![regexp -nocase {(?:^(?:\xef\xbb\xbf)?|\n)[ \t\r]*\.(?:nodeset|ic)(?:\s|$)} $text]} {
     return {}
   }
+  set out {}
   set card {}
+  set segs {}
+  set cond 0
   set depth 0
-  foreach L [ase::spice_lines $text] {
+  set ifd 0
+  foreach L [concat [ase::spice_lines $text] [list {kind end}]] {
+    set k [dict get $L kind]
+    if {$k eq {skip}} { continue }
+    if {$k eq {cont}} {
+      if {$card ne {}} {
+        set f [dict get $L from]
+        lappend segs [list [expr {[dict get $L pos] + $f}] [dict get $L n] \
+                        [string range [dict get $L body] $f end]]
+      }
+      continue
+    }
+    ## any other card, or the end of the text, closes the card that is open
+    if {$card ne {}} {
+      lappend out {*}[ase::include_card_names $card $cond $segs]
+      set card {}
+      set segs {}
+    }
+    if {$k eq {end}} { break }
     set body [dict get $L body]
-    set from -1
-    switch -- [dict get $L kind] {
-      skip { continue }
-      cont {
-        if {$card ne {}} { set from [dict get $L from] }
-      }
-      default {
-        set card {}
-        set kw {}
-        regexp {^\S+} [string range $body [dict get $L from] end] kw
-        set kw [string tolower $kw]
-        if {$kw eq {.subckt}} {
-          incr depth
-        } elseif {$kw eq {.ends}} {
-          if {$depth > 0} { incr depth -1 }
-        } elseif {$depth == 0 && ($kw eq {.nodeset} || $kw eq {.ic})} {
-          set card [string range $kw 1 end]
-          set from [expr {[dict get $L from] + [string length $kw]}]
-        }
-      }
+    set f [dict get $L from]
+    ## the first word as INPgetTok ends it: at a blank, `=`, `(`, `)` or `,`
+    set kw [string tolower [lindex [regexp -inline {^[^\s=(),]+} \
+                                      [string range $body $f end]] 0]]
+    if {$kw eq {.subckt}} {
+      incr depth
+    } elseif {$kw eq {.ends}} {
+      if {$depth > 0} { incr depth -1 }
+    } elseif {$depth > 0} {
+      continue
+    } elseif {$kw eq {.if}} {
+      incr ifd
+    } elseif {$kw eq {.endif}} {
+      if {$ifd > 0} { incr ifd -1 }
+    } elseif {$kw eq {.nodeset} || $kw eq {.ic}} {
+      set card [string range $kw 1 end]
+      set cond [expr {$ifd > 0 ? 1 : 0}]
+      set f [expr {$f + [string length $kw]}]
+      set segs [list [list [expr {[dict get $L pos] + $f}] [dict get $L n] \
+                        [string range $body $f end]]]
     }
-    if {$from < 0} { continue }
-    set pos [dict get $L pos]
-    set seg [string range $body $from end]
-    foreach s [ase::preflight_ident_spans $seg 1] {
-      lassign $s kind nm st en
-      if {$kind ne {voltage}} { continue }
-      ## the value: past `)`, blanks, `=`, blanks; a {...} expression whole
-      set v {}
-      set rest [string range $seg [expr {$en + 1}] end]
-      regexp {^[^)]*\)\s*=\s*(\{[^\}]*\}|\S*)} $rest -> v
-      lappend out [dict create line [dict get $L n] card $card ident $nm \
-                     start [expr {$pos + $from + $st}] \
-                     end [expr {$pos + $from + $en}] value $v]
+  }
+  return $out
+}
+
+# ONE `.nodeset`/`.ic` CARD'S NAMES, read as INPpas3 reads the stitched card.
+# Pure. CARD is `nodeset` or `ic`; COND is 1 inside a `.if` block; SEGS is
+# {{<offset in the file> <line> <text>} ...}, the card's text after its
+# keyword and each continuation's after its `+`, in order. -> the records
+# ase::include_card_idents answers.
+#
+# ngspice joins a card before it reads it: each continuation's `+` becomes a
+# blank (inp_stitch_continuation_lines). So the segments are joined with one
+# blank each, the names are found in the JOINED text, and every offset is
+# mapped back to the file. A name that straddles two physical lines is not
+# taken (ngspice would read it as two words).
+#
+# ⚠ A VALUE ON THE NEXT LINE IS THE NAME'S VALUE (fix round 3, finding 4): the
+# value was read from the rest of the name's own physical line, so
+# `v(xdut.nosuch)=` then `+ 1.5` had none, and the caution said the run stops
+# where ngspice -- which reads the joined `v(xdut.nosuch)=1.5` -- drops the name
+# at rc 0 (MEASURED 2026-11-21 on 45.2 and ver_53, and with `+ =1.5` too).
+#
+# ⚠ `.nodeset all=<v>` ENDS WHAT NGSPICE READS OF ITS CARD (fix round 3,
+# finding 2): INPpas3's `all` branch sets every node and BREAKS out of the
+# card's token loop, so no name after it, on that line or a `+` line, is ever
+# read. MEASURED 2026-11-21 on 45.2 and ver_53: `.nodeset all=0.5
+# v(x1.q)={vsup}`, and the same with the name on a `+` line, run at rc 0 with
+# no warning; the name alone draws the syntax error. `all` is the keyword only
+# as a word of its own outside every name, value, `{...}` and quoted stretch;
+# `v(all)` is a node and `={all}` a value. `.ic` has no such branch (`.ic
+# all=0.5` is itself a syntax error, rc 1), so an `.ic` card is read whole.
+proc ase::include_card_names {card cond segs} {
+  set joined {}
+  set map {}
+  set j 0
+  foreach sg $segs {
+    lassign $sg fpos line txt
+    if {$j} { append joined " " }
+    incr j
+    lappend map [list [string length $joined] [string length $txt] $fpos $line]
+    append joined $txt
+  }
+  ## every name with its value, and where the value ends
+  set names {}
+  set masks [regexp -all -inline -indices {\{[^\}]*\}|'[^']*'|"[^"]*"} $joined]
+  foreach s [ase::preflight_ident_spans $joined 1] {
+    lassign $s kind nm st en
+    set v {}
+    set ve $en
+    set rest [string range $joined [expr {$en + 1}] end]
+    if {[regexp -indices {^[^)]*\)\s*=\s*(\{[^\}]*\}|\S*)} $rest m vi]} {
+      set v [string range $rest {*}$vi]
+      set ve [expr {$en + 1 + [lindex $m 1]}]
     }
+    lappend masks [list $st $ve]
+    lappend names [list $kind $nm $st $en $v]
+  }
+  ## where `.nodeset all` stops the reading
+  set stop [string length $joined]
+  if {$card eq {nodeset}} {
+    foreach {w a} [regexp -all -inline -indices -nocase \
+                     {(?:^|[\s=(),])(all)(?=[\s=(),*/^+-]|$)} $joined] {
+      set at [lindex $a 0]
+      set inside 0
+      foreach mk $masks {
+        if {$at >= [lindex $mk 0] && $at <= [lindex $mk 1]} { set inside 1 ; break }
+      }
+      if {!$inside} { set stop $at ; break }
+    }
+  }
+  set out {}
+  foreach n $names {
+    lassign $n kind nm st en v
+    if {$kind ne {voltage} || $st >= $stop} { continue }
+    set hit {}
+    foreach mp $map {
+      lassign $mp js jl fpos line
+      if {$st >= $js && $en < $js + $jl} { set hit $mp ; break }
+    }
+    if {$hit eq {}} { continue }
+    lassign $hit js jl fpos line
+    lappend out [dict create line $line card $card ident $nm \
+                   start [expr {$fpos + $st - $js}] end [expr {$fpos + $en - $js}] \
+                   value $v cond $cond]
   }
   return $out
 }
@@ -17572,6 +17762,13 @@ proc ase::include_top_words {itexts} {
         } elseif {$kw eq {.ends} && $depth > 0} {
           incr depth -1
         }
+        continue
+      } elseif {[regexp {^[;=\[\]?()&%"!:,\f]} $t]} {
+        ## a card ngspice turns into a comment (inp_check_syntax: a leading
+        ## `;`, or one of the "unusual leading characters"), with every `+`
+        ## line it swallows: no element (fix round 3, finding 1 -- `; x5 was
+        ## the dut` at column 0, or indented, added the word `x5`)
+        set elem 0
         continue
       } else {
         set elem [expr {$depth == 0}]
@@ -17630,8 +17827,15 @@ proc ase::include_top_nests {itexts} {
 # every component but the last, so `~/pdk -> /opt/pdks` stayed `~/pdk` while
 # the include it holds (ase::include_resolve) and that include's `real`
 # (ase::include_edit_facts) both read `/opt/pdks/...`: nothing was "under" the
-# root, and a PDK file opened with Save. A models folder needs no second form:
-# it is the dirname of a normalized path, so it is resolved already.
+# root, and a PDK file opened with Save.
+#
+# ⚠ SO IS THE FOLDER OF A MODELS ENTRY (fix round 3, finding 7). The comment
+# here used to say a models folder "needs no second form: it is the dirname of a
+# normalized path, so it is resolved already" -- true of the folder the entry
+# NAMES, false when the model file is itself a link (`~/proj/models/m.lib ->
+# /pdk/models/real.lib`, the workarea shape with no PDK_ROOT): the real model
+# folder was unprotected, and a nodeset file beside the real model file was
+# editable. Both folders are listed now.
 proc ase::include_protected_roots {state rundir} {
   set out {}
   set pr {}
@@ -17654,7 +17858,13 @@ proc ase::include_protected_roots {state rundir} {
     if {[catch {dict get $m file} f]} { continue }
     set p [dict get [ase::include_resolve $f $rundir] path]
     if {$p eq {}} { continue }
-    lappend out [dict create dir [file dirname $p] why models]
+    set forms [list [file dirname $p]]
+    catch {lappend forms [file dirname [file dirname [file normalize [file join $p ___]]]]}
+    foreach d $forms {
+      if {[lsearch -exact $seen $d] >= 0} { continue }
+      lappend seen $d
+      lappend out [dict create dir $d why models]
+    }
   }
   return $out
 }
@@ -18119,23 +18329,33 @@ proc ase::include_hand_first {f} {
 # first. The session itself is NOT touched -- that is ase::preflight_fix_session,
 # unchanged. Typing it is the confirmation, as for that command (D1).
 # -> the number of names rewritten.
+#
+# ⚠ IT REFUSES TO STRAND THE SESSION HALF (fix round 3, findings 3 and 8). The
+# output rows and the include rows decide a rename TOGETHER, and each console
+# half re-scans: once the files are rewritten their names no longer decide,
+# so an output row that only the two together made unique (`v(x1.OUTP)` beside
+# xdut and xother, with the include's `x1.a1` naming xdut) lost its correction
+# for good, and ase::preflight_fix_session then said it had none. When the
+# rewrite would do that (ase::preflight_strand), nothing is written and the
+# sentence names what would be lost and `ase::preflight_fix_all <key>`, which
+# applies both halves from one scan as the window's OK does.
 proc ase::preflight_fix_includes {key} {
   set state [ase::session_state $key]
   set scan [ase::preflight_session_scan $key]
   set plan [ase::preflight_include_plan $state $scan [dict get $scan itexts] \
-              [ase::rundir $state]]
-  set nblk 0
-  set nbf 0
-  foreach f $plan {
-    if {![dict get $f editable]} {
-      incr nblk [dict get $f n]
-      incr nbf
-      set hand "[string totitle [ase::include_hand_first $f] 0 0]"
-      set verb [expr {$hand eq {} ? {Change} : "${hand}change"}]
-      ::ase::echo "ase: include file '[dict get $f path]' is not edited:\
- [dict get $f why]. $verb [ase::include_change_words $f] there by hand\
- ([ase::preflight_include_door])." note
-    }
+              [dict get $scan rundir]]
+  catch {set plan [ase::include_plan_shared $plan [ase::session_path $key]]}
+  lassign [ase::include_blocked_said $plan] nblk nbf
+  set lost {}
+  catch {set lost [dict get [ase::preflight_strand $state $scan files $plan] lost]}
+  if {[llength $lost]} {
+    set what [ase::preflight_strand_rows $lost]
+    ::ase::echo "ase: pre-flight — nothing was rewritten in the include files of\
+ session '$key': applied alone, they would cost this session's $what their\
+ correction ([join [lmap l $lost {format "'%s' -> '%s'" [dict get $l expr] [dict get $l fixed]}] {, }]),\
+ which only the two halves together decide. `ase::preflight_fix_all $key` applies\
+ both from one scan, as '[ase::preflight_apply_label]' does." note
+    return 0
   }
   set r [ase::include_apply_plan $plan]
   if {![dict get $r ok]} {
@@ -18143,6 +18363,7 @@ proc ase::preflight_fix_includes {key} {
     return 0
   }
   foreach l [ase::include_apply_said $r] { ::ase::echo $l }
+  foreach l [ase::include_shared_said $plan $r] { ::ase::echo $l note }
   ## NOTHING WRITTEN IS SAID TRUTHFULLY (fix round 2, findings 8 and 10): when
   ## the corrections exist but sit in files ASE-L may not edit, the lines above
   ## have just named them, and "no name has a correction" contradicted them
@@ -18156,6 +18377,271 @@ proc ase::preflight_fix_includes {key} {
  session '$key': no .nodeset/.ic name in them has a correction to offer." note
   }
   return [dict get $r n]
+}
+
+# Say, once per plan record ASE-L may not edit, what to change there by hand.
+# -> {<names in them> <files>}. The console commands' shared half.
+proc ase::include_blocked_said {plan} {
+  set nblk 0
+  set nbf 0
+  foreach f $plan {
+    if {![dict get $f editable]} {
+      incr nblk [dict get $f n]
+      incr nbf
+      set hand "[string totitle [ase::include_hand_first $f] 0 0]"
+      set verb [expr {$hand eq {} ? {Change} : "${hand}change"}]
+      ::ase::echo "ase: include file '[dict get $f path]' is not edited:\
+ [dict get $f why]. $verb [ase::include_change_words $f] there by hand\
+ ([ase::preflight_include_door])." note
+    }
+  }
+  return [list $nblk $nbf]
+}
+
+# "output rows" / "measurements" / "output rows and measurements", for the
+# lost records of ase::preflight_strand's `files` half. Pure.
+proc ase::preflight_strand_rows {lost} {
+  set kinds [lsort -unique [lmap l $lost {dict get $l what}]]
+  if {[llength $kinds] > 1} { return {output rows and measurements} }
+  if {$kinds eq {measurement}} { return measurements }
+  return {output rows}
+}
+
+# EVERY INCLUDE-ROW CORRECTION A SCAN OFFERS, the refusal's own list. Pure.
+# -> {{path <file> start <s> line <n> ident <name> fixed <name> stale <p>
+#      to <t>} ...}: the rows whose rename is unique, each with the name it is
+# rewritten to (ase::include_name_fixed), editable file or not.
+proc ase::preflight_include_fixes {scan} {
+  set cs 0
+  catch {set cs [dict get $scan cs]}
+  set to [dict create]
+  set rn {}
+  catch {set rn [dict get $scan renames]}
+  foreach g $rn {
+    if {[dict get $g fit] eq {unique} && [dict get $g to] ne {}} {
+      dict set to [dict get $g prefix] [dict get $g to]
+    }
+  }
+  set rows {}
+  catch {set rows [dict get $scan incrows]}
+  set out {}
+  foreach r $rows {
+    if {[ase::state_get $r fixkind] ne {rename} ||
+        [ase::state_get $r correction] eq {}} { continue }
+    set p [ase::state_get $r stale]
+    if {![dict exists $to $p]} { continue }
+    set fixed [ase::include_name_fixed $r [dict get $to $p] $cs]
+    if {$fixed eq {}} { continue }
+    lappend out [dict create path [dict get $r path] start [dict get $r start] \
+                   line [dict get $r line] ident [dict get $r ident] fixed $fixed \
+                   stale $p to [dict get $to $p]]
+  }
+  return $out
+}
+
+# WOULD ONE HALF, APPLIED ALONE, COST THE OTHER HALF A CORRECTION? Pure
+# (fix round 3, findings 3 and 8). SCAN is ase::preflight_session_scan's: it
+# carries the include texts read (`itexts`) and the netlist text (`ntext`), so
+# the scan after the half can be computed without touching the disk. HALF is
+# the half about to run alone:
+#   files    the include files are rewritten (only PLAN's editable files, when
+#            PLAN is given; every file the scan corrects otherwise); -> the
+#            session's corrections a re-scan then no longer offers, as
+#            {what output|measurement expr <old> fixed <new>} records;
+#   session  the session's rows are corrected; -> the include corrections a
+#            re-scan then no longer offers, as ase::preflight_include_fixes
+#            records.
+# -> {lost {...}}. Empty when the half can run alone and the other half,
+# re-scanned afterwards, still finds every correction this scan offers.
+proc ase::preflight_strand {state scan half {plan -}} {
+  set itexts [dict get $scan itexts]
+  set ntext [dict get $scan ntext]
+  set lost {}
+  if {$half eq {files}} {
+    set edits [dict create]
+    if {$plan eq {-}} {
+      foreach f [ase::preflight_include_edits $scan] {
+        dict set edits [dict get $f path] [dict get $f edits]
+      }
+    } else {
+      foreach f $plan {
+        if {[dict get $f editable] && [llength [dict get $f edits]]} {
+          dict set edits [dict get $f path] [dict get $f edits]
+        }
+      }
+    }
+    if {![dict size $edits]} { return [dict create lost {}] }
+    set before [ase::preflight_repairs $scan]
+    if {![llength $before]} { return [dict create lost {}] }
+    set new {}
+    foreach it $itexts {
+      set p [dict get $it path]
+      if {[dict exists $edits $p] &&
+          ![catch {ase::include_rewrite_text [dict get $it text] [dict get $edits $p]} t]} {
+        dict set it text $t
+      }
+      lappend new $it
+    }
+    set after {}
+    foreach r [ase::preflight_repairs [ase::preflight_scan $state $ntext $new]] {
+      lappend after [list [dict get $r expr] [dict get $r fixed]]
+    }
+    foreach r $before {
+      if {[lsearch -exact $after [list [dict get $r expr] [dict get $r fixed]]] < 0} {
+        lappend lost [dict create what [dict get $r what] expr [dict get $r expr] \
+                        fixed [dict get $r fixed]]
+      }
+    }
+    return [dict create lost $lost]
+  }
+  set before [ase::preflight_include_fixes $scan]
+  if {![llength $before]} { return [dict create lost {}] }
+  set a [ase::preflight_apply $state $scan]
+  if {![dict get $a n]} { return [dict create lost {}] }
+  set after {}
+  foreach x [ase::preflight_include_fixes [ase::preflight_scan [dict get $a state] $ntext $itexts]] {
+    lappend after [list [dict get $x path] [dict get $x start] [dict get $x fixed]]
+  }
+  foreach x $before {
+    if {[lsearch -exact $after [list [dict get $x path] [dict get $x start] [dict get $x fixed]]] < 0} {
+      lappend lost $x
+    }
+  }
+  return [dict create lost $lost]
+}
+
+# BOTH HALVES FROM ONE SCAN: the files of PLAN first (backed up, then
+# rewritten, all or nothing), then SCAN's session corrections. The window's OK
+# (ase::ui::repair_confirm_ok) and the console's ase::preflight_fix_all are
+# this. NOTHING HALF-DONE (the ruling): a session half that raises after the
+# files were written puts the files back and drops their backups
+# (ase::include_unapply). -> {ok 1 files <names rewritten> rows <session rows
+# rewritten> r <ase::include_apply_plan's answer>} | {ok 0 why <sentence>}.
+proc ase::preflight_commit_both {key scan plan} {
+  set r [ase::include_apply_plan $plan]
+  if {![dict get $r ok]} { return [dict create ok 0 why [dict get $r why]] }
+  set a {}
+  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
+  set rows 0
+  if {$a ne {} && [dict get $a n]} {
+    if {[catch {ase::preflight_session_commit $key $scan} rows]} {
+      set why "the session corrections could not be applied ($rows), so the\
+ include files were put back as they were and nothing was changed."
+      set ub [ase::include_unapply $plan $r]
+      if {$ub ne {}} { append why " But $ub." }
+      return [dict create ok 0 why $why]
+    }
+  }
+  foreach l [ase::include_apply_said $r] { catch {::ase::echo $l} }
+  return [dict create ok 1 files [dict get $r n] rows $rows r $r]
+}
+
+# BOTH HALVES' CONSOLE COMMAND (fix round 3, findings 3 and 8): what
+# 'Apply Corrections' and its OK do, from one scan, with no dialog -- typing it
+# is the confirmation (D1). The include files ASE-L may edit are backed up and
+# rewritten, then the session's rows are corrected and the session goes
+# unsaved; Session > Save State is still the user's. Run alone, each half
+# re-scans, and can cost the other a correction the two decide together
+# (ase::preflight_strand); this cannot. -> include names plus session rows
+# rewritten.
+proc ase::preflight_fix_all {key} {
+  set state [ase::session_state $key]
+  set scan [ase::preflight_session_scan $key]
+  set plan [ase::preflight_include_plan $state $scan [dict get $scan itexts] \
+              [dict get $scan rundir]]
+  catch {set plan [ase::include_plan_shared $plan [ase::session_path $key]]}
+  ase::include_blocked_said $plan
+  set c [ase::preflight_commit_both $key $scan $plan]
+  if {![dict get $c ok]} {
+    ::ase::echo "ase: [dict get $c why]" error
+    return 0
+  }
+  foreach l [ase::include_shared_said $plan [dict get $c r]] { ::ase::echo $l note }
+  set n [expr {[dict get $c files] + [dict get $c rows]}]
+  if {!$n} {
+    ::ase::echo "ase: pre-flight — nothing was rewritten for session '$key':\
+ the pre-flight found nothing it may correct." note
+  }
+  return $n
+}
+
+# THE OTHER ASE-L STATES OF THE SAME LIBRARY WHOSE `includes` NAME PATH (fix
+# round 3, finding 10). -> {<cell>/<view> ...}, sorted. STATEPATH is this
+# session's state file, `<lib>/<cell>/<view>/<file>.state` with <cell> its
+# design cell; any other shape (a state file outside a library) answers {}.
+# Every `<lib>/*/*/*.state` but STATEPATH is read; an include of each resolves
+# against that state's own run directory, peeked (ase::include_rundir_peek,
+# which creates nothing), and two paths are the same file when they resolve to
+# the same place with every link followed. It reads the disk and changes
+# nothing. MEASURED in the user's tree 2026-11-21: one nodeset file sits in the
+# `includes` of seven states across three benches, and rewriting it for one
+# bench changes what all the others read.
+proc ase::include_sharers {statepath path} {
+  set sp [file normalize $statepath]
+  if {[catch {ase::state_load $sp} st]} { return {} }
+  set design [ase::state_get $st design]
+  if {[catch {dict get $design cell} cell]} { return {} }
+  set cdir [file dirname [file dirname $sp]]
+  if {[file tail $cdir] ne $cell} { return {} }
+  set real [list apply {{p} {
+    set r $p
+    catch {set r [file dirname [file normalize [file join $p ___]]]}
+    return $r
+  }}]
+  set want [{*}$real [file normalize $path]]
+  set out {}
+  foreach f [glob -nocomplain -types f -directory [file dirname $cdir] */*/*.state] {
+    set fn [file normalize $f]
+    if {$fn eq $sp} { continue }
+    if {[catch {ase::state_load $fn} ost]} { continue }
+    set rd [ase::include_rundir_peek $ost]
+    foreach inc [ase::state_get $ost includes] {
+      set q [dict get [ase::include_resolve [ase::include_entry_file $inc] $rd] path]
+      if {$q ne {} && [{*}$real $q] eq $want} {
+        lappend out "[file tail [file dirname [file dirname $fn]]]/[file tail [file dirname $fn]]"
+        break
+      }
+    }
+  }
+  return [lsort $out]
+}
+
+# PLAN with `shared` (ase::include_sharers) set on every record the press would
+# write, and {} on the rest. It reads the disk and changes nothing.
+proc ase::include_plan_shared {plan statepath} {
+  set out {}
+  foreach f $plan {
+    set sh {}
+    if {[dict get $f editable] && [dict get $f n]} {
+      set sh [ase::include_sharers $statepath [dict get $f path]]
+    }
+    dict set f shared $sh
+    lappend out $f
+  }
+  return $out
+}
+
+# The clause naming the other states a shared file is read by, or {}. Pure.
+proc ase::include_shared_words {f} {
+  set sh {}
+  catch {set sh [dict get $f shared]}
+  set n [llength $sh]
+  if {!$n} { return {} }
+  return "$n other state[expr {$n == 1 ? {} : {s}}] of this library\
+ include[expr {$n == 1 ? {s} : {}}] it too ([join $sh {, }]), and they will read\
+ the new names"
+}
+
+# One CIW line per shared file a successful write (R) rewrote. Pure.
+proc ase::include_shared_said {plan r} {
+  set done [lmap f [dict get $r files] {dict get $f path}]
+  set out {}
+  foreach f $plan {
+    set w [ase::include_shared_words $f]
+    if {$w eq {} || [lsearch -exact $done [dict get $f path]] < 0} { continue }
+    lappend out "ase: include file '[dict get $f path]': [string totitle $w 0 0]."
+  }
+  return $out
 }
 
 # IS A `.nodeset`/`.ic` VALUE A PLAIN NUMBER? Pure. A sign, digits with an
@@ -18195,16 +18681,39 @@ proc ase::include_ngspice_clause {card value} {
 # there inside an instance that is (no ruling covers refusing it), or -- under
 # case mode `distinguish` only -- a name the netlist has in another case, which
 # that mode does not fold (`spelled` names the netlist's spelling; `ambiguous`
-# is two netlist names differing only in case). Pure.
+# is two netlist names differing only in case), or any absent name on a card
+# inside a `.if` block (`cond`; a missing instance is then `condmiss`), whose
+# branch ASE-L cannot tell ngspice takes. Pure.
 proc ase::preflight_include_caution {row} {
   set id [dict get $row ident]
-  set head "ase: caution: include file '[dict get $row path]' line\
- [dict get $row line]: .[dict get $row card] names '$id',"
+  set at "ase: caution: include file '[dict get $row path]' line\
+ [dict get $row line]: .[dict get $row card] names '$id'"
+  set head "$at,"
   set clause [ase::include_ngspice_clause [dict get $row card] [dict get $row value]]
   set sp {}
   catch {set sp [dict get $row spelled]}
   set amb 0
   catch {set amb [dict get $row ambiguous]}
+  ## A CARD INSIDE A `.if` BLOCK (fix round 3, finding 6): whether ngspice
+  ## reads it depends on a condition ASE-L does not evaluate, so the caution
+  ## says what happens IF that branch is taken
+  if {[ase::state_get $row cond 0]} {
+    if {[dict exists $row condmiss]} {
+      set cw "the netlist has no instance '[dict get $row condmiss prefix]'"
+    } elseif {$sp ne {}} {
+      set cw "the netlist spells it '$sp' (under case mode distinguish ngspice\
+ does not fold case)"
+    } elseif {$amb} {
+      set cw "it differs only in case from more than one netlist name (under case\
+ mode distinguish ngspice does not fold case)"
+    } elseif {[llength [split $id .]] > 1} {
+      set cw "instance '[join [lrange [split $id .] 0 end-1] .]' does not have it"
+    } else {
+      set cw "the netlist does not have it"
+    }
+    return "$at inside a .if block, which ASE-L does not evaluate, and $cw: if\
+ that branch is taken, $clause."
+  }
   if {$sp ne {} || $amb} {
     set what [expr {$sp ne {} ? "which the netlist spells '$sp'" :
                     {which differs only in case from more than one netlist name}}]
@@ -18330,8 +18839,34 @@ proc ase::preflight_fixed_expr {rows} {
 # plus measurement fields rewritten. The ASE-L window's Apply button
 # (ase::ui::repair_apply) is this command, pressed: the press IS the
 # confirmation D1 asks for, and nothing calls it without one.
+#
+# ⚠ WHAT IT WRITES IS WHAT IT ALWAYS WROTE (the ruling of 2026-11-21: "keep it
+# working exactly as before, session only"), AND IT SAYS WHAT THAT COSTS (fix
+# round 3, findings 3 and 8). An include file's `.nodeset`/`.ic` names decide a
+# rename with the output rows; once the rows are corrected the names no longer
+# decide it, so a name only the two together made unique loses its correction,
+# and ase::preflight_fix_includes then has none to offer. When that happens
+# (ase::preflight_strand), a note names every such name with the correction it
+# just lost, to be made by hand, and `ase::preflight_fix_all <key>`, which does
+# both halves from one scan.
 proc ase::preflight_fix_session {key} {
-  return [ase::preflight_session_commit $key [ase::preflight_session_scan $key]]
+  set scan [ase::preflight_session_scan $key]
+  set lost {}
+  catch {set lost [dict get [ase::preflight_strand [ase::session_state $key] $scan session] lost]}
+  set n [ase::preflight_session_commit $key $scan]
+  if {$n && [llength $lost]} {
+    set rn [lsort -unique [lmap x $lost {format "'%s' -> '%s'" [dict get $x stale] [dict get $x to]}]]
+    ::ase::echo "ase: pre-flight — note: the include files' .nodeset/.ic names below\
+ lose their correction now, because with this session's output rows corrected\
+ they no longer decide [join $rn {, }] on their own; change them by hand\
+ ([ase::preflight_include_door]). Next time `ase::preflight_fix_all $key` applies\
+ both halves from one scan." note
+    foreach x $lost {
+      ::ase::echo "ase:   include file '[dict get $x path]' line [dict get $x line]:\
+ '[dict get $x ident]' -> '[dict get $x fixed]'" note
+    }
+  }
+  return $n
 }
 
 # ase::preflight_fix_session's body for a scan already taken: the ASE-L
@@ -18454,6 +18989,10 @@ proc ase::preflight_session_scan {key} {
   set itexts [ase::include_texts $state [ase::rundir $state]]
   set scan [ase::preflight_scan $state $txt $itexts]
   dict set scan itexts $itexts
+  ## and the netlist text and run directory, so ase::preflight_strand can
+  ## re-scan what one half alone would leave without reading the disk again
+  dict set scan ntext $txt
+  dict set scan rundir [ase::rundir $state]
   return $scan
 }
 
@@ -18986,8 +19525,12 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     if {[dict exists $pk [dict get $ih path]]} {
       set f [dict get $pk [dict get $ih path]]
       foreach c [dict get $f changes] {
+        ## under `fold`, spellings whose records agree are ONE hit record,
+        ## counted case-blind; spellings that disagree are a record each
+        ## (ase::preflight_include_hits), so only the same target counts
         set cp [ase::state_get $c prefix [dict get $c from]]
-        if {$cp eq $pre || (![dict get $scan cs] && [string equal -nocase $cp $pre])} {
+        if {$cp eq $pre || (![dict get $scan cs] && [string equal -nocase $cp $pre]
+                            && [dict get $c to] eq $to)} {
           incr k [dict get $c n]
         }
       }
@@ -19059,8 +19602,19 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
  ASE-L window when its Run is refused) rewrites $what, after asking:"
     }
     append l " each file is backed up beside itself first and written at once,\
- not at Save State. `ase::preflight_fix_includes <key>` does the same from the\
+ not at Save State."
+    ## ⚠ BOTH HALVES: THE CONSOLE TWIN OF THE PRESS IS ONE COMMAND (fix round
+    ## 3, findings 3 and 8). Each half re-scans, so run one after the other
+    ## the second can find that the first took away the names that decided its
+    ## rename; ase::preflight_fix_all applies both from one scan.
+    if {$said_session} {
+      append l " `ase::preflight_fix_all <key>` does both halves from the console\
+ from one scan, as the button does; `ase::preflight_fix_session <key>` and\
+ `ase::preflight_fix_includes <key>` are each half alone. $door shows the files."
+    } else {
+      append l " `ase::preflight_fix_includes <key>` does the same from the\
  console, and $door shows the files."
+    }
     ::ase::echo $l error
     lappend lines $l
   } elseif {$nin || [llength $incs]} {

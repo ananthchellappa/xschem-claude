@@ -4235,6 +4235,302 @@ set twd4 [pcall textwindow_disk_changed $TWF [list 0 {}]]
 eqcheck PF1723ai-the-text-windows-save-sees-a-file-that-changed-since-it-read-it \
   [list $twd0 $twd1 $twd2 $twd3 $twd4] {0 1 1 0 1}
 
+## === FIX ROUND 3 (2026-11-21): the third review's confirmed findings =======
+## Each row was written first and watched red on the fix-round-2 code. The
+## shapes were MEASURED 2026-11-21 on /usr/bin/ngspice 45.2 and on the fork
+## (ver_53), with the flags ASE-L passes, on a deck holding `xdut` and no `x1`;
+## the table is the issue file's.
+##
+## FINDING 1: ngspice's readline() DROPS A LINE'S LEADING BLANKS AND TABS
+## before any pass sees it, so `  ; note` reaches the comment stripper as
+## `; note`, whose `;` at column 0 is never cut: a regular card, which ends the
+## `.nodeset` card and swallows the `+` line after it (inp_check_syntax later
+## makes it a `*` comment). Measured: `  ; note`, a tab before it, ` ;note`:
+## rc 0, no warning; `  * note` in its place: the warning, then the syntax
+## error. And an indented `* note \\` or `$ note \\` continues nothing, because
+## its column 0 is `*` or `$` once the blanks are gone (measured: the next line,
+## an element card, is not joined; a real `\\` joins it, rc 1).
+set r9 {}
+foreach mid [list "  ; note" "\t; note" " ;note" "; note" "  * note"] {
+  lappend r9 [lmap c [pcall ase::include_card_idents ".nodeset v(b)=0.3\n$mid\n+ v(x1.r)={2}\n"] {dgn $c ident}]
+}
+eqcheck PF1723r9-an-indented-semicolon-line-ends-the-card-because-ngspice-drops-its-leading-blanks-first \
+  $r9 {b b b b {b x1.r}}
+set r10 {}
+foreach mid [list "  * note \\\\" "  \$ note \\\\" "\t* note \\\\"] {
+  lappend r10 [lmap c [pcall ase::include_card_idents ".nodeset v(b)=0.3\n$mid\nv(x1.r)={2}\n"] {dgn $c ident}]
+}
+lappend r10 [lmap c [pcall ase::include_card_idents ".nodeset v(b)=0.3 \\\\\nv(x1.r)={2}\n"] {dgn $c ident}]
+eqcheck PF1723r10-an-indented-star-or-dollar-line-ending-in-a-double-backslash-continues-nothing \
+  $r10 {b b b {b x1.r}}
+eqcheck PF1723r11-a-semicolon-led-line-at-column-0-or-indented-adds-no-element-word \
+  [list [dex [pcall ase::include_top_words [list [dict create text "; x5 was the dut\nR1 p q 1k\n"]]] x5] \
+        [dex [pcall ase::include_top_words [list [dict create text "  ; x5 was the dut\nR1 p q 1k\n"]]] x5] \
+        [dex [pcall ase::include_top_words [list [dict create text "  ; x5 was the dut\nR1 p q 1k\n"]]] r1]] \
+  {0 0 1}
+## the finding's own bench: the gate let it through and Apply had a name to
+## rewrite in a card ngspice reads as a comment
+set NSSEMI [file normalize [file join $RDI ns_semi.spice]]
+putfile $NSSEMI ".nodeset v(OUT)=0.3\n  ; x1 was the dut before the rename\n+ v(x1.a1)={2}\n"
+set stsemi [ri_state [list [list file $NSSEMI]]]
+set scsemi [pcall ase::preflight_scan $stsemi $NLR [pcall ase::include_texts $stsemi $RDI]]
+lassign [rn_gate $stsemi] rcsemi esemi
+eqcheck PF1723s11-the-name-behind-an-indented-semicolon-line-is-neither-refused-nor-offered-for-rewriting \
+  [list [llength [dg $scsemi incrows]] [llength [dg $scsemi renames]] \
+        [llength [pcall ase::preflight_include_edits $scsemi]] $rcsemi [said_count {ase: REFUSED*}]] \
+  {0 0 0 0 0}
+## FINDING 5: A UTF-8 BYTE ORDER MARK. The fork's inp_read strips EF BB BF from
+## a file's first line (measured: ver_53 says "encoding: UTF-8 with BOM", then
+## the warning and the syntax error on a stale `{2}`, rc 1; 45.2 dies on
+## "unknown device type", rc 1, so a refusal is right on both). The reader
+## strips it too, and keeps every offset the file's own.
+set BOMT "\xef\xbb\xbf.nodeset v(b)=0.3 v(x1.r)={2}\n"
+set bomc [pcall ase::include_card_idents $BOMT]
+set NSBOM [file normalize [file join $RDI ns_bom.spice]]
+writebin $NSBOM "\xef\xbb\xbf.nodeset v(OUT)=0.3 v(x1.a1)={2}\n"
+lassign [rn_gate [ri_state [list [list file $NSBOM]]]] rcbom ebom
+eqcheck PF1723r12-a-utf8-byte-order-mark-before-a-first-line-card-is-stripped-as-the-fork-strips-it \
+  [list [lmap c $bomc {list [dgn $c line] [dgn $c ident]}] \
+        [lmap c $bomc {expr {[string range $BOMT [dgn $c start] [dgn $c end]] eq [dgn $c ident]}}] \
+        [lmap c [pcall ase::include_card_idents "\xef\xbb\xbf* hdr\n.nodeset v(x1.r)={2}\n"] {dgn $c ident}] \
+        $rcbom [said_count "ase:   include file '$NSBOM' line 1: .nodeset names 'x1.a1'*'x1.a1' -> 'xdut.a1'"]] \
+  {{{1 b} {1 x1.r}} {1 1} x1.r 1 1}
+## FINDING 2: `.nodeset all=<v>` ENDS WHAT NGSPICE READS OF ITS CARD. INPpas3's
+## `all` branch sets every node and BREAKS out of the card's token loop, so no
+## name after it -- on that line or a `+` line -- is read. Measured:
+## `.nodeset all=0.5 v(x1.q)={vsup}` and the same with the name on a `+` line,
+## rc 0 and no warning; the name alone, the syntax error. `.ic` has no `all`
+## branch (`.ic all=0.5` is itself a syntax error, rc 1), so it is unchanged. A
+## node or a value that is called `all` is not the keyword, and a later card is
+## read as ever.
+set r13 {}
+foreach t [list ".nodeset all=0.5 v(x1.q)={vsup}\n" \
+                ".nodeset all=0.5\n+ v(x1.q)={vsup} v(xdut.q)=0.2\n" \
+                ".nodeset v(x1.a)=1 ALL = 0.5 v(x1.b)=2\n" \
+                ".ic all=0.5 v(x1.q)=1\n" \
+                ".nodeset v(all)=1 v(a)={all} v(x1.q)=2\n.nodeset all=0.5\n.nodeset v(x1.z)=1\n"] {
+  lappend r13 [lmap c [pcall ase::include_card_idents $t] {dgn $c ident}]
+}
+eqcheck PF1723r13-nodeset-all-ends-what-ngspice-reads-of-its-card-continuations-included \
+  $r13 {{} {} x1.a x1.q {all a x1.q x1.z}}
+set NSALL [file normalize [file join $RDI ns_all.spice]]
+putfile $NSALL ".nodeset all=0.5 v(x1.a1)={2}\n+ v(x1.tail)={vsup}\n"
+set stall [ri_state [list [list file $NSALL]]]
+set scall [pcall ase::preflight_scan $stall $NLR [pcall ase::include_texts $stall $RDI]]
+lassign [rn_gate $stall] rcall eall
+eqcheck PF1723s12-names-after-nodeset-all-are-neither-refused-nor-offered-for-rewriting \
+  [list [llength [dg $scall incrows]] [llength [pcall ase::preflight_include_edits $scall]] \
+        $rcall [said_count {ase: REFUSED*}]] {0 0 0 0}
+## FINDING 4: A VALUE ON THE NEXT `+` LINE IS THE NAME'S VALUE. ngspice joins
+## the card before INPpas3 reads it (measured: `v(xdut.nosuch)=` then `+ 1.5`,
+## and `v(xdut.nosuch)` then `+ =1.5`: the warning naming the joined
+## `v(xdut.nosuch)=1.5`, rc 0), so the caution must say the name is dropped,
+## not that the run stops.
+set r14 {}
+foreach t [list ".nodeset v(b)=0.3 v(xdut.nosuch)=\n+ 1.5\n" ".nodeset v(b)=0.3 v(xdut.nosuch)\n+ =1.5\n" \
+                ".nodeset v(xdut.nosuch)=\n\n* a note\n+ {vsup}\n"] {
+  lappend r14 [lmap c [pcall ase::include_card_idents $t] {list [dgn $c line] [dgn $c ident] [dgn $c value]}]
+}
+set NSVAL [file normalize [file join $RDI ns_val.spice]]
+putfile $NSVAL ".nodeset v(OUT)=0.3 v(xdut.nosuch)=\n+ 1.5\n"
+lassign [rn_gate [ri_state [list [list file $NSVAL]]]] rcval eval
+eqcheck PF1723r14-a-value-on-the-next-continuation-line-is-the-names-value-as-ngspice-joins-it \
+  [list {*}$r14 $rcval \
+        [said_count "ase: caution: include file '$NSVAL' line 1: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice drops it with a 'non-existent node' warning, so that guess is lost."] \
+        [said_count {*this one has none*}]] \
+  [list {{1 b 0.3} {1 xdut.nosuch 1.5}} {{1 b 0.3} {1 xdut.nosuch 1.5}} [list [list 1 xdut.nosuch "{vsup}"]] 0 1 0]
+## FINDING 6: A CARD INSIDE A `.if` BLOCK. ngspice evaluates the condition and
+## comments out the branches not taken (inp.c recifeval), which ASE-L cannot
+## do: a stale-looking name in a branch not taken refused a bench that runs
+## (measured: `.if (sel == 1)` with sel=0, rc 0, no warning; sel=1, the syntax
+## error), and Apply offered to rewrite the other variant's own nodeset. A card
+## inside any `.if` ... `.endif` is marked `cond`; its names neither refuse,
+## nor join the rename search, nor are rewritten; each absent one is a caution.
+set IFT ".if (sel == 1)\n.nodeset v(xalt.a1)={vs-0.1}\n.ELSEIF(sel==2)\n.if (deep)\n.endif\n.nodeset v(x1.p)=1\n.else\n.nodeset v(xdut.a1)={vs-0.1}\n.endif\n.nodeset v(x9.q)=1\n"
+eqcheck PF1723r15-a-card-inside-an-if-block-is-marked-conditional-nested-blocks-included \
+  [lmap c [pcall ase::include_card_idents $IFT] {list [dgn $c line] [dgn $c ident] [dgn $c cond]}] \
+  {{2 xalt.a1 1} {6 x1.p 1} {8 xdut.a1 1} {10 x9.q 0}}
+set NSIF [file normalize [file join $RDI ns_if.spice]]
+putfile $NSIF ".if (sel == 1)\n.nodeset v(xalt.a1)={vs-0.1}\n.else\n.nodeset v(xdut.a1)={vs-0.1}\n.endif\n"
+set stif [ri_state [list [list file $NSIF]]]
+set scif [pcall ase::preflight_scan $stif $NLR [pcall ase::include_texts $stif $RDI]]
+lassign [rn_gate $stif] rcif eif
+eqcheck PF1723s13-a-stale-looking-name-in-a-if-branch-is-one-caution-never-a-refusal-or-a-rewrite \
+  [list $rcif [said_count {ase: REFUSED*}] [llength [dg $scif renames]] \
+        [llength [pcall ase::preflight_include_edits $scif]] \
+        [said_count "ase: caution: include file '$NSIF' line 2: .nodeset names 'xalt.a1' inside a .if block, which ASE-L does not evaluate, and the netlist has no instance 'xalt': if that branch is taken, ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is '{vs-0.1}'."] \
+        [said_count {ase: caution:*}]] {0 0 0 0 1 1}
+## FINDING 9: UNDER `fold`, THE PER-FILE LINE QUOTES THE FILE'S OWN SPELLING AND
+## ITS OWN TARGET. `X1` (an output, `several`) and `x1` (the include, `unique`)
+## are two rename records; the hit line took the first record's spelling and
+## its empty target: "names 'X1.' 1 time, ... rewrites them to '.'".
+set NSF9 [file normalize [file join $RDI ns_fold9.spice]]
+putfile $NSF9 ".nodeset v(x1.a1)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSF9]] {{expr v(X1.n1) save 1}}]] rcf9 ef9
+eqcheck PF1723t7-under-fold-the-per-file-line-quotes-the-files-own-spelling-and-its-own-target \
+  [list $rcf9 \
+        [said_count "ase:   include file '$NSF9' names 'x1.' 1 time, all in .nodeset/.ic cards: '[pcall ase::ui::lbl_repair_apply]' rewrites them to 'xdut.' after asking"] \
+        [said_count "*rewrites them to '.'*"] [said_count "*names 'X1.'*"]] {1 1 0 0}
+## ...and two spellings with DIFFERENT targets are a line each, each counting
+## only the names its own target rewrites: `x1.a1` (xdut) in a card and once in
+## a comment, `X1.b1` (xother) in a card.
+set NSF8 [file normalize [file join $RDI ns_fold8.spice]]
+putfile $NSF8 ".nodeset v(x1.a1)=1 v(X1.b1)=2
+* x1.tail was the old guess
+"
+lassign [rn_gate [ri_state [list [list file $NSF8]]]] rcf8 ef8
+set lab8 [pcall ase::ui::lbl_repair_apply]
+eqcheck PF1723t8-under-fold-two-spellings-with-different-targets-are-a-line-each-counting-their-own-names \
+  [list $rcf8 \
+        [said_count "ase:   include file '$NSF8' names 'x1.' 2 times; '$lab8' rewrites the 1 in .nodeset/.ic cards to 'xdut.' after asking and leaves the other 1 for you to change ([pcall ase::ui::menu_path_include_files])"] \
+        [said_count "ase:   include file '$NSF8' names 'X1.' 1 time, all in .nodeset/.ic cards: '$lab8' rewrites them to 'xother.' after asking"]] \
+  {1 1 1}
+## FINDING 7: A SYMLINKED MODEL FILE PROTECTS THE FOLDER IT REALLY LIVES IN.
+## `file normalize` resolves every component but the last, so a models entry
+## that is itself a link protected only the link's folder, and a file beside
+## the real model file was editable.
+set SLD [file normalize [file join $tmp sym1723]]
+file mkdir [file join $SLD pdk models] [file join $SLD proj models]
+putfile [file join $SLD pdk models real.lib] "* real models\n"
+putfile [file join $SLD pdk models nodeset.spice] ".nodeset v(x1.a1)=1\n"
+if {[catch {file link -symbolic [file join $SLD proj models m.lib] [file join $SLD pdk models real.lib]} slerr]} {
+  puts "skip: PF1723y5 (no symbolic link could be made: $slerr)"
+} else {
+  set stsl [ri_state {}]
+  dict set stsl models [list [list file [file join $SLD proj models m.lib] section tt]]
+  set rsl [pcall ase::include_protected_roots $stsl $RDI]
+  set nsl [file join $SLD pdk models nodeset.spice]
+  eqcheck PF1723y5-a-symlinked-model-file-protects-the-folder-it-really-lives-in-too \
+    [list [lsort [lmap r $rsl {dgn $r dir}]] \
+          [pcall ase::include_edit_verdict $nsl [pcall ase::include_edit_facts $nsl] $rsl]] \
+    [list [lsort [list [file join $SLD pdk models] [file join $SLD proj models]]] \
+          "it is in a model file's folder ([file join $SLD pdk models])"]
+}
+## FINDINGS 3 AND 8: THE TWO CONSOLE HALVES MUST NOT DEPEND ON THEIR ORDER.
+## Output rows and include rows decide one rename together; each half re-scans,
+## and once one half is applied its rows no longer decide. Bench B: the output
+## `v(x1.OUTP)` alone fits xdut AND xother (both have OUTP); the include's
+## `x1.a1` makes it unique. Bench A is the reverse. So the file half applied
+## first strands B's outputs, and the session half applied first strands A's
+## include names. `ase::preflight_fix_all <key>` applies both from ONE scan,
+## as the window's OK does; the file half refuses to strand the session half;
+## the session half writes exactly what it always wrote (the ruling) and names
+## every include correction it costs, with fix_all.
+proc strand_bench {name outs inctxt} {
+  set d [file join $::tmp run_1723_$name]
+  file mkdir $d
+  putfile [file join $d rn_top.spice] $::NLR
+  set inc [file normalize [file join $d ns.spice]]
+  putfile $inc $inctxt
+  putfile [file join $d rn.state] \
+    "design {lib dlib cell rn_top view schematic} rundir [list $d] models {} outputs [list $outs]\
+ includes [list [list [list file $inc]]]"
+  pcall ase::session_open $name [file join $d rn.state]
+  return $inc
+}
+set SBTXT ".nodeset v(x1.a1)=1\n"
+set SATXT ".nodeset v(x1.OUTP)=1\n"
+set incB [strand_bench sbB {{expr v(x1.OUTP) save 1}} $SBTXT]
+set incA [strand_bench sbA {{expr v(x1.a1) save 1}} $SATXT]
+set scB [pcall ase::preflight_session_scan sbB]
+set scA [pcall ase::preflight_session_scan sbA]
+eqcheck PF1723aj-the-strand-check-sees-which-half-applied-alone-loses-the-others-correction \
+  [list [lmap g [dg $scB renames] {list [dgn $g prefix] [dgn $g to] [dgn $g fit]}] \
+        [llength [dgn [pcall ase::preflight_strand [ase::session_state sbB] $scB files] lost]] \
+        [llength [dgn [pcall ase::preflight_strand [ase::session_state sbB] $scB session] lost]] \
+        [lmap g [dg $scA renames] {list [dgn $g prefix] [dgn $g to] [dgn $g fit]}] \
+        [llength [dgn [pcall ase::preflight_strand [ase::session_state sbA] $scA files] lost]] \
+        [llength [dgn [pcall ase::preflight_strand [ase::session_state sbA] $scA session] lost]]] \
+  {{{x1 xdut unique}} 1 0 {{x1 xdut unique}} 0 1}
+said_clear
+set njB [pcall ase::preflight_fix_includes sbB]
+eqcheck PF1723aj2-the-file-half-refuses-to-strand-the-session-half-and-names-fix-all \
+  [list $njB [expr {[readfile $incB] eq $SBTXT}] [file exists $incB.bak] \
+        [lmap o [dg [ase::session_state sbB] outputs] {dgn $o expr}] \
+        [said_count "ase: pre-flight — nothing was rewritten in the include files of session 'sbB': applied alone, they would cost this session's output rows their correction ('v(x1.OUTP)' -> 'v(xdut.OUTP)'), which only the two halves together decide. `ase::preflight_fix_all sbB` applies both from one scan, as '[pcall ase::ui::lbl_repair_apply]' does."]] \
+  {0 1 0 v(x1.OUTP) 1}
+said_clear
+set nallB [pcall ase::preflight_fix_all sbB]
+lassign [rn_gate [ase::session_state sbB]] rcallB eallB
+eqcheck PF1723aj3-fix-all-applies-both-halves-from-one-scan-and-the-gate-passes \
+  [list $nallB [readfile $incB] [expr {[readfile $incB.bak] eq $SBTXT}] \
+        [lmap o [dg [ase::session_state sbB] outputs] {dgn $o expr}] [pcall ase::session_dirty sbB] $rcallB] \
+  [list 2 ".nodeset v(xdut.a1)=1\n" 1 v(xdut.OUTP) 1 0]
+said_clear
+set nsA [pcall ase::preflight_fix_session sbA]
+eqcheck PF1723aj4-the-session-half-writes-what-it-always-wrote-and-names-every-include-correction-it-costs \
+  [list $nsA [lmap o [dg [ase::session_state sbA] outputs] {dgn $o expr}] [expr {[readfile $incA] eq $SATXT}] \
+        [said_count "ase: pre-flight — note: the include files' .nodeset/.ic names below lose their correction now, because with this session's output rows corrected they no longer decide 'x1' -> 'xdut' on their own; change them by hand ([pcall ase::ui::menu_path_include_files]). Next time `ase::preflight_fix_all sbA` applies both halves from one scan."] \
+        [said_count "ase:   include file '$incA' line 1: 'x1.OUTP' -> 'xdut.OUTP'"]] \
+  {1 v(xdut.a1) 1 1 1}
+pcall ase::session_close sbA
+pcall ase::session_close sbB
+file delete -force [file join $tmp run_1723_sbA]
+set incA [strand_bench sbA {{expr v(x1.a1) save 1}} $SATXT]
+said_clear
+set nallA [pcall ase::preflight_fix_all sbA]
+lassign [rn_gate [ase::session_state sbA]] rcallA eallA
+eqcheck PF1723aj5-fix-all-on-the-reverse-bench-too \
+  [list $nallA [readfile $incA] [lmap o [dg [ase::session_state sbA] outputs] {dgn $o expr}] $rcallA] \
+  [list 2 ".nodeset v(xdut.OUTP)=1\n" v(xdut.a1) 0]
+pcall ase::session_close sbA
+## the refusal names fix_all when both halves have corrections, and keeps the
+## file half's own sentence when only the files do (PF1723t3)
+file delete -force [file join $tmp run_1723_sbB]
+set incB [strand_bench sbB {{expr v(x1.OUTP) save 1}} $SBTXT]
+lassign [rn_gate [ase::session_state sbB]] rct6 et6
+eqcheck PF1723t6-a-refusal-with-both-halves-names-fix-all-first \
+  [list $rct6 [said_count "ase: '[pcall ase::ui::lbl_repair_apply]' also rewrites the 1 .nodeset/.ic name above in 1 include file, after asking: each file is backed up beside itself first and written at once, not at Save State. `ase::preflight_fix_all <key>` does both halves from the console from one scan, as the button does; `ase::preflight_fix_session <key>` and `ase::preflight_fix_includes <key>` are each half alone. [pcall ase::ui::menu_path_include_files] shows the files."]] \
+  {1 1}
+pcall ase::session_close sbB
+## FINDING 10: A SHARED INCLUDE FILE. The user's own tree has one nodeset file
+## in the includes of seven states across three benches; rewriting it for one
+## bench changes what every other bench reads, and the confirmation said
+## nothing. ase::include_sharers names the other states of the same library
+## whose includes resolve to the same file, by any spelling; the confirmation
+## names them.
+set SHL [file normalize [file join $tmp shlib1723 libx]]
+foreach cv {bench_a/ngspice_state1 bench_b/ngspice_state1 bench_b/ngspice_state2 bench_c/ngspice_state1} {
+  file mkdir [file join $SHL $cv]
+}
+set SHINC [file join $SHL bench_a includes ns.spice]
+file mkdir [file dirname $SHINC]
+putfile $SHINC ".nodeset v(x1.a1)=1\n"
+putfile [file join $SHL bench_a other.spice] "* other\n"
+set ::PF1723SHL $SHL
+proc shstate {cell incs} {
+  return "design {lib libx cell $cell view schematic} rundir [list [file join $::tmp run_sh_$cell]] includes [list $incs]"
+}
+set SHA [file join $SHL bench_a ngspice_state1 bench_a.state]
+putfile $SHA [shstate bench_a [list [list file $SHINC]]]
+putfile [file join $SHL bench_b ngspice_state1 bench_b.state] [shstate bench_b [list {file {$::PF1723SHL/bench_a/includes/ns.spice}}]]
+putfile [file join $SHL bench_b ngspice_state2 bench_b.state] [shstate bench_b [list [list file [file join $SHL bench_a includes .. includes ns.spice]]]]
+putfile [file join $SHL bench_c ngspice_state1 bench_c.state] [shstate bench_c [list [list file [file join $SHL bench_a other.spice]]]]
+## and one through a link TO THE FILE: the same file only once the last link
+## is followed too (`file normalize` already follows a linked folder, so the
+## sabotage that compared paths as spelled stayed green on a linked folder)
+set shlinked {}
+file mkdir [file join $SHL bench_d ngspice_state1]
+if {![catch {file link -symbolic [file join $SHL bench_d ns_link.spice] $SHINC}]} {
+  putfile [file join $SHL bench_d ngspice_state1 bench_d.state] [shstate bench_d [list [list file [file join $SHL bench_d ns_link.spice]]]]
+  set shlinked bench_d/ngspice_state1
+} else {
+  puts "skip: PF1723ak's linked-file leg (no symbolic link could be made)"
+}
+set shp [list [dict create path $SHINC file $SHINC editable 1 n 1 why {} writable 1 \
+                 backup $SHINC.bak edits {} changes [list [dict create from x1 to xdut n 1 whole 0 prefix x1]]]]
+set shp2 [pcall ase::include_plan_shared $shp $SHA]
+eqcheck PF1723ak-the-other-states-of-the-library-that-include-the-same-file-are-found-by-any-spelling \
+  [list [pcall ase::include_sharers $SHA $SHINC] [pcall ase::include_sharers $SHA [file join $SHL bench_a other.spice]] \
+        [pcall ase::include_sharers [file join $tmp run_1723i rn.state] $SHINC] \
+        [dgn [lindex $shp2 0] shared]] \
+  [list [list bench_b/ngspice_state1 bench_b/ngspice_state2 {*}$shlinked] bench_c/ngspice_state1 {} \
+        [list bench_b/ngspice_state1 bench_b/ngspice_state2 {*}$shlinked]]
+eqcheck PF1723ak2-the-confirmation-names-the-other-states-a-shared-file-is-rewritten-for \
+  [lrange [pcall ase::ui::repair_confirm_lines $shp2 {}] 1 2] \
+  [list "  ns.spice: 1 × x1. → xdut. Backup: $SHINC.bak" \
+        "    Shared: [expr {$shlinked eq {} ? 2 : 3}] other states of this library include it too ([join [list bench_b/ngspice_state1 bench_b/ngspice_state2 {*}$shlinked] {, }]), and they will read the new names."]
+
 ## --- PF1723ah: the user's shape, end to end, on /usr/bin/ngspice ------------
 ## Two nodeset include files, `{vsup-1.35}` values, a `+` continuation,
 ## `.nodeset` only, correct outputs, and (fix round) a stdcell deck ahead of
@@ -4333,6 +4629,35 @@ if {![file executable $NG]} {
     [list 1 1 {} 1 1 3 0 0 0 \
           "* fix round 2 shapes\n.nodeset v(out)=1.2\n\$ the enabled-state guesses\n+ v(xdut.a1)={vsup-1.35}\n.nodeset v (xdut.d1)={vsup-0.1} \\\\\n  v(xdut.tail)=0.30\n"]
   pcall ase::session_close e2ek3
+  ## FIX ROUND 3, END TO END: three shapes ngspice RUNS although each names
+  ## `x1.` with a `{...}` value -- an indented `;` line ending the card before
+  ## its `+` line (finding 1), a name after `.nodeset all=` (finding 2), and a
+  ## card in a `.if` branch not taken (finding 6). The gate refused this bench;
+  ## now, with the check ON, it reaches ngspice and finishes at exit 0 with no
+  ## nodeset warning, the `.if` card is one caution, and the file is untouched.
+  set ENF4 [file join $RDE nodeset_r3.spice]
+  set ENF4TXT "* fix round 3 shapes\n.nodeset v(out)=1.2\n  ; x1 was the dut before the rename\n+ v(x1.a1)={vsup-1.35}\n.nodeset all=0.5 v(x1.d1)={vsup}\n.if (0)\n.nodeset v(x1.tail)={vsup}\n.endif\n"
+  putfile $ENF4 $ENF4TXT
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  putfile [file join $RDE e2e4.state] \
+    "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
+ analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}}\
+ includes [list [list {file {$::PF1723E/stdcells.spice}} {file {$::PF1723E/nodeset_r3.spice}}]]"
+  pcall ase::session_open e2ek4 [file join $RDE e2e4.state]
+  proc e2e4_st {} { return [ase::sim_choice_set [ase::session_state e2ek4] entry pf1723e] }
+  said_clear
+  set e4id -1
+  set e4rc [catch {set e4id [ase::run_deck [e2e4_st] $NLEF]} e4err]
+  set e4ex [ase::wait $e4id]
+  set e4log [e2e_log]
+  eqcheck PF1723ah4-a-semicolon-line-a-nodeset-all-and-a-branch-not-taken-reach-ngspice-which-runs-them-clean \
+    [list $e4rc $e4ex [file exists [file join $RDE e2e_tb_ase.raw]] \
+          [string match -nocase {*nodeset*} [string range $e4log [string first {--- simulator output ---} $e4log] end]] \
+          [string match {*non-existent*} $e4log] [said_count {ase: REFUSED*}] \
+          [said_count "ase: caution: include file '*nodeset_r3.spice' line 7: .nodeset names 'x1.tail' inside a .if block*"] \
+          [expr {[readfile $ENF4] eq $ENF4TXT}]] \
+    {0 0 1 0 0 0 1 1}
+  pcall ase::session_close e2ek4
   pcall ase::sim_clear
 }
 

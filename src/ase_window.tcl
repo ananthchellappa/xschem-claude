@@ -17278,10 +17278,12 @@ proc ase::ui::repair_offer {err state scan {incs {}} {plan {}}} {
 }
 
 # THE CONFIRMATION'S TEXT, one line per element, PURE (issue 1723 item 6). PLAN
-# is ase::preflight_include_plan's answer; APPLY is ase::preflight_apply's for
-# the session ({} when there is none). It names every file and its change, that
-# files are written at once and not at Save State, where each backup goes, and
-# which files are not editable and why.
+# is ase::preflight_include_plan's answer, with `shared` set by
+# ase::include_plan_shared; APPLY is ase::preflight_apply's for the session
+# ({} when there is none). It names every file and its change, that files are
+# written at once and not at Save State, where each backup goes, which other
+# states of the library read a file too, and which files are not editable and
+# why.
 proc ase::ui::repair_confirm_lines {plan apply} {
   set out [list "[ase::ui::lbl_repair_apply] writes these include files now,\
  not at Session > Save State, and backs each one up first:"]
@@ -17291,6 +17293,11 @@ proc ase::ui::repair_confirm_lines {plan apply} {
     if {[dict get $f editable]} {
       lappend out "  $name: [ase::include_change_words $f]\
  Backup: [dict get $f backup]"
+      ## ⚠ A FILE OTHER BENCHES INCLUDE TOO IS SAID SO (fix round 3, finding
+      ## 10): the rewrite reaches every state that reads it, and those benches
+      ## may still name the old instance (ase::include_plan_shared)
+      set sw [ase::include_shared_words $f]
+      if {$sw ne {}} { lappend out "    Shared: $sw." }
     } else {
       lappend out "  $name: not editable, because [dict get $f why]; left as it is."
     }
@@ -17369,6 +17376,7 @@ proc ase::ui::repair_apply {key} {
       set plan [ase::preflight_include_plan $st $scan [dict get $scan itexts] \
                   [ase::rundir $st]]
     }
+    catch {set plan [ase::include_plan_shared $plan [ase::session_path $key]]}
   }
   foreach f $plan {
     if {[dict get $f editable] && [dict get $f n]} {
@@ -17419,40 +17427,31 @@ proc ase::ui::repair_confirm {key scan plan} {
 # dialog and in the CIW and changes nothing; the dialog and the banner stay.
 # NOTHING HALF-DONE (the ruling): a session half that raises after the files
 # were written puts the files back and drops their backups
-# (ase::include_unapply). -> the number of include names rewritten, or -1 on a
-# refusal.
+# (ase::include_unapply). Both halves are ase::preflight_commit_both, which the
+# console's ase::preflight_fix_all runs too. -> the number of include names
+# rewritten, or -1 on a refusal.
 proc ase::ui::repair_confirm_ok {key} {
   variable wins
   variable fixconf
   if {![info exists fixconf($key)] || ![dict exists $wins $key]} { return -1 }
   lassign $fixconf($key) scan plan
   set w [dict get $wins $key].fixconf
-  set r [ase::include_apply_plan $plan]
-  if {![dict get $r ok]} {
-    catch {$w.status configure -text [dict get $r why]}
-    catch {::ase::echo "ase: [dict get $r why]" error}
+  set c [ase::preflight_commit_both $key $scan $plan]
+  if {![dict get $c ok]} {
+    catch {$w.status configure -text [dict get $c why]}
+    catch {::ase::echo "ase: [dict get $c why]" error}
     return -1
   }
-  set a {}
-  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
-  set sess [expr {$a ne {} && [dict get $a n]}]
-  if {$sess && [catch {ase::preflight_session_commit $key $scan} ce]} {
-    set why "the session corrections could not be applied ($ce), so the include\
- files were put back as they were and nothing was changed."
-    set ub [ase::include_unapply $plan $r]
-    if {$ub ne {}} { append why " But $ub." }
-    catch {$w.status configure -text $why}
-    catch {::ase::echo "ase: $why" error}
-    return -1
-  }
-  foreach l [ase::include_apply_said $r] { catch {::ase::echo $l} }
-  ase::ui::log_action [list ase::preflight_fix_includes $key]
-  if {$sess} { ase::ui::log_action [list ase::preflight_fix_session $key] }
+  ## ⚠ ONE LOG LINE, THE COMMAND THAT IS THIS PRESS (fix round 3, findings 3
+  ## and 8). It logged the two halves, files then session, and a replay of
+  ## those re-scans between them: on a bench where only the two halves
+  ## together decide the rename, the second half then finds no correction.
+  ase::ui::log_action [list ase::preflight_fix_all $key]
   unset fixconf($key)
   catch {destroy $w}
   ase::ui::repair_banner $key {}
   catch {ase::ui::populate $key}
-  return [dict get $r n]
+  return [dict get $c files]
 }
 
 # Cancel / ESC / the window's close: nothing changes, the banner stays.

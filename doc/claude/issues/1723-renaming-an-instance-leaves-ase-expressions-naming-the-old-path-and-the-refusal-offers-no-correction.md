@@ -204,7 +204,8 @@ is its child, the commit that adds the "Fix round 2" section.
 deduplicated by resolved path) and hands them to the scan. `ase::include_card_idents` (pure) gives every
 voltage name a top-level `.nodeset`/`.ic` card assigns, through `+` continuations (comment and blank
 lines between are transparent, as ngspice drops them before joining), with its line, byte offsets and
-value. `ase::preflight_scan` makes an `incrows` row of every one that resolves `absent`; a row with
+value. *(⚠ False for a line that starts with `;` once its leading blanks are gone: ngspice reads that as a
+card, which ends the `.nodeset`. Fix round 3, finding 1.)* `ase::preflight_scan` makes an `incrows` row of every one that resolves `absent`; a row with
 `miss` refuses and joins `ase::preflight_rename_solve` as a decider beside the output rows (every rename
 record now counts `includes`). The refusal head when only include rows refuse is "ase: REFUSED — N
 .nodeset/.ic name(s) in M include file(s) stop(s) at an instance this circuit does not have…", which
@@ -498,6 +499,127 @@ The fixes:
   alone (CRLF ↔ LF) is not seen. The window keeps a copy of what it read while it is open.
 - **`G2sens` in `test_ase_dialogs` is red on the display arm**, the same row and values at
   `a464b7f6b`, at `2f1b8bca7` and here. That is issue 1436, not this one.
+
+## Fix round 3 (2026-11-21): the third review's confirmed findings
+
+A review of fix round 2 (`96c8ec091`) confirmed ten findings, nine distinct defects (3 and 8 are one).
+All ten are fixed below. Each is a row that was written first and watched red on `96c8ec091`'s code:
+21 FAILED of 349 on the counted arm, the 328 older rows all green, and `FX1723Cb3` and `FX1723Ce3` red
+on the display arm. The sabotage sweep is `doc/claude/issue_1723/receipts/sabotage_sweep_fix_round_3.md`.
+
+**Measured for this round** (hand decks, `HOME` throwaway, `DISPLAY` unset). The deck holds `xdut`
+(`.subckt sub p q`, internal node `a1`) and no `x1`, and `.include`s a file holding the card.
+`/usr/bin/ngspice` 45.2 and the fork (ver_53, run with `-D casemode=distinguish -D casemodewrite`) agree on
+every line except the BOM line:
+
+| the include holds | what ngspice does | rc |
+|---|---|---|
+| `.nodeset v(b)=0.3`, then `  ; note` (or a tab before `;`, or ` ;note`), then `+ v(x1.r)={2}` | the `;` line is a card that ends the `.nodeset`; the `+` line joins the `;` card, which becomes a comment. No warning for `x1.r` | 0 |
+| the same with `  * note` in the middle | joined across the `*` line: the warning for `x1.r`, then the syntax error | 1 |
+| `.nodeset v(b)=0.3`, `  * note \\` (or `  $ note \\`), then `R9 out 0 1meg` | the indented comment continues nothing, so the element card is not joined | 0 |
+| `.nodeset v(b)=0.3 \\`, then `R9 out 0 1meg` (the control) | joined, and the syntax error | 1 |
+| `.nodeset all=0.5 v(x1.q)={vsup}` | no warning: nothing after `all=` is read | 0 |
+| `.nodeset all=0.5`, then `+ v(x1.q)={vsup} v(xdut.q)=0.2` | the same | 0 |
+| `.nodeset v(x1.q)={vsup}` (the control) | the warning, then the syntax error | 1 |
+| `.ic all=0.5 v(xdut.q)=1` | `.ic syntax error` at `all` (`.ic` has no `all` form) | 1 |
+| `.nodeset v(b)=0.3 v(xdut.nosuch)=`, then `+ 1.5` | joined to `v(xdut.nosuch)=1.5`: the warning, and the name dropped | 0 |
+| the same with `v(xdut.nosuch)`, then `+ =1.5` | the same | 0 |
+| `<UTF-8 BOM>.nodeset v(b)=0.3 v(x1.r)={2}`, on line 1 | ver_53: "encoding: UTF-8 with BOM", the warning, the syntax error. 45.2: "unknown device type" | 1 / 1 |
+| `<BOM>* hdr`, then `.nodeset v(b)=0.3 v(x1.r)={2}` | ver_53: the warning, then the syntax error | 1 |
+| `.if (sel == 1)` / `.nodeset v(xalt.a1)={vsup-0.1}` / `.else` / `.nodeset v(xdut.a1)={vsup-0.1}` / `.endif`, with `sel=0` | the branch is not taken; no warning | 0 |
+| the same with `.if (sel == 0)` | the warning for `xalt.a1`, then the syntax error | 1 |
+
+Read against ngspice's source (ver_53): `readline()` in `src/frontend/inpcom.c` drops the blanks, tabs and
+carriage returns a line starts with, before every pass the 1723 reader ports. `inp_stripcomments_line`
+never cuts a `;` at index 0. `inp_stitch_continuation_lines` treats a `;`-led line as a regular card, and
+`inp_check_syntax` later turns it into a `*` line. `inp_read` strips a UTF-8 BOM from a file's first line.
+In `src/spicelib/parser/inppas3.c`, INPpas3's `.nodeset` loop handles `all` by setting every node and then
+`break`ing out of the card. `src/frontend/inp.c`'s `recifeval` comments out every `.if` branch that is not
+taken.
+
+The fixes:
+
+1. **An indented `;` line was read as a comment line** (finding 1). `ase::spice_lines` now drops the
+   leading blanks first, as `readline()` does, so every column-0 test reads the first character after
+   them. `  ; note` is now a card that ends the `.nodeset`, and an indented `* note \\` continues
+   nothing. `ase::include_top_words` takes no element word from a card ngspice turns into a comment
+   (a leading `;`, or one of the "unusual leading characters"), at column 0 or indented. Rows
+   `PF1723r9`, `PF1723r10`, `PF1723r11` and `PF1723s11` (the finding's bench: no refusal, nothing to
+   rewrite).
+2. **Names after `.nodeset all=<v>` were read** (finding 2). `ase::include_card_names` (new, pure) reads
+   one stitched card the way INPpas3 does. On a `.nodeset` card it reads nothing after an `all` that
+   stands as a word of its own, outside every name, value, `{...}` and quoted stretch. `.ic` is unchanged.
+   Rows `PF1723r13` and `PF1723s12`.
+3. **The two console halves depended on their order** (findings 3 and 8). `ase::preflight_strand` (new,
+   pure) computes the re-scan one half alone would leave and names every correction the other half would
+   lose. `ase::preflight_fix_includes` refuses when its rewrite would cost the session half a correction:
+   nothing is written, and the sentence names the loss and `ase::preflight_fix_all <key>`.
+   `ase::preflight_fix_session` writes exactly what it always wrote (the ruling). When that costs the
+   include half a correction, it prints a note naming every such name with the correction it just lost,
+   so the user can make it by hand, and names `ase::preflight_fix_all`. `ase::preflight_fix_all <key>`
+   (new) applies both halves from one scan through `ase::preflight_commit_both`, which the window's OK
+   now runs too. OK logs that one command, where it used to log the two halves. The refusal names
+   `ase::preflight_fix_all` whenever both halves carry corrections, and keeps the file half's own
+   sentence when only the files do. Rows `PF1723aj` to `PF1723aj5`, `PF1723t6`, and `FX1723Ce3` (display
+   arm).
+4. **A value on the next `+` line was read as no value** (finding 4). `ase::include_card_names` joins
+   the card's lines with one blank each, as `inp_stitch_continuation_lines` does, and reads the value
+   from the joined text. Every offset still maps back to the file. Row `PF1723r14` covers both shapes, a
+   blank line and a comment line between, and the caution, which now says "drops it".
+5. **A UTF-8 BOM hid the whole file** (finding 5). `ase::spice_lines` drops the BOM from line 1, as the
+   fork does, and the early out allows it. Row `PF1723r12` covers the reader, its offsets and the gate on
+   a file written binary.
+6. **A `.if` branch not taken was refused and offered for rewriting** (finding 6).
+   `ase::include_card_idents` marks every card inside a `.if` ... `.endif` block `cond 1`, nested blocks
+   included. `ase::preflight_scan` keeps such a row's missing instance as `condmiss`, not `miss`, so it
+   neither refuses, nor joins the rename search, nor is rewritten. Its caution says "inside a .if block,
+   which ASE-L does not evaluate, and the netlist has no instance 'xalt': if that branch is taken, ngspice
+   stops the run with …". Rows `PF1723r15` and `PF1723s13`.
+7. **A symlinked model file left its real folder unprotected** (finding 7).
+   `ase::include_protected_roots` now lists a models entry's folder as spelled and as resolved through its
+   last component, the PDK roots' rule. The header's claim that a models folder "needs no second form" is
+   withdrawn in place. Row `PF1723y5`.
+8. **Under `fold`, a hit line could quote a spelling the file does not hold, and an empty target**
+   (finding 9). In `ase::preflight_include_hits`, the spellings of one folded group speak as one only when
+   their rename records agree on one target. One record, counted case-blind, quotes the first spelling the
+   file itself holds. When the records disagree, each spelling the file holds is its own record with its
+   own target, and the gate counts each line's names against that target only. Rows `PF1723t7` (the
+   finding) and `PF1723t8` (two spellings with two targets). `PF1723l`, `l2` and `t4` hold the agreeing
+   case.
+9. **A shared include file was rewritten with no word about the others** (finding 10).
+   `ase::include_sharers` (new) names every other state of the same library, `<lib>/*/*/*.state`, whose
+   `includes` resolve to the same file, by any spelling and through a link to the file itself.
+   `ase::ui::repair_apply` puts the result on the plan (`ase::include_plan_shared`). The confirmation adds
+   "Shared: 2 other states of this library include it too (…), and they will read the new names.", and the
+   console commands say the same after they write. Rows `PF1723ak` and `PF1723ak2`, and `FX1723Cb3` on the
+   display arm, with a real second state view.
+10. **End to end** (`PF1723ah4`, `/usr/bin/ngspice`, check ON): an include holding an indented `;` line
+    before a `+` line, a `.nodeset all=` card and a `.if (0)` branch, all naming `x1.` with `{...}` values,
+    is no longer refused. It reaches ngspice and finishes at exit 0 with no nodeset warning, the `.if` card
+    is one caution, and the file is untouched. On `96c8ec091` this bench was refused before ngspice.
+
+## Known limits of fix round 3 (accepted)
+
+- **A `.if` condition is never evaluated.** Every absent name inside any `.if` block is a caution on every
+  Run, even in a branch ngspice will never take, and it is never refused or rewritten, even in the branch
+  that is taken. A rename that strands names inside such a block is said, and the user changes those names
+  by hand (Setup > Include Files…).
+- **`ase::preflight_fix_session` can still cost the include half its correction.** The ruling keeps what it
+  writes unchanged, so it applies and then says so: a note names every include name it stranded, with the
+  correction to make by hand. `ase::preflight_fix_all` is the console command that cannot strand either
+  half. `ase::preflight_fix_includes` refuses rather than strand.
+- **The strand check compares corrections, not states.** It asks whether every correction this scan offers
+  the other half is still offered after a re-scan, read from the texts this scan read. A file edited
+  between the two commands is not seen until the next scan.
+- **The sharer search covers one library.** `ase::include_sharers` reads `<lib>/*/*/*.state` of the
+  session's own library, and only when the session's state file has that shape, with its design cell as
+  `<cell>`. A state in another library, or an open session's unsaved `includes`, is not seen. A relative
+  include of another state resolves against that state's own run directory (peeked, never created).
+- **The BOM rule is UTF-8 only.** A UTF-16 file (which the fork also strips and reads) is not modelled. The
+  apt 45.2 build does not strip a BOM and dies on such a file anyway, so a refusal is right on both.
+- **`.nodeset all` is read as a word of its own** outside every `v(...)` name with its value, `{...}` and
+  quoted stretch. The model does not follow ngspice's tokenizer any further. A syntax error before `all`
+  ends ngspice's reading too, and the run dies anyway.
 
 Still open: **item 4** (unscheduled); **the pixels** of the Include Files window and the confirmation
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question

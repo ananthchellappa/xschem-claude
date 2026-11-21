@@ -5143,6 +5143,15 @@ R3 tail OUTP 1k
       return [llength [lsearch -all -glob [lmap e $::fx_said {lindex $e 1}] $pat]]
     }
     set fc_conf $fctop.fixconf
+    ## FX1723Cb3 (fix round 3, finding 10): ANOTHER STATE OF THIS LIBRARY
+    ## INCLUDES THE SAME FILE, by a different spelling, so the confirmation must
+    ## say the rewrite reaches it too. Written straight to disk and removed at
+    ## the band's foot.
+    library_new_view aselib nfet_clean ngspice_state_fx1723c2 ngspice_state_fx1723c2
+    set fc_sh [xschem cellview_path aselib/nfet_clean ngspice_state_fx1723c2]
+    ase::state_save $fc_sh [dict merge [ase::state_default] \
+      [dict create design {lib aselib cell nfet_clean view schematic} rundir $fc_run \
+         includes [list [list file [file join $fc_run . fc_edit.spice]]]]]
     set fc_state0 [ase::session_state $fckey]
     set fc_disk0 [fc_read $fcpath]
 
@@ -5160,6 +5169,8 @@ R3 tail OUTP 1k
       [list $fc_p1 [winfo exists $fc_conf] [wtext_fx $fc_conf.btns.proceed] [wtext_fx $fc_conf.btns.cancel] \
             [string match "*not at Session > Save State*fc_edit.spice: 2 × x1. → xdut. Backup: $fc_ed.bak*fc_mod.spice: not editable, because it is in a model file's folder ($fc_modd); left as it is.*It then rewrites 1 output row in this session*Cancel changes nothing.*" $fc_msg]] \
       {ok 1 OK Cancel 1}
+    check "FX1723Cb3 ...and names the other state of the library that includes the same file" \
+      [string match "*fc_edit.spice: 2 × x1. → xdut. Backup: $fc_ed.bak\n    Shared: 1 other state of this library includes it too (nfet_clean/ngspice_state_fx1723c2), and they will read the new names.\n*" $fc_msg] 1
     check "FX1723Cb2 ...and asking wrote nothing: files, backups, session and banner as they were" \
       [list [expr {[fc_read $fc_ed] eq $fc_edtxt}] [fc_baks] [ase::session_dirty $fckey] \
             [fx_exprs $fckey] [fx_banner_up $fctop]] \
@@ -5209,7 +5220,12 @@ R3 tail OUTP 1k
     # --- OK: back up, rewrite, then the session --------------------------------
     fc_press $fctop.fix.apply
     set ::fx_said {}
+    rename ::ase::ui::log_action ::fc_saved_log
+    set ::fc_log {}
+    proc ::ase::ui::log_action {line} { lappend ::fc_log $line }
     set fc_p4 [fc_press $fc_conf.btns.proceed]
+    rename ::ase::ui::log_action {}
+    rename ::fc_saved_log ::ase::ui::log_action
     check "FX1723Ce OK backs the file up, rewrites only its card names, leaves the model folder's file, then rewrites the session" \
       [list $fc_p4 [winfo exists $fc_conf] [fc_read $fc_ed] [expr {[fc_read $fc_ed.bak] eq $fc_edtxt}] \
             [expr {[fc_read $fc_mod] eq $fc_modtxt}] [file exists $fc_mod.bak] \
@@ -5218,6 +5234,11 @@ R3 tail OUTP 1k
     check "FX1723Ce2 ...and says each write on the CIW, the file with its backup and the session row" \
       [list [fc_said "ase: include file '$fc_ed' rewritten: 2 × x1. → xdut. The original is in '$fc_ed.bak'."] \
             [fc_said {ase: pre-flight — * rewritten to *instance 'x1' is now 'xdut'*}]] {1 1}
+    ## fix round 3, findings 3 and 8: the press is logged as the ONE command
+    ## that replays it; the two halves logged apart re-scan between them
+    check "FX1723Ce3 ...and logs the press as the one console command that replays it" \
+      $::fc_log [list [list ase::preflight_fix_all $fckey]]
+    catch {file delete -force [file dirname $fc_sh]}
 
     rename ::ase::echo {}
     rename ::fc_saved_echo ::ase::echo
@@ -5239,6 +5260,9 @@ R3 tail OUTP 1k
     }
     if {[info commands ::fc_saved_precheck] ne {}} {
       catch {rename ::ase::run_precheck {}} ; rename ::fc_saved_precheck ::ase::run_precheck
+    }
+    if {[info commands ::fc_saved_log] ne {}} {
+      catch {rename ::ase::ui::log_action {}} ; rename ::fc_saved_log ::ase::ui::log_action
     }
   }
  }
