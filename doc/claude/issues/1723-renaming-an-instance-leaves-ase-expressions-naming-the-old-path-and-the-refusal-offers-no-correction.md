@@ -173,7 +173,8 @@ real presses of OK and Cancel; an end-to-end fixture in the user's exact shape r
 | `.ic` | `{...}` | the same warning, then `Error: .ic syntax error.` | 1 | none |
 
 A plain value is therefore a guess lost without a word in ASE-L, and a `{...}` value is the user's
-crash. The same shape through ASE-L with the check switched off (`set ase_preflight 0`, row
+crash. *(The fix round below widened "`{...}`" to every value that is not a plain number; the first
+table measured only those two shapes.)* The same shape through ASE-L with the check switched off (`set ase_preflight 0`, row
 `PF1723ah`'s control) dies the same way, with `=== exit 1`.
 
 **The saved operating point restored as Seed (Simulation > Convergence…), after a rename.** Measured
@@ -211,10 +212,11 @@ file, line, card, identifier and correction. The include-hit lines and the closi
 `ase::preflight_fix_includes <key>` and Setup > Include Files…; no line says "does not edit your files".
 A row without `miss` (an absent node inside an instance that exists, or an absent top-level node) is one
 caution line from `ase::preflight_include_caution`, which says what ngspice will do (`ase::include_ngspice_clause`,
-the table above), and does not refuse. Three shapes stand down entirely: a missing top-level instance
+the table above), and does not refuse. Three shapes stood down entirely: a missing top-level instance
 or a top-level node that an include file's own element cards add (`ase::include_top_words`), and a
 case-only spelling under `distinguish` (ngspice folds a card's names to lower case, so it reaches the
-node).
+node). ⚠ **The third claim was false**, and the fix round below withdrew it: under `distinguish` the
+case-keeping fork does not fold a card's names (measured), so that spelling is now a caution.
 
 **6. Apply Corrections, after asking.** `ase::ui::repair_apply` builds the plan
 (`ase::preflight_include_plan`) and, when an editable file has edits, opens the confirmation
@@ -275,7 +277,8 @@ model file's folder, so its press stays the session-only one. The sabotage sweep
   `.nodeset` naming `x1.b1` (only `xother` has `b1`) are a `partial` fit and nothing is offered (row
   `PF1723s3`). Before item 7 the outputs alone decided.
 - Only `v(...)` names are read; a card inside a `.subckt` body of an include names that subcircuit's
-  own nodes and is not read; an inline `;` or ` $` comment ends what is read of a line.
+  own nodes and is not read; an inline `;` or ` $` comment ends what is read of a line. *(The fix
+  round below made the comment rule ngspice's own, `//` and `#` lines included.)*
 - An absent top-level node is a caution, not a refusal: an include file may add it, and the scan stands
   down only when an include file's own element card connects it.
 - Open goes through the stock `textwindow`: its Save writes in text mode, so a CRLF file comes back
@@ -284,6 +287,106 @@ model file's folder, so its press stays the session-only one. The sabotage sweep
   Revert while it is open leaves its rows stale until it is reopened.
 - Apply Corrections writes the files before the session; the session half is in-memory and is undone
   with the files if it raises.
+
+## Fix round (2026-11-21): the review's confirmed findings
+
+A review of the items 5-7 commit (`ed635d969`) confirmed thirteen findings, nine distinct defects. Each
+was made a row first, watched red on that commit's code, then fixed. The sabotage sweep is
+`doc/claude/issue_1723/receipts/sabotage_sweep_fix_round.md`.
+
+**Measured for this round** (hand decks, `HOME` throwaway, no `.spiceinit`), a `.nodeset` name on a
+node that the existing instance `xdut` does not have. `/usr/bin/ngspice` 45.2 and the fork ver_53 agree
+on every line. A name under a missing instance (`x1.q`, on 45.2) splits the same way for `1.5`,
+`{0.4}`, `'vsup'` and `vsup`, because one branch of ngspice's parser handles both shapes:
+
+| value | what ngspice does | rc |
+|---|---|---|
+| `1.5`, `-0.1`, `+1.5`, `.5`, `5.`, `1.5m`, `1.5meg`, `1e-3`, `1e+3`, `1.5V`, `1.5e-3V`; blanks around `=` or not | `Warning : Nodeset on non-existent node`, the name is dropped | 0 |
+| `{0.4}`, `{vsup}`, `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'`, the bare parameter `vsup` | the warning, then `Error: .nodeset syntax error.` | 1 |
+| empty (`v(xdut.nosuch)=`) | `Expression err`, `Cannot compute substitute`, fatal | 1 |
+| `.ic` with `1.5` / with `{0.4}`, `'vsup'`, `vsup` | the same split, `.ic syntax error.` | 0 / 1 |
+
+and, on the same decks:
+
+- `.nodeset` alone on its line (LF), names on `+` lines: joined, and a `{...}` value on a missing node
+  dies as above.
+- `.nodeset v(b)=0.5 // v(x1.q)={0.4}`, `... 0.5//v(...)`, `... ; v(...)` and `... $ v(...)`: rc 0
+  with no warning, so the name behind the comment never reaches the simulator.
+- A `#` line between a card and its `+` continuation, at column 0 or indented, is a comment line: the
+  card is joined across it.
+- `-D casemode=distinguish -D casemodewrite` on the fork (the flags ASE-L passes), `xdut` in the
+  netlist: `v(XDUT.mid)={0.4}` and `v(xdut.MID)={0.4}` give the warning and then the syntax error (rc 1).
+  `v(XDUT.mid)=0.4`, `v(xdut.MID)=0.4` and `.ic v(XDUT.mid)=0.4` give the warning only (rc 0).
+  `v(xdut.mid)={0.4}` runs clean. Under `casemode=fold`, and with no flag, every spelling reaches the
+  node.
+
+The fixes:
+
+1. **A keyword alone on its line was never read** (findings 1 and 11). The early out in
+   `ase::include_card_idents` ran without `-line`, so its `$` meant the end of the text, and `.nodeset`
+   followed by LF matched nothing; only CRLF files worked. It now ends on `\s`. Rows `PF1723r3` and
+   `PF1723s7`.
+2. **The case-only stand-down rested on a false claim** (finding 2). Under `distinguish` a name that the
+   netlist has in another case (or that differs in case from two netlist names) is now an include row
+   without `miss`: one caution naming the netlist's spelling ("which the netlist spells 'xdut.a1':
+   under case mode distinguish ngspice does not fold case, so …"). It neither refuses (the ruling refuses
+   only on a missing instance) nor is rewritten. Row `PF1723s4` moved and says why; the leg is
+   `PF1723s4b`.
+3. **`//` comments, quoted values and `#` lines** (finding 3, plus the `#` line found while fixing it).
+   `ase::spice_comment_at` (pure) is a port of ngspice's `inp_stripcomments_line` outside `.control`:
+   `;` anywhere but the first character, `//`, `$` after a blank, tab or comma, with quoted stretches
+   skipped. Both readers cut each physical line with it. A line that is only a comment, or starts with
+   `*` or `#`, is transparent. Rows `PF1723r4`, `PF1723r5` and `PF1723s7`.
+4. **The caution said "dropped" for values that stop the run** (finding 4). `ase::include_value_plain`
+   (pure) says whether a value is a plain number, and `ase::include_ngspice_clause` says the run stops
+   for every other value, quoting it ("because such a name's value must be a plain number and this one
+   is 'vsup'"). The refusal head now says the same: "…when its value is a plain number, and stops the
+   run with a syntax error when it is anything else (a {...} or '...' expression, or a parameter
+   name)". Rows `PF1723u3`, `PF1723t` and `PF1723u`.
+5. **A failed write could destroy the only copy and then say all was well** (findings 5 and 7).
+   `ase::include_apply_plan`'s failure arm now skips a file that still reads as it was
+   (`ase::include_reads_as`), writes the others back (`ase::include_write_bytes`), and deletes a backup
+   only after its file is back. If any file could not be put back, the sentence names each one with its
+   error and its kept backup ("…so their backups are kept as the only copy of what they held: …").
+   `ase::include_unapply` uses the same writer. Row `PF1723ad3`: a full disk (`/dev/full`, larger than a
+   channel buffer) after the truncation, with one leg where the other file goes back and one where it
+   does not. `PF1723ad2` still holds.
+6. **The backup took the umask's mode** (finding 6). `ase::include_backup_write` creates it exclusively
+   at 0600 and, once it is complete, gives it the original's permissions. Row `PF1723ac4` (0640 and
+   0600).
+7. **A backup that failed after its open was left behind with its channel open** (finding 8). The same
+   proc closes the channel and removes a backup it created. Row `PF1723ad4`.
+8. **A symlinked PDK root protected nothing** (findings 9 and 13). `ase::include_protected_roots` lists a
+   PDK root both as spelled and resolved through its last component. Row `PF1723y4` covers
+   `::PDK_ROOT` and `env(PDK_ROOT)` with a trailing slash.
+9. **A nested include's instance was refused as missing** (finding 10). `ase::include_top_nests` (pure)
+   finds the `.include`, `.inc` and `.lib` cards at an include file's own top level (the keywords
+   `ase::netlist_map` counts). While there is one, a missing top-level instance or node is `unknown`,
+   as in any scope carrying an include card, so it neither refuses nor cautions. Row `PF1723s5`: the
+   bench ngspice runs, the control without the nested card, a deeper missing instance that still
+   refuses, and an include inside a `.subckt` body that does not count.
+10. **The fixtures lacked the user's real include list** (finding 12). `PF1723s6` (counted, a scan and a
+    gate) and the end-to-end `PF1723ah` and `FX1723E` now put a stdcell deck first. Its `.subckt` and
+    `.SUBCKT` bodies are full of `X1` element cards, and every entry is a `$::VAR` path. Breaking
+    `ase::include_top_words`' depth, or skipping `$::VAR` entries in `ase::include_texts`, now reddens
+    them.
+
+## Known limits of the fix round (accepted)
+
+- **A case-only spelling under `distinguish` is said, not fixed.** The caution names the netlist's
+  spelling. The Run is not refused and Apply Corrections does not rewrite it: item 6 rewrites
+  rename corrections only, and no ruling covers a case rewrite of a user's file.
+- **A nested include at an include file's top level silences every missing top-level name.** It is the
+  `unknown` rule, and it is coarse: the nested file is still not followed, so a `.nodeset` on a stale
+  top-level `x1.` beside such a card is not refused either. A missing instance deeper than the top level
+  still refuses.
+- The comment port covers ngspice outside `.control` with the PS compatibility mode off. Inside a
+  `.control` block, `$` is a comment only before a blank. `newcompat.ps` turns the `$` rule off. Neither
+  is modelled, and neither is a place for a `.nodeset` card.
+- Where the platform has no `file attributes -permissions` (Windows), a backup stays 0600.
+- The stdcell deck in the user's bench (`$::SKYWATER_HVL_STDCELLS/...`) lies under neither PDK root nor
+  a models folder, so it is judged by its permissions alone, and Open shows it with Save. Apply never
+  writes it, because it carries no `.nodeset`/`.ic` card.
 
 Still open: **item 4** (unscheduled); **the pixels** of the Include Files window and the confirmation
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question

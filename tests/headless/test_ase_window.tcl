@@ -5177,9 +5177,10 @@ R3 tail OUTP 1k
 # =============================================================================
 # FX1723E -- THE USER'S SHAPE, END TO END, ON /usr/bin/ngspice, BY PRESSES
 # =============================================================================
-# Two include files, `{vsup-1.35}` values, a `+` continuation, `.nodeset` only,
-# and output rows that are already correct (the user's state after the first
-# Apply Corrections). Run is refused BEFORE ngspice; Apply, then OK; Run
+# Two nodeset include files, `{vsup-1.35}` values, a `+` continuation,
+# `.nodeset` only, and output rows that are already correct (the user's state
+# after the first Apply Corrections), behind a stdcell deck, every entry by a
+# portable `$::VAR` path (the fix round's finding 12). Run is refused BEFORE ngspice; Apply, then OK; Run
 # reaches ngspice and finishes with no nodeset warning in its log. The control
 # that makes the refusal worth having -- the same deck run with the check off
 # dies on `.nodeset syntax error` -- is PF1723ah on the counted arm.
@@ -5196,6 +5197,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [file executable /us
   set fe_dis [file join $fe_run nodeset_disabled.spice]
   w_hier_write $fe_en "* e2e bench, enabled state\n* a first guess for the dc solver\n.nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.d1)={vsup-1.35} v(x1.tail)=0.30 v(x1.tailb)=0.025\n+ v(x1.enb)=0 v(x1.enbuf)={vsup} v(x1.net1)={vsup-0.01}\n"
   w_hier_write $fe_dis "* e2e bench, disabled state\n.nodeset v(out)=0 v(x1.a1)=1.1 v(x1.d1)={vsup} v(x1.tail)=0.87 v(x1.tailb)=0.87\n+ v(x1.enb)={vsup} v(x1.enbuf)=0 v(x1.net1)={vsup}\n"
+  ## the user's list starts with a PDK stdcell deck and names every entry by a
+  ## portable `$::VAR` path (fix round, finding 12): the `X1` cards inside its
+  ## `.subckt` bodies must not stand the stale top-level `x1.` rows down
+  set ::FX1723EDIR $fe_run
+  w_hier_write [file join $fe_run stdcells.spice] "* a stdcell library\n.subckt lib_buf_1 A X VGND VPWR\nX1 A n1 VGND VPWR lib_inv_1\nX2 n1 X VGND VPWR lib_inv_1\n.ends\n.SUBCKT lib_inv_1 A Y VGND VPWR\nX1 A Y VGND VPWR lib_res\n.ENDS\n.subckt lib_res a b VGND VPWR\nR1 a b 1k\n.ends\n"
   catch {ase::sim_clear}
   ase::sim_register fx1723e /usr/bin/ngspice
   ase::sim_select fx1723e
@@ -5214,7 +5220,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {} && [file executable /us
     dict set fest outputs {{expr v(out) save 1 plot 0}}
     dict set fest measurements {}
     dict set fest models {}
-    dict set fest includes [list [list file $fe_en] [list file $fe_dis]]
+    dict set fest includes [list {file {$::FX1723EDIR/stdcells.spice}} \
+      {file {$::FX1723EDIR/nodeset_enabled.spice}} {file {$::FX1723EDIR/nodeset_disabled.spice}}]
     set fest [ase::sim_choice_set $fest entry fx1723e]
     ase::session_update $fekey $fest
     ase::session_save $fekey

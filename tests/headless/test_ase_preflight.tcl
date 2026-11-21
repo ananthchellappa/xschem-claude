@@ -3390,6 +3390,41 @@ eqcheck PF1723r2-each-names-offsets-read-back-the-name-and-a-file-with-no-card-g
   [list [lmap c $cid {expr {[pcall string range $CTXT [dgn $c start] [dgn $c end]] eq [dgn $c ident]}}] \
         [pcall ase::include_card_idents "* none\nR1 a b 1k\n.print v(x1.a1)\n"]] \
   {{1 1 1 1 1 1} {}}
+## THE KEYWORD ALONE ON ITS LINE, every name on `+` lines (fix round, finding
+## 1): a valid layout ngspice joins and dies on exactly as on the user's card.
+## LF line ends are the shape that was never read; the trailing blank and the
+## CRLF forms are the controls that always were.
+set kw_lf [pcall ase::include_card_idents ".nodeset\n+ v(x1.a1)=1.5\n+ v(x1.d1)={vsup}\n"]
+set kw_ic [pcall ase::include_card_idents "* hdr\n.IC\n+ v(x1.q)=1\n"]
+set kw_bl [pcall ase::include_card_idents ".nodeset \n+ v(x1.t)=2\n"]
+set kw_cr [pcall ase::include_card_idents ".nodeset\r\n+ v(x1.c)=3\r\n"]
+eqcheck PF1723r3-a-keyword-alone-on-its-line-with-every-name-on-continuations-is-read-with-LF-ends-too \
+  [list [lmap c $kw_lf {list [dgn $c line] [dgn $c card] [dgn $c ident] [dgn $c value]}] \
+        [lmap c $kw_ic {list [dgn $c line] [dgn $c card] [dgn $c ident]}] \
+        [lmap c $kw_bl {dgn $c ident}] [lmap c $kw_cr {dgn $c ident}]] \
+  [list [list {2 nodeset x1.a1 1.5} [list 3 nodeset x1.d1 "{vsup}"]] {{3 ic x1.q}} x1.t x1.c]
+## `//` IS AN INLINE COMMENT TO NGSPICE (fix round, finding 3; MEASURED
+## 2026-11-21: `.nodeset v(b)=0.5 // v(x1.q)={0.4}` runs at rc 0 with no
+## warning, on 45.2 and ver_53, with or without the blank before `//`). A name
+## behind one is not read, a line that is only a `//` comment is as transparent
+## as a `*` line, and a comment character inside a quoted value is not one
+## (ngspice's inp_stripcomments_line skips quoted strings).
+set CMT ".nodeset v(xdut.a1)=1.5 // was v(x1.a1)=2\n.nodeset v(b)=0.5//v(x1.q)={0.4}\n.nodeset v(a)=1\n   // a note between\n+ v(x1.b)=2\n.ic v(q)='a//b' v(x1.r)=1\n"
+eqcheck PF1723r4-a-name-behind-a-double-slash-comment-is-not-read-and-a-comment-only-line-is-transparent \
+  [list [lmap c [pcall ase::include_card_idents $CMT] {list [dgn $c line] [dgn $c ident] [dgn $c value]}] \
+        [dex [pcall ase::include_top_words [list [dict create text "R1 a b 1k // x5 q\n"]]] x5] \
+        [dex [pcall ase::include_top_words [list [dict create text "R1 a b 1k // x5 q\n"]]] r1]] \
+  [list {{1 xdut.a1 1.5} {2 b 0.5} {3 a 1} {5 x1.b 2} {6 q 'a//b'} {6 x1.r 1}} 0 1]
+## A `#` LINE IS A COMMENT LINE TO NGSPICE, indented or not (found in the fix
+## round; MEASURED 2026-11-21 on 45.2: `.nodeset v(b)=0.5`, `  # a note`, then
+## `+ v(xdut.nosuch)={0.4}` is joined across the `#` line and dies on the
+## syntax error). So it is transparent to the reader, and its words are not an
+## element card's.
+eqcheck PF1723r5-a-hash-line-is-a-comment-line-the-card-continues-across-it \
+  [list [lmap c [pcall ase::include_card_idents ".nodeset v(a)=1\n  # the a1 note\n+ v(x1.h)=2\n"] {dgn $c ident}] \
+        [dex [pcall ase::include_top_words [list [dict create text "# the a1 note\nR1 p q 1k\n"]]] a1] \
+        [dex [pcall ase::include_top_words [list [dict create text "# the a1 note\nR1 p q 1k\n"]]] r1]] \
+  {{a x1.h} 0 1}
 
 ## --- the scan: every absent include name is a row ---------------------------
 set RDI [file join $tmp run_1723i]
@@ -3427,10 +3462,15 @@ set scp [pcall ase::preflight_scan $stp $NLR [pcall ase::include_texts $stp $RDI
 eqcheck PF1723s3-an-include-row-decides-the-rename-as-an-output-row-does \
   [lmap g [dg $scp renames] {list [dgn $g fit] [dgn $g candidates] [dgn $g outputs] [dgn $g includes]}] \
   {{partial {xdut xother} 1 1}}
-## the three stand-downs, each beside the control that makes it count: an
-## instance an include ADDS (`x5 ...`), a top-level node only an include
-## connects (`V5 vsup5 0 1.8`), and a case-only spelling under `distinguish`
-## (ngspice folds a card's names to lower case, so it reaches the node)
+## the two stand-downs, each beside the control that makes it count: an
+## instance an include ADDS (`x5 ...`) and a top-level node only an include
+## connects (`V5 vsup5 0 1.8`). ⚠ MOVED in the fix round (finding 2): this row
+## also asserted a THIRD stand-down, a case-only spelling under `distinguish`,
+## on the claim that ngspice folds a card's names to lower case. MEASURED
+## 2026-11-21 on ver_53 with `-D casemode=distinguish -D casemodewrite` (the
+## flags ASE-L passes): it does not -- `v(XDUT.mid)={0.4}` with `xdut` in the
+## netlist is `Nodeset on non-existent node`, then `.nodeset syntax error`,
+## rc 1. That leg is PF1723s4b now, and it asserts the caution.
 proc ri_rows {txt} {
   set f [file join $::RDI ns_sd.spice]
   putfile $f $txt
@@ -3441,18 +3481,83 @@ set sd_a [ri_rows "x5 IN OUT rn_amp\n.nodeset v(x5.a1)=1\n"]
 set sd_ac [ri_rows ".nodeset v(x5.a1)=1\n"]
 set sd_b [ri_rows "V5 vsup5 0 1.8\n.nodeset v(vsup5)=1.8\n"]
 set sd_bc [ri_rows ".nodeset v(vsup5)=1.8\n"]
+eqcheck PF1723s4-what-the-circuit-netlist-cannot-show-stands-down \
+  [list $sd_a $sd_ac $sd_b $sd_bc] {0 1 0 1}
+## A CASE-ONLY SPELLING UNDER `distinguish` IS A CAUTION NAMING THE NETLIST'S
+## SPELLING (finding 2): not a refusal (it has no `miss`, and the ruling refuses
+## only on a missing instance), never silent, never rewritten.
 set ::sim_case_mode distinguish
-set sd_c [ri_rows ".nodeset v(XDUT.a1)=1\n"]
-set sd_cc [ri_rows ".nodeset v(XDUT.nosuch)=1\n"]
+set NSCS [file join $RDI ns_case.spice]
+putfile $NSCS ".nodeset v(XDUT.a1)={0.4} v(xdut.A1)=0.4\n"
+set stcs [ri_state [list [list file $NSCS]]]
+set sccs [pcall ase::preflight_scan $stcs $NLR [pcall ase::include_texts $stcs $RDI]]
+lassign [rn_gate $stcs] rccs ecs
 set ::sim_case_mode fold
-eqcheck PF1723s4-what-the-circuit-netlist-cannot-show-or-ngspice-reaches-anyway-stands-down \
-  [list $sd_a $sd_ac $sd_b $sd_bc $sd_c $sd_cc] {0 1 0 1 0 1}
+eqcheck PF1723s4b-a-case-only-spelling-under-distinguish-is-a-caution-naming-the-netlists-spelling \
+  [list [lmap r [dg $sccs incrows] {list [dgn $r ident] [dex $r miss] [dgn $r spelled] [dgn $r correction]}] \
+        $rccs [said_count {ase: caution:*}] \
+        [said_count "ase: caution: include file '[file normalize $NSCS]' line 1: .nodeset names 'XDUT.a1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is '{0.4}'."] \
+        [said_count "ase: caution: include file '[file normalize $NSCS]' line 1: .nodeset names 'xdut.A1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice drops it with a 'non-existent node' warning, so that guess is lost."]] \
+  {{{XDUT.a1 0 xdut.a1 {}} {xdut.A1 0 xdut.a1 {}}} 0 2 1 1}
+## A NESTED `.include` AT AN INCLUDE FILE'S TOP LEVEL (fix round, finding 10).
+## The nested file is not followed (a carried-over limit), so what it adds at
+## the top level cannot be seen -- the include-bearing-scope ruling of
+## ase::netlist_map_resolve applied to the top scope: a missing TOP-LEVEL
+## instance or node is `unknown` and stands down. MEASURED 2026-11-21:
+## /usr/bin/ngspice runs `x5` added by a nested include, with `.nodeset
+## v(x5.a1)=1`, at rc 0 and no warning. The control is the same pair with the
+## `.include` line removed, and a missing instance DEEPER than the top level
+## still refuses, nesting or not.
+proc ri_rows2 {txts} {
+  set incs {}
+  set i 0
+  foreach t $txts {
+    set f [file join $::RDI ns_sd2_[incr i].spice]
+    putfile $f $t
+    lappend incs [list file $f]
+  }
+  set st [ri_state $incs]
+  set sc [pcall ase::preflight_scan $st $::NLR [pcall ase::include_texts $st $::RDI]]
+  lassign [rn_gate $st] rc e
+  return [list [llength [dg $sc incrows]] $rc]
+}
+putfile [file join $RDI stim_more.spice] "x5 IN OUT2 rn_amp\n"
+eqcheck PF1723s5-a-nested-include-at-an-include-files-top-level-makes-a-missing-top-level-name-unknown \
+  [list [ri_rows2 [list ".include stim_more.spice\n" ".nodeset v(x5.a1)=1\n"]] \
+        [ri_rows2 [list "* no nested include\n" ".nodeset v(x5.a1)=1\n"]] \
+        [ri_rows2 [list ".INC stim_more.spice\n" ".nodeset v(vsup9)=1\n"]] \
+        [ri_rows2 [list ".include stim_more.spice\n" ".nodeset v(xdut.x9.a)=1\n"]] \
+        [ri_rows2 [list ".subckt inner a\n.include stim_more.spice\n.ends\n" ".nodeset v(x5.a1)=1\n"]]] \
+  {{0 0} {1 1} {0 0} {1 1} {1 1}}
+## THE USER'S INCLUDE LIST, AS IT REALLY IS (fix round, finding 12): a PDK
+## stdcell deck first -- `.subckt` bodies full of `X1 ...` element cards, some
+## spelled `.SUBCKT`/`.ENDS` -- then the stale nodeset file, both by a portable
+## `$::VAR` path the scan must expand. Those `X1` cards name each subcircuit's
+## OWN instance, so they must never stand the top-level `x1.` rows down.
+set ::PF1723LIB [file join $RDI lib1723]
+file mkdir $::PF1723LIB
+putfile [file join $::PF1723LIB stdcells.spice] "* a stdcell library\n.subckt lib_buf_1 A X VGND VPWR\nX1 A n1 VGND VPWR lib_inv_1\nX2 n1 X VGND VPWR lib_inv_1\n.ends\n.SUBCKT lib_inv_1 A Y VGND VPWR\nX1 A Y VGND VPWR lib_res\n.ENDS\n.subckt lib_res a b VGND VPWR\nR1 a b 1k\n.ends\n"
+putfile [file join $::PF1723LIB nodeset_enabled.spice] ".nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.tail)={vsup-1.35}\n+ v(x1.mid)=0\n"
+set stlib [ri_state [list {file {$::PF1723LIB/stdcells.spice}} {file {$::PF1723LIB/nodeset_enabled.spice}}]]
+set itlib [pcall ase::include_texts $stlib $RDI]
+set sclib [pcall ase::preflight_scan $stlib $NLR $itlib]
+lassign [rn_gate $stlib] rclib elib
+eqcheck PF1723s6-a-stdcell-deck-of-subckt-bodies-with-X1-cards-by-a-portable-path-stands-nothing-down \
+  [list [llength $itlib] [dex [pcall ase::include_top_words $itlib] x1] \
+        [lmap r [dg $sclib incrows] {list [dgn $r ident] [dex $r miss] [dgn $r correction]}] $rclib] \
+  {2 0 {{x1.a1 1 xdut.a1} {x1.tail 1 xdut.tail} {x1.mid 1 xdut.mid}} 1}
+## and the reader's two fix-round shapes reach the scan and the gate: the
+## keyword-alone card refuses, the name behind `//` does not
+eqcheck PF1723s7-the-keyword-alone-card-refuses-and-a-name-behind-a-double-slash-does-not \
+  [list [ri_rows2 [list ".nodeset\n+ v(x1.a1)=1.5\n+ v(x1.tail)={vsup}\n"]] \
+        [ri_rows2 [list ".nodeset v(xdut.a1)=1.5 // was v(x1.a1)=2\n"]]] \
+  {{2 1} {0 0}}
 
 ## --- the gate: refused before ngspice, by the include alone ------------------
 lassign [rn_gate $STI] rct1 et1
 eqcheck PF1723t-correct-outputs-and-a-stale-include-are-refused-by-the-include-alone \
   [list $rct1 \
-        [string match {ase: REFUSED — 4 .nodeset/.ic names in 2 include files stop at an instance this circuit does not have. ngspice drops each such name with a warning, and stops the run with a syntax error when its value is a {...} expression. Nothing was generated*} $et1] \
+        [string match {ase: REFUSED — 4 .nodeset/.ic names in 2 include files stop at an instance this circuit does not have. ngspice drops each such name with a warning when its value is a plain number, and stops the run with a syntax error when it is anything else (a {...} or '...' expression, or a parameter name). Nothing was generated*} $et1] \
         [said_count {ase: REFUSED — * output expression*}] \
         [llength [glob -nocomplain -directory $RDI *_ase.*]]] {1 1 0 0}
 eqcheck PF1723t2-each-refused-name-gets-its-own-line-with-file-line-name-and-correction \
@@ -3466,13 +3571,30 @@ eqcheck PF1723t3-the-refusal-names-the-button-the-console-command-and-the-door-a
         [said_count {*does not edit your files*}] [said_count {*there yourself*}]] {1 0 0}
 eqcheck PF1723u-an-absent-node-in-an-instance-that-exists-is-a-caution-saying-what-ngspice-will-do \
   [list [said_count "ase: caution: include file '$NSB' line 3: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice drops it with a 'non-existent node' warning, so that guess is lost."] \
-        [said_count "ase: caution: include file '$NSB' line 4: .ic names 'nosuchtop', which the netlist does not have; ngspice stops the run with '.ic syntax error' when such a name carries a {...} value, as this one does."] \
+        [said_count "ase: caution: include file '$NSB' line 4: .ic names 'nosuchtop', which the netlist does not have; ngspice stops the run with '.ic syntax error', because such a name's value must be a plain number and this one is '{vsup}'."] \
         [said_count {ase: caution:*}]] {1 1 2}
 set NSC [file join $RDI ns_c.spice]
 putfile $NSC ".nodeset v(xdut.nosuch)=1\n"
 lassign [rn_gate [ri_state [list [list file $NSC]]]] rcu eu
 eqcheck PF1723u2-and-alone-it-does-not-refuse-the-run-is-let-through-with-the-one-caution \
   [list $rcu [said_count {ase: caution:*}] [said_count {ase: REFUSED*}]] {0 1 0}
+## WHAT NGSPICE DOES, BY THE VALUE'S SHAPE (fix round, finding 4). MEASURED
+## 2026-11-21, identically on /usr/bin/ngspice 45.2 and ver_53, a `.nodeset`
+## (and `.ic`) name on a node an existing instance does not have: a plain
+## number -- `1.5`, `-0.1`, `1.5m`, `1e-3`, `1.5V`, blanks around the `=` or
+## not -- is dropped with the warning at rc 0; ANYTHING ELSE -- `{0.4}`,
+## `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'`, the bare parameter `vsup` -- draws the
+## warning and then the syntax error, rc 1. The table is the receipt's.
+eqcheck PF1723u3-the-caution-says-the-run-stops-for-every-value-but-a-plain-number \
+  [list [lmap v [list 1.5 -0.1 1.5m 1e-3 1.5V "{0.4}" "{vsup-0.1}" 'vsup-0.1' '1.5' vsup {}] \
+           {pcall ase::include_value_plain $v}] \
+        [pcall ase::include_ngspice_clause nodeset vsup] \
+        [pcall ase::include_ngspice_clause ic 'vsup'] \
+        [pcall ase::include_ngspice_clause ic 1e-3]] \
+  [list {1 1 1 1 1 0 0 0 0 0 0} \
+        "ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is 'vsup'" \
+        "ngspice stops the run with '.ic syntax error', because such a name's value must be a plain number and this one is ''vsup''" \
+        "ngspice drops it with a 'non-existent node' warning, so that initial condition is lost"]
 set NSD [file join $RDI ns_d.spice]
 putfile $NSD ".nodeset v(x1.a1)=1\n"
 lassign [rn_gate [ri_state [list [list file $NSD]]]] rcx ex1
@@ -3545,6 +3667,29 @@ eqcheck PF1723y3-on-disk-a-plain-file-is-editable-a-link-into-the-pdk-and-a-read
   [list {} "it is under the PDK ($PDKD)" {it is read-only}]
 if {!$ro_measurable} { puts "skip: PF1723y3 read-only leg (this user can write a 0444 file)" }
 file attributes $ROF -permissions 0644
+## A PDK ROOT THAT IS ITSELF A SYMBOLIC LINK (fix round, findings 9 and 13).
+## The include path resolves through the link (`file normalize` resolves every
+## component but the last), so the root must be compared resolved too, or every
+## file under a linked PDK_ROOT reads as editable and opens with Save. Both
+## spellings of the root are kept: a root's own name and where it points.
+set RPDK [file normalize [file join $tmp real_pdk1723]]
+file mkdir [file join $RPDK libs]
+putfile [file join $RPDK libs x.spice] ".nodeset v(x1.a1)=1\n"
+set LPDK [file join $tmp pdk_link1723]
+catch {file delete $LPDK}
+file link -symbolic $LPDK $RPDK
+set ::PDK_ROOT $LPDK
+set lpinc [dgn [pcall ase::include_resolve {$::PDK_ROOT/libs/x.spice} $RDI] path]
+set lpv1 [pcall ase::include_edit_verdict $lpinc [pcall ase::include_edit_facts $lpinc] \
+            [pcall ase::include_protected_roots [ri_state {}] $RDI]]
+unset ::PDK_ROOT
+set ::env(PDK_ROOT) $LPDK/
+set lpv2 [pcall ase::include_edit_verdict $lpinc [pcall ase::include_edit_facts $lpinc] \
+            [pcall ase::include_protected_roots [ri_state {}] $RDI]]
+unset ::env(PDK_ROOT)
+eqcheck PF1723y4-a-file-under-a-symlinked-pdk-root-is-not-editable-by-either-variable \
+  [list [expr {$lpinc eq [file join $RPDK libs x.spice]}] $lpv1 $lpv2] \
+  [list 1 "it is under the PDK ($RPDK)" "it is under the PDK ($RPDK)"]
 
 ## --- the backup's name -------------------------------------------------------
 set BKF [file join $RDI bk.spice]
@@ -3658,6 +3803,109 @@ if {[file writable $F2]} {
 }
 file attributes $F2 -permissions 0644
 
+## --- the press's failure arms, driven by a write that fails AFTER its open ---
+## (fix round, findings 5, 7 and 8). PF1723ad2's 0444 file fails at `open`,
+## before anything is truncated; a full disk fails at `puts`/`close`, after
+## `open w` has already truncated the file. `::ase::open` shadows the global
+## `open` for the procs of the ase namespace only, so each leg routes the
+## writes it names to /dev/full (every write: ENOSPC) and passes every other
+## open through; it is deleted at the leg's foot.
+proc fo_plan {texts} {
+  set incs {}
+  set ps {}
+  set i 0
+  foreach t $texts {
+    set f [file normalize [file join $::RDI ns_fo[incr i].spice]]
+    foreach b [glob -nocomplain $f.bak*] { file delete $b }
+    writebin $f $t
+    lappend incs [list file $f]
+    lappend ps $f
+  }
+  set st [ri_state $incs]
+  set it [pcall ase::include_texts $st $::RDI]
+  set sc [pcall ase::preflight_scan $st $::NLR $it]
+  return [list $ps [pcall ase::preflight_include_plan $st $sc $it $::RDI]]
+}
+if {![file writable /dev/full]} {
+  puts "skip: PF1723ad3 PF1723ad4 (no /dev/full to make a write fail after its open)"
+} else {
+  set FOA ".nodeset v(x1.a1)=1\n"
+  set FOB ".nodeset v(x1.tail)=0\n[string repeat "* padding past one channel buffer\n" 400]"
+  ## B's write fails after the truncation; A's put-back succeeds (leg 1) or
+  ## fails too (leg 2). A backup is deleted only when its file was put back:
+  ## otherwise it is the only copy, and the sentence names it. B is larger than
+  ## a channel buffer, so its writes fail at `puts` itself and a channel left
+  ## open there shows in the riding count.
+  foreach leg {1 2} {
+    lassign [fo_plan [list $FOA $FOB]] fops foplan
+    lassign $fops ::FOPA ::FOPB
+    set ::fo_aw 0
+    set ::fo_afail [expr {$leg == 2}]
+    proc ::ase::open {args} {
+      set p [lindex $args 0]
+      set m [lindex $args 1]
+      if {$m eq {w} && $p eq $::FOPB} {
+        close [::open $p w]
+        return [::open /dev/full w]
+      }
+      if {$m eq {w} && $p eq $::FOPA && [incr ::fo_aw] >= 2 && $::fo_afail} {
+        return -code error "simulated EIO putting a back"
+      }
+      return [::open {*}$args]
+    }
+    set foch [llength [file channels]]
+    set fo($leg) [pcall ase::include_apply_plan $foplan]
+    rename ::ase::open {}
+    set fo($leg,state) [list [llength $foplan] [dgn $fo($leg) ok] \
+      [expr {[readbin $::FOPA] eq $FOA}] [file exists $::FOPA.bak] \
+      [expr {[readbin $::FOPA.bak] eq $FOA}] \
+      [file exists $::FOPB.bak] [expr {[readbin $::FOPB.bak] eq $FOB}] \
+      [expr {[llength [file channels]] - $foch}]]
+  }
+  eqcheck PF1723ad3-a-file-that-cannot-be-put-back-keeps-its-backup-and-the-sentence-names-it \
+    [list $fo(1,state) \
+          [string match "'ns_fo2.spice' could not be written (*no space left on device*). These include files could not be put back, so their backups are kept as the only copy of what they held: 'ns_fo2.spice' (*; its original is in '$::FOPB.bak')." [dgn $fo(1) why]] \
+          $fo(2,state) \
+          [string match "*could not be put back, so their backups are kept*'ns_fo1.spice' (simulated EIO putting a back; its original is in '$::FOPA.bak'), 'ns_fo2.spice' (*; its original is in '$::FOPB.bak')." [dgn $fo(2) why]] \
+          [string match {*every file was put back*} "[dgn $fo(1) why][dgn $fo(2) why]"]] \
+    [list {2 0 1 0 0 1 1 0} 1 {2 0 0 1 1 1 1 0} 1 0]
+  ## a BACKUP whose open succeeds and whose write then fails: removed, its
+  ## channel closed, and "nothing was changed" is then true. A's text is larger
+  ## than a channel buffer, so the failure is at `puts` itself (the leak) and
+  ## not only at `close`.
+  set FOBIG ".nodeset v(x1.a1)=1\n[string repeat "* padding past one channel buffer\n" 400]"
+  lassign [fo_plan [list $FOBIG]] fops foplan
+  set ::FOPA [lindex $fops 0]
+  proc ::ase::open {args} {
+    set p [lindex $args 0]
+    if {[string match $::FOPA.bak* $p] && [string first CREAT [lindex $args 1]] >= 0} {
+      close [::open {*}$args]
+      return [::open /dev/full w]
+    }
+    return [::open {*}$args]
+  }
+  set foch [llength [file channels]]
+  set fo4 [pcall ase::include_apply_plan $foplan]
+  rename ::ase::open {}
+  eqcheck PF1723ad4-a-backup-that-fails-after-its-open-is-removed-and-its-channel-closed \
+    [list [dgn $fo4 ok] \
+          [string match "the backup '$::FOPA.bak' could not be written (*), so nothing was changed." [dgn $fo4 why]] \
+          [glob -nocomplain $::FOPA.bak*] [expr {[llength [file channels]] - $foch}] \
+          [expr {[readbin $::FOPA] eq $FOBIG}]] \
+    {0 1 {} 0 1}
+}
+## THE BACKUP KEEPS THE ORIGINAL'S MODE (fix round, finding 6): a private
+## include (0640, 0600) must not get a world-readable `.bak` beside it.
+lassign [fo_plan [list ".nodeset v(x1.a1)=1\n" ".nodeset v(x1.tail)=0\n"]] fops foplan
+file attributes [lindex $fops 0] -permissions 0640
+file attributes [lindex $fops 1] -permissions 0600
+set fo5 [pcall ase::include_apply_plan $foplan]
+eqcheck PF1723ac4-each-backup-has-its-originals-mode-and-the-rewritten-file-keeps-it \
+  [list [dgn $fo5 ok] \
+        [lmap f $fops {list [file attributes $f -permissions] [file attributes $f.bak -permissions]}]] \
+  {1 {{00640 00640} {00600 00600}}}
+foreach f $fops { catch {file attributes $f -permissions 0644} }
+
 ## --- the console command for the file half, beside the session one -----------
 set RDF [file join $tmp run_1723f]
 file mkdir $RDF
@@ -3706,8 +3954,9 @@ eqcheck PF1723ag3-the-folder-shown-is-only-peeked-a-state-with-no-run-directory-
   [list [file normalize $RDI] 1]
 
 ## --- PF1723ah: the user's shape, end to end, on /usr/bin/ngspice ------------
-## Two include files, `{vsup-1.35}` values, a `+` continuation, `.nodeset` only,
-## correct outputs. Stale: refused before ngspice, nothing generated. The
+## Two nodeset include files, `{vsup-1.35}` values, a `+` continuation,
+## `.nodeset` only, correct outputs, and (fix round) a stdcell deck ahead of
+## them, every entry by a portable `$::VAR` path. Stale: refused before ngspice, nothing generated. The
 ## CONTROL (the check switched off) reaches ngspice and dies on the syntax
 ## error, which is what makes the refusal worth having. Fixed through the
 ## console command: the run completes with no nodeset warning in its log.
@@ -3724,13 +3973,19 @@ if {![file executable $NG]} {
   set DISF [file join $RDE nodeset_disabled.spice]
   putfile $ENF "* e2e bench, enabled state\n* a first guess for the dc solver\n.nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.d1)={vsup-1.35} v(x1.tail)=0.30 v(x1.tailb)=0.025\n+ v(x1.enb)=0 v(x1.enbuf)={vsup} v(x1.net1)={vsup-0.01}\n"
   putfile $DISF "* e2e bench, disabled state\n.nodeset v(out)=0 v(x1.a1)=1.1 v(x1.d1)={vsup} v(x1.tail)=0.87 v(x1.tailb)=0.87\n+ v(x1.enb)={vsup} v(x1.enbuf)=0 v(x1.net1)={vsup}\n"
+  ## the user's list really starts with the PDK stdcell deck, and every entry is
+  ## a portable `$::VAR` path (fix round, finding 12): `X1` element cards inside
+  ## its `.subckt` bodies must not stand the stale top-level `x1.` rows down
+  set ::PF1723E $RDE
+  putfile [file join $RDE stdcells.spice] "* a stdcell library\n.subckt lib_buf_1 A X VGND VPWR\nX1 A n1 VGND VPWR lib_inv_1\nX2 n1 X VGND VPWR lib_inv_1\n.ends\n.SUBCKT lib_inv_1 A Y VGND VPWR\nX1 A Y VGND VPWR lib_res\n.ENDS\n.subckt lib_res a b VGND VPWR\nR1 a b 1k\n.ends\n"
   pcall ase::sim_clear
   pcall ase::sim_register pf1723e $NG
   pcall ase::sim_select pf1723e
   putfile [file join $RDE e2e.state] \
     "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
  analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}}\
- includes [list [list [list file $ENF] [list file $DISF]]]"
+ includes [list [list {file {$::PF1723E/stdcells.spice}} {file {$::PF1723E/nodeset_enabled.spice}}\
+                      {file {$::PF1723E/nodeset_disabled.spice}}]]"
   pcall ase::session_open e2ek [file join $RDE e2e.state]
   proc e2e_st {} { return [ase::sim_choice_set [ase::session_state e2ek] entry pf1723e] }
   proc e2e_log {} { return [readfile [file join $::RDE e2e_tb_ase.log]] }

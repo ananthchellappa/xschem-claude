@@ -16980,10 +16980,13 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
   ## refusing it). `unknown` is not a row, which carries over the
   ## include-bearing-scope ruling -- and a missing TOP-LEVEL instance that an
   ## include file itself defines (`x5 ...` in a stimulus file) stands down the
-  ## same way, because the circuit netlist cannot show it.
+  ## same way, because the circuit netlist cannot show it; so does every
+  ## missing top-level name once an include file carries a nested include card
+  ## of its own (ase::include_top_nests), whose additions cannot be seen.
   set incrows {}
   if {[llength $itexts]} {
     set topdef [ase::include_top_words $itexts]
+    set topnest [expr {[llength [ase::include_top_nests $itexts]] > 0}]
     foreach it $itexts {
       foreach ci [ase::include_card_idents [dict get $it text]] {
         set ident [dict get $ci ident]
@@ -16996,22 +16999,26 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
           ambiguous [dict get $r ambiguous] why [dict get $r why] fixkind {}]
         if {[dict exists $r miss]} {
           set mz [dict get $r miss]
-          if {[dict get $mz scope] eq {} &&
-              [dict exists $topdef [string tolower [dict get $mz prefix]]]} {
+          if {[dict get $mz scope] eq {} && ($topnest ||
+              [dict exists $topdef [string tolower [dict get $mz prefix]]])} {
             continue
           }
           dict set row miss $mz
-        } elseif {[dict get $r real] ne {} || [dict get $r ambiguous]} {
-          ## the node IS there in another spelling (a case mismatch under
-          ## `distinguish`): ngspice folds every name of a `.nodeset`/`.ic`
-          ## card to lower case, so the card reaches that node and there is
-          ## nothing to refuse, caution or rewrite
-          continue
-        } elseif {[string first . $ident] < 0 &&
-                  [dict exists $topdef [string tolower $ident]]} {
-          ## a top-level node only an include file connects
+        } elseif {[string first . $ident] < 0 && ($topnest ||
+                  [dict exists $topdef [string tolower $ident]])} {
+          ## a top-level node only an include file connects, or may
           continue
         }
+        ## ⚠ A CASE-ONLY SPELLING UNDER `distinguish` (`real` set, or
+        ## `ambiguous`) IS A ROW, a caution naming the netlist's spelling (fix
+        ## round, finding 2). It used to stand down, on the claim that ngspice
+        ## folds a card's names to lower case. MEASURED 2026-11-21 on ver_53
+        ## with `-D casemode=distinguish -D casemodewrite`, the flags ASE-L
+        ## passes: it does not -- `v(XDUT.mid)={0.4}` beside `xdut` is
+        ## `Nodeset on non-existent node`, then `.nodeset syntax error`, rc 1,
+        ## and a plain value is dropped. It never refuses (no `miss`: the ruling
+        ## refuses on a missing instance only) and is never rewritten (its
+        ## `fixkind` stays empty).
         lappend incrows $row
       }
     }
@@ -17281,6 +17288,41 @@ proc ase::include_texts {state rundir} {
   return $out
 }
 
+# WHERE AN INLINE COMMENT STARTS IN ONE PHYSICAL LINE, as ngspice's own
+# stripper finds it: -> the index of the comment's first character, or -1. Pure.
+# A port of inp_stripcomments_line (src/frontend/inpcom.c, read 2026-11-21 in
+# the ver_53 tree) outside a `.control` block: `;` anywhere but the first
+# character, `//` anywhere, and `$` after a blank, a tab or a comma; a quoted
+# stretch ('...' or "...", a backslash escaping its quote) is skipped, so
+# `'a//b'` is a value, not a comment. MEASURED 2026-11-21 on 45.2 and ver_53:
+# `.nodeset v(b)=0.5 // v(x1.q)={0.4}` and `... 0.5//v(x1.q)=...` both run at
+# rc 0 with no warning, so the name behind `//` never reaches the simulator.
+proc ase::spice_comment_at {line} {
+  set n [string length $line]
+  set blanks [list " " , "\t"]
+  set i 0
+  while {$i < $n} {
+    set c [string index $line $i]
+    incr i
+    if {$c eq "\"" || $c eq "'"} {
+      while {$i < $n && ([string index $line $i] ne $c ||
+                         [string index $line [expr {$i - 1}]] eq "\\")} {
+        incr i
+      }
+      if {$i < $n} { incr i }
+      continue
+    }
+    set nx [string index $line $i]
+    if {$nx eq ";"} { return $i }
+    if {$c eq "\$" && $i >= 2 &&
+        [lsearch -exact $blanks [string index $line [expr {$i - 2}]]] >= 0} {
+      return [expr {$i - 1}]
+    }
+    if {$c eq "/" && $nx eq "/"} { return [expr {$i - 1}] }
+  }
+  return -1
+}
+
 # THE NAMES A `.nodeset`/`.ic` CARD OF ONE INCLUDE FILE GIVES A VALUE TO. Pure.
 # -> {{line <n> card nodeset|ic ident <name> start <s> end <e> value <v>} ...}
 # `line` is the 1-based physical line the name sits on (a `+` continuation is
@@ -17289,14 +17331,23 @@ proc ase::include_texts {state rundir} {
 # whole.
 #
 # A card is a line whose first word is `.nodeset` or `.ic` (any case), plus the
-# `+` lines that continue it; comment (`*`) and blank lines between them do not
-# end it, because ngspice drops those before it joins continuations. Only cards
+# `+` lines that continue it; comment (`*` or `#`) and blank lines between them
+# do not end it, because ngspice drops those before it joins continuations. The
+# keyword may stand alone on its line with every name on `+` lines. Only cards
 # at the file's top level count: one inside a `.subckt` block names that
-# subcircuit's own nodes. An inline comment (`;`, or `$` after a blank) ends
-# what is read of a line. Only voltage names: `i(...)` is not a node.
+# subcircuit's own nodes. An inline comment ends what is read of a line, where
+# ngspice's own stripper ends it (ase::spice_comment_at: `;`, `//`, or `$`
+# after a blank, a tab or a comma, outside quotes), and a line that is only a
+# comment is as transparent as a `*` line. Only voltage names: `i(...)` is not
+# a node.
+#
+# ⚠ THE EARLY OUT ENDS ON `\s`, NOT `[ \t\r]|$` (fix round, finding 1): this
+# regexp runs without -line, so `$` is the end of the TEXT, and `.nodeset`
+# followed by a bare LF matched neither -- a keyword-alone card was never read,
+# and the user's crash went through the gate untouched.
 proc ase::include_card_idents {text} {
   set out {}
-  if {![regexp -nocase {(?:^|\n)[ \t]*\.(?:nodeset|ic)(?:[ \t\r]|$)} $text]} {
+  if {![regexp -nocase {(?:^|\n)[ \t]*\.(?:nodeset|ic)(?:\s|$)} $text]} {
     return {}
   }
   set pos 0
@@ -17306,12 +17357,18 @@ proc ase::include_card_idents {text} {
   foreach raw [split $text "\n"] {
     incr lineno
     set len [string length $raw]
-    set t [string trimleft $raw]
-    set lead [expr {$len - [string length $t]}]
+    ## the comment is cut off the PHYSICAL line first, as ngspice does, so every
+    ## offset below still counts from the start of RAW
+    set line $raw
+    set cut [ase::spice_comment_at $raw]
+    if {$cut >= 0} { set line [string range $raw 0 [expr {$cut - 1}]] }
+    set t [string trimleft $line]
+    set lead [expr {[string length $line] - [string length $t]}]
     set c [string index $t 0]
     set from -1
-    if {[string trim $t] eq {} || $c eq {*}} {
-      ## transparent: neither starts nor ends a card
+    if {[string trim $t] eq {} || $c eq {*} || $c eq {#}} {
+      ## transparent: neither starts nor ends a card (a `#` line is a comment
+      ## line to ngspice, indented or not -- measured 2026-11-21 on 45.2)
     } elseif {$c eq {+}} {
       if {$card ne {}} { set from [expr {$lead + 1}] }
     } else {
@@ -17329,11 +17386,7 @@ proc ase::include_card_idents {text} {
       }
     }
     if {$from >= 0} {
-      set seg [string range $raw $from end]
-      ## an inline comment ends what is read of the line
-      if {[regexp -indices {;|[ \t]\$} $seg cm]} {
-        set seg [string range $seg 0 [expr {[lindex $cm 0] - 1}]]
-      }
+      set seg [string range $line $from end]
       foreach s [ase::preflight_ident_spans $seg] {
         lassign $s kind nm st en
         if {$kind ne {voltage}} { continue }
@@ -17369,12 +17422,11 @@ proc ase::include_top_words {itexts} {
     set depth 0
     set elem 0
     foreach raw [split [dict get $it text] "\n"] {
+      set cut [ase::spice_comment_at $raw]
+      if {$cut >= 0} { set raw [string range $raw 0 [expr {$cut - 1}]] }
       set t [string trimleft $raw]
       set c [string index $t 0]
-      if {[string trim $t] eq {} || $c eq {*}} { continue }
-      if {[regexp -indices {;|[ \t]\$} $t cm]} {
-        set t [string range $t 0 [expr {[lindex $cm 0] - 1}]]
-      }
+      if {[string trim $t] eq {} || $c eq {*} || $c eq {#}} { continue }
       if {$c eq {+}} {
         if {!$elem} { continue }
         set t [string range $t 1 end]
@@ -17399,18 +17451,67 @@ proc ase::include_top_words {itexts} {
   return $out
 }
 
+# THE INCLUDE CARDS include files carry at their OWN top level -- `.include`,
+# `.inc`, `.lib`, the keywords ase::netlist_map counts -- as {{path <resolved>
+# line <n> card <keyword>} ...}. Pure. ase::include_texts does not follow a
+# nested include (a carried-over limit), so what one adds to the deck's top
+# level cannot be seen: the scan then treats the TOP scope the way
+# ase::netlist_map_resolve treats any scope that carries an include card, and a
+# missing top-level instance or node there is `unknown`, which neither refuses
+# nor cautions (fix round, finding 10: an `x5` added by a nested include was
+# refused as missing, on a bench /usr/bin/ngspice runs at rc 0). One inside a
+# `.subckt` body adds to that subcircuit, not to the top level.
+proc ase::include_top_nests {itexts} {
+  set out {}
+  foreach it $itexts {
+    set path {}
+    catch {set path [dict get $it path]}
+    set depth 0
+    set n 0
+    foreach raw [split [dict get $it text] "\n"] {
+      incr n
+      set t [string trimleft $raw]
+      if {[string index $t 0] ne {.}} { continue }
+      set kw [string tolower [lindex [regexp -inline {^\S+} $t] 0]]
+      if {$kw eq {.subckt}} {
+        incr depth
+      } elseif {$kw eq {.ends} || $kw eq {.eom}} {
+        if {$depth > 0} { incr depth -1 }
+      } elseif {$depth == 0 && ($kw eq {.include} || $kw eq {.inc} || $kw eq {.lib})} {
+        lappend out [dict create path $path line $n card $kw]
+      }
+    }
+  }
+  return $out
+}
+
 # THE FOLDERS ASE-L NEVER WRITES INTO, as {{dir <normalized> why pdk|models} ...}.
 # `$::PDK_ROOT` and `$::env(PDK_ROOT)` when set, and the folder of every
 # `models` entry of STATE and of ::ASE_DEFAULT_MODELS (the PDK's own models).
 # A models entry that does not expand is skipped: it names no folder.
+#
+# ⚠ A PDK ROOT IS LISTED AS SPELLED AND WITH EVERY LINK RESOLVED, its last
+# component included (fix round, findings 9 and 13). `file normalize` resolves
+# every component but the last, so `~/pdk -> /opt/pdks` stayed `~/pdk` while
+# the include it holds (ase::include_resolve) and that include's `real`
+# (ase::include_edit_facts) both read `/opt/pdks/...`: nothing was "under" the
+# root, and a PDK file opened with Save. A models folder needs no second form:
+# it is the dirname of a normalized path, so it is resolved already.
 proc ase::include_protected_roots {state rundir} {
   set out {}
   set pr {}
   if {[info exists ::PDK_ROOT]} { lappend pr $::PDK_ROOT }
   if {[info exists ::env(PDK_ROOT)]} { lappend pr $::env(PDK_ROOT) }
+  set seen {}
   foreach d $pr {
     if {[string trim $d] eq {}} { continue }
-    lappend out [dict create dir [file normalize $d] why pdk]
+    set forms [list [file normalize $d]]
+    catch {lappend forms [file dirname [file normalize [file join $d ___]]]}
+    foreach f $forms {
+      if {[lsearch -exact $seen $f] >= 0} { continue }
+      lappend seen $f
+      lappend out [dict create dir $f why pdk]
+    }
   }
   set ms [ase::state_get $state models]
   if {[info exists ::ASE_DEFAULT_MODELS]} { lappend ms {*}$::ASE_DEFAULT_MODELS }
@@ -17603,10 +17704,80 @@ proc ase::include_change_words {f} {
   return [join $w {, }]
 }
 
+# WRITE BYTES to PATH, binary, truncating it: -> {} when every byte reached the
+# file, else the error. The channel is closed either way -- one that failed at
+# `puts` is never left open -- and no channel name is reused from an earlier
+# write, so a failed `open` never closes somebody else's channel.
+proc ase::include_write_bytes {path bytes} {
+  set fh {}
+  if {[catch {
+    set fh [open $path w]
+    fconfigure $fh -translation binary
+    puts -nonewline $fh $bytes
+    set c $fh
+    set fh {}
+    close $c
+  } e]} {
+    if {$fh ne {}} { catch {close $fh} }
+    return $e
+  }
+  return {}
+}
+
+# Does the file at PATH hold exactly BYTES (read binary)? -> 1|0; 0 when it
+# cannot be read. It reads the disk and changes nothing.
+proc ase::include_reads_as {path bytes} {
+  set fh {}
+  if {[catch {
+    set fh [open $path r]
+    fconfigure $fh -translation binary
+    set now [read $fh]
+    set c $fh
+    set fh {}
+    close $c
+  }]} {
+    if {$fh ne {}} { catch {close $fh} }
+    return 0
+  }
+  return [expr {$now eq $bytes}]
+}
+
+# MAKE THE BACKUP B of PATH holding BYTES: created exclusively (an existing B,
+# or a dangling link called B, is never followed or overwritten), private
+# (0600) until it is complete, then given PATH's own permissions, so a private
+# include never gets a world-readable `.bak` beside it (fix round, finding 6:
+# it used to take the umask's 0644). -> {} or the error; on an error a B this
+# call created is removed and its channel closed (fix round, finding 8: an
+# empty or partial `.bak` was left behind, its channel open, under a sentence
+# saying nothing was changed). Where the platform has no `-permissions`, B
+# stays 0600.
+proc ase::include_backup_write {path b bytes} {
+  set fh {}
+  set made 0
+  if {[catch {
+    set fh [open $b {WRONLY CREAT EXCL} 0600]
+    set made 1
+    fconfigure $fh -translation binary
+    puts -nonewline $fh $bytes
+    set c $fh
+    set fh {}
+    close $c
+  } e]} {
+    if {$fh ne {}} { catch {close $fh} }
+    if {$made} { catch {file delete -- $b} }
+    return $e
+  }
+  catch {file attributes $b -permissions [file attributes $path -permissions]}
+  return {}
+}
+
 # WRITE THE PLAN: every editable file is re-read and must still be the bytes
 # the scan read; then every one is backed up beside itself, then every one is
 # rewritten. All or nothing -- a failure at any step puts back every file
-# already written and deletes every backup already made.
+# already written and deletes every backup already made, EXCEPT the backup of a
+# file that could not be put back: that one is the only copy of what the file
+# held, so it is kept and the sentence names it (fix round, findings 5 and 7:
+# every backup was deleted and "every file was put back" said regardless).
 # -> {ok 1 n <names> files {{path backup n changes} ...}}
 #  | {ok 0 why <the sentence>}
 # A file that is not editable is never opened for writing.
@@ -17616,12 +17787,16 @@ proc ase::include_apply_plan {plan} {
     if {![dict get $f editable] || ![llength [dict get $f edits]]} { continue }
     set p [dict get $f path]
     ## RE-READ AT THE PRESS: the file must be the one the scan read
+    set fh {}
     if {[catch {
       set fh [open $p r]
       fconfigure $fh -translation binary
       set now [read $fh]
-      close $fh
+      set c $fh
+      set fh {}
+      close $c
     } e]} {
+      if {$fh ne {}} { catch {close $fh} }
       return [list ok 0 why "'[file tail $p]' cannot be read ($e), so nothing was\
  changed."]
     }
@@ -17639,12 +17814,8 @@ proc ase::include_apply_plan {plan} {
   foreach t $todo {
     lassign $t f new
     set b [dict get $f backup]
-    if {[catch {
-      set fh [open $b {WRONLY CREAT EXCL}]
-      fconfigure $fh -translation binary
-      puts -nonewline $fh [dict get $f text]
-      close $fh
-    } e]} {
+    set e [ase::include_backup_write [dict get $f path] $b [dict get $f text]]
+    if {$e ne {}} {
       foreach m $made { catch {file delete -- $m} }
       return [list ok 0 why "the backup '$b' could not be written ($e), so nothing\
  was changed."]
@@ -17655,25 +17826,33 @@ proc ase::include_apply_plan {plan} {
   foreach t $todo {
     lassign $t f new
     set p [dict get $f path]
-    if {[catch {
-      set fh [open $p w]
-      fconfigure $fh -translation binary
-      puts -nonewline $fh $new
-      close $fh
-    } e]} {
-      catch {close $fh}
-      ## put back every file touched, this one included, then drop the backups
+    set e [ase::include_write_bytes $p $new]
+    if {$e ne {}} {
+      ## put back every file touched, this one included (an `open w` that
+      ## succeeded has already truncated it; one that failed left it whole, and
+      ## a file that still reads as it was needs no write); a backup is dropped
+      ## only once its file is back
+      set bad {}
+      set keep {}
       foreach d [concat $done [list $f]] {
-        catch {
-          set fh [open [dict get $d path] w]
-          fconfigure $fh -translation binary
-          puts -nonewline $fh [dict get $d text]
-          close $fh
+        if {[ase::include_reads_as [dict get $d path] [dict get $d text]]} { continue }
+        set pe [ase::include_write_bytes [dict get $d path] [dict get $d text]]
+        if {$pe ne {}} {
+          lappend bad "'[file tail [dict get $d path]]' ($pe; its original is in\
+ '[dict get $d backup]')"
+          lappend keep [dict get $d backup]
         }
       }
-      foreach m $made { catch {file delete -- $m} }
-      return [list ok 0 why "'[file tail $p]' could not be written ($e), so every\
+      foreach m $made {
+        if {[lsearch -exact $keep $m] < 0} { catch {file delete -- $m} }
+      }
+      if {![llength $bad]} {
+        return [list ok 0 why "'[file tail $p]' could not be written ($e), so every\
  file was put back as it was and nothing was changed."]
+      }
+      return [list ok 0 why "'[file tail $p]' could not be written ($e). These\
+ include files could not be put back, so their backups are kept as the only copy\
+ of what they held: [join $bad {, }]."]
     }
     lappend done $f
   }
@@ -17709,13 +17888,8 @@ proc ase::include_unapply {plan r} {
   set bad {}
   foreach f [dict get $r files] {
     set p [dict get $f path]
-    if {[catch {
-      set fh [open $p w]
-      fconfigure $fh -translation binary
-      puts -nonewline $fh [dict get $texts $p]
-      close $fh
-    } e]} {
-      catch {close $fh}
+    set e [ase::include_write_bytes $p [dict get $texts $p]]
+    if {$e ne {}} {
       lappend bad "'[file tail $p]' ($e; its original is in '[dict get $f backup]')"
       continue
     }
@@ -17772,33 +17946,65 @@ proc ase::preflight_fix_includes {key} {
   return [dict get $r n]
 }
 
+# IS A `.nodeset`/`.ic` VALUE A PLAIN NUMBER? Pure. A sign, digits with an
+# optional point (`1.5`, `.5`, `5.`), an optional exponent, then any letters (a
+# scale factor or a unit: `1.5m`, `1.5meg`, `1.5V`). Everything else is not:
+# a `{...}` or `'...'` expression (even `{0.4}` or `'1.5'`), a parameter name
+# (`vsup`), an empty value.
+proc ase::include_value_plain {value} {
+  return [regexp {^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?[A-Za-z]*$} \
+            [string trim $value]]
+}
+
 # What ngspice does with a `.nodeset`/`.ic` name on a node it does not have,
 # as a clause. MEASURED 2026-11-21 on /usr/bin/ngspice (45.2) and the fork
-# (ver_53), identically: a plain number is dropped with `Warning : Nodeset on
-# non-existent node - <n>, ignored` and the run goes on; a `{...}` value draws
-# the same warning and then `Error: .nodeset syntax error.` (`.ic syntax
-# error.` for an `.ic` card), and the run stops with rc 1 and no raw.
+# (ver_53), identically, for a missing instance (`x1.q`) and for a missing node
+# inside one that exists (`xdut.nosuch`) alike -- one branch of ngspice's
+# parser (INPpas3) handles both: a PLAIN NUMBER (ase::include_value_plain: `1.5`, `-0.1`, `1.5m`, `1e-3`,
+# `1.5V`, blanks around the `=` or not) is dropped with `Warning : Nodeset on
+# non-existent node - <n>, ignored` and the run goes on at rc 0. ANY OTHER
+# value -- `{0.4}`, `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'`, the bare parameter
+# `vsup` -- draws the same warning and then `Error: .nodeset syntax error.`
+# (`.ic syntax error.` for an `.ic` card): the run stops with rc 1 and no raw.
+# (The first cut said this only of `{...}`; fix round, finding 4.) An empty
+# value stops the run earlier, in the expression parser.
 proc ase::include_ngspice_clause {card value} {
-  if {[string index [string trim $value] 0] eq "\{"} {
-    return "ngspice stops the run with '.$card syntax error' when such a name\
- carries a {...} value, as this one does"
+  if {![ase::include_value_plain $value]} {
+    set v [string trim $value]
+    set this [expr {$v eq {} ? {this one has none} : "this one is '$v'"}]
+    return "ngspice stops the run with '.$card syntax error', because such a\
+ name's value must be a plain number and $this"
   }
   return "ngspice drops it with a 'non-existent node' warning, so that\
  [expr {$card eq {ic} ? {initial condition} : {guess}}] is lost"
 }
 
 # The caution for ONE include row that does not refuse: a node that is not
-# there inside an instance that is (no ruling covers refusing it). Pure.
+# there inside an instance that is (no ruling covers refusing it), or -- under
+# case mode `distinguish` only -- a name the netlist has in another case, which
+# that mode does not fold (`spelled` names the netlist's spelling; `ambiguous`
+# is two netlist names differing only in case). Pure.
 proc ase::preflight_include_caution {row} {
   set id [dict get $row ident]
+  set head "ase: caution: include file '[dict get $row path]' line\
+ [dict get $row line]: .[dict get $row card] names '$id',"
+  set clause [ase::include_ngspice_clause [dict get $row card] [dict get $row value]]
+  set sp {}
+  catch {set sp [dict get $row spelled]}
+  set amb 0
+  catch {set amb [dict get $row ambiguous]}
+  if {$sp ne {} || $amb} {
+    set what [expr {$sp ne {} ? "which the netlist spells '$sp'" :
+                    {which differs only in case from more than one netlist name}}]
+    return "$head $what: under case mode distinguish ngspice does not fold case,\
+ so $clause."
+  }
   set segs [split $id .]
   set where "the netlist does not have"
   if {[llength $segs] > 1} {
     set where "instance '[join [lrange $segs 0 end-1] .]' does not have"
   }
-  return "ase: caution: include file '[dict get $row path]' line\
- [dict get $row line]: .[dict get $row card] names '$id', which $where;\
- [ase::include_ngspice_clause [dict get $row card] [dict get $row value]]."
+  return "$head which $where; $clause."
 }
 
 # --- Setup > Include Files… (item 5): the pure halves -------------------------
@@ -18410,8 +18616,9 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   set ihead "$nin .nodeset/.ic name[expr {$nin == 1 ? {} : {s}}] in $nif include\
  file[expr {$nif == 1 ? {} : {s}}] stop[expr {$nin == 1 ? {s} : {}}] at an\
  instance this circuit does not have. ngspice drops each such name with a\
- warning, and stops the run with a syntax error when its value is a {...}\
- expression."
+ warning when its value is a plain number, and stops the run with a syntax\
+ error when it is anything else (a {...} or '...' expression, or a parameter\
+ name)."
   set rdnote "Nothing was generated: no deck, no raw,\
  no log. Any files already in [ase::rundir $state] are from an earlier run."
   if {$nex} {
