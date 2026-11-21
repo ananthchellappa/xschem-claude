@@ -4555,7 +4555,13 @@ R3 tail OUTP 1k
 .ends
 .end
 }
-  set fx_inc [file join $fx_run fx_nodeset.spice]
+  ## ⚠ THE INCLUDE SITS IN A MODEL FILE'S FOLDER (issue 1723 item 6, ruled
+  ## 2026-11-21): Apply Corrections never rewrites such a file, so this band's
+  ## press stays the session-only press it was built to test, with no
+  ## confirmation. The FX1723C band below is the press that asks.
+  set fx_modd [file join $fx_run models]
+  w_hier_write [file join $fx_modd fx.lib] "* fixture models\n"
+  set fx_inc [file join $fx_modd fx_nodeset.spice]
   set fx_inctxt ".nodeset v(x1.a1)=1 v(x1.tail)=0\n"
   w_hier_write $fx_inc $fx_inctxt
   set fx_stale {{expr v(x1.a1) save 1 plot 0} {expr v(x1.tail) save 1 plot 0}}
@@ -4575,6 +4581,7 @@ R3 tail OUTP 1k
     dict set fxst outputs $fx_stale
     dict set fxst measurements $fx_meas
     dict set fxst includes [list [list file $fx_inc]]
+    dict set fxst models [list [list file [file join $fx_modd fx.lib] section {}]]
     ase::session_update $fxkey $fxst
     ase::session_save $fxkey
     ase::session_close $fxkey
@@ -4649,9 +4656,13 @@ R3 tail OUTP 1k
     check "FX1723c D1 -- the refusal alone rewrites NOTHING: the rows still say x1 and the session is clean" \
       [list [fx_exprs $fxkey] [fx_targets $fxkey] [ase::session_dirty $fxkey]] \
       [list {v(x1.a1) v(x1.tail)} {v(x1.a1)} 0]
-    check "FX1723d the banner says what the press does, names the rename, and the include it will not edit" \
-      [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 2 output rows and 1 measurement in this session; Session > Save State keeps them.*1 include file names the old instance too*" \
-         [wtext_fx $fxtop.fix.msg]] 1
+    ## ⚠ MOVED, 2026-11-21 (issue 1723 items 5-6): the include clause said
+    ## "ASE-L does not edit your files"; it now names the door that shows the
+    ## file, and that this one is not editable (it is in a model file's folder)
+    check "FX1723d the banner says what the press does, names the rename, the include, its door, and that it is not editable" \
+      [list [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 2 output rows and 1 measurement in this session; Session > Save State keeps them.*1 include file names the old instance; [pcall_ux {ase::ui::menu_path_include_files}] shows it. 1 of them is not editable and left as it is.*" \
+               [wtext_fx $fxtop.fix.msg]] \
+            [string match {*does not edit your files*} [wtext_fx $fxtop.fix.msg]]] {1 0}
     check "FX1723d2 the banner sits directly above the status bar" \
       [expr {[winfo exists $fxtop.fix] &&
              [winfo y $fxtop.fix] + [winfo height $fxtop.fix] <= [winfo y $fxtop.status] + 1}] 1
@@ -4743,6 +4754,537 @@ R3 tail OUTP 1k
  }
 } else {
   puts "FX1723 legs skipped (no DISPLAY)"
+}
+# =============================================================================
+# FX1723I -- SETUP > INCLUDE FILES… (issue 1723 item 5, ruled 2026-11-21)
+# =============================================================================
+# The `includes` key's door. The user, after a Run died inside ngspice on a
+# `.nodeset` card naming a renamed instance, asked where those nodesets were
+# hidden: no ASE-L window showed the key. The rows' pure halves
+# (ase::include_rows, ase::include_add, ase::include_remove) are pinned on the
+# counted headless arm (test_ase_preflight.tcl, PF1723ag*); these rows are the
+# window, and every gesture is a real press.
+#
+# ⚠ FX1723If IS textwindow's OWN DEFECT, FOUND HERE: its Save read the globals
+# of whichever text window opened LAST, so with two open (the ordinary case
+# for Open on two include files) Save in the first wrote the second.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+ if {[catch {
+
+  proc fi_press {b} {
+    if {![winfo exists $b]} { return NOWIDGET }
+    for {set i 0} {$i < 50 && ![winfo ismapped $b]} {incr i} { update ; after 20 }
+    if {![winfo ismapped $b]} { return NOTMAPPED }
+    set x [expr {[winfo width $b] / 2}]
+    set y [expr {[winfo height $b] / 2}]
+    event generate $b <Enter> -x $x -y $y
+    event generate $b <ButtonPress-1> -x $x -y $y
+    event generate $b <ButtonRelease-1> -x $x -y $y
+    ## an OK or Cancel destroys its own dialog on the release
+    if {[winfo exists $b]} { event generate $b <Leave> -x $x -y $y }
+    update
+    return ok
+  }
+  proc fi_read {p} {
+    if {[catch {open $p r} fh]} { return NOFILE }
+    set t [read $fh] ; close $fh ; return $t
+  }
+  ## FX1723's helpers, which it defines only when its own fixture resolved
+  if {[info commands wtext_fx] eq {}} {
+    proc wtext_fx {w} {
+      if {![winfo exists $w]} { return NOWIDGET }
+      if {[catch {$w cget -text} t]} { return NOTEXT }
+      return $t
+    }
+  }
+  if {[info commands fx_banner_up] eq {}} {
+    proc fx_banner_up {top} {
+      update
+      return [expr {[winfo exists $top.fix] && [winfo ismapped $top.fix]}]
+    }
+  }
+  if {[info commands fx_exprs] eq {}} {
+    proc fx_exprs {key} {
+      set out {}
+      foreach o [ase::state_get [ase::session_state $key] outputs] { lappend out [dict get $o expr] }
+      return $out
+    }
+  }
+  proc fi_rows {w} {
+    set out {}
+    foreach it [$w.tv children {}] { lappend out [$w.tv item $it -values] }
+    return $out
+  }
+  proc fi_stored {key} {
+    set out {}
+    foreach i [ase::state_get [ase::session_state $key] includes] {
+      lappend out [ase::include_entry_file $i]
+    }
+    return $out
+  }
+  ## the text windows textwindow made since MARK (it names them .win<N>)
+  proc fi_textwins {} {
+    set out {}
+    foreach c [winfo children .] {
+      if {[regexp {^\.win[0-9]+$} $c] && [winfo exists $c.text]} { lappend out $c }
+    }
+    return [lsort -dictionary $out]
+  }
+
+  set fi_run [file normalize [file join $scratch fx1723i_run]]
+  file mkdir $fi_run
+  set ::FX1723IDIR $fi_run
+  set fi_rel [file join $fi_run ns_rel.spice]
+  set fi_reltxt ".nodeset v(x1.a1)=1\n"
+  w_hier_write $fi_rel $fi_reltxt
+  set fi_var [file join $fi_run ns_var.spice]
+  set fi_vartxt "* reached through a variable\n.nodeset v(out)=0\n"
+  w_hier_write $fi_var $fi_vartxt
+  set fi_modd [file join $fi_run models]
+  w_hier_write [file join $fi_modd fx.lib] "* fixture models\n"
+  set fi_mod [file join $fi_modd ns_mod.spice]
+  w_hier_write $fi_mod "* in a model file's folder\n"
+
+  library_new_view aselib nfet_clean ngspice_state_fx1723i ngspice_state_fx1723i
+  set fipath [xschem cellview_path aselib/nfet_clean ngspice_state_fx1723i]
+  set fikey  [ase::session_key aselib nfet_clean ngspice_state_fx1723i]
+  if {$fipath eq {}} {
+    puts "SKIPPED: FX1723I (the fixture state view did not resolve)"
+  } else {
+    ase::session_open $fikey [file normalize $fipath]
+    set fist [ase::session_state $fikey]
+    dict set fist design {lib aselib cell nfet_clean view schematic}
+    dict set fist rundir $fi_run
+    dict set fist includes [list {file ns_rel.spice} {file {$::FX1723IDIR/ns_var.spice}} \
+                              {file nosuch.spice} [list file $fi_mod]]
+    dict set fist models [list [list file [file join $fi_modd fx.lib] section {}]]
+    ase::session_update $fikey $fist
+    ase::session_save $fikey
+    ase::session_close $fikey
+    check "FX1723I open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_fx1723i] 1
+    update
+    set fitop [ase::ui::window_for $fikey]
+    catch {wm geometry $fitop 900x560}
+    update ; after 150 ; update
+
+    # --- the menu entry: a constant label, right after Model Files… ---------
+    set fi_m $fitop.mb.setup
+    set fi_ix -1
+    set fi_prev {}
+    for {set i 0} {$i <= [$fi_m index end]} {incr i} {
+      if {[$fi_m type $i] ne {command}} { continue }
+      if {[$fi_m entrycget $i -label] eq [pcall_ux {ase::ui::lbl_include_files_menu}]} {
+        set fi_ix $i
+        catch {set fi_prev [$fi_m entrycget [expr {$i - 1}] -label]}
+      }
+    }
+    check "FX1723Ia Setup carries Include Files…, by its constant label, right after Model Files…" \
+      [list [expr {$fi_ix >= 0}] $fi_prev [pcall_ux {ase::ui::menu_path_include_files}]] \
+      [list 1 "Model Files…" "Setup > Include Files…"]
+
+    # --- opening it shows each entry as stored, where it resolves, whether it exists
+    if {$fi_ix >= 0} { $fi_m invoke $fi_ix } else { ase::ui::include_files_dialog $fikey }
+    update
+    set fiw $fitop.incfiles
+    check "FX1723Ib the window lists every entry as stored, resolved, and whether the file exists, and opening it changes nothing" \
+      [list [winfo exists $fiw] [wm title $fiw] [fi_rows $fiw] [ase::session_dirty $fikey]] \
+      [list 1 {Include Files} \
+         [list [list ns_rel.spice $fi_rel yes] [list {$::FX1723IDIR/ns_var.spice} $fi_var yes] \
+               [list nosuch.spice [file join $fi_run nosuch.spice] no] [list $fi_mod $fi_mod yes]] 0]
+
+    # --- Add…: the path is stored as typed, and the session goes unsaved ----
+    set fi_p1 [fi_press $fiw.btns.add]
+    set fi_ed $fitop.incrow
+    set fi_edup [winfo exists $fi_ed]
+    $fi_ed.file insert end {$::FX1723IDIR/added.spice}
+    set fi_p2 [fi_press $fi_ed.btns.proceed]
+    check "FX1723Ic Add… stores the portable path as typed, marks the session unsaved, and the list shows it" \
+      [list $fi_p1 $fi_edup $fi_p2 [winfo exists $fi_ed] [lindex [fi_stored $fikey] end] \
+            [ase::session_dirty $fikey] [string match {* \*} [wm title $fitop]] \
+            [lindex [fi_rows $fiw] end]] \
+      [list ok 1 ok 0 {$::FX1723IDIR/added.spice} 1 1 \
+         [list {$::FX1723IDIR/added.spice} [file join $fi_run added.spice] no]]
+    set ::fx_said {}
+    rename ::ase::echo ::fi_saved_echo
+    proc ::ase::echo {msg {tag {}}} { lappend ::fx_said [list $tag $msg] ; return 1 }
+    fi_press $fiw.btns.add
+    set fi_p3 [fi_press $fi_ed.btns.proceed]
+    set fi_n3 [llength [fi_stored $fikey]]
+    check "FX1723Ic2 an empty Add is refused on the CIW, stores nothing, and keeps its editor; Cancel closes it" \
+      [list $fi_p3 [winfo exists $fi_ed] $fi_n3 \
+            [llength [lsearch -all -glob [lmap e $::fx_said {lindex $e 1}] {ase: Include Files: a path is needed}]] \
+            [fi_press $fi_ed.btns.cancel] [winfo exists $fi_ed] [llength [fi_stored $fikey]]] \
+      [list ok 1 5 1 ok 0 5]
+    rename ::ase::echo {}
+    rename ::fi_saved_echo ::ase::echo
+
+    # --- Remove: the selected row, and nothing with nothing selected ---------
+    $fiw.tv selection set {}
+    update
+    set fi_p4 [fi_press $fiw.btns.remove]
+    set fi_none [list [llength [fi_stored $fikey]] [$fiw.status cget -text]]
+    $fiw.tv selection set 2
+    update
+    set fi_p5 [fi_press $fiw.btns.remove]
+    check "FX1723Id Remove takes the selected entry out, and with nothing selected says so and takes nothing" \
+      [list $fi_p4 $fi_none $fi_p5 [fi_stored $fikey] [llength [fi_rows $fiw]]] \
+      [list ok [list 5 [ase::ui::lbl_rdel_none]] ok \
+         [list ns_rel.spice {$::FX1723IDIR/ns_var.spice} $fi_mod {$::FX1723IDIR/added.spice}] 4]
+
+    # --- Open: XSCHEM's own text window; read only where Apply may not write -
+    foreach c [fi_textwins] { destroy $c }
+    $fiw.tv selection set 0
+    update
+    set fi_p6 [fi_press $fiw.btns.open]
+    set fi_tw1 [lindex [fi_textwins] end]
+    $fiw.tv selection set 2
+    update
+    fi_press $fiw.btns.open
+    set fi_twm [lindex [fi_textwins] end]
+    check "FX1723Ie Open shows the file in XSCHEM's text window with Save, and a model folder's file with no Save" \
+      [list $fi_p6 [expr {$fi_tw1 ne {}}] [wm title $fi_tw1] \
+            [expr {[$fi_tw1.text get 1.0 {end - 1 chars}] eq $fi_reltxt}] \
+            [winfo exists $fi_tw1.buttons.save] [expr {$fi_twm ne $fi_tw1}] [wm title $fi_twm] \
+            [winfo exists $fi_twm.buttons.save]] \
+      [list ok 1 $fi_rel 1 1 1 $fi_mod 0]
+    destroy $fi_twm
+    $fiw.tv selection set 3
+    update
+    set fi_nw [llength [fi_textwins]]
+    fi_press $fiw.btns.open
+    check "FX1723Ie2 Open on an entry whose file does not exist opens nothing and says so" \
+      [list [llength [fi_textwins]] [$fiw.status cget -text]] \
+      [list $fi_nw [ase::ui::lbl_incdlg_missing [file join $fi_run added.spice]]]
+
+    # --- two text windows: Save writes ITS file and closes ITS window --------
+    $fiw.tv selection set 1
+    update
+    fi_press $fiw.btns.open
+    set fi_tw2 [lindex [fi_textwins] end]
+    $fi_tw1.text insert 1.0 "* edited in the first window\n"
+    set fi_p7 [fi_press $fi_tw1.buttons.save]
+    check "FX1723If with two text windows open, Save in the first writes the first's file and closes only the first" \
+      [list $fi_p7 [expr {$fi_tw2 ne $fi_tw1}] [fi_read $fi_rel] [fi_read $fi_var] \
+            [winfo exists $fi_tw1] [winfo exists $fi_tw2]] \
+      [list ok 1 "* edited in the first window\n$fi_reltxt" $fi_vartxt 0 1]
+    foreach c [fi_textwins] { destroy $c }
+    w_hier_write $fi_rel $fi_reltxt
+
+    fi_press $fiw.btns.close
+    check "FX1723Ig Close takes the window down" [winfo exists $fiw] 0
+    ase::session_revert $fikey
+    update
+    ase::ui::close $fikey
+    catch {ase::session_close $fikey}
+    update
+  }
+
+ } fi_bigerr]} {
+  puts "UNEXPECTED ERROR (FX1723I block): $fi_bigerr"
+  incr fail
+  catch {
+    if {[info commands ::fi_saved_echo] ne {}} {
+      catch {rename ::ase::echo {}} ; rename ::fi_saved_echo ::ase::echo
+    }
+  }
+ }
+} else {
+  puts "FX1723I legs skipped (no DISPLAY)"
+}
+
+# =============================================================================
+# FX1723C -- APPLY CORRECTIONS ASKS BEFORE IT WRITES A FILE (issue 1723 item 6)
+# =============================================================================
+# Ruled 2026-11-21: when the corrections reach include files, the press opens a
+# confirmation listing each file, its change, that files are written at once
+# and not at Save State, and where each backup goes. OK backs up, rewrites, then
+# applies the session corrections; Cancel changes NOTHING, the session
+# included, and the banner stays. The dialog's text and the offer are pure and
+# pinned on the counted arm (PF1723ae*); these rows press the real buttons.
+#
+# ⚠ FX1723Cc IS THE ROW THAT MATTERS MOST: after Cancel the session state, the
+# state file and every include file are byte-identical, and no backup exists.
+#
+# ⚠ `ase::run_precheck` is renamed out as in FX1723, for the same reason: the
+# registry here is empty, and no Run below starts a simulator.
+if {[info exists ::has_x] && [info commands winfo] ne {}} {
+ if {[catch {
+
+  proc fc_press {b} { return [fi_press $b] }
+  proc fc_read {p} { return [fi_read $p] }
+  set fc_run [file normalize [file join $scratch fx1723c_run]]
+  file mkdir $fc_run
+  w_hier_write [file join $fc_run nfet_clean.spice] {** sch_path: /fixture/nfet_clean.sch
+**.subckt nfet_clean
+xdut IN OUT fx_amp
+V1 IN 0 1
+**.ends
+.subckt fx_amp INP OUTP
+R1 INP a1 1k
+R2 a1 tail 1k
+R3 tail OUTP 1k
+.ends
+.end
+}
+  set fc_ed [file join $fc_run fc_edit.spice]
+  set fc_edtxt "* the bench's nodeset\n.nodeset v(x1.a1)=1\n+ v(x1.tail)=0\n"
+  w_hier_write $fc_ed $fc_edtxt
+  set fc_modd [file join $fc_run models]
+  w_hier_write [file join $fc_modd fx.lib] "* fixture models\n"
+  set fc_mod [file join $fc_modd fc_mod.spice]
+  set fc_modtxt ".nodeset v(x1.a1)=1\n"
+  w_hier_write $fc_mod $fc_modtxt
+  proc fc_baks {} {
+    return [lsort [concat [glob -nocomplain -directory $::fc_run *.bak*] \
+                          [glob -nocomplain -directory $::fc_modd *.bak*]]]
+  }
+
+  library_new_view aselib nfet_clean ngspice_state_fx1723c ngspice_state_fx1723c
+  set fcpath [xschem cellview_path aselib/nfet_clean ngspice_state_fx1723c]
+  set fckey  [ase::session_key aselib nfet_clean ngspice_state_fx1723c]
+  if {$fcpath eq {}} {
+    puts "SKIPPED: FX1723C (the fixture state view did not resolve)"
+  } else {
+    ase::session_open $fckey [file normalize $fcpath]
+    set fcst [ase::session_state $fckey]
+    dict set fcst design {lib aselib cell nfet_clean view schematic}
+    dict set fcst rundir $fc_run
+    dict set fcst analyses {{type tran enabled 1 stop 1u step 1n}}
+    dict set fcst outputs {{expr v(x1.a1) save 1 plot 0}}
+    dict set fcst measurements {}
+    dict set fcst includes [list [list file $fc_ed] [list file $fc_mod]]
+    dict set fcst models [list [list file [file join $fc_modd fx.lib] section {}]]
+    ase::session_update $fckey $fcst
+    ase::session_save $fckey
+    ase::session_close $fckey
+    check "FX1723C open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_fx1723c] 1
+    update
+    set fctop [ase::ui::window_for $fckey]
+    catch {wm geometry $fctop 900x560}
+    update ; after 150 ; update
+    rename ::ase::run_precheck ::fc_saved_precheck
+    proc ::ase::run_precheck {state} { return {} }
+    set ::fx_said {}
+    rename ::ase::echo ::fc_saved_echo
+    proc ::ase::echo {msg {tag {}}} { lappend ::fx_said [list $tag $msg] ; return 1 }
+    proc fc_said {pat} {
+      return [llength [lsearch -all -glob [lmap e $::fx_said {lindex $e 1}] $pat]]
+    }
+    set fc_conf $fctop.fixconf
+    set fc_state0 [ase::session_state $fckey]
+    set fc_disk0 [fc_read $fcpath]
+
+    # --- the refusal's offer says the press will ask -----------------------
+    fc_press $fctop.strip.run
+    check "FX1723Ca the banner offers the session rows AND the include names, says it will ask, and names the file it may not edit" \
+      [list [fx_banner_up $fctop] \
+            [string match "*rewrites 1 output row in this session; Session > Save State keeps them. It also rewrites 2 .nodeset/.ic names in 1 include file, after asking; each file is backed up first and written at once. 2 include files name the old instance; [pcall_ux {ase::ui::menu_path_include_files}] shows them. 1 of them is not editable and left as it is." \
+               [wtext_fx $fctop.fix.msg]]] {1 1}
+
+    # --- Apply asks, and nothing has moved yet ------------------------------
+    set fc_p1 [fc_press $fctop.fix.apply]
+    set fc_msg [wtext_fx $fc_conf.msg]
+    check "FX1723Cb Apply opens the confirmation naming the file, its change, its backup, and the file it will not touch" \
+      [list $fc_p1 [winfo exists $fc_conf] [wtext_fx $fc_conf.btns.proceed] [wtext_fx $fc_conf.btns.cancel] \
+            [string match "*not at Session > Save State*fc_edit.spice: 2 × x1. → xdut. Backup: $fc_ed.bak*fc_mod.spice: not editable, because it is in a model file's folder ($fc_modd); left as it is.*It then rewrites 1 output row in this session*Cancel changes nothing.*" $fc_msg]] \
+      {ok 1 OK Cancel 1}
+    check "FX1723Cb2 ...and asking wrote nothing: files, backups, session and banner as they were" \
+      [list [expr {[fc_read $fc_ed] eq $fc_edtxt}] [fc_baks] [ase::session_dirty $fckey] \
+            [fx_exprs $fckey] [fx_banner_up $fctop]] \
+      [list 1 {} 0 v(x1.a1) 1]
+
+    # --- Cancel: nothing changes at all -------------------------------------
+    set fc_p2 [fc_press $fc_conf.btns.cancel]
+    check "FX1723Cc Cancel changes NOTHING: the session, its state file and every include file are byte-identical, no backup exists, and the banner stays" \
+      [list $fc_p2 [winfo exists $fc_conf] \
+            [expr {[ase::session_state $fckey] eq $fc_state0}] [ase::session_dirty $fckey] \
+            [expr {[fc_read $fcpath] eq $fc_disk0}] \
+            [expr {[fc_read $fc_ed] eq $fc_edtxt}] [expr {[fc_read $fc_mod] eq $fc_modtxt}] \
+            [fc_baks] [fx_banner_up $fctop]] \
+      [list ok 0 1 0 1 1 1 {} 1]
+
+    # --- OK on a file changed while the dialog was open: refused -------------
+    fc_press $fctop.fix.apply
+    w_hier_write $fc_ed "$fc_edtxt* edited meanwhile\n"
+    set ::fx_said {}
+    set fc_p3 [fc_press $fc_conf.btns.proceed]
+    check "FX1723Cd OK on a file edited after the check is refused on the dialog and the CIW, and writes nothing" \
+      [list $fc_p3 [winfo exists $fc_conf] \
+            [string match {*'fc_edit.spice' changed after ASE-L checked it, so nothing was changed.*} [wtext_fx $fc_conf.status]] \
+            [fc_said {ase: 'fc_edit.spice' changed after ASE-L checked it*}] \
+            [fc_read $fc_ed] [fc_baks] [ase::session_dirty $fckey] [fx_banner_up $fctop]] \
+      [list ok 1 1 1 "$fc_edtxt* edited meanwhile\n" {} 0 1]
+    fc_press $fc_conf.btns.cancel
+    w_hier_write $fc_ed $fc_edtxt
+    # --- OK whose session half raises: the files go back, nothing half-done --
+    ## the session half is in-memory and should never raise; it is made to,
+    ## so the ruling's "leave nothing half-done" is measured rather than argued
+    fc_press $fctop.fix.apply
+    rename ::ase::preflight_session_commit ::fc_saved_commit
+    proc ::ase::preflight_session_commit {key scan} { error "fc1723: the session half raised" }
+    set ::fx_said {}
+    set fc_p5 [fc_press $fc_conf.btns.proceed]
+    set fc_cf [list $fc_p5 [winfo exists $fc_conf] \
+                 [string match {*fc1723: the session half raised*} [wtext_fx $fc_conf.status]] \
+                 [expr {[fc_read $fc_ed] eq $fc_edtxt}] [fc_baks] \
+                 [ase::session_dirty $fckey] [fx_exprs $fckey] [fx_banner_up $fctop]]
+    rename ::ase::preflight_session_commit {}
+    rename ::fc_saved_commit ::ase::preflight_session_commit
+    check "FX1723Cf OK whose session half raises puts every file back, drops every backup, and keeps the dialog and the banner" \
+      $fc_cf [list ok 1 1 1 {} 0 v(x1.a1) 1]
+    fc_press $fc_conf.btns.cancel
+
+    # --- OK: back up, rewrite, then the session --------------------------------
+    fc_press $fctop.fix.apply
+    set ::fx_said {}
+    set fc_p4 [fc_press $fc_conf.btns.proceed]
+    check "FX1723Ce OK backs the file up, rewrites only its card names, leaves the model folder's file, then rewrites the session" \
+      [list $fc_p4 [winfo exists $fc_conf] [fc_read $fc_ed] [expr {[fc_read $fc_ed.bak] eq $fc_edtxt}] \
+            [expr {[fc_read $fc_mod] eq $fc_modtxt}] [file exists $fc_mod.bak] \
+            [fx_exprs $fckey] [ase::session_dirty $fckey] [fx_banner_up $fctop]] \
+      [list ok 0 "* the bench's nodeset\n.nodeset v(xdut.a1)=1\n+ v(xdut.tail)=0\n" 1 1 0 v(xdut.a1) 1 0]
+    check "FX1723Ce2 ...and says each write on the CIW, the file with its backup and the session row" \
+      [list [fc_said "ase: include file '$fc_ed' rewritten: 2 × x1. → xdut. The original is in '$fc_ed.bak'."] \
+            [fc_said {ase: pre-flight — * rewritten to *instance 'x1' is now 'xdut'*}]] {1 1}
+
+    rename ::ase::echo {}
+    rename ::fc_saved_echo ::ase::echo
+    rename ::ase::run_precheck {}
+    rename ::fc_saved_precheck ::ase::run_precheck
+    ase::session_revert $fckey
+    update
+    ase::ui::close $fckey
+    catch {ase::session_close $fckey}
+    update
+  }
+
+ } fc_bigerr]} {
+  puts "UNEXPECTED ERROR (FX1723C block): $fc_bigerr"
+  incr fail
+  catch {
+    if {[info commands ::fc_saved_echo] ne {}} {
+      catch {rename ::ase::echo {}} ; rename ::fc_saved_echo ::ase::echo
+    }
+    if {[info commands ::fc_saved_precheck] ne {}} {
+      catch {rename ::ase::run_precheck {}} ; rename ::fc_saved_precheck ::ase::run_precheck
+    }
+  }
+ }
+} else {
+  puts "FX1723C legs skipped (no DISPLAY)"
+}
+
+# =============================================================================
+# FX1723E -- THE USER'S SHAPE, END TO END, ON /usr/bin/ngspice, BY PRESSES
+# =============================================================================
+# Two include files, `{vsup-1.35}` values, a `+` continuation, `.nodeset` only,
+# and output rows that are already correct (the user's state after the first
+# Apply Corrections). Run is refused BEFORE ngspice; Apply, then OK; Run
+# reaches ngspice and finishes with no nodeset warning in its log. The control
+# that makes the refusal worth having -- the same deck run with the check off
+# dies on `.nodeset syntax error` -- is PF1723ah on the counted arm.
+#
+# ⚠ NOTHING IS STUBBED HERE: a simulator is registered for the band (the
+# registry is otherwise empty, ISO1377) and cleared at its foot.
+if {[info exists ::has_x] && [info commands winfo] ne {} && [file executable /usr/bin/ngspice]} {
+ if {[catch {
+
+  set fe_run [file normalize [file join $scratch fx1723e_run]]
+  file mkdir $fe_run
+  w_hier_write [file join $fe_run nfet_clean.spice] "** sch_path: /fixture/nfet_clean.sch\n**.subckt nfet_clean\nxdut vsupn out e2e_buf\nVS vsupn 0 {vsup}\n.param vsup=1.8\n**.ends\n.subckt e2e_buf VDD OUT\nR1 VDD a1 1k\nR2 a1 d1 1k\nR3 d1 tail 1k\nR4 tail tailb 1k\nR5 tailb enb 1k\nR6 enb enbuf 1k\nR7 enbuf net1 1k\nR8 net1 OUT 1k\nR9 OUT 0 1k\n.ends\n.end\n"
+  set fe_en [file join $fe_run nodeset_enabled.spice]
+  set fe_dis [file join $fe_run nodeset_disabled.spice]
+  w_hier_write $fe_en "* e2e bench, enabled state\n* a first guess for the dc solver\n.nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.d1)={vsup-1.35} v(x1.tail)=0.30 v(x1.tailb)=0.025\n+ v(x1.enb)=0 v(x1.enbuf)={vsup} v(x1.net1)={vsup-0.01}\n"
+  w_hier_write $fe_dis "* e2e bench, disabled state\n.nodeset v(out)=0 v(x1.a1)=1.1 v(x1.d1)={vsup} v(x1.tail)=0.87 v(x1.tailb)=0.87\n+ v(x1.enb)={vsup} v(x1.enbuf)=0 v(x1.net1)={vsup}\n"
+  catch {ase::sim_clear}
+  ase::sim_register fx1723e /usr/bin/ngspice
+  ase::sim_select fx1723e
+
+  library_new_view aselib nfet_clean ngspice_state_fx1723e ngspice_state_fx1723e
+  set fepath [xschem cellview_path aselib/nfet_clean ngspice_state_fx1723e]
+  set fekey  [ase::session_key aselib nfet_clean ngspice_state_fx1723e]
+  if {$fepath eq {}} {
+    puts "SKIPPED: FX1723E (the fixture state view did not resolve)"
+  } else {
+    ase::session_open $fekey [file normalize $fepath]
+    set fest [ase::session_state $fekey]
+    dict set fest design {lib aselib cell nfet_clean view schematic}
+    dict set fest rundir $fe_run
+    dict set fest analyses {{type op enabled 1}}
+    dict set fest outputs {{expr v(out) save 1 plot 0}}
+    dict set fest measurements {}
+    dict set fest models {}
+    dict set fest includes [list [list file $fe_en] [list file $fe_dis]]
+    set fest [ase::sim_choice_set $fest entry fx1723e]
+    ase::session_update $fekey $fest
+    ase::session_save $fekey
+    ase::session_close $fekey
+    check "FX1723E open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_fx1723e] 1
+    update
+    set fetop [ase::ui::window_for $fekey]
+    catch {wm geometry $fetop 900x560}
+    update ; after 150 ; update
+    set ::fx_said {}
+    rename ::ase::echo ::fe_saved_echo
+    proc ::ase::echo {msg {tag {}}} { lappend ::fx_said [list $tag $msg] ; return 1 }
+
+    set fe_p1 [fi_press $fetop.strip.run]
+    check "FX1723Ea Run with correct outputs and stale include files is refused before ngspice: no run, nothing generated, the banner up" \
+      [list $fe_p1 [ase::session_getattr $fekey run_id {}] \
+            [expr {[lsearch -glob [lmap e $::fx_said {lindex $e 1}] {ase: REFUSED — 14 .nodeset/.ic names in 2 include files stop at*}] >= 0}] \
+            [glob -nocomplain -tails -directory $fe_run *_ase.*] [fx_banner_up $fetop]] \
+      {ok {} 1 {} 1}
+    fi_press $fetop.fix.apply
+    set fe_p2 [fi_press $fetop.fixconf.btns.proceed]
+    check "FX1723Eb Apply, then OK, rewrites both files with their backups and leaves the session as it was" \
+      [list $fe_p2 [string match {*x1.*} "[fi_read $fe_en][fi_read $fe_dis]"] \
+            [file exists $fe_en.bak] [file exists $fe_dis.bak] [ase::session_dirty $fekey] [fx_banner_up $fetop]] \
+      {ok 0 1 1 0 0}
+    set ::fx_said {}
+    set fe_p3 [fi_press $fetop.strip.run]
+    set fe_id [ase::session_getattr $fekey run_id {}]
+    if {$fe_id ne {}} { ase::wait $fe_id }
+    ## the run can finish inside the press's own `update` (run_finished then
+    ## clears run_id), so the exit code is read off the log's own footer, with
+    ## a bound of 10 s
+    set fe_ex NOFOOTER
+    set fe_logf [file join $fe_run nfet_clean_ase.log]
+    for {set i 0} {$i < 200} {incr i} {
+      if {[regexp {=== exit (-?[0-9]+) after} [fi_read $fe_logf] -> fe_ex]} { break }
+      update ; after 50
+    }
+    update
+    set fe_log [fi_read $fe_logf]
+    set fe_sim [string range $fe_log [string first {--- simulator output ---} $fe_log] end]
+    check "FX1723Ec the next Run reaches ngspice and finishes, with no nodeset warning or syntax error in its log" \
+      [list $fe_p3 [string match {*using     : fx1723e*} $fe_log] $fe_ex [file exists [file join $fe_run nfet_clean_ase.raw]] \
+            [string match -nocase {*nodeset*} $fe_sim] [string match {*non-existent*} $fe_log] \
+            [string match {*syntax error*} $fe_log]] \
+      {ok 1 0 1 0 0 0}
+
+    rename ::ase::echo {}
+    rename ::fe_saved_echo ::ase::echo
+    catch {ase::session_setattr $fekey run_id {}}
+    ase::ui::close $fekey
+    catch {ase::session_close $fekey}
+    update
+  }
+  catch {ase::sim_clear}
+
+ } fe_bigerr]} {
+  puts "UNEXPECTED ERROR (FX1723E block): $fe_bigerr"
+  incr fail
+  catch {
+    if {[info commands ::fe_saved_echo] ne {}} {
+      catch {rename ::ase::echo {}} ; rename ::fe_saved_echo ::ase::echo
+    }
+  }
+  catch {ase::sim_clear}
+ }
+} elseif {[info exists ::has_x] && [info commands winfo] ne {}} {
+  puts "skip: FX1723E end to end (no /usr/bin/ngspice)"
+} else {
+  puts "FX1723E legs skipped (no DISPLAY)"
 }
 
 # --- verdict -----------------------------------------------------------------

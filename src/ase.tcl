@@ -16885,17 +16885,21 @@ proc ase::netlist_map_resolve {map kind name cs} {
 # every ruling here is drivable with no simulator and no files.
 #
 #   -> {mode <requested>  cs 0|1  absent {<row> ...}  unknown {<row> ...}
-#       measurements {<mrow> ...}  renames {<rename> ...}}
+#       measurements {<mrow> ...}  renames {<rename> ...}  incrows {<irow> ...}}
 #      row = {expr <e> kind <k> ident <n> correction <c> ambiguous 0|1 why <w>
 #             fixkind case|rename|{}  [miss .. stale .. fit .. candidates ..]}
 #      mrow = the same, plus {meas <name> index <i> field <f>}, `expr` being
 #             that field's text
+#      irow = the same, for a `.nodeset`/`.ic` name of an include file, plus
+#             {file <as stored> path <resolved> line <n> card nodeset|ic
+#             start <s> end <e> value <v> spelled <the netlist's spelling or {}>}
+#             (issue 1723 item 7; only when ITEXTS is given)
 #      rename = see ase::preflight_rename_solve (issue 1723)
 #
 # The mode is the RUN's REQUEST — item 9 §13.4's ruling, and the same value item
 # 8's gate uses (profile `casemode` -> global floor `sim_case_mode` -> fold).
 # It decides one thing only: whether the comparison is case-sensitive.
-proc ase::preflight_scan {state netlist_text} {
+proc ase::preflight_scan {state netlist_text {itexts {}}} {
   set mode fold
   # The same value item 8's gate uses. ⚠ ITEM 9's `init 0` READ-ONLY FORM IS
   # GONE WITH THE PROFILE LAYER, and it is not missed: the reason it existed was
@@ -16967,9 +16971,55 @@ proc ase::preflight_scan {state netlist_text} {
       }
     }
   }
-  lassign [ase::preflight_rename_solve $map $cs $absent $meas] absent meas renames
+  ## ISSUE 1723 item 7: THE `.nodeset`/`.ic` NAMES OF THE INCLUDE FILES. ITEXTS
+  ## is ase::include_texts' list, read by the caller, so this proc stays a pure
+  ## function of its arguments. Every name that resolves `absent` is a row of
+  ## `incrows`; one whose path stops at a missing instance (`miss`) refuses the
+  ## run and joins the rename search beside the output rows; any other is a
+  ## caution (a node an instance that exists does not have: no ruling covers
+  ## refusing it). `unknown` is not a row, which carries over the
+  ## include-bearing-scope ruling -- and a missing TOP-LEVEL instance that an
+  ## include file itself defines (`x5 ...` in a stimulus file) stands down the
+  ## same way, because the circuit netlist cannot show it.
+  set incrows {}
+  if {[llength $itexts]} {
+    set topdef [ase::include_top_words $itexts]
+    foreach it $itexts {
+      foreach ci [ase::include_card_idents [dict get $it text]] {
+        set ident [dict get $ci ident]
+        set r [ase::netlist_map_resolve $map voltage $ident $cs]
+        if {[dict get $r status] ne {absent}} { continue }
+        set row [dict create file [dict get $it file] path [dict get $it path] \
+          line [dict get $ci line] card [dict get $ci card] kind voltage \
+          ident $ident expr $ident start [dict get $ci start] end [dict get $ci end] \
+          value [dict get $ci value] correction {} spelled [dict get $r real] \
+          ambiguous [dict get $r ambiguous] why [dict get $r why] fixkind {}]
+        if {[dict exists $r miss]} {
+          set mz [dict get $r miss]
+          if {[dict get $mz scope] eq {} &&
+              [dict exists $topdef [string tolower [dict get $mz prefix]]]} {
+            continue
+          }
+          dict set row miss $mz
+        } elseif {[dict get $r real] ne {} || [dict get $r ambiguous]} {
+          ## the node IS there in another spelling (a case mismatch under
+          ## `distinguish`): ngspice folds every name of a `.nodeset`/`.ic`
+          ## card to lower case, so the card reaches that node and there is
+          ## nothing to refuse, caution or rewrite
+          continue
+        } elseif {[string first . $ident] < 0 &&
+                  [dict exists $topdef [string tolower $ident]]} {
+          ## a top-level node only an include file connects
+          continue
+        }
+        lappend incrows $row
+      }
+    }
+  }
+  lassign [ase::preflight_rename_solve $map $cs $absent $meas $incrows] \
+    absent meas renames incrows
   return [dict create mode $mode cs $cs absent $absent unknown $unknown \
-            measurements $meas renames $renames]
+            measurements $meas renames $renames incrows $incrows]
 }
 
 # ISSUE 1723: THE INSTANCES OF THE MISSING SEGMENT'S OWN SCOPE UNDER WHICH THE
@@ -17031,23 +17081,37 @@ proc ase::preflight_rename_try {map kind name cs miss} {
 # ⚠ ONLY A ROW CARRYING `miss` IS A MEMBER, and the two kinds of correction
 # cannot meet on one row: the resolver sets `miss` only on the arm that
 # answers `real {}`, and never for a fold-ambiguous segment.
-proc ase::preflight_rename_solve {map cs orows mrows} {
+#
+# ⚠ ISSUE 1723 item 7: `irows`, the include files' `.nodeset`/`.ic` rows, refuse
+# a run as output rows do, so they DECIDE as output rows do (the ruling: "these
+# rows join the rename search like output rows"). -> {orows mrows renames
+# irows}, and every rename record counts them as `includes`.
+proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
   set grp [dict create]
+  set gname [dict create]
   set tries [dict create]
-  foreach w {o m} rows [list $orows $mrows] {
+  foreach w {o m i} rows [list $orows $mrows $irows] {
     set i -1
     foreach row $rows {
       incr i
       if {![dict exists $row miss]} { continue }
-      dict lappend grp [dict get $row miss prefix] [list $w $i]
+      ## under `fold` two spellings of one stale prefix (`x1`, `X1`) are one
+      ## instance, so one group; the record keeps the first spelling seen
+      set gk [dict get $row miss prefix]
+      if {!$cs} { set gk [string tolower $gk] }
+      if {![dict exists $gname $gk]} { dict set gname $gk [dict get $row miss prefix] }
+      dict lappend grp $gk [list $w $i]
       dict set tries $w,$i [ase::preflight_rename_try $map [dict get $row kind] \
                               [dict get $row ident] $cs [dict get $row miss]]
     }
   }
   set renames {}
-  dict for {p members} $grp {
+  dict for {gk members} $grp {
+    set p [dict get $gname $gk]
     set deciders {}
-    foreach mb $members { if {[lindex $mb 0] eq {o}} { lappend deciders $mb } }
+    foreach mb $members {
+      if {[lindex $mb 0] in {o i}} { lappend deciders $mb }
+    }
     if {![llength $deciders]} { set deciders $members }
     set common {}
     set union {}
@@ -17072,10 +17136,11 @@ proc ase::preflight_rename_solve {map cs orows mrows} {
     set to {}
     set no 0
     set nm 0
+    set ni 0
     foreach mb $members {
       lassign $mb w j
-      if {$w eq {o}} { incr no } else { incr nm }
-      set row [lindex [expr {$w eq {o} ? $orows : $mrows}] $j]
+      switch -- $w { o { incr no } m { incr nm } i { incr ni } }
+      set row [lindex [dict get [dict create o $orows m $mrows i $irows] $w] $j]
       dict set row stale $p
       dict set row fit $fit
       dict set row candidates $cands
@@ -17096,12 +17161,16 @@ proc ase::preflight_rename_solve {map cs orows mrows} {
           }
         }
       }
-      if {$w eq {o}} { lset orows $j $row } else { lset mrows $j $row }
+      switch -- $w {
+        o { lset orows $j $row }
+        m { lset mrows $j $row }
+        i { lset irows $j $row }
+      }
     }
     lappend renames [dict create prefix $p to $to fit $fit candidates $cands \
-                       outputs $no measurements $nm]
+                       outputs $no measurements $nm includes $ni]
   }
-  return [list $orows $mrows $renames]
+  return [list $orows $mrows $renames $irows]
 }
 
 # Quoted names for a sentence: 'a' / 'a' and 'b' / 'a', 'b' and 'c'.
@@ -17112,49 +17181,678 @@ proc ase::preflight_name_list {names} {
   return "[join [lrange $q 0 end-1] {, }] and [lindex $q end]"
 }
 
-# ISSUE 1723: THE `.include`d FILES THAT NAME A STALE PREFIX, listed and NEVER
-# edited -- they are the user's files, and ASE-L does not own their text.
+# ISSUE 1723: THE `.include`d FILES THAT NAME A STALE PREFIX, by path and count.
 # -> {{path <resolved> file <as stored> prefix <p> to <t> count <n>} ...}
 #
 # The count is of `<prefix>.` with the dot, preceded by the start of a line or
 # by a character that cannot continue a name or a path: the same text a user's
 # own search-and-replace has to find. The dot is not optional -- a graph record
 # in a state file carries `x1 0 x2 9` as axis keys, and an include file can
-# just as well hold a bare `x1` that is not an instance path.
+# just as well hold a bare `x1` that is not an instance path. EVERY such hit is
+# counted, inside a `.nodeset`/`.ic` card or not; only the card names the scan
+# resolved (ase::preflight_include_edits) are ever rewritten.
 #
-# A relative path resolves against `rundir`, because the simulator runs there.
-# An include that does not expand, is not a readable file, or is larger than
-# 8 MB is passed over: a nested `.include` inside one is not followed.
-proc ase::preflight_include_hits {state renames cs {rundir {}}} {
+# The files are ase::include_texts' (a relative path resolves against `rundir`,
+# because the simulator runs there; a file that does not expand, is not a
+# readable regular file, or is larger than 8 MB is passed over; a nested
+# `.include` inside one is not followed). ITEXTS, when given, is that list as a
+# caller already read it, so the gate reads each file once; `-` reads it here.
+proc ase::preflight_include_hits {state renames cs {rundir {}} {itexts -}} {
   set out {}
   if {![llength $renames]} { return {} }
   set opts [list -all]
   if {!$cs} { lappend opts -nocase }
-  foreach inc [ase::state_get $state includes] {
-    if {[llength $inc] >= 2 && ![catch {dict get $inc file} f]} {
-    } else {
-      set f $inc
-    }
-    if {[string trim $f] eq {}} { continue }
-    if {[catch {ase::expand_path $f} p]} { continue }
-    if {[catch {file pathtype $p} pt]} { continue }
-    if {$pt ne {absolute} && $rundir ne {}} { set p [file join $rundir $p] }
-    if {![file isfile $p] || ![file readable $p]} { continue }
-    if {[catch {file size $p} sz] || $sz > 8388608} { continue }
-    if {[catch {open $p r} fh]} { continue }
-    set txt [read $fh]
-    close $fh
+  if {$itexts eq {-}} { set itexts [ase::include_texts $state $rundir] }
+  foreach it $itexts {
+    set txt [dict get $it text]
+    ## under `fold` the count is case-blind, so two stale prefixes differing
+    ## only in case (`x1`, `X1`) would count the same hits twice: the first
+    ## spelling speaks for both
+    set seen [dict create]
     foreach g $renames {
       set pre [dict get $g prefix]
+      if {!$cs} {
+        if {[dict exists $seen [string tolower $pre]]} { continue }
+        dict set seen [string tolower $pre] 1
+      }
       set q [regsub -all {[][{}()*+?.\\^$|]} $pre {\\&}]
       set n [regexp {*}$opts -- "(?:^|\[^A-Za-z0-9_.\])$q\\." $txt]
       if {$n} {
-        lappend out [dict create path [file normalize $p] file $f prefix $pre \
-                       to [dict get $g to] count $n]
+        lappend out [dict create path [dict get $it path] file [dict get $it file] \
+                       prefix $pre to [dict get $g to] count $n]
       }
     }
   }
   return $out
+}
+
+# --- ISSUE 1723 items 5-7: THE SESSION'S INCLUDE FILES ------------------------
+#
+# The user's report (2026-11-21): after a rename and Apply Corrections the next
+# Run died inside ngspice on a `.nodeset` card in an include file still naming
+# `x1.`, and "where are these nodesets hidden? How is a user to find them?" --
+# no ASE-L window showed the `includes` key. The ruling of that day:
+#   5  Setup > Include Files… lists them (src/ase_window.tcl);
+#   6  Apply Corrections rewrites the `.nodeset`/`.ic` names in them, after
+#      asking, backing each file up first;
+#   7  a `.nodeset`/`.ic` name stopping at a missing instance refuses the Run.
+# The decisions are the pure procs below; the window only acts on them.
+
+# One `includes` entry's file text, as stored: a {file <path>} dict, or a bare
+# string a hand-written state carries (render_deck's own reading).
+proc ase::include_entry_file {inc} {
+  if {[llength $inc] >= 2 && ![catch {dict get $inc file} f]} { return $f }
+  return $inc
+}
+
+# Where one stored include path resolves: -> {path <normalized, or {}> why
+# <the expander's sentence, or {}>}. A relative path joins RUNDIR (the
+# simulator's working directory), exactly as the deck's `.include` card is read.
+proc ase::include_resolve {f rundir} {
+  if {[string trim $f] eq {}} { return [list path {} why {an empty path}] }
+  if {[catch {ase::expand_path $f} p]} { return [list path {} why $p] }
+  if {[catch {file pathtype $p} pt]} { return [list path {} why $pt] }
+  if {$pt ne {absolute} && $rundir ne {}} { set p [file join $rundir $p] }
+  return [list path [file normalize $p] why {}]
+}
+
+# The session's include files as read for a scan: -> {{file <as stored> path
+# <resolved> text <bytes>} ...}, once per resolved path, in `includes` order.
+# Read BINARY, so every offset into `text` is a byte offset and a rewrite can
+# keep every other byte as it was (CRLF line ends included). A file that does
+# not expand, is not a readable regular file, or is larger than 8 MB is passed
+# over (the issue 1723 limits); a nested `.include` inside one is not followed.
+proc ase::include_texts {state rundir} {
+  set out {}
+  set seen [dict create]
+  foreach inc [ase::state_get $state includes] {
+    set f [ase::include_entry_file $inc]
+    set p [dict get [ase::include_resolve $f $rundir] path]
+    if {$p eq {} || [dict exists $seen $p]} { continue }
+    if {![file isfile $p] || ![file readable $p]} { continue }
+    if {[catch {file size $p} sz] || $sz > 8388608} { continue }
+    if {[catch {open $p r} fh]} { continue }
+    fconfigure $fh -translation binary
+    set txt [read $fh]
+    close $fh
+    dict set seen $p 1
+    lappend out [dict create file $f path $p text $txt]
+  }
+  return $out
+}
+
+# THE NAMES A `.nodeset`/`.ic` CARD OF ONE INCLUDE FILE GIVES A VALUE TO. Pure.
+# -> {{line <n> card nodeset|ic ident <name> start <s> end <e> value <v>} ...}
+# `line` is the 1-based physical line the name sits on (a `+` continuation is
+# its own line); `start`/`end` are offsets into TEXT, inclusive, of the name
+# inside `v(...)`; `value` is the text after its `=`, a `{...}` expression kept
+# whole.
+#
+# A card is a line whose first word is `.nodeset` or `.ic` (any case), plus the
+# `+` lines that continue it; comment (`*`) and blank lines between them do not
+# end it, because ngspice drops those before it joins continuations. Only cards
+# at the file's top level count: one inside a `.subckt` block names that
+# subcircuit's own nodes. An inline comment (`;`, or `$` after a blank) ends
+# what is read of a line. Only voltage names: `i(...)` is not a node.
+proc ase::include_card_idents {text} {
+  set out {}
+  if {![regexp -nocase {(?:^|\n)[ \t]*\.(?:nodeset|ic)(?:[ \t\r]|$)} $text]} {
+    return {}
+  }
+  set pos 0
+  set lineno 0
+  set card {}
+  set depth 0
+  foreach raw [split $text "\n"] {
+    incr lineno
+    set len [string length $raw]
+    set t [string trimleft $raw]
+    set lead [expr {$len - [string length $t]}]
+    set c [string index $t 0]
+    set from -1
+    if {[string trim $t] eq {} || $c eq {*}} {
+      ## transparent: neither starts nor ends a card
+    } elseif {$c eq {+}} {
+      if {$card ne {}} { set from [expr {$lead + 1}] }
+    } else {
+      set card {}
+      set kw {}
+      regexp {^\S+} $t kw
+      set kw [string tolower $kw]
+      if {$kw eq {.subckt}} {
+        incr depth
+      } elseif {$kw eq {.ends}} {
+        if {$depth > 0} { incr depth -1 }
+      } elseif {$depth == 0 && ($kw eq {.nodeset} || $kw eq {.ic})} {
+        set card [string range $kw 1 end]
+        set from [expr {$lead + [string length $kw]}]
+      }
+    }
+    if {$from >= 0} {
+      set seg [string range $raw $from end]
+      ## an inline comment ends what is read of the line
+      if {[regexp -indices {;|[ \t]\$} $seg cm]} {
+        set seg [string range $seg 0 [expr {[lindex $cm 0] - 1}]]
+      }
+      foreach s [ase::preflight_ident_spans $seg] {
+        lassign $s kind nm st en
+        if {$kind ne {voltage}} { continue }
+        ## the value: past `)`, blanks, `=`, blanks; a {...} expression whole
+        set v {}
+        set rest [string range $seg [expr {$en + 1}] end]
+        regexp {^[^)]*\)\s*=\s*(\{[^\}]*\}|\S*)} $rest -> v
+        lappend out [dict create line $lineno card $card ident $nm \
+                       start [expr {$pos + $from + $st}] \
+                       end [expr {$pos + $from + $en}] value $v]
+      }
+    }
+    incr pos [expr {$len + 1}]
+  }
+  return $out
+}
+
+# EVERY WORD OF THE ELEMENT CARDS include files put at the TOP LEVEL of the
+# deck, folded to lower case: -> {<word> 1 ...}. Pure. The element's own name
+# and every node it connects (and its values, which costs nothing: a value is
+# never asked about). A `+` line continuing an element card counts with it;
+# dot cards, comments and `.subckt` bodies do not.
+#
+# The circuit netlist cannot show what these files add, so the scan stands
+# down on it rather than refuse or caution: a `.nodeset` name under an
+# instance a stimulus include adds (`x5 ...`), or on a node only an include
+# connects (`V5 vsup 0 1.8`, then `.nodeset v(vsup)=1.8`) -- the
+# include-bearing-scope ruling of ase::netlist_map_resolve, applied to the
+# scope these files really add cards to.
+proc ase::include_top_words {itexts} {
+  set out [dict create]
+  foreach it $itexts {
+    set depth 0
+    set elem 0
+    foreach raw [split [dict get $it text] "\n"] {
+      set t [string trimleft $raw]
+      set c [string index $t 0]
+      if {[string trim $t] eq {} || $c eq {*}} { continue }
+      if {[regexp -indices {;|[ \t]\$} $t cm]} {
+        set t [string range $t 0 [expr {[lindex $cm 0] - 1}]]
+      }
+      if {$c eq {+}} {
+        if {!$elem} { continue }
+        set t [string range $t 1 end]
+      } elseif {$c eq {.}} {
+        set elem 0
+        set kw [string tolower [lindex [regexp -inline {^\S+} $t] 0]]
+        if {$kw eq {.subckt}} {
+          incr depth
+        } elseif {$kw eq {.ends} && $depth > 0} {
+          incr depth -1
+        }
+        continue
+      } else {
+        set elem [expr {$depth == 0}]
+      }
+      if {!$elem} { continue }
+      foreach w [regexp -all -inline {[^\s=(),]+} $t] {
+        dict set out [string tolower $w] 1
+      }
+    }
+  }
+  return $out
+}
+
+# THE FOLDERS ASE-L NEVER WRITES INTO, as {{dir <normalized> why pdk|models} ...}.
+# `$::PDK_ROOT` and `$::env(PDK_ROOT)` when set, and the folder of every
+# `models` entry of STATE and of ::ASE_DEFAULT_MODELS (the PDK's own models).
+# A models entry that does not expand is skipped: it names no folder.
+proc ase::include_protected_roots {state rundir} {
+  set out {}
+  set pr {}
+  if {[info exists ::PDK_ROOT]} { lappend pr $::PDK_ROOT }
+  if {[info exists ::env(PDK_ROOT)]} { lappend pr $::env(PDK_ROOT) }
+  foreach d $pr {
+    if {[string trim $d] eq {}} { continue }
+    lappend out [dict create dir [file normalize $d] why pdk]
+  }
+  set ms [ase::state_get $state models]
+  if {[info exists ::ASE_DEFAULT_MODELS]} { lappend ms {*}$::ASE_DEFAULT_MODELS }
+  foreach m $ms {
+    if {[catch {dict get $m file} f]} { continue }
+    set p [dict get [ase::include_resolve $f $rundir] path]
+    if {$p eq {}} { continue }
+    lappend out [dict create dir [file dirname $p] why models]
+  }
+  return $out
+}
+
+# What the disk says about one include file, for ase::include_edit_verdict:
+# -> {isfile 0|1 writable 0|1 dirwritable 0|1 real <the path with every link,
+# the last one included, resolved>}. A symlinked include is judged by where it
+# really points too, because a write through the link lands there.
+proc ase::include_edit_facts {path} {
+  set real $path
+  catch {set real [file dirname [file normalize [file join $path ___]]]}
+  set isf [expr {[file isfile $path] ? 1 : 0}]
+  set wr [expr {$isf && [file writable $path] ? 1 : 0}]
+  set dir [file dirname $path]
+  set dw [expr {[file isdirectory $dir] && [file writable $dir] ? 1 : 0}]
+  return [dict create isfile $isf writable $wr dirwritable $dw real $real]
+}
+
+# MAY ASE-L REWRITE THIS INCLUDE FILE? Pure. -> {} when it may, else the reason
+# as a clause ("it is under the PDK (/x)").
+#
+# THE RULE (issue 1723 item 6, ruled 2026-11-21). A file is rewritten only when
+# ALL of these hold; otherwise it is never touched and is named as not editable:
+#   1. it is a regular file that exists (FACTS `isfile`);
+#   2. it is writable, and so is its folder, because the backup is written
+#      beside it (FACTS `writable`, `dirwritable`);
+#   3. neither PATH nor where it really points (FACTS `real`) lies under one of
+#      ROOTS (ase::include_protected_roots: the PDK, and every `models`
+#      entry's folder). "Under" compares whole path segments, so `/p/sky` holds
+#      `/p/sky/a.spice` and not `/p/sky2/a.spice`.
+proc ase::include_edit_verdict {path facts roots} {
+  if {![dict get $facts isfile]} { return "it is not a file ASE-L can read" }
+  if {![dict get $facts writable]} { return "it is read-only" }
+  if {![dict get $facts dirwritable]} {
+    return "its folder is read-only, so no backup can be written beside it"
+  }
+  foreach p [lsort -unique [list $path [dict get $facts real]]] {
+    set ps [file split $p]
+    foreach r $roots {
+      set rs [file split [dict get $r dir]]
+      if {[llength $rs] >= [llength $ps]} { continue }
+      if {[lrange $ps 0 [expr {[llength $rs] - 1}]] ne $rs} { continue }
+      if {[dict get $r why] eq {pdk}} {
+        return "it is under the PDK ([dict get $r dir])"
+      }
+      return "it is in a model file's folder ([dict get $r dir])"
+    }
+  }
+  return {}
+}
+
+# THE BACKUP'S NAME: `<path>.bak`, or `.bak2`, `.bak3`, ... when that is in
+# TAKEN (the names that already exist). Pure.
+proc ase::include_backup_pick {path taken} {
+  set b $path.bak
+  set i 1
+  while {[lsearch -exact $taken $b] >= 0} {
+    incr i
+    set b $path.bak$i
+  }
+  return $b
+}
+
+# The same, against the disk. `file lstat`, not `file exists`: a dangling link
+# called `.bak` exists for this purpose, and a write would follow it.
+proc ase::include_backup_name {path} {
+  set taken {}
+  set b [ase::include_backup_pick $path $taken]
+  while {![catch {file lstat $b _st}]} {
+    lappend taken $b
+    set b [ase::include_backup_pick $path $taken]
+  }
+  return $b
+}
+
+# EVERY REWRITE THE SCAN OFFERS IN THE INCLUDE FILES, per file. Pure.
+# -> {{path <resolved> file <as stored> edits {{start <s> end <e> old <o>
+#      new <n> line <l> ident <i>} ...} changes {{from <p> to <t> n <k>} ...}} ...}
+# Only `.nodeset`/`.ic` names whose rename was UNIQUE (`fixkind rename` with a
+# correction) are edits, and an edit replaces the stale PREFIX alone -- the
+# name's own spelling of the rest is kept, so "7 × x1. → xdut." is the whole
+# of what changes. Files in first-appearance order.
+proc ase::preflight_include_edits {scan} {
+  set cs 0
+  catch {set cs [dict get $scan cs]}
+  set to [dict create]
+  set rn {}
+  catch {set rn [dict get $scan renames]}
+  foreach g $rn {
+    if {[dict get $g fit] eq {unique} && [dict get $g to] ne {}} {
+      dict set to [dict get $g prefix] [dict get $g to]
+    }
+  }
+  set byfile [dict create]
+  set rows {}
+  catch {set rows [dict get $scan incrows]}
+  foreach r $rows {
+    if {[ase::state_get $r fixkind] ne {rename} ||
+        [ase::state_get $r correction] eq {}} { continue }
+    set p [ase::state_get $r stale]
+    if {![dict exists $to $p]} { continue }
+    ## the name's OWN spelling of the prefix: under `fold` a group's record
+    ## keeps its first spelling, and `X1.tail` is still rewritten as written
+    set old [string range [dict get $r ident] 0 [expr {[string length $p] - 1}]]
+    if {$old ne $p && ($cs || ![string equal -nocase $old $p])} { continue }
+    set path [dict get $r path]
+    if {![dict exists $byfile $path]} {
+      dict set byfile $path [dict create path $path file [dict get $r file] \
+                               edits {} changes [dict create]]
+    }
+    set f [dict get $byfile $path]
+    set st [dict get $r start]
+    dict lappend f edits [dict create start $st \
+      end [expr {$st + [string length $p] - 1}] old $old new [dict get $to $p] \
+      line [dict get $r line] ident [dict get $r ident]]
+    set ch [dict get $f changes]
+    dict incr ch "$old\n[dict get $to $p]"
+    dict set f changes $ch
+    dict set byfile $path $f
+  }
+  set out {}
+  dict for {path f} $byfile {
+    set ch {}
+    dict for {k n} [dict get $f changes] {
+      lassign [split $k "\n"] a b
+      lappend ch [dict create from $a to $b n $n]
+    }
+    dict set f changes $ch
+    lappend out $f
+  }
+  return $out
+}
+
+# TEXT with EDITS applied, right to left, every other byte kept. Pure. Raises
+# when an edit's span no longer reads its `old` text: the file is not the one
+# the scan read, and nothing may be guessed.
+proc ase::include_rewrite_text {text edits} {
+  set out $text
+  foreach e [lsort -decreasing -command {apply {{a b} {
+               expr {[dict get $a start] - [dict get $b start]}}}} $edits] {
+    set st [dict get $e start]
+    set en [dict get $e end]
+    if {[string range $out $st $en] ne [dict get $e old]} {
+      return -code error "the text at byte $st is not '[dict get $e old]'"
+    }
+    set out [string replace $out $st $en [dict get $e new]]
+  }
+  return $out
+}
+
+# THE FILE HALF OF APPLY CORRECTIONS, as a plan: what the press would write.
+# -> {{path file edits changes text <the bytes the scan read> editable 0|1
+#      why <ase::include_edit_verdict's clause> backup <name, editable only>
+#      n <names rewritten>} ...}
+# ITEXTS is the list the scan read (ase::include_texts); RUNDIR resolves a
+# relative `models` entry the way the deck does.
+proc ase::preflight_include_plan {state scan itexts rundir} {
+  set texts [dict create]
+  foreach it $itexts { dict set texts [dict get $it path] [dict get $it text] }
+  set roots [ase::include_protected_roots $state $rundir]
+  set out {}
+  foreach f [ase::preflight_include_edits $scan] {
+    set p [dict get $f path]
+    if {![dict exists $texts $p]} { continue }
+    dict set f text [dict get $texts $p]
+    dict set f n [llength [dict get $f edits]]
+    set why [ase::include_edit_verdict $p [ase::include_edit_facts $p] $roots]
+    dict set f why $why
+    dict set f editable [expr {$why eq {} ? 1 : 0}]
+    dict set f backup [expr {$why eq {} ? [ase::include_backup_name $p] : {}}]
+    lappend out $f
+  }
+  return $out
+}
+
+# "7 × x1. → xdut." for one plan record's changes. Pure.
+proc ase::include_change_words {f} {
+  set w {}
+  foreach c [dict get $f changes] {
+    lappend w "[dict get $c n] × [dict get $c from]. → [dict get $c to]."
+  }
+  return [join $w {, }]
+}
+
+# WRITE THE PLAN: every editable file is re-read and must still be the bytes
+# the scan read; then every one is backed up beside itself, then every one is
+# rewritten. All or nothing -- a failure at any step puts back every file
+# already written and deletes every backup already made.
+# -> {ok 1 n <names> files {{path backup n changes} ...}}
+#  | {ok 0 why <the sentence>}
+# A file that is not editable is never opened for writing.
+proc ase::include_apply_plan {plan} {
+  set todo {}
+  foreach f $plan {
+    if {![dict get $f editable] || ![llength [dict get $f edits]]} { continue }
+    set p [dict get $f path]
+    ## RE-READ AT THE PRESS: the file must be the one the scan read
+    if {[catch {
+      set fh [open $p r]
+      fconfigure $fh -translation binary
+      set now [read $fh]
+      close $fh
+    } e]} {
+      return [list ok 0 why "'[file tail $p]' cannot be read ($e), so nothing was\
+ changed."]
+    }
+    if {$now ne [dict get $f text]} {
+      return [list ok 0 why "'[file tail $p]' changed after ASE-L checked it, so\
+ nothing was changed. Press [ase::preflight_apply_label] again to check it afresh."]
+    }
+    if {[catch {ase::include_rewrite_text $now [dict get $f edits]} new]} {
+      return [list ok 0 why "'[file tail $p]' does not read as ASE-L checked it\
+ ($new), so nothing was changed."]
+    }
+    lappend todo [list $f $new]
+  }
+  set made {}
+  foreach t $todo {
+    lassign $t f new
+    set b [dict get $f backup]
+    if {[catch {
+      set fh [open $b {WRONLY CREAT EXCL}]
+      fconfigure $fh -translation binary
+      puts -nonewline $fh [dict get $f text]
+      close $fh
+    } e]} {
+      foreach m $made { catch {file delete -- $m} }
+      return [list ok 0 why "the backup '$b' could not be written ($e), so nothing\
+ was changed."]
+    }
+    lappend made $b
+  }
+  set done {}
+  foreach t $todo {
+    lassign $t f new
+    set p [dict get $f path]
+    if {[catch {
+      set fh [open $p w]
+      fconfigure $fh -translation binary
+      puts -nonewline $fh $new
+      close $fh
+    } e]} {
+      catch {close $fh}
+      ## put back every file touched, this one included, then drop the backups
+      foreach d [concat $done [list $f]] {
+        catch {
+          set fh [open [dict get $d path] w]
+          fconfigure $fh -translation binary
+          puts -nonewline $fh [dict get $d text]
+          close $fh
+        }
+      }
+      foreach m $made { catch {file delete -- $m} }
+      return [list ok 0 why "'[file tail $p]' could not be written ($e), so every\
+ file was put back as it was and nothing was changed."]
+    }
+    lappend done $f
+  }
+  set files {}
+  set n 0
+  foreach f $done {
+    incr n [dict get $f n]
+    lappend files [dict create path [dict get $f path] backup [dict get $f backup] \
+                     n [dict get $f n] changes [dict get $f changes]]
+  }
+  return [list ok 1 n $n files $files]
+}
+
+# What a successful ase::include_apply_plan says, one CIW line per file
+# rewritten. Pure. The console command and the window's OK both say these.
+proc ase::include_apply_said {r} {
+  set out {}
+  foreach f [dict get $r files] {
+    lappend out "ase: include file '[dict get $f path]' rewritten:\
+ [ase::include_change_words $f] The original is in '[dict get $f backup]'."
+  }
+  return $out
+}
+
+# UNDO A SUCCESSFUL ase::include_apply_plan: every file R wrote goes back to the
+# bytes PLAN read, and its backup is deleted. For a press whose file half
+# succeeded and whose session half then raised (the ruling: "leave nothing
+# half-done"). -> {} when every file went back, else the sentence naming the
+# ones that did not (their backups are then KEPT, as the only copy).
+proc ase::include_unapply {plan r} {
+  set texts [dict create]
+  foreach f $plan { dict set texts [dict get $f path] [dict get $f text] }
+  set bad {}
+  foreach f [dict get $r files] {
+    set p [dict get $f path]
+    if {[catch {
+      set fh [open $p w]
+      fconfigure $fh -translation binary
+      puts -nonewline $fh [dict get $texts $p]
+      close $fh
+    } e]} {
+      catch {close $fh}
+      lappend bad "'[file tail $p]' ($e; its original is in '[dict get $f backup]')"
+      continue
+    }
+    catch {file delete -- [dict get $f backup]}
+  }
+  if {![llength $bad]} { return {} }
+  return "these include files could not be put back: [join $bad {, }]"
+}
+
+# The Apply button's label, from the window when it is loaded: the engine may
+# not depend on src/ase_window.tcl, so the literal is the fallback, and row
+# PF1723w holds the two equal.
+proc ase::preflight_apply_label {} {
+  set l {Apply Corrections}
+  catch {set l [ase::ui::lbl_repair_apply]}
+  return $l
+}
+
+# The door to the session's include files, Setup > Include Files… (item 5), the
+# same way: row PF1723w holds the literal equal to the window's menu path.
+proc ase::preflight_include_door {} {
+  set d "Setup > Include Files…"
+  catch {set d [ase::ui::menu_path_include_files]}
+  return $d
+}
+
+# THE FILE HALF'S CONSOLE COMMAND (item 6): rewrite the `.nodeset`/`.ic` names
+# the pre-flight resolved in session KEY's include files, backing each up
+# first. The session itself is NOT touched -- that is ase::preflight_fix_session,
+# unchanged. Typing it is the confirmation, as for that command (D1).
+# -> the number of names rewritten.
+proc ase::preflight_fix_includes {key} {
+  set state [ase::session_state $key]
+  set scan [ase::preflight_session_scan $key]
+  set plan [ase::preflight_include_plan $state $scan [dict get $scan itexts] \
+              [ase::rundir $state]]
+  foreach f $plan {
+    if {![dict get $f editable]} {
+      ::ase::echo "ase: include file '[dict get $f path]' is not edited:\
+ [dict get $f why]. Change [ase::include_change_words $f] there by hand\
+ ([ase::preflight_include_door])." note
+    }
+  }
+  set r [ase::include_apply_plan $plan]
+  if {![dict get $r ok]} {
+    ::ase::echo "ase: [dict get $r why]" error
+    return 0
+  }
+  foreach l [ase::include_apply_said $r] { ::ase::echo $l }
+  if {![dict get $r n]} {
+    ::ase::echo "ase: pre-flight — nothing was rewritten in the include files of\
+ session '$key': no .nodeset/.ic name in them has a correction to offer." note
+  }
+  return [dict get $r n]
+}
+
+# What ngspice does with a `.nodeset`/`.ic` name on a node it does not have,
+# as a clause. MEASURED 2026-11-21 on /usr/bin/ngspice (45.2) and the fork
+# (ver_53), identically: a plain number is dropped with `Warning : Nodeset on
+# non-existent node - <n>, ignored` and the run goes on; a `{...}` value draws
+# the same warning and then `Error: .nodeset syntax error.` (`.ic syntax
+# error.` for an `.ic` card), and the run stops with rc 1 and no raw.
+proc ase::include_ngspice_clause {card value} {
+  if {[string index [string trim $value] 0] eq "\{"} {
+    return "ngspice stops the run with '.$card syntax error' when such a name\
+ carries a {...} value, as this one does"
+  }
+  return "ngspice drops it with a 'non-existent node' warning, so that\
+ [expr {$card eq {ic} ? {initial condition} : {guess}}] is lost"
+}
+
+# The caution for ONE include row that does not refuse: a node that is not
+# there inside an instance that is (no ruling covers refusing it). Pure.
+proc ase::preflight_include_caution {row} {
+  set id [dict get $row ident]
+  set segs [split $id .]
+  set where "the netlist does not have"
+  if {[llength $segs] > 1} {
+    set where "instance '[join [lrange $segs 0 end-1] .]' does not have"
+  }
+  return "ase: caution: include file '[dict get $row path]' line\
+ [dict get $row line]: .[dict get $row card] names '$id', which $where;\
+ [ase::include_ngspice_clause [dict get $row card] [dict get $row value]]."
+}
+
+# --- Setup > Include Files… (item 5): the pure halves -------------------------
+
+# The folder a relative include resolves against, READ ONLY: the state's own
+# `rundir` key normalized, or the shared default's preview. Never ase::rundir,
+# which creates the folder and, for an empty key, rewrites ::netlist_dir.
+proc ase::include_rundir_peek {state} {
+  set rd [ase::state_get $state rundir]
+  if {$rd ne {}} { return [file normalize $rd] }
+  return [ase::rundir_default_preview]
+}
+
+# The dialog's rows: -> {{stored <as stored> path <resolved, or {}> exists 0|1
+# why <why it does not resolve, or {}>} ...}, one per `includes` entry, in order.
+proc ase::include_rows {state rundir} {
+  set out {}
+  foreach inc [ase::state_get $state includes] {
+    set f [ase::include_entry_file $inc]
+    set r [ase::include_resolve $f $rundir]
+    set p [dict get $r path]
+    lappend out [dict create stored $f path $p \
+                   exists [expr {$p ne {} && [file isfile $p] ? 1 : 0}] \
+                   why [dict get $r why]]
+  }
+  return $out
+}
+
+# STATE with one include added, stored AS TYPED (trimmed): the portable
+# `$::VAR/...` form a user types is kept unexpanded, the way Setup > Model
+# Files keeps a model path. Raises on an empty path. Pure.
+proc ase::include_add {state text} {
+  set t [string trim $text]
+  if {$t eq {}} { return -code error "a path is needed" }
+  set incs [ase::state_get $state includes]
+  lappend incs [dict create file $t]
+  dict set state includes $incs
+  return $state
+}
+
+# STATE with the include rows at INDICES (0-based) removed. Pure.
+proc ase::include_remove {state indices} {
+  set incs [ase::state_get $state includes]
+  set ok {}
+  foreach i $indices {
+    if {[string is integer -strict $i] && $i >= 0 && $i < [llength $incs]} {
+      lappend ok $i
+    }
+  }
+  foreach i [lsort -integer -decreasing -unique $ok] {
+    set incs [lreplace $incs $i $i]
+  }
+  dict set state includes $incs
+  return $state
 }
 
 # A scan's absent rows grouped by the OUTPUT ROW they came from, in
@@ -17215,8 +17913,16 @@ proc ase::preflight_fixed_expr {rows} {
 # (ase::ui::repair_apply) is this command, pressed: the press IS the
 # confirmation D1 asks for, and nothing calls it without one.
 proc ase::preflight_fix_session {key} {
+  return [ase::preflight_session_commit $key [ase::preflight_session_scan $key]]
+}
+
+# ase::preflight_fix_session's body for a scan already taken: the ASE-L
+# window's confirmation (issue 1723 item 6) applies the scan it SHOWED, after
+# the include files are rewritten -- a re-scan then would no longer see the
+# include rows that helped decide a rename. The console command is this with a
+# fresh scan, so its effect and its sentences are what they always were.
+proc ase::preflight_session_commit {key scan} {
   set state [ase::session_state $key]
-  set scan [ase::preflight_session_scan $key]
   set a [ase::preflight_apply $state $scan]
   foreach l [dict get $a said] { ::ase::echo $l }
   set n [dict get $a n]
@@ -17324,7 +18030,13 @@ proc ase::preflight_session_scan {key} {
  (Simulation > Netlist > Recreate first)"
   }
   set f [open $nl r] ; set txt [read $f] ; close $f
-  return [ase::preflight_scan $state $txt]
+  ## ISSUE 1723 item 7: the include files' `.nodeset`/`.ic` names are scanned
+  ## as the gate scans them, and the texts read ride along as `itexts`, so the
+  ## file half of Apply Corrections can refuse a file that changed since.
+  set itexts [ase::include_texts $state [ase::rundir $state]]
+  set scan [ase::preflight_scan $state $txt $itexts]
+  dict set scan itexts $itexts
+  return $scan
 }
 
 # ISSUE 1723: EVERY REWRITE A SCAN OFFERS, as one list -- what
@@ -17452,11 +18164,17 @@ proc ase::preflight_refusal {{lead {}} {rdnote {}}} {
 # ISSUE 1723: IS ERR THE GATE'S SAVE-NAME REFUSAL, the one refusal of this gate
 # that can carry corrections? Read off the head line ase::preflight_gate mints
 # below (`ase: REFUSED — <n> output expression(s) name(s) something this
-# circuit does not have.`); row PF1723m drives the real gate's error through
-# it, so a reworded head reds there rather than silently losing the offer.
+# circuit does not have.`, or, when the include files alone refuse -- issue
+# 1723 item 7 -- `ase: REFUSED — <n> .nodeset/.ic name(s) in <m> include
+# file(s) stop(s) at an instance this circuit does not have.`); rows PF1723m and
+# PF1723x drive the real gate's error through it, so a reworded head reds there
+# rather than silently losing the offer.
 proc ase::preflight_is_name_refusal {err} {
   set first [lindex [split $err "\n"] 0]
-  return [regexp {^ase: REFUSED — [0-9]+ output expressions? names? something this circuit does not have\.} $first]
+  if {[regexp {^ase: REFUSED — [0-9]+ output expressions? names? something this circuit does not have\.} $first]} {
+    return 1
+  }
+  return [regexp {^ase: REFUSED — [0-9]+ \.nodeset/\.ic names? in [0-9]+ include files? stops? at an instance this circuit does not have\.} $first]
 }
 
 proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
@@ -17660,22 +18378,55 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     }
   }
   if {[info exists ::ase_preflight] && !$::ase_preflight} { return {} }
-  set scan [ase::preflight_scan $state $netlist_text]
+  ## ISSUE 1723 item 7: THE INCLUDE FILES ARE READ ONCE, HERE, and handed to
+  ## the scan, the hit count and the plan, so all three read the same bytes.
+  ## The run directory is asked for only when there is an include to resolve
+  ## against it: ase::rundir creates the folder, and a gate that passes must
+  ## not have made anything (the refusal below names it either way).
+  set incrd {}
+  if {[llength [ase::state_get $state includes]]} { set incrd [ase::rundir $state] }
+  set itexts [ase::include_texts $state $incrd]
+  set scan [ase::preflight_scan $state $netlist_text $itexts]
   set rows [dict get $scan absent]
-  if {![llength $rows]} { return {} }
+  ## `miss` refuses; the rest of the include rows are cautions, said whether or
+  ## not anything refuses, because ngspice will act on them either way
+  set irefuse {}
+  foreach r [dict get $scan incrows] {
+    if {[dict exists $r miss]} {
+      lappend irefuse $r
+    } else {
+      ::ase::echo [ase::preflight_include_caution $r]
+    }
+  }
+  if {![llength $rows] && ![llength $irefuse]} { return {} }
   # COUNT EXPRESSIONS, NOT IDENTIFIERS. `[llength $rows]` is the number of
   # offending identifiers, and one output row naming two absent nodes was
   # reported as "2 output expressions". The per-identifier detail lines below
   # still get one line each. (Fix round, item 10.)
   set groups [ase::preflight_group_rows $rows]
   set nex [dict size $groups]
-  set head "ase: REFUSED — $nex output expression[expr {$nex == 1 ? {} : {s}}]\
+  set nin [llength $irefuse]
+  set nif [llength [lsort -unique [lmap r $irefuse {dict get $r path}]]]
+  set ihead "$nin .nodeset/.ic name[expr {$nin == 1 ? {} : {s}}] in $nif include\
+ file[expr {$nif == 1 ? {} : {s}}] stop[expr {$nin == 1 ? {s} : {}}] at an\
+ instance this circuit does not have. ngspice drops each such name with a\
+ warning, and stops the run with a syntax error when its value is a {...}\
+ expression."
+  set rdnote "Nothing was generated: no deck, no raw,\
+ no log. Any files already in [ase::rundir $state] are from an earlier run."
+  if {$nex} {
+    set head "ase: REFUSED — $nex output expression[expr {$nex == 1 ? {} : {s}}]\
  name[expr {$nex == 1 ? {s} : {}}] something this circuit does not have.\
  ngspice does NOT fail usefully on that: NOTHING on either stream names the bad\
  token, and what lands in the run directory is a raw file holding TWELVE\
  MATHEMATICAL CONSTANTS (Plotname: constants) which reads back as a perfectly\
- valid result. Nothing was generated: no deck, no raw,\
- no log. Any files already in [ase::rundir $state] are from an earlier run."
+ valid result. $rdnote"
+  } else {
+    ## ISSUE 1723 item 7: the include files ALONE refuse -- the user's state, a
+    ## session whose outputs were corrected while its nodeset file still named
+    ## the old instance. ase::preflight_is_name_refusal reads this head too.
+    set head "ase: REFUSED — $ihead $rdnote"
+  }
   ::ase::echo $head error
   set lines [list $head]
   # Every offending IDENTIFIER gets its own line — item 14's lesson is that a
@@ -17726,10 +18477,36 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       lappend lines $l
     }
   }
+  ## ISSUE 1723 item 7: EVERY `.nodeset`/`.ic` NAME THAT STOPS AT A MISSING
+  ## INSTANCE, one line each, naming the file, the line, the name and -- when the
+  ## rename is unique -- the correction. The door is named once, below.
+  if {$nin && $nex} {
+    set l "ase:   and $ihead"
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  set nirn 0
+  foreach r $irefuse {
+    set mz [dict get $r miss]
+    set id [dict get $r ident]
+    set l "ase:   include file '[dict get $r path]' line [dict get $r line]:\
+ .[dict get $r card] names '$id', and the netlist has no instance\
+ '[dict get $mz prefix]'"
+    if {[ase::state_get $r fixkind] eq {rename} && [ase::state_get $r correction] ne {}
+        && [dict exists $rnof [dict get $r stale]]} {
+      set g [dict get $rnof [dict get $r stale]]
+      set p [dict get $g prefix]
+      incr nirn
+      append l ". Instance '$p' looks renamed to '[dict get $g to]': '$id' ->\
+ '[dict get $g to][string range $id [string length $p] end]'"
+    }
+    ::ase::echo $l error
+    lappend lines $l
+  }
   ## A stale prefix with no single correction says why, once, naming the
   ## instances that came closest -- the user picks; ASE-L does not guess.
   foreach g [dict get $scan renames] {
-    if {[dict get $g outputs] == 0} { continue }
+    if {[dict get $g outputs] + [dict get $g includes] == 0} { continue }
     set who [ase::preflight_name_list [dict get $g candidates]]
     set many [expr {[llength [dict get $g candidates]] > 1}]
     set l {}
@@ -17750,9 +18527,9 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       lappend lines $l
     }
   }
-  ## ISSUE 1723 item 3: THE MEASUREMENTS AND THE INCLUDE FILES NAMING THE SAME
-  ## MISSING INSTANCES, said only here, inside a refusal the outputs already
-  ## caused -- a stale measurement alone never refuses a run.
+  ## ISSUE 1723 item 3: THE MEASUREMENTS NAMING THE SAME MISSING INSTANCES,
+  ## said only here, inside a refusal something else already caused -- a stale
+  ## measurement alone never refuses a run.
   set nmfix 0
   dict for {mk grows} [ase::preflight_group_meas [dict get $scan measurements]] {
     set r0 [lindex $grows 0]
@@ -17767,16 +18544,45 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     ::ase::echo $l error
     lappend lines $l
   }
+  ## ...AND EVERY INCLUDE FILE NAMING THEM, by count, with what Apply Corrections
+  ## will and will not do there (issue 1723 item 6): it rewrites the resolved
+  ## `.nodeset`/`.ic` names of an editable file, after asking, and nothing else.
+  set btn [ase::preflight_apply_label]
+  set door [ase::preflight_include_door]
+  set plan [ase::preflight_include_plan $state $scan $itexts $incrd]
+  set pk [dict create]
+  foreach f $plan { dict set pk [dict get $f path] $f }
   set incs [ase::preflight_include_hits $state [dict get $scan renames] \
-              [dict get $scan cs] [ase::rundir $state]]
+              [dict get $scan cs] $incrd $itexts]
   foreach ih $incs {
     set nn [dict get $ih count]
-    set l "ase:   include file '[dict get $ih path]' names\
- '[dict get $ih prefix].' $nn time[expr {$nn == 1 ? {} : {s}}]; ASE-L does not\
- edit your files"
-    if {[dict get $ih to] ne {}} {
-      append l ", so change '[dict get $ih prefix].' to '[dict get $ih to].' there\
- yourself"
+    set pre [dict get $ih prefix]
+    set to [dict get $ih to]
+    set f {}
+    set k 0
+    if {[dict exists $pk [dict get $ih path]]} {
+      set f [dict get $pk [dict get $ih path]]
+      foreach c [dict get $f changes] {
+        if {[dict get $c from] eq $pre ||
+            (![dict get $scan cs] && [string equal -nocase [dict get $c from] $pre])} {
+          incr k [dict get $c n]
+        }
+      }
+    }
+    set l "ase:   include file '[dict get $ih path]' names '$pre.' $nn\
+ time[expr {$nn == 1 ? {} : {s}}]"
+    if {$f ne {} && ![dict get $f editable]} {
+      append l "; '$btn' will not rewrite it, because [dict get $f why]: change it\
+ by hand ($door)"
+    } elseif {$k > 0 && $k >= $nn} {
+      append l ", all in .nodeset/.ic cards: '$btn' rewrites them to '$to.' after\
+ asking"
+    } elseif {$k > 0} {
+      append l "; '$btn' rewrites the $k in .nodeset/.ic cards to '$to.' after\
+ asking and leaves the other [expr {$nn - $k}] for you to change ($door)"
+    } else {
+      append l "; '$btn' rewrites only resolved .nodeset/.ic names, so change\
+ [expr {$nn == 1 ? {it} : {them}}] by hand ($door)"
     }
     ::ase::echo $l error
     lappend lines $l
@@ -17792,20 +18598,50 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     lappend lines $l
   }
   foreach g [dict get $scan renames] {
-    if {[dict get $g fit] ne {unique} || [dict get $g outputs] == 0} { continue }
+    if {[dict get $g fit] ne {unique} ||
+        [dict get $g outputs] + [dict get $g includes] == 0} { continue }
     set l "ase: the netlist has no instance '[dict get $g prefix]', and every\
  refused row naming it resolves under '[dict get $g to]', so it looks like\
  '[dict get $g prefix]' was renamed '[dict get $g to]'."
     ::ase::echo $l error
     lappend lines $l
   }
+  set said_session 0
   if {$ncase || $nren || $nmfix} {
-    set btn {Apply Corrections}
-    catch {set btn [ase::ui::lbl_repair_apply]}
+    set said_session 1
     set l "ase: Nothing is rewritten automatically: '$btn' (offered in the\
  ASE-L window when its Run is refused) or `ase::preflight_fix_session <key>`\
  applies the corrections above to this session's output\
  rows[expr {$nmfix ? { and measurements} : {}}]; then save."
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  ## THE INCLUDE FILES' DOORS (issue 1723 items 5 and 6): the press, after a
+  ## confirmation; the console command of the file half; and the window that
+  ## shows the files, for every name the press cannot reach.
+  set nied 0
+  set nief 0
+  foreach f $plan {
+    if {![dict get $f editable] || ![dict get $f n]} { continue }
+    incr nied [dict get $f n]
+    incr nief
+  }
+  if {$nied} {
+    set what "the $nied .nodeset/.ic name[expr {$nied == 1 ? {} : {s}}] above in\
+ $nief include file[expr {$nief == 1 ? {} : {s}}]"
+    if {$said_session} {
+      set l "ase: '$btn' also rewrites $what, after asking:"
+    } else {
+      set l "ase: Nothing is rewritten automatically: '$btn' (offered in the\
+ ASE-L window when its Run is refused) rewrites $what, after asking:"
+    }
+    append l " each file is backed up beside itself first and written at once,\
+ not at Save State. `ase::preflight_fix_includes <key>` does the same from the\
+ console, and $door shows the files."
+    ::ase::echo $l error
+    lappend lines $l
+  } elseif {$nin || [llength $incs]} {
+    set l "ase: $door opens the include files, to change the names above by hand."
     ::ase::echo $l error
     lappend lines $l
   }
@@ -17815,6 +18651,7 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   lappend lines $l
   return -code error [join $lines "\n"]
 }
+
 set_ne ase_preflight 1
 
 # --- Run directory ----------------------------------------------------------

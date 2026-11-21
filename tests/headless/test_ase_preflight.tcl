@@ -3142,7 +3142,7 @@ eqcheck PF1723c-a-unique-rename-fills-the-rows-existing-correction-field \
   [list [rn_fixes $scr absent] [lsort -unique [lmap r [dg $scr absent] {dgn $r fixkind}]] \
         [dg $scr renames]] \
   [list {{x1.a1 xdut.a1} {x1.tail xdut.tail} {v.x1.vs v.xdut.vs}} rename \
-        {{prefix x1 to xdut fit unique candidates xdut outputs 3 measurements 0}}]
+        {{prefix x1 to xdut fit unique candidates xdut outputs 3 measurements 0 includes 0}}]
 ## ...so ase::preflight_fixed_expr applies it unchanged, the leading `-` kept
 eqcheck PF1723c2-and-the-existing-composer-applies-it-unchanged \
   [lmap {ex g} [pcall ase::preflight_group_rows [dg $scr absent]] {pcall ase::preflight_fixed_expr $g}] \
@@ -3206,7 +3206,7 @@ eqcheck PF1723h2-two-candidates-each-resolving-a-different-row-are-a-partial-mat
 set sc4 [pcall ase::preflight_scan [rn_state {{expr v(xdut.x8.a) save 1}}] $NLR]
 eqcheck PF1723p-a-renamed-deeper-segment-falls-out-of-the-same-search \
   [list [rn_fixes $sc4 absent] [dg $sc4 renames]] \
-  {{{xdut.x8.a xdut.x7.A}} {{prefix xdut.x8 to xdut.x7 fit unique candidates x7 outputs 1 measurements 0}}}
+  {{{xdut.x8.a xdut.x7.A}} {{prefix xdut.x8 to xdut.x7 fit unique candidates x7 outputs 1 measurements 0 includes 0}}}
 
 ## --- item 3: measurements -------------------------------------------------
 set RNMEAS {{name m1 analysis tran kind find target v(x1.tail) at 1u}
@@ -3252,10 +3252,16 @@ eqcheck PF1723l-an-include-file-is-listed-by-path-and-count-with-the-dot-require
      {list [file tail [dgn $h path]] [dgn $h prefix] [dgn $h to] [dgn $h count]}] \
   {{rn_nodeset.spice x1 xdut 3}}
 lassign [rn_gate $RNINC] rc7 e7
-eqcheck PF1723l2-the-refusal-names-it-and-the-file-is-left-byte-identical \
+## ⚠ MOVED, 2026-11-21 (issue 1723 item 6): the line used to end "ASE-L does not
+## edit your files, so change 'x1.' to 'xdut.' there yourself"; the ruling made
+## Apply Corrections rewrite the resolved `.nodeset`/`.ic` names after asking,
+## and all three `x1.` hits here are in such cards (`X1.tail` too: `fold`). The
+## gate still writes nothing, and no line says the old sentence.
+eqcheck PF1723l2-the-refusal-names-it-says-what-the-press-will-rewrite-and-the-file-is-left-byte-identical \
   [list $rc7 \
-        [said_count "*include file '[file normalize $INCF]' names 'x1.' 3 times*change 'x1.' to 'xdut.' there yourself"] \
-        [said_count {*rn_quiet*}] [expr {[readfile $INCF] eq $INCTXT}]] {1 1 0 1}
+        [said_count "*include file '[file normalize $INCF]' names 'x1.' 3 times, all in .nodeset/.ic cards: '[pcall ase::ui::lbl_repair_apply]' rewrites them to 'xdut.' after asking"] \
+        [said_count {*rn_quiet*}] [expr {[readfile $INCF] eq $INCTXT}] \
+        [said_count {*does not edit your files*}]] {1 1 0 1 0}
 
 ## --- the predicate the window's offer is keyed on ---------------------------
 lassign [rn_gate [rn_state {{expr v(x1.a1) save 1}}]] rc8 e8
@@ -3286,9 +3292,14 @@ eqcheck PF1723o-the-buttons-decision-offers-every-rewrite-of-both-lists-and-name
   [list [dgn $off9 label] [dgn $off9 rows] [dgn $off9 outputs] [dgn $off9 measurements] \
         [dgn $off9 rename] [dgn $off9 case] [dgn $off9 includes]] \
   [list [pcall ase::ui::lbl_repair_apply] 5 3 2 3 0 1]
-## `2 measurements`, not 3: d1's trig AND targ are one measurement rewritten
+## `2 measurements`, not 3: d1's trig AND targ are one measurement rewritten.
+## ⚠ MOVED, 2026-11-21 (issue 1723 items 5-6): the include clause said "ASE-L
+## does not edit your files, and the refusal lists them"; it now names the door
+## that shows the file. No plan is passed here, so the offer promises no file
+## rewrite -- PF1723ae drives the plan.
 eqcheck PF1723o2-and-its-sentence-says-what-the-press-does-and-that-saving-is-the-users \
-  [list [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 3 output rows and 2 measurements in this session; Session > Save State keeps them.*1 include file names the old instance too; ASE-L does not edit your files*" [dgn $off9 text]]] {1}
+  [list [string match "*no instance 'x1'; it looks renamed 'xdut'.*rewrites 3 output rows and 2 measurements in this session; Session > Save State keeps them.*1 include file names the old instance; [pcall ase::ui::menu_path_include_files] shows it.*" [dgn $off9 text]] \
+        [string match {*does not edit your files*} [dgn $off9 text]]] {1 0}
 ## the three arms where there is nothing to offer
 lassign [rn_gate [rn_state {{expr v(nosuch) save 1}}]] rct ett
 eqcheck PF1723o3-no-offer-for-another-error-for-a-refusal-with-nothing-to-apply-or-for-a-pass \
@@ -3316,14 +3327,448 @@ eqcheck PF1723n-fix-session-rewrites-outputs-and-measurements-and-marks-the-sess
         [pcall ase::session_dirty rnk] [said_count {*rewritten to*instance 'x1' is now 'xdut'*}]] \
   [list 5 5 {v(xdut.a1) v(xdut.tail) -i(v.xdut.vs)} \
         {{v(xdut.tail) {} {}} {{} v(xdut.a1) v(xdut.tail)} {v(x1.typo) {} {}} {v(OUT) {} {}}} 1 6]
-eqcheck PF1723n2-the-repaired-session-passes-the-gate-and-the-include-is-still-untouched \
-  [list [lindex [rn_gate $st9b] 0] [expr {[readfile $INC9] eq $INCTXT}]] {0 1}
+## ⚠ MOVED, 2026-11-21 (issue 1723 item 7): the session-only repair used to pass
+## the gate while the include still named `x1.` -- the user's exact state, whose
+## next Run then died inside ngspice. It is refused now, by the include alone,
+## and the console command still did not touch the file.
+eqcheck PF1723n2-the-session-only-repair-is-still-refused-by-the-stale-include-which-it-left-untouched \
+  [list [lindex [rn_gate $st9b] 0] [expr {[readfile $INC9] eq $INCTXT}] \
+        [pcall ase::preflight_is_name_refusal [lindex [rn_gate $st9b] 1]] \
+        [string match {ase: REFUSED — * .nodeset/.ic names in 1 include file stop at*} [lindex [rn_gate $st9b] 1]]] {1 1 1 1}
 ## nothing on disk moved: the state file still holds the user's text until Save
 eqcheck PF1723n3-nothing-is-saved-until-the-user-saves \
   [string match {*v(x1.a1)*} [readfile [file join $RD9 rn.state]]] 1
 pcall ase::session_close rnk
 
 } pf1723err]} { puts "FATAL: PF1723 $pf1723err" ; incr fail }
+set ::sim_case_mode fold
+## ===========================================================================
+## PF1723 items 5-7 (ruled by the user 2026-11-21) -- THE INCLUDE FILES. A
+## `.nodeset`/`.ic` name in one that stops at a missing instance refuses the Run
+## before ngspice (item 7); Apply Corrections rewrites the resolved ones AFTER
+## ASKING, backing each file up first (item 6); Setup > Include Files… lists
+## them (item 5; its window is test_ase_window.tcl's FX1723 bands).
+## ===========================================================================
+## The user's report: the session's outputs were corrected by Apply
+## Corrections, the next Run reached ngspice, and ngspice died on
+## `.nodeset v(x1.d1)={vsup-1.35}` in the bench's nodeset include -- a file no
+## ASE-L window showed. MEASURED 2026-11-21 on /usr/bin/ngspice (45.2): a plain
+## value on a node that is not there is dropped with `Warning : Nodeset on
+## non-existent node`; a `{...}` value draws `Error: .nodeset syntax error.`,
+## rc 1, no raw. PF1723ah drives exactly that, end to end.
+##
+## ⚠ ITS OWN `catch`, and every global it moves (the PDK roots, the default
+## models, the simulator registry) is put back at its foot.
+if {[catch {
+set ::sim_case_mode fold
+proc readbin {p} {
+  if {[catch {open $p r} f]} { return "NOFILE" }
+  fconfigure $f -translation binary
+  set t [read $f] ; close $f ; return $t
+}
+proc writebin {p bytes} {
+  set f [open $p w] ; fconfigure $f -translation binary
+  puts -nonewline $f $bytes ; close $f
+}
+foreach v {::PDK_ROOT ::ASE_DEFAULT_MODELS ::env(PDK_ROOT)} {
+  if {[info exists $v]} { set ::pfi_saved($v) [set $v] ; unset $v }
+}
+
+## --- item 7's reader: the names a card gives a value to ---------------------
+## line 2: three names, a {...} value whole; 3-4: a comment and a blank line do
+## not end the card, so line 5's `+` continues it, and its `;` comment hides
+## `x1.zz`; 6-8: a `.subckt` body names its own nodes; 9: `.IC`, and ` $` is an
+## inline comment; 10-11: `+` continues a `.param`, not a card; 12: `i(v1)` is
+## not a node.
+set CTXT "* bench\n.nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.d1)={vsup-1.35}\n* between\n\n+ v(x1.tail)=0.30 ; v(x1.zz)=0\n.subckt inner a b\n.nodeset v(a)=0\n.ends\n.IC V(x1.q)=0 \$ v(x1.yy)=1\n.param p=1\n+ v(x1.notacard)=1\n.nodeset i(v1)=0 v(x1.cur)=2\n"
+set cid [pcall ase::include_card_idents $CTXT]
+eqcheck PF1723r-the-card-reader-takes-top-level-nodeset-and-ic-names-through-continuations-and-past-comments \
+  [lmap c $cid {list [dgn $c line] [dgn $c card] [dgn $c ident] [dgn $c value]}] \
+  [list {2 nodeset out 1.2} {2 nodeset x1.a1 1.5} [list 2 nodeset x1.d1 "{vsup-1.35}"] \
+        {5 nodeset x1.tail 0.30} {9 ic x1.q 0} {12 nodeset x1.cur 2}]
+eqcheck PF1723r2-each-names-offsets-read-back-the-name-and-a-file-with-no-card-gives-nothing \
+  [list [lmap c $cid {expr {[pcall string range $CTXT [dgn $c start] [dgn $c end]] eq [dgn $c ident]}}] \
+        [pcall ase::include_card_idents "* none\nR1 a b 1k\n.print v(x1.a1)\n"]] \
+  {{1 1 1 1 1 1} {}}
+
+## --- the scan: every absent include name is a row ---------------------------
+set RDI [file join $tmp run_1723i]
+file mkdir $RDI
+set NSA [file normalize [file join $RDI ns_a.spice]]
+set NSB [file normalize [file join $RDI ns_b.spice]]
+## the user's shape: correct outputs, two files, a {...} value, a continuation
+set NSATXT "* nodeset_enabled\n.nodeset v(OUT)=1.2 v(x1.a1)=1.5 v(x1.tail)={vsup-1.35}\n+ v(x1.mid)=0.3\n"
+set NSBTXT "* nodeset_disabled\n.nodeset v(x1.a1)=0\n+ v(xdut.nosuch)=1\n.ic v(nosuchtop)={vsup}\n"
+putfile $NSA $NSATXT
+putfile $NSB $NSBTXT
+proc ri_state {incs {outs {{expr v(OUT) save 1}}}} {
+  set s [mkstate $::RDI rn_top $outs]
+  dict set s models {}
+  dict set s includes $incs
+  return $s
+}
+set STI [ri_state [list [list file $NSA] [list file $NSB]]]
+set ITI [pcall ase::include_texts $STI $RDI]
+set SCI [pcall ase::preflight_scan $STI $NLR $ITI]
+eqcheck PF1723s-the-scan-makes-a-row-of-every-absent-include-name-and-corrects-the-stale-ones \
+  [lmap r [dg $SCI incrows] {list [file tail [dgn $r path]] [dgn $r line] [dgn $r ident] [dex $r miss] [dgn $r correction]}] \
+  {{ns_a.spice 2 x1.a1 1 xdut.a1} {ns_a.spice 2 x1.tail 1 xdut.tail} {ns_a.spice 3 x1.mid 1 xdut.mid} {ns_b.spice 2 x1.a1 1 xdut.a1} {ns_b.spice 3 xdut.nosuch 0 {}} {ns_b.spice 4 nosuchtop 0 {}}}
+eqcheck PF1723s2-with-every-output-row-correct-the-rename-is-decided-by-the-include-rows \
+  [list [llength [dg $SCI absent]] [dg $SCI renames]] \
+  {0 {{prefix x1 to xdut fit unique candidates xdut outputs 0 measurements 0 includes 4}}}
+## ⚠ THE RULING: "these rows join the rename search like output rows". `x1.a1`
+## resolves only under xdut and `x1.b1` only under xother, so an output row and
+## an include row that disagree are a PARTIAL match and nothing is offered --
+## where a measurement disagreeing would not cost the outputs their correction.
+set NSP [file join $RDI ns_p.spice]
+putfile $NSP ".nodeset v(x1.b1)=1\n"
+set stp [ri_state [list [list file $NSP]] {{expr v(x1.a1) save 1}}]
+set scp [pcall ase::preflight_scan $stp $NLR [pcall ase::include_texts $stp $RDI]]
+eqcheck PF1723s3-an-include-row-decides-the-rename-as-an-output-row-does \
+  [lmap g [dg $scp renames] {list [dgn $g fit] [dgn $g candidates] [dgn $g outputs] [dgn $g includes]}] \
+  {{partial {xdut xother} 1 1}}
+## the three stand-downs, each beside the control that makes it count: an
+## instance an include ADDS (`x5 ...`), a top-level node only an include
+## connects (`V5 vsup5 0 1.8`), and a case-only spelling under `distinguish`
+## (ngspice folds a card's names to lower case, so it reaches the node)
+proc ri_rows {txt} {
+  set f [file join $::RDI ns_sd.spice]
+  putfile $f $txt
+  set st [ri_state [list [list file $f]]]
+  return [llength [dg [pcall ase::preflight_scan $st $::NLR [pcall ase::include_texts $st $::RDI]] incrows]]
+}
+set sd_a [ri_rows "x5 IN OUT rn_amp\n.nodeset v(x5.a1)=1\n"]
+set sd_ac [ri_rows ".nodeset v(x5.a1)=1\n"]
+set sd_b [ri_rows "V5 vsup5 0 1.8\n.nodeset v(vsup5)=1.8\n"]
+set sd_bc [ri_rows ".nodeset v(vsup5)=1.8\n"]
+set ::sim_case_mode distinguish
+set sd_c [ri_rows ".nodeset v(XDUT.a1)=1\n"]
+set sd_cc [ri_rows ".nodeset v(XDUT.nosuch)=1\n"]
+set ::sim_case_mode fold
+eqcheck PF1723s4-what-the-circuit-netlist-cannot-show-or-ngspice-reaches-anyway-stands-down \
+  [list $sd_a $sd_ac $sd_b $sd_bc $sd_c $sd_cc] {0 1 0 1 0 1}
+
+## --- the gate: refused before ngspice, by the include alone ------------------
+lassign [rn_gate $STI] rct1 et1
+eqcheck PF1723t-correct-outputs-and-a-stale-include-are-refused-by-the-include-alone \
+  [list $rct1 \
+        [string match {ase: REFUSED — 4 .nodeset/.ic names in 2 include files stop at an instance this circuit does not have. ngspice drops each such name with a warning, and stops the run with a syntax error when its value is a {...} expression. Nothing was generated*} $et1] \
+        [said_count {ase: REFUSED — * output expression*}] \
+        [llength [glob -nocomplain -directory $RDI *_ase.*]]] {1 1 0 0}
+eqcheck PF1723t2-each-refused-name-gets-its-own-line-with-file-line-name-and-correction \
+  [list [said_count "ase:   include file '$NSA' line 2: .nodeset names 'x1.a1', and the netlist has no instance 'x1'. Instance 'x1' looks renamed to 'xdut': 'x1.a1' -> 'xdut.a1'"] \
+        [said_count "ase:   include file '$NSA' line 3: .nodeset names 'x1.mid', and the netlist has no instance 'x1'. Instance 'x1' looks renamed to 'xdut': 'x1.mid' -> 'xdut.mid'"] \
+        [said_count "ase:   include file '$NSB' line 2: .nodeset names 'x1.a1'*"] \
+        [said_count {ase:   include file * names 'xdut.nosuch'*}] \
+        [said_count {ase:   include file * names 'nosuchtop'*}]] {1 1 1 0 0}
+eqcheck PF1723t3-the-refusal-names-the-button-the-console-command-and-the-door-and-never-the-old-sentence \
+  [list [said_count "ase: Nothing is rewritten automatically: '[pcall ase::ui::lbl_repair_apply]' * rewrites the 4 .nodeset/.ic names above in 2 include files, after asking: each file is backed up beside itself first and written at once, not at Save State. `ase::preflight_fix_includes <key>` does the same from the console, and [pcall ase::ui::menu_path_include_files] shows the files."] \
+        [said_count {*does not edit your files*}] [said_count {*there yourself*}]] {1 0 0}
+eqcheck PF1723u-an-absent-node-in-an-instance-that-exists-is-a-caution-saying-what-ngspice-will-do \
+  [list [said_count "ase: caution: include file '$NSB' line 3: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice drops it with a 'non-existent node' warning, so that guess is lost."] \
+        [said_count "ase: caution: include file '$NSB' line 4: .ic names 'nosuchtop', which the netlist does not have; ngspice stops the run with '.ic syntax error' when such a name carries a {...} value, as this one does."] \
+        [said_count {ase: caution:*}]] {1 1 2}
+set NSC [file join $RDI ns_c.spice]
+putfile $NSC ".nodeset v(xdut.nosuch)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSC]]]] rcu eu
+eqcheck PF1723u2-and-alone-it-does-not-refuse-the-run-is-let-through-with-the-one-caution \
+  [list $rcu [said_count {ase: caution:*}] [said_count {ase: REFUSED*}]] {0 1 0}
+set NSD [file join $RDI ns_d.spice]
+putfile $NSD ".nodeset v(x1.a1)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSD]]]] rcx ex1
+eqcheck PF1723x-the-offer-predicate-reads-the-include-head-in-both-numbers \
+  [list [pcall ase::preflight_is_name_refusal $et1] [pcall ase::preflight_is_name_refusal $ex1] \
+        [string match {ase: REFUSED — 1 .nodeset/.ic name in 1 include file stops at an instance*} $ex1]] \
+  {1 1 1}
+
+## --- the engine's literals are the window's ---------------------------------
+## src/ase.tcl may not depend on src/ase_window.tcl, so the label and the door
+## are typed twice; with the window's procs renamed away the fallbacks speak.
+set wlab [pcall ase::ui::lbl_repair_apply]
+set wdoor [pcall ase::ui::menu_path_include_files]
+set flab NORENAME
+set fdoor NORENAME
+if {![catch {rename ::ase::ui::lbl_repair_apply ::pfi_saved_lra}]} {
+  set flab [pcall ase::preflight_apply_label]
+  rename ::pfi_saved_lra ::ase::ui::lbl_repair_apply
+}
+if {![catch {rename ::ase::ui::menu_path_include_files ::pfi_saved_mpif}]} {
+  set fdoor [pcall ase::preflight_include_door]
+  rename ::pfi_saved_mpif ::ase::ui::menu_path_include_files
+}
+eqcheck PF1723w-the-engines-literal-label-and-door-equal-the-windows-own \
+  [list [expr {$flab eq $wlab}] [expr {$fdoor eq $wdoor}] \
+        [expr {[pcall ase::preflight_apply_label] eq $wlab}] \
+        [expr {[pcall ase::preflight_include_door] eq $wdoor}] $wlab $wdoor] \
+  [list 1 1 1 1 {Apply Corrections} "Setup > Include Files…"]
+
+## --- item 6: which files may be rewritten (a pure rule, stated in its header) -
+proc vf {path args} {
+  return [dict merge [dict create isfile 1 writable 1 dirwritable 1 real $path] $args]
+}
+set ROOTS {{dir /p/sky why pdk} {dir /m/lib why models}}
+eqcheck PF1723y-the-editable-predicate-follows-its-stated-rule \
+  [list [pcall ase::include_edit_verdict /w/ns.spice [vf /w/ns.spice] $ROOTS] \
+        [pcall ase::include_edit_verdict /p/sky/a.spice [vf /p/sky/a.spice] $ROOTS] \
+        [pcall ase::include_edit_verdict /p/sky2/a.spice [vf /p/sky2/a.spice] $ROOTS] \
+        [pcall ase::include_edit_verdict /m/lib/sub/x.spice [vf /m/lib/sub/x.spice] $ROOTS] \
+        [pcall ase::include_edit_verdict /w/link.spice [vf /w/link.spice real /p/sky/b.spice] $ROOTS] \
+        [pcall ase::include_edit_verdict /w/ns.spice [vf /w/ns.spice isfile 0] $ROOTS] \
+        [pcall ase::include_edit_verdict /w/ns.spice [vf /w/ns.spice writable 0] $ROOTS] \
+        [pcall ase::include_edit_verdict /w/ns.spice [vf /w/ns.spice dirwritable 0] $ROOTS]] \
+  [list {} {it is under the PDK (/p/sky)} {} {it is in a model file's folder (/m/lib)} \
+        {it is under the PDK (/p/sky)} {it is not a file ASE-L can read} {it is read-only} \
+        {its folder is read-only, so no backup can be written beside it}]
+set ::PDK_ROOT /p/sky
+set rst [ri_state {}]
+dict set rst models [list {file /m/lib/models.lib section tt} {file {$::NOSUCHVAR1723/x.lib} section tt}]
+eqcheck PF1723y2-the-protected-folders-are-the-pdk-and-every-model-entrys-folder \
+  [lmap r [pcall ase::include_protected_roots $rst $RDI] {list [dgn $r dir] [dgn $r why]}] \
+  {{/p/sky pdk} {/m/lib models}}
+unset ::PDK_ROOT
+## ...and the facts are read off the disk, a link judged by where it points
+set PDKD [file normalize [file join $tmp pdk1723]]
+file mkdir [file join $PDKD models]
+putfile [file join $PDKD models ns_pdk.spice] ".nodeset v(x1.a1)=1\n"
+set LNK [file join $RDI ns_link.spice]
+catch {file delete $LNK}
+file link -symbolic $LNK [file join $PDKD models ns_pdk.spice]
+set ROF [file join $RDI ns_ro.spice]
+putfile $ROF ".nodeset v(x1.a1)=1\n"
+file attributes $ROF -permissions 0444
+set droots [list [dict create dir $PDKD why pdk]]
+set ro_measurable [expr {![file writable $ROF]}]
+eqcheck PF1723y3-on-disk-a-plain-file-is-editable-a-link-into-the-pdk-and-a-read-only-file-are-not \
+  [list [pcall ase::include_edit_verdict $NSA [pcall ase::include_edit_facts $NSA] $droots] \
+        [pcall ase::include_edit_verdict $LNK [pcall ase::include_edit_facts $LNK] $droots] \
+        [expr {$ro_measurable ? [pcall ase::include_edit_verdict $ROF [pcall ase::include_edit_facts $ROF] $droots] : {it is read-only}}]] \
+  [list {} "it is under the PDK ($PDKD)" {it is read-only}]
+if {!$ro_measurable} { puts "skip: PF1723y3 read-only leg (this user can write a 0444 file)" }
+file attributes $ROF -permissions 0644
+
+## --- the backup's name -------------------------------------------------------
+set BKF [file join $RDI bk.spice]
+putfile $BKF x
+putfile $BKF.bak x
+catch {file delete $BKF.bak2}
+## `file link` refuses a target that does not exist, so ln(1) makes the
+## dangling link
+exec ln -s [file join $RDI no_such_target] $BKF.bak2
+eqcheck PF1723z-the-backup-is-bak-then-bak2-bak3-and-a-dangling-link-counts-as-taken \
+  [list [pcall ase::include_backup_pick /w/a.spice {}] \
+        [pcall ase::include_backup_pick /w/a.spice {/w/a.spice.bak}] \
+        [pcall ase::include_backup_pick /w/a.spice {/w/a.spice.bak /w/a.spice.bak2}] \
+        [file tail [pcall ase::include_backup_name $BKF]]] \
+  {/w/a.spice.bak /w/a.spice.bak2 /w/a.spice.bak3 bk.spice.bak3}
+
+## --- the rewrite: only the resolved card names, every other byte kept --------
+## CRLF line ends, a tab, a non-ASCII byte pair, `X1.tail` (fold), an inline
+## comment hiding `x1.keep`, a comment line and a `.print` card naming `x1.a1`:
+## only the three card names move, and only their stale prefix.
+set RWF [file normalize [file join $RDI ns_rw.spice]]
+set RWORIG [encoding convertto utf-8 "* hdr é\r\n.nodeset v(x1.a1)=1\tv(X1.tail)={vsup-1.35}\r\n+ v(x1.mid)=0 ; v(x1.keep)=9\r\n* x1.a1 in a comment stays\r\n.print v(x1.a1)\r\n"]
+set RWWANT [encoding convertto utf-8 "* hdr é\r\n.nodeset v(xdut.a1)=1\tv(xdut.tail)={vsup-1.35}\r\n+ v(xdut.mid)=0 ; v(x1.keep)=9\r\n* x1.a1 in a comment stays\r\n.print v(x1.a1)\r\n"]
+writebin $RWF $RWORIG
+set MODD [file normalize [file join $RDI models]]
+file mkdir $MODD
+putfile [file join $MODD fx.lib] "* models\n"
+set NSM [file join $MODD ns_m.spice]
+set NSMTXT ".nodeset v(x1.a1)=1\n"
+putfile $NSM $NSMTXT
+proc rw_state {} {
+  set s [ri_state [list [list file $::RWF] [list file $::NSM]]]
+  dict set s models [list [list file [file join $::MODD fx.lib] section {}]]
+  return $s
+}
+set STRW [rw_state]
+set ITRW [pcall ase::include_texts $STRW $RDI]
+set SCRW [pcall ase::preflight_scan $STRW $NLR $ITRW]
+set PLAN [pcall ase::preflight_include_plan $STRW $SCRW $ITRW $RDI]
+set prw [lindex $PLAN 0]
+eqcheck PF1723aa-the-rewrite-moves-only-the-resolved-card-names-and-keeps-every-other-byte \
+  [list [expr {[pcall ase::include_rewrite_text [dgn $prw text] [dgn $prw edits]] eq $RWWANT}] \
+        [pcall ase::include_change_words $prw] \
+        [pcall ase::include_rewrite_text abc {{start 0 end 1 old zz new q}}]] \
+  [list 1 "2 × x1. → xdut., 1 × X1. → xdut." {ERR:the text at byte 0 is not 'zz'}]
+eqcheck PF1723ab-the-plan-says-per-file-what-changes-whether-it-may-and-where-its-backup-goes \
+  [lmap f $PLAN {list [file tail [dgn $f path]] [dgn $f n] [dgn $f editable] [dgn $f why] [file tail [dgn $f backup]]}] \
+  [list [list ns_rw.spice 3 1 {} ns_rw.spice.bak] \
+        [list ns_m.spice 1 0 "it is in a model file's folder ($MODD)" {}]]
+
+## --- the button's decision and the confirmation's text, both pure -----------
+lassign [rn_gate $STRW] rce erw
+set offrw [pcall ase::ui::repair_offer $erw $STRW $SCRW \
+             [pcall ase::preflight_include_hits $STRW [dg $SCRW renames] 0 $RDI $ITRW] $PLAN]
+eqcheck PF1723ae-the-offer-counts-what-the-press-rewrites-in-the-files-and-which-it-may-not \
+  [list $rce [dgn $offrw rows] [dgn $offrw incnames] [dgn $offrw incfiles] [dgn $offrw incblocked] [dgn $offrw includes] \
+        [string match "The run was refused. The netlist has no instance 'x1'; it looks renamed 'xdut'. Apply Corrections rewrites 3 .nodeset/.ic names in 1 include file, after asking; each file is backed up first and written at once. 2 include files name the old instance; [pcall ase::ui::menu_path_include_files] shows them. 1 of them is not editable and left as it is." [dgn $offrw text]]] \
+  {1 0 3 1 1 2 1}
+eqcheck PF1723ae2-without-a-plan-there-is-nothing-to-press-for \
+  [pcall ase::ui::repair_offer $erw $STRW $SCRW {} {}] {}
+eqcheck PF1723ae3-the-confirmation-names-each-file-its-change-its-backup-and-that-files-are-written-now \
+  [pcall ase::ui::repair_confirm_lines $PLAN {}] \
+  [list "Apply Corrections writes these include files now, not at Session > Save State, and backs each one up first:" \
+        "  ns_rw.spice: 2 × x1. → xdut., 1 × X1. → xdut. Backup: $RWF.bak" \
+        "  ns_m.spice: not editable, because it is in a model file's folder ($MODD); left as it is." \
+        "Cancel changes nothing."]
+
+## --- the press's file half: all or nothing ----------------------------------
+set ar [pcall ase::include_apply_plan $PLAN]
+eqcheck PF1723ac-OK-backs-each-editable-file-up-then-rewrites-it-and-never-opens-the-other \
+  [list [dgn $ar ok] [dgn $ar n] [expr {[readbin $RWF] eq $RWWANT}] \
+        [expr {[readbin $RWF.bak] eq $RWORIG}] [expr {[readfile $NSM] eq $NSMTXT}] \
+        [file exists $NSM.bak]] {1 3 1 1 1 0}
+eqcheck PF1723ac2-and-says-so-once-per-file-naming-the-backup \
+  [pcall ase::include_apply_said $ar] \
+  [list "ase: include file '$RWF' rewritten: 2 × x1. → xdut., 1 × X1. → xdut. The original is in '$RWF.bak'."]
+## the undo the window's OK takes when its session half raises afterwards
+set un [pcall ase::include_unapply $PLAN $ar]
+eqcheck PF1723ac3-unapply-puts-every-written-file-back-and-drops-its-backup \
+  [list $un [expr {[readbin $RWF] eq $RWORIG}] [file exists $RWF.bak] \
+        [expr {[readfile $NSM] eq $NSMTXT}]] {{} 1 0 1}
+## a file edited after the scan: refused, nothing written, no backup
+writebin $RWF $RWORIG
+catch {file delete $RWF.bak}
+set PLAN2 [pcall ase::preflight_include_plan $STRW $SCRW $ITRW $RDI]
+writebin $RWF "$RWORIG* edited\r\n"
+set ar2 [pcall ase::include_apply_plan $PLAN2]
+eqcheck PF1723ad-a-file-changed-since-the-check-is-refused-and-nothing-is-written \
+  [list [dgn $ar2 ok] \
+        [string match "'ns_rw.spice' changed after ASE-L checked it, so nothing was changed. Press Apply Corrections again*" [dgn $ar2 why]] \
+        [expr {[readbin $RWF] eq "$RWORIG* edited\r\n"}] [file exists $RWF.bak]] {0 1 1 0}
+## two editable files, the second made read-only after the plan: the first is
+## put back and both backups go
+writebin $RWF $RWORIG
+set F2 [file normalize [file join $RDI ns_two.spice]]
+putfile $F2 ".nodeset v(x1.tail)=0\n"
+set st2f [ri_state [list [list file $RWF] [list file $F2]]]
+set it2f [pcall ase::include_texts $st2f $RDI]
+set sc2f [pcall ase::preflight_scan $st2f $NLR $it2f]
+set PLAN3 [pcall ase::preflight_include_plan $st2f $sc2f $it2f $RDI]
+file attributes $F2 -permissions 0444
+if {[file writable $F2]} {
+  puts "skip: PF1723ad2 (this user can write a 0444 file, so no write can be made to fail)"
+} else {
+  set ar3 [pcall ase::include_apply_plan $PLAN3]
+  eqcheck PF1723ad2-a-write-that-fails-puts-back-every-file-and-drops-every-backup \
+    [list [llength $PLAN3] [dgn $ar3 ok] \
+          [string match "'ns_two.spice' could not be written*so every file was put back as it was and nothing was changed." [dgn $ar3 why]] \
+          [expr {[readbin $RWF] eq $RWORIG}] [file exists $RWF.bak] [file exists $F2.bak] \
+          [readfile $F2]] [list 2 0 1 1 0 0 ".nodeset v(x1.tail)=0\n"]
+}
+file attributes $F2 -permissions 0644
+
+## --- the console command for the file half, beside the session one -----------
+set RDF [file join $tmp run_1723f]
+file mkdir $RDF
+putfile [file join $RDF rn_top.spice] $NLR
+set INCF2 [file normalize [file join $RDF ns_f.spice]]
+set INCF2TXT ".nodeset v(x1.a1)=1 v(x1.tail)=0\n"
+putfile $INCF2 $INCF2TXT
+putfile [file join $RDF rn.state] \
+  "design {lib dlib cell rn_top view schematic} rundir [list $RDF] models {} outputs [list {{expr v(x1.a1) save 1}}]\
+ includes [list [list [list file $INCF2]]]"
+pcall ase::session_open rnf [file join $RDF rn.state]
+said_clear
+set nfi [pcall ase::preflight_fix_includes rnf]
+eqcheck PF1723af-fix-includes-rewrites-the-files-alone-and-leaves-the-session-as-it-was \
+  [list $nfi [readfile $INCF2] [expr {[readfile $INCF2.bak] eq $INCF2TXT}] \
+        [lmap o [dg [ase::session_state rnf] outputs] {dgn $o expr}] [pcall ase::session_dirty rnf] \
+        [said_count "ase: include file '$INCF2' rewritten: 2 × x1. → xdut. The original is in '$INCF2.bak'."]] \
+  [list 2 ".nodeset v(xdut.a1)=1 v(xdut.tail)=0\n" 1 v(x1.a1) 0 1]
+lassign [rn_gate [ase::session_state rnf]] rcf1 ef1
+set nfs [pcall ase::preflight_fix_session rnf]
+lassign [rn_gate [ase::session_state rnf]] rcf2 ef2
+eqcheck PF1723af2-then-the-session-command-fixes-the-outputs-and-the-gate-passes \
+  [list $rcf1 [string match {ase: REFUSED — 1 output expression*} $ef1] $nfs $rcf2 \
+        [pcall ase::preflight_fix_includes rnf]] {1 1 1 0 0}
+pcall ase::session_close rnf
+
+## --- item 5's pure halves: the rows, Add, Remove -----------------------------
+set ::PF1723DIR $RDI
+set sti5 [ri_state [list {file ns_a.spice} {file {$::PF1723DIR/ns_b.spice}} {file nosuch.spice} \
+                         {file {$::NOSUCHVAR1723/x.spice}}]]
+set rows5 [pcall ase::include_rows $sti5 $RDI]
+eqcheck PF1723ag-the-rows-say-as-stored-where-it-resolves-and-whether-it-exists \
+  [lmap r $rows5 {list [dgn $r stored] [dgn $r path] [dgn $r exists] [expr {[dgn $r why] ne {}}]}] \
+  [list [list ns_a.spice $NSA 1 0] [list {$::PF1723DIR/ns_b.spice} $NSB 1 0] \
+        [list nosuch.spice [file join [file normalize $RDI] nosuch.spice] 0 0] \
+        [list {$::NOSUCHVAR1723/x.spice} {} 0 1]]
+set sta5 [pcall ase::include_add $sti5 "  \$::PF1723DIR/new.spice "]
+set str5 [pcall ase::include_remove $sta5 {0 2 99 x}]
+eqcheck PF1723ag2-add-keeps-the-portable-path-as-typed-and-remove-takes-the-rows-named \
+  [list [lindex [pcall ase::state_get $sta5 includes] end] [pcall ase::include_add $sti5 {   }] \
+        [lmap i [pcall ase::state_get $str5 includes] {pcall ase::include_entry_file $i}]] \
+  [list {file {$::PF1723DIR/new.spice}} {ERR:a path is needed} {{$::PF1723DIR/ns_b.spice} {$::NOSUCHVAR1723/x.spice} {$::PF1723DIR/new.spice}}]
+eqcheck PF1723ag3-the-folder-shown-is-only-peeked-a-state-with-no-run-directory-creates-nothing \
+  [list [pcall ase::include_rundir_peek $sti5] \
+        [expr {[pcall ase::include_rundir_peek [dict replace $sti5 rundir {}]] eq [pcall ase::rundir_default_preview]}]] \
+  [list [file normalize $RDI] 1]
+
+## --- PF1723ah: the user's shape, end to end, on /usr/bin/ngspice ------------
+## Two include files, `{vsup-1.35}` values, a `+` continuation, `.nodeset` only,
+## correct outputs. Stale: refused before ngspice, nothing generated. The
+## CONTROL (the check switched off) reaches ngspice and dies on the syntax
+## error, which is what makes the refusal worth having. Fixed through the
+## console command: the run completes with no nodeset warning in its log.
+set NG /usr/bin/ngspice
+if {![file executable $NG]} {
+  puts "skip: PF1723ah end to end (no $NG)"
+} else {
+  set RDE [file normalize [file join $tmp run_1723e]]
+  file mkdir $RDE
+  set NLE "** sch_path: /fixture/e2e_tb.sch\n**.subckt e2e_tb\nxdut vsupn out e2e_buf\nVS vsupn 0 {vsup}\n.param vsup=1.8\n**.ends\n.subckt e2e_buf VDD OUT\nR1 VDD a1 1k\nR2 a1 d1 1k\nR3 d1 tail 1k\nR4 tail tailb 1k\nR5 tailb enb 1k\nR6 enb enbuf 1k\nR7 enbuf net1 1k\nR8 net1 OUT 1k\nR9 OUT 0 1k\n.ends\n.end\n"
+  set NLEF [file join $RDE e2e_tb.spice]
+  putfile $NLEF $NLE
+  set ENF [file join $RDE nodeset_enabled.spice]
+  set DISF [file join $RDE nodeset_disabled.spice]
+  putfile $ENF "* e2e bench, enabled state\n* a first guess for the dc solver\n.nodeset v(out)=1.2 v(x1.a1)=1.5 v(x1.d1)={vsup-1.35} v(x1.tail)=0.30 v(x1.tailb)=0.025\n+ v(x1.enb)=0 v(x1.enbuf)={vsup} v(x1.net1)={vsup-0.01}\n"
+  putfile $DISF "* e2e bench, disabled state\n.nodeset v(out)=0 v(x1.a1)=1.1 v(x1.d1)={vsup} v(x1.tail)=0.87 v(x1.tailb)=0.87\n+ v(x1.enb)={vsup} v(x1.enbuf)=0 v(x1.net1)={vsup}\n"
+  pcall ase::sim_clear
+  pcall ase::sim_register pf1723e $NG
+  pcall ase::sim_select pf1723e
+  putfile [file join $RDE e2e.state] \
+    "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
+ analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}}\
+ includes [list [list [list file $ENF] [list file $DISF]]]"
+  pcall ase::session_open e2ek [file join $RDE e2e.state]
+  proc e2e_st {} { return [ase::sim_choice_set [ase::session_state e2ek] entry pf1723e] }
+  proc e2e_log {} { return [readfile [file join $::RDE e2e_tb_ase.log]] }
+  said_clear
+  set e1rc [catch {ase::run_deck [e2e_st] $NLEF} e1]
+  set e1files [glob -nocomplain -tails -directory $RDE *_ase.*]
+  set ::ase_preflight 0
+  set ecid -1
+  catch {set ecid [ase::run_deck [e2e_st] $NLEF]}
+  set ecex [ase::wait $ecid]
+  set ::ase_preflight 1
+  set eclog [e2e_log]
+  eqcheck PF1723ah-stale-the-run-is-refused-before-ngspice-which-would-have-died-on-the-syntax-error \
+    [list $e1rc [string match {ase: REFUSED — 14 .nodeset/.ic names in 2 include files stop at*} $e1] \
+          $e1files $ecex [string match "*Error: .nodeset syntax error.*" $eclog]] {1 1 {} 1 1}
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  set e2n [pcall ase::preflight_fix_includes e2ek]
+  set e2id -1
+  set e2rc [catch {set e2id [ase::run_deck [e2e_st] $NLEF]} e2err]
+  set e2ex [ase::wait $e2id]
+  set e2log [e2e_log]
+  eqcheck PF1723ah2-fixed-the-run-reaches-ngspice-and-finishes-with-no-nodeset-warning \
+    [list $e2n $e2rc $e2ex [file exists [file join $RDE e2e_tb_ase.raw]] \
+          [string match -nocase {*nodeset*} [string range $e2log [string first {--- simulator output ---} $e2log] end]] \
+          [string match {*non-existent*} $e2log] [string match {*x1.*} [readfile $ENF][readfile $DISF]]] \
+    {14 0 0 1 0 0 0}
+  pcall ase::session_close e2ek
+  pcall ase::sim_clear
+}
+
+} pf1723ierr]} { puts "FATAL: PF1723 items 5-7 $pf1723ierr" ; incr fail }
+catch {file attributes [file join $tmp run_1723i ns_ro.spice] -permissions 0644}
+catch {file attributes [file join $tmp run_1723i ns_two.spice] -permissions 0644}
+foreach v {::PDK_ROOT ::ASE_DEFAULT_MODELS ::env(PDK_ROOT)} {
+  catch {unset $v}
+  if {[info exists ::pfi_saved($v)]} { set $v $::pfi_saved($v) }
+}
+set ::ase_preflight 1
 set ::sim_case_mode fold
 
 ## ===========================================================================

@@ -905,6 +905,13 @@ proc ase::ui::build {key top} {
     -command [list ase::ui::design_dialog $key]
   $top.mb.setup add command -label "Model Files\u2026" \
     -command [list ase::ui::model_files_dialog $key]
+  # Include Files\u2026 = the `includes` key's door (issue 1723 item 5): the key was
+  # read by every deck, and no window showed it, so a `.nodeset` file naming a
+  # renamed instance could only be found by reading the .state file. The label
+  # is a constant because the pre-flight's refusal and the repair banner name
+  # this path. No log call, for the reason given above the Simulators entry.
+  $top.mb.setup add command -label [ase::ui::lbl_include_files_menu] \
+    -command [list ase::ui::include_files_dialog $key]
   # Simulators… = the registry issue 0931 shipped with no door at all (issue
   # 0937). Setup, not Simulation: this is configuration that outlives a run,
   # and it is where the other configuration dialogs already live. The menu
@@ -12681,6 +12688,204 @@ proc ase::ui::model_files_dialog {key} {
   return [ase::ui::listdlg_open $key models {Model Files}]
 }
 
+# --- Setup > Include Files… (issue 1723 item 5) --------------------------------
+# The `includes` key's door. The user, 2026-11-21, after a Run died inside
+# ngspice on a `.nodeset` card naming a renamed instance: "where are these
+# nodesets hidden? How is a user to find them?" -- no ASE-L window showed the
+# key. One row per entry: as stored, where it resolves, and whether that file
+# exists (ase::include_rows, pure). Add…, Remove and Open.
+#
+# ⚠ ADD AND REMOVE ARE SESSION STATE, like every other Setup edit: they go
+# through ase::session_update, the session goes unsaved, and Session > Save State
+# is what reaches the .state file. Add stores the path AS TYPED, so the portable
+# `$::VAR/...` form a user types stays portable (the Model Files rule).
+#
+# ⚠ OPEN IS THE STOCK `textwindow` (src/xschem.tcl), and it was chosen over the
+# other three: `edit_file` hands the file to an external `$editor` when one is
+# executable, which is not XSCHEM's own window; `editdata` is modal and returns
+# text to its caller, with only "Save a copy"; `viewdata` shows data with only
+# Save As. `textwindow` takes a FILE NAME, shows it in XSCHEM's own text widget,
+# and its Save writes back to that file -- read or edit, which is what the
+# ruling asked for. A file ase::include_edit_verdict would not let Apply
+# Corrections touch (under the PDK, in a model folder, read-only) opens READ
+# ONLY, so this door cannot do by hand what the press refuses to do.
+#
+# ⚠ THE RESOLVED PATH NEVER CALLS ase::rundir (ase::include_rundir_peek): a
+# relative entry is shown against the folder the run would use, without
+# creating that folder or rewriting ::netlist_dir.
+#
+# Widgets: $w.tv (columns stored path exists), $w.status, $w.btns.add,
+# $w.btns.remove, $w.btns.open, $w.btns.close, where $w = <session top>.incfiles;
+# the Add editor is <session top>.incrow ($w.file, $w.btns.proceed/.cancel).
+proc ase::ui::include_files_dialog {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::incdlg_win $key]
+  if {$w ne {}} {
+    catch {wm deiconify $w}
+    catch {raise $w}
+    ase::ui::incdlg_fill $key
+    return $w
+  }
+  set w [dict get $wins $key].incfiles
+  toplevel $w
+  wm title $w [ase::ui::lbl_include_files_title]
+  ttk::treeview $w.tv -columns {stored path exists} -show headings \
+    -selectmode extended -height 6 -style Ase.Treeview \
+    -yscrollcommand [list $w.sb set]
+  foreach c {stored path exists} h [ase::ui::incdlg_heads] st {1 1 0} {
+    $w.tv heading $c -text $h
+    $w.tv column $c -width [ase::ui::colw 20 $h] -minwidth [ase::ui::colw 0 $h] \
+      -anchor w -stretch $st
+  }
+  scrollbar $w.sb -orient vertical -command [list $w.tv yview]
+  label $w.status -font AseLabelFont -anchor w -justify left -wraplength 640 -text {}
+  frame $w.btns
+  button $w.btns.add -text "Add…" -command [list ase::ui::incdlg_add $key]
+  button $w.btns.remove -text Remove -command [list ase::ui::incdlg_remove $key]
+  button $w.btns.open -text Open -command [list ase::ui::incdlg_open $key]
+  button $w.btns.close -text Close -command [list ase::ui::incdlg_close $key]
+  pack $w.btns.add $w.btns.remove $w.btns.open -side left -padx 4
+  pack $w.btns.close -side right -padx 4
+  pack $w.btns -side bottom -fill x -padx 8 -pady 6
+  pack $w.status -side bottom -fill x -padx 8
+  pack $w.sb -side right -fill y
+  pack $w.tv -side left -fill both -expand 1
+  bind $w.tv <Double-1> [list ase::ui::incdlg_open $key]
+  bind $w.tv <Delete> [list ase::ui::incdlg_remove $key]
+  ase::ui::bind_dialog_esc $w [list ase::ui::incdlg_close $key]
+  ase::ui::dialog_close_protocol $w [list ase::ui::incdlg_close $key]
+  ase::ui::incdlg_fill $key
+  ase::ui::apply_theme $w
+  return $w
+}
+
+proc ase::ui::incdlg_heads {} { return {{As stored} {Resolved path} Exists} }
+proc ase::ui::incdlg_exists_word {e} { return [expr {$e ? {yes} : {no}}] }
+proc ase::ui::lbl_incdlg_missing {p} { return "$p does not exist." }
+proc ase::ui::lbl_incdlg_unresolved {why} { return "This path does not resolve: $why" }
+
+# The dialog for KEY, or {} when it is not open.
+proc ase::ui::incdlg_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].incfiles
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::incdlg_status {key text} {
+  set w [ase::ui::incdlg_win $key]
+  if {$w ne {}} { catch {$w.status configure -text $text} }
+}
+
+# The rows, re-read from the session: the resolved column is never cached, so a
+# file created or deleted since shows as it is now.
+proc ase::ui::incdlg_fill {key} {
+  set w [ase::ui::incdlg_win $key]
+  if {$w eq {}} { return }
+  set st [ase::session_state $key]
+  $w.tv delete [$w.tv children {}]
+  set i 0
+  foreach r [ase::include_rows $st [ase::include_rundir_peek $st]] {
+    set p [dict get $r path]
+    if {$p eq {}} { set p "([dict get $r why])" }
+    $w.tv insert {} end -id $i -values [list [dict get $r stored] $p \
+      [ase::ui::incdlg_exists_word [dict get $r exists]]]
+    incr i
+  }
+}
+
+# The selected row indices, in order, or {} having said so on the status line.
+proc ase::ui::incdlg_selection {key} {
+  set w [ase::ui::incdlg_win $key]
+  if {$w eq {}} { return {} }
+  set sel [lsort -integer [$w.tv selection]]
+  if {![llength $sel]} { ase::ui::incdlg_status $key [ase::ui::lbl_rdel_none] }
+  return $sel
+}
+
+# Add…: the one-entry editor. Nothing is stored before its OK.
+proc ase::ui::incdlg_add {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [ase::ui::dialog_frame [dict get $wins $key].incrow {Add Include File}]
+  set e [ase::ui::dialog_row $w 0 File: file]
+  $e configure -width 48
+  ase::ui::dialog_buttons $w 1 [list ase::ui::incdlg_add_ok $key] \
+    [list ase::ui::incdlg_add_cancel $key]
+  ase::ui::dialog_close_protocol $w [list ase::ui::incdlg_add_cancel $key]
+  bind $e <Return> [list ase::ui::incdlg_add_ok $key]
+  ase::ui::apply_theme $w
+  focus $e
+  return $w
+}
+
+proc ase::ui::incdlg_add_ok {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return }
+  set w [dict get $wins $key].incrow
+  if {![winfo exists $w]} { return }
+  if {[catch {ase::include_add [ase::session_state $key] [$w.file get]} st]} {
+    catch {::ase::echo "ase: Include Files: $st" error}
+    return
+  }
+  ase::session_update $key $st
+  destroy $w
+  ase::ui::incdlg_status $key {}
+  ase::ui::incdlg_fill $key
+}
+
+proc ase::ui::incdlg_add_cancel {key} {
+  variable wins
+  if {[dict exists $wins $key]} { catch {destroy [dict get $wins $key].incrow} }
+}
+
+proc ase::ui::incdlg_remove {key} {
+  set sel [ase::ui::incdlg_selection $key]
+  if {![llength $sel]} { return }
+  ase::session_update $key [ase::include_remove [ase::session_state $key] $sel]
+  ase::ui::incdlg_status $key {}
+  ase::ui::incdlg_fill $key
+}
+
+# Open: the first selected file in XSCHEM's own text window, read only when
+# Apply Corrections may not touch it either. -> the text window, or {}.
+proc ase::ui::incdlg_open {key} {
+  set sel [ase::ui::incdlg_selection $key]
+  if {![llength $sel]} { return {} }
+  set st [ase::session_state $key]
+  set rd [ase::include_rundir_peek $st]
+  set r [lindex [ase::include_rows $st $rd] [lindex $sel 0]]
+  if {$r eq {}} { return {} }
+  set p [dict get $r path]
+  if {$p eq {}} {
+    ase::ui::incdlg_status $key [ase::ui::lbl_incdlg_unresolved [dict get $r why]]
+    return {}
+  }
+  if {![dict get $r exists]} {
+    ase::ui::incdlg_status $key [ase::ui::lbl_incdlg_missing $p]
+    return {}
+  }
+  set ro {}
+  if {[ase::include_edit_verdict $p [ase::include_edit_facts $p] \
+         [ase::include_protected_roots $st $rd]] ne {}} { set ro ro }
+  ase::ui::incdlg_status $key {}
+  if {[catch {textwindow $p $ro} e]} {
+    ase::ui::incdlg_status $key $e
+    return {}
+  }
+  return $::textwindow_w
+}
+
+proc ase::ui::incdlg_close {key} {
+  variable wins
+  if {[dict exists $wins $key]} {
+    catch {destroy [dict get $wins $key].incrow}
+    catch {destroy [dict get $wins $key].incfiles}
+  }
+}
+
 # ═══ §7c: THE OPTIONS SHEET -- FINDING ONE OPTION AMONG 247 (issue 1441) ══════
 #
 # Simulation > Options… used to be the shared two-column list dialog: the rows
@@ -14613,6 +14818,14 @@ proc ase::ui::menu_path_stop {} {
 proc ase::ui::lbl_run_dir_menu {} { return "Run Directory\u2026" }
 proc ase::ui::menu_path_run_dir {} {
   return "Setup > [ase::ui::lbl_run_dir_menu]"
+}
+# Setup > Include Files\u2026 (issue 1723 item 5). src/ase.tcl types this path as
+# the fallback of `ase::preflight_include_door` (the engine may not depend on
+# this file); row PF1723w of test_ase_preflight holds the two equal.
+proc ase::ui::lbl_include_files_menu {} { return "Include Files\u2026" }
+proc ase::ui::lbl_include_files_title {} { return {Include Files} }
+proc ase::ui::menu_path_include_files {} {
+  return "Setup > [ase::ui::lbl_include_files_menu]"
 }
 proc ase::ui::menu_path_waveform_viewer {} {
   return "[ase::ui::lbl_tools] > [ase::ui::lbl_waveform_viewer]"
@@ -16878,8 +17091,10 @@ proc ase::ui::run_started {key id} {
   ## ISSUE 1705 (R911a): a launch that SUCCEEDED returns the view to the live
   ## run; both Run doors reach here only after `ase::run*` returned an id.
   catch {ase::result_view_reset $key}
-  ## issue 1723: a run that started was not refused, so an offer is stale
+  ## issue 1723: a run that started was not refused, so an offer is stale --
+  ## and so is a confirmation of it still open (item 6), whose Cancel is a no-op
   catch {ase::ui::repair_banner $key {}}
+  catch {ase::ui::repair_confirm_cancel $key}
   ase::session_setattr $key run_id $id
   ase::session_setattr $key stopped 0
   ase::ui::log_open $key
@@ -16955,12 +17170,20 @@ proc ase::ui::run_raised {key err} {
 # comment above ase::ui::repair_currents). The banner only OFFERS; the press is
 # the confirmation, and it runs exactly the console command -- the session is
 # rewritten and marked unsaved, and Session > Save State is still the user's.
-# Nothing here writes a file.
 #
-# ⚠ THE DECISION IS ase::ui::repair_offer, PURE (no Tk, no file read), and it is
-# what the counted headless arm tests (tests/headless/test_ase_preflight.tcl,
-# rows PF1723*). The act -- the banner and the press -- is display-only
-# (tests/headless/test_ase_window.tcl, rows FX1723*).
+# ⚠ ISSUE 1723 item 6 (ruled 2026-11-21): WHEN THE CORRECTIONS REACH INCLUDE
+# FILES, THE PRESS ASKS FIRST. Those are files, written at once and not at Save
+# State, so Apply opens a confirmation listing each file, its change and where
+# its backup goes (ase::ui::repair_confirm). OK backs every file up, rewrites
+# it, then applies the session corrections; Cancel changes nothing at all and
+# leaves the banner up. A press whose corrections reach no editable include
+# file is the session-only press it always was, with no dialog.
+#
+# ⚠ THE DECISION IS ase::ui::repair_offer (and the dialog's text,
+# ase::ui::repair_confirm_lines), PURE (no Tk, no file read), and it is what the
+# counted headless arm tests (tests/headless/test_ase_preflight.tcl, rows
+# PF1723*). The act -- the banner, the dialog and the presses -- is
+# display-only (tests/headless/test_ase_window.tcl, rows FX1723*).
 
 proc ase::ui::lbl_repair_apply   {} { return {Apply Corrections} }
 proc ase::ui::lbl_repair_dismiss {} { return {Dismiss} }
@@ -16972,17 +17195,32 @@ proc ase::ui::repair_count {n one many} {
 
 # What the banner offers after a Run raised ERR, for a session whose state is
 # STATE and whose scan against its netlist artifact is SCAN (INCS: what
-# ase::preflight_include_hits answers for it). -> {} when there is nothing to
-# offer: ERR is not the save-name refusal, or the apply would rewrite nothing.
-# Else {label <button> text <banner sentence> rows <n> outputs <n>
-#       measurements <n> case <n> rename <n> includes <n>}.
+# ase::preflight_include_hits answers for it; PLAN: ase::preflight_include_plan's
+# answer). -> {} when there is nothing to offer: ERR is not the save-name
+# refusal, or the press would rewrite nothing. Else
+#   {label <button> text <banner sentence> rows <session rows> outputs <n>
+#    measurements <n> case <n> rename <n> includes <files naming a stale prefix>
+#    incnames <names the press rewrites in editable files> incfiles <those
+#    files> incblocked <files with rewrites that are not editable>}.
 #
-# The counts are ase::preflight_apply's own, so the sentence cannot promise a
-# number the press does not rewrite.
-proc ase::ui::repair_offer {err state scan {incs {}}} {
+# The counts are ase::preflight_apply's and the plan's own, so the sentence
+# cannot promise a number the press does not rewrite.
+proc ase::ui::repair_offer {err state scan {incs {}} {plan {}}} {
   if {![ase::preflight_is_name_refusal $err]} { return {} }
   if {[catch {ase::preflight_apply $state $scan} a]} { return {} }
-  if {![dict get $a n]} { return {} }
+  set nied 0
+  set nief 0
+  set nblk 0
+  foreach f $plan {
+    if {[catch {dict get $f n} fn] || !$fn} { continue }
+    if {[dict get $f editable]} {
+      incr nied $fn
+      incr nief
+    } else {
+      incr nblk
+    }
+  }
+  if {![dict get $a n] && !$nied} { return {} }
   set ncase 0
   set nren 0
   foreach rp [ase::preflight_repairs $scan] {
@@ -17001,20 +17239,68 @@ proc ase::ui::repair_offer {err state scan {incs {}}} {
     lappend parts "[ase::ui::repair_count $ncase {output row differs} {output rows differ}]\
  from the netlist's own names only in case."
   }
-  set what [ase::ui::repair_count [dict get $a outputs] {output row} {output rows}]
-  if {[dict get $a measurements]} {
-    append what " and [ase::ui::repair_count [dict get $a measurements] measurement measurements]"
-  }
   set btn [ase::ui::lbl_repair_apply]
-  lappend parts "$btn rewrites $what in this session; Session > Save State keeps them."
-  set ninc [llength $incs]
+  set files "[ase::ui::repair_count $nied {.nodeset/.ic name} {.nodeset/.ic names}]\
+ in [ase::ui::repair_count $nief {include file} {include files}]"
+  if {[dict get $a n]} {
+    set what [ase::ui::repair_count [dict get $a outputs] {output row} {output rows}]
+    if {[dict get $a measurements]} {
+      append what " and [ase::ui::repair_count [dict get $a measurements] measurement measurements]"
+    }
+    lappend parts "$btn rewrites $what in this session; Session > Save State keeps them."
+    if {$nied} {
+      lappend parts "It also rewrites $files, after asking; each file is backed\
+ up first and written at once."
+    }
+  } else {
+    lappend parts "$btn rewrites $files, after asking; each file is backed up\
+ first and written at once."
+  }
+  ## FILES, not hit records: one file naming two stale prefixes is one file
+  set ninc [llength [lsort -unique [lmap h $incs {dict get $h path}]]]
   if {$ninc} {
     lappend parts "[ase::ui::repair_count $ninc {include file names} {include files name}]\
- the old instance too; ASE-L does not edit your files, and the refusal lists them."
+ the old instance; [ase::ui::menu_path_include_files] shows\
+ [expr {$ninc == 1 ? {it} : {them}}]."
+  }
+  if {$nblk} {
+    lappend parts "[ase::ui::repair_count $nblk {of them is} {of them are}] not\
+ editable and left as [expr {$nblk == 1 ? {it is} : {they are}}]."
   }
   return [dict create label $btn text [join $parts { }] rows [dict get $a n] \
             outputs [dict get $a outputs] measurements [dict get $a measurements] \
-            case $ncase rename $nren includes $ninc]
+            case $ncase rename $nren includes $ninc incnames $nied incfiles $nief \
+            incblocked $nblk]
+}
+
+# THE CONFIRMATION'S TEXT, one line per element, PURE (issue 1723 item 6). PLAN
+# is ase::preflight_include_plan's answer; APPLY is ase::preflight_apply's for
+# the session ({} when there is none). It names every file and its change, that
+# files are written at once and not at Save State, where each backup goes, and
+# which files are not editable and why.
+proc ase::ui::repair_confirm_lines {plan apply} {
+  set out [list "[ase::ui::lbl_repair_apply] writes these include files now,\
+ not at Session > Save State, and backs each one up first:"]
+  foreach f $plan {
+    if {![dict get $f n]} { continue }
+    set name [file tail [dict get $f path]]
+    if {[dict get $f editable]} {
+      lappend out "  $name: [ase::include_change_words $f]\
+ Backup: [dict get $f backup]"
+    } else {
+      lappend out "  $name: not editable, because [dict get $f why]; left as it is."
+    }
+  }
+  if {$apply ne {} && [dict get $apply n]} {
+    set what [ase::ui::repair_count [dict get $apply outputs] {output row} {output rows}]
+    if {[dict get $apply measurements]} {
+      append what " and [ase::ui::repair_count [dict get $apply measurements] measurement measurements]"
+    }
+    lappend out "It then rewrites $what in this session; Session > Save State keeps\
+ those."
+  }
+  lappend out "Cancel changes nothing."
+  return $out
 }
 
 # The act after a refused Run: compose the offer for session KEY and show it,
@@ -17025,9 +17311,14 @@ proc ase::ui::repair_after_refusal {key err} {
       ![catch {ase::preflight_session_scan $key} scan]} {
     set st [ase::session_state $key]
     set incs {}
-    catch {set incs [ase::preflight_include_hits $st [dict get $scan renames] \
-                       [dict get $scan cs] [ase::rundir $st]]}
-    set offer [ase::ui::repair_offer $err $st $scan $incs]
+    set plan {}
+    catch {
+      set rd [ase::rundir $st]
+      set incs [ase::preflight_include_hits $st [dict get $scan renames] \
+                  [dict get $scan cs] $rd [dict get $scan itexts]]
+      set plan [ase::preflight_include_plan $st $scan [dict get $scan itexts] $rd]
+    }
+    set offer [ase::ui::repair_offer $err $st $scan $incs $plan]
   }
   ase::ui::repair_banner $key $offer
   return $offer
@@ -17061,9 +17352,26 @@ proc ase::ui::repair_banner {key offer} {
   return
 }
 
-# The Apply press: the console command, then the panes. -> the number of rows
-# rewritten, or -1 when the command raised (its sentence reaches the CIW).
+# The Apply press. When the corrections reach an editable include file it asks
+# first (ase::ui::repair_confirm) and rewrites nothing yet -> 0. Otherwise it is
+# the console command, then the panes -> the number of rows rewritten, or -1
+# when the command raised (its sentence reaches the CIW).
 proc ase::ui::repair_apply {key} {
+  set plan {}
+  set scan {}
+  if {![catch {ase::preflight_session_scan $key} scan]} {
+    set st [ase::session_state $key]
+    catch {
+      set plan [ase::preflight_include_plan $st $scan [dict get $scan itexts] \
+                  [ase::rundir $st]]
+    }
+  }
+  foreach f $plan {
+    if {[dict get $f editable] && [dict get $f n]} {
+      ase::ui::repair_confirm $key $scan $plan
+      return 0
+    }
+  }
   ase::ui::repair_banner $key {}
   if {[catch {ase::preflight_fix_session $key} n]} {
     catch {::ase::echo $n error}
@@ -17072,6 +17380,83 @@ proc ase::ui::repair_apply {key} {
   ase::ui::log_action [list ase::preflight_fix_session $key]
   catch {ase::ui::populate $key}
   return $n
+}
+
+# The confirmation (issue 1723 item 6): what the press will write, OK and
+# Cancel. MODELESS, like the other Setup dialogs; the scan and plan it shows are
+# held per key, and OK re-reads every file before writing any (the plan's own
+# rule), so a file edited while it was open is refused, not overwritten.
+# Widgets: $w.msg, $w.status, $w.btns.proceed (OK), $w.btns.cancel, where
+# $w = <session toplevel>.fixconf.
+namespace eval ase::ui { variable fixconf ; array set fixconf {} }
+
+proc ase::ui::repair_confirm {key scan plan} {
+  variable wins
+  variable fixconf
+  if {![dict exists $wins $key]} { return {} }
+  set a {}
+  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
+  set w [ase::ui::dialog_frame [dict get $wins $key].fixconf [ase::ui::lbl_repair_apply]]
+  label $w.msg -font AseLabelFont -anchor w -justify left -wraplength 720 \
+    -text [join [ase::ui::repair_confirm_lines $plan $a] "\n"]
+  grid $w.msg -row 0 -column 0 -columnspan 2 -sticky we -padx 8 -pady {8 4}
+  label $w.status -font AseLabelFont -anchor w -justify left -wraplength 720 -text {}
+  grid $w.status -row 1 -column 0 -columnspan 2 -sticky we -padx 8 -pady 2
+  ase::ui::dialog_buttons $w 2 [list ase::ui::repair_confirm_ok $key] \
+    [list ase::ui::repair_confirm_cancel $key]
+  ase::ui::dialog_close_protocol $w [list ase::ui::repair_confirm_cancel $key]
+  set fixconf($key) [list $scan $plan]
+  ase::ui::apply_theme $w
+  return $w
+}
+
+# OK: the files first (backed up, then rewritten, all or nothing), then the
+# session corrections of the scan the dialog SHOWED. A refusal is said on the
+# dialog and in the CIW and changes nothing; the dialog and the banner stay.
+# NOTHING HALF-DONE (the ruling): a session half that raises after the files
+# were written puts the files back and drops their backups
+# (ase::include_unapply). -> the number of include names rewritten, or -1 on a
+# refusal.
+proc ase::ui::repair_confirm_ok {key} {
+  variable wins
+  variable fixconf
+  if {![info exists fixconf($key)] || ![dict exists $wins $key]} { return -1 }
+  lassign $fixconf($key) scan plan
+  set w [dict get $wins $key].fixconf
+  set r [ase::include_apply_plan $plan]
+  if {![dict get $r ok]} {
+    catch {$w.status configure -text [dict get $r why]}
+    catch {::ase::echo "ase: [dict get $r why]" error}
+    return -1
+  }
+  set a {}
+  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
+  set sess [expr {$a ne {} && [dict get $a n]}]
+  if {$sess && [catch {ase::preflight_session_commit $key $scan} ce]} {
+    set why "the session corrections could not be applied ($ce), so the include\
+ files were put back as they were and nothing was changed."
+    set ub [ase::include_unapply $plan $r]
+    if {$ub ne {}} { append why " But $ub." }
+    catch {$w.status configure -text $why}
+    catch {::ase::echo "ase: $why" error}
+    return -1
+  }
+  foreach l [ase::include_apply_said $r] { catch {::ase::echo $l} }
+  ase::ui::log_action [list ase::preflight_fix_includes $key]
+  if {$sess} { ase::ui::log_action [list ase::preflight_fix_session $key] }
+  unset fixconf($key)
+  catch {destroy $w}
+  ase::ui::repair_banner $key {}
+  catch {ase::ui::populate $key}
+  return [dict get $r n]
+}
+
+# Cancel / ESC / the window's close: nothing changes, the banner stays.
+proc ase::ui::repair_confirm_cancel {key} {
+  variable wins
+  variable fixconf
+  catch {unset fixconf($key)}
+  if {[dict exists $wins $key]} { catch {destroy [dict get $wins $key].fixconf} }
 }
 
 # ⚠ ONE ROUTER, TWO DOORS (issue 1464). This block used to be inline in

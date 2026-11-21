@@ -14957,16 +14957,14 @@ proc textwindow {filename {ro {}}} {
   button $textwindow_w.buttons.dismiss -text Dismiss -command "destroy $textwindow_w"
   pack $textwindow_w.buttons.dismiss -side left -expand 1
   if { $ro eq {} } {
-    button $textwindow_w.buttons.save -text "Save" -command \
-     {
-      if {[catch {open $textwindow_filename w} textwindow_fileid]} {
-        puts "textwindow: $textwindow_fileid"
-      } else {
-        puts -nonewline $textwindow_fileid [$textwindow_w.text get 1.0 {end - 1 chars}]
-        close $textwindow_fileid
-      }
-      destroy $textwindow_w
-     }
+    ## issue 1723 item 5: the window and the file are BOUND at creation. This
+    ## used to be a braced script reading the globals $textwindow_filename and
+    ## $textwindow_w at the PRESS, i.e. whichever window opened LAST: with two
+    ## text windows open, Save in the first wrote the second's text into the
+    ## second's file and closed the second. ASE-L's Include Files... opens one
+    ## window per file, so two at once is the ordinary case there.
+    button $textwindow_w.buttons.save -text "Save" \
+      -command [list textwindow_save $textwindow_w $filename]
     pack $textwindow_w.buttons.save  -side left -expand 1
   }
 
@@ -14978,7 +14976,8 @@ proc textwindow {filename {ro {}}} {
   pack $textwindow_w.text -expand yes -fill both
   pack $textwindow_w.xscroll -side bottom -fill x
   bind $textwindow_w <Escape> "$textwindow_w.buttons.dismiss invoke"
-  set textwindow_fileid [open $filename r]
+  ## one open, inside the catch: a second bare `open` here leaked a channel on
+  ## every call and raised out of the proc on a file it cannot read
   if {[catch {open $filename r} textwindow_fileid]} {
     puts "textwindow: $textwindow_fileid"
   } else {
@@ -14986,6 +14985,21 @@ proc textwindow {filename {ro {}}} {
     close $textwindow_fileid
   }
   return {}
+}
+
+# Save for the text window W, writing FILENAME: the pair textwindow bound at
+# creation. A failed write keeps the window, so the text is not lost with it.
+# -> 1 when the file was written, 0 when not.
+proc textwindow_save {w filename} {
+  if {![winfo exists $w.text]} { return 0 }
+  if {[catch {open $filename w} fid]} {
+    puts "textwindow: $fid"
+    return 0
+  }
+  puts -nonewline $fid [$w.text get 1.0 {end - 1 chars}]
+  close $fid
+  destroy $w
+  return 1
 }
 
 proc viewdata {data {ro {}} {win .view} {wrap none}} {
