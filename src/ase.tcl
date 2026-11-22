@@ -17034,8 +17034,8 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
         set cond [ase::state_get $ci cond 0]
         dict set row cond $cond
         ## `stops`: ngspice stops the run on this name if it is absent -- its
-        ## value is not a plain number (ase::include_value_plain) and its card
-        ## is not inside a `.if` block. A row without `miss` refuses on it
+        ## value is not one ngspice skips there (ase::include_value_plain) and
+        ## its card is not inside a `.if` block. A row without `miss` refuses on it
         ## (the user's ruling of 2026-11-22: "Refuse only when ngspice will
         ## stop"); a row with `miss` refuses whatever its value.
         dict set row stops [expr {!$cond && ![ase::include_value_plain [dict get $ci value]]}]
@@ -17185,16 +17185,58 @@ proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
                               [dict get $row ident] $cs [dict get $row miss]]
     }
   }
+  ## ⚠ UNDER `fold`, OUTPUTS FIRST ACROSS SPELLINGS (review round 2, finding
+  ## 4). `x1` and `X1` are one instance to ngspice, but each spelling is its
+  ## own group (above), so an include row spelled `X1.b1` beside the output
+  ## `v(x1.a1)` decided alone and was offered xother in the press that renamed
+  ## x1 to xdut. When the output rows of every spelling folding together
+  ## point to ONE instance, a group of that folded prefix with include rows
+  ## and no output row of its own takes that instance and its corrected
+  ## prefix: the rows it resolves are corrected to it, the rest keep `miss`
+  ## and refuse with no correction, as in the outputs-first step below. A
+  ## group with no include row is never moved, so a session with no include
+  ## file is decided exactly as before (PF1723s10). Row PF1723s3e.
+  set ofold [dict create]
+  if {!$cs} {
+    set ob [dict create]
+    dict for {p members} $grp {
+      foreach mb $members {
+        if {[lindex $mb 0] eq {o}} { dict lappend ob [string tolower $p] [list $p $mb] }
+      }
+    }
+    dict for {fp pms} $ob {
+      set oc [lindex [ase::preflight_rename_common $tries \
+                        [lmap pm $pms {lindex $pm 1}]] 0]
+      if {[llength $oc] != 1} { continue }
+      lassign [lindex $pms 0] p0 mb0
+      set fx {}
+      foreach t [dict get $tries [join $mb0 ,]] {
+        if {[lindex $t 0] eq [lindex $oc 0]} { set fx [lindex $t 1] }
+      }
+      set idx [dict get [lindex $orows [lindex $mb0 1]] miss index]
+      set n0 [llength [split $p0 .]]
+      dict set ofold $fp [list [lindex $oc 0] \
+        [join [lrange [split $fx .] [expr {$idx - $n0 + 1}] $idx] .]]
+    }
+  }
   set renames {}
   dict for {p members} $grp {
     set deciders {}
     set odec {}
+    set nidec 0
     foreach mb $members {
       if {[lindex $mb 0] in {o i}} { lappend deciders $mb }
       if {[lindex $mb 0] eq {o}} { lappend odec $mb }
+      if {[lindex $mb 0] eq {i}} { incr nidec }
     }
     if {![llength $deciders]} { set deciders $members }
     lassign [ase::preflight_rename_common $tries $deciders] common union
+    set ofto {}
+    if {![llength $odec] && $nidec && [dict exists $ofold [string tolower $p]]} {
+      lassign [dict get $ofold [string tolower $p]] oinst ofto
+      set common [list $oinst]
+      set union $common
+    }
     ## ⚠ OUTPUTS FIRST, THE INCLUDE ROWS BREAK TIES (the user's ruling of
     ## 2026-11-22 on 1723_include_stand_downs, part 4). When the output and
     ## include rows together leave no single instance but the output rows
@@ -17250,6 +17292,8 @@ proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
         i { lset irows $j $row }
       }
     }
+    ## a spelling the outputs' instance resolves none of still names it
+    if {$to eq {}} { set to $ofto }
     lappend renames [dict create prefix $p to $to fit $fit candidates $cands \
                        outputs $no measurements $nm includes $ni]
   }
@@ -18807,28 +18851,60 @@ proc ase::include_shared_said {plan r} {
   return $out
 }
 
-# IS A `.nodeset`/`.ic` VALUE A PLAIN NUMBER? Pure. A sign, digits with an
-# optional point (`1.5`, `.5`, `5.`), an optional exponent, then any letters (a
-# scale factor or a unit: `1.5m`, `1.5meg`, `1.5V`). Everything else is not:
-# a `{...}` or `'...'` expression (even `{0.4}` or `'1.5'`), a parameter name
-# (`vsup`), an empty value.
+# IS A `.nodeset`/`.ic` VALUE ONE NGSPICE SKIPS ON A NODE IT DOES NOT HAVE?
+# Pure. -> 1 when ngspice drops the name with a warning and runs on, 0 when it
+# stops the run. The proc keeps its name: such a value is written as a number.
+#
+# On a name whose node is not there, INPpas3 warns and SKIPS the value with
+# `nexttok`, which ends it at a blank or a `,` and never reads it as a number.
+# What stops the run is either the value's own expression, which numparam
+# rewrites or rejects before INPpas3 sees the card -- a `{...}` or a quote
+# anywhere in it (`{0.4}`, `'1.5'`, `1{x}`), or a value that does not start
+# as a number does (a parameter name `vsup`, `nan`, `x1`, a lone sign `-`,
+# `+.`, an empty value) -- or, after a `,`, a word that is not the next name,
+# which INPpas3 then reads as a name (`1,5`, `,1`, `1,i(v1)=0.3`). So a value
+# that starts as a number (an optional sign, then a digit, or a point and a
+# digit, or a bare point) and holds no brace or quote is skipped whatever
+# follows inside it: `1.5m`, `1.5V`, and also `0x10`, `1e+`, `1k5`, `1..5`,
+# `1.5*2`, `1.5)`, and `1.5,` before a blank or the next name.
+#
+# ⚠ MEASURED, NOT DERIVED (review round 2, finding 2): the first cut called a
+# value plain only by a number's grammar, so it refused values ngspice runs on
+# and its refused line said ngspice stops. Row PF1723u9 drives both lists it
+# was measured on through this proc and the gate. ⚠ AND IT JUDGES THE VALUE
+# ONLY: a card malformed whatever its nodes (`=1.5 2`, `=1, 5`: ngspice reads
+# the `2` or the `5` as a name) stops the run on an existing node too, and the
+# pre-flight checks no card's syntax, so such a value is still a caution here.
 proc ase::include_value_plain {value} {
-  return [regexp {^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?[A-Za-z]*$} \
-            [string trim $value]]
+  set v [string trim $value]
+  set c [string first , $v]
+  if {$c >= 0} {
+    set rest [string trimleft [string range $v [expr {$c + 1}] end] ,]
+    if {$rest ne {} && ![regexp -nocase {^(?:v\(|all(?:[=(),]|$))} $rest]} {
+      return 0
+    }
+    set v [string range $v 0 [expr {$c - 1}]]
+  }
+  return [regexp {^(?:[+-]?\.?[0-9]|\.)[^\{\}'"]*$} $v]
 }
 
 # What ngspice does with a `.nodeset`/`.ic` name on a node it does not have,
 # as a clause. MEASURED 2026-11-21 on /usr/bin/ngspice (45.2) and the fork
 # (ver_53), identically, for a missing instance (`x1.q`) and for a missing node
 # inside one that exists (`xdut.nosuch`) alike -- one branch of ngspice's
-# parser (INPpas3) handles both: a PLAIN NUMBER (ase::include_value_plain: `1.5`, `-0.1`, `1.5m`, `1e-3`,
-# `1.5V`, blanks around the `=` or not) is dropped with `Warning : Nodeset on
-# non-existent node - <n>, ignored` and the run goes on at rc 0. ANY OTHER
-# value -- `{0.4}`, `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'`, the bare parameter
-# `vsup` -- draws the same warning and then `Error: .nodeset syntax error.`
-# (`.ic syntax error.` for an `.ic` card): the run stops with rc 1 and no raw.
-# (The first cut said this only of `{...}`; fix round, finding 4.) An empty
-# value stops the run earlier, in the expression parser.
+# parser (INPpas3) handles both: a value written as a number
+# (ase::include_value_plain: `1.5`, `-0.1`, `1.5m`, `1e-3`, `1.5V`, blanks
+# around the `=` or not, and the other shapes that proc lists) is dropped with
+# `Warning : Nodeset on non-existent node - <n>, ignored` and the run goes on
+# at rc 0. A `{0.4}`, `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'` or a defined bare
+# parameter `vsup` draws the same warning and then `Error: .nodeset syntax
+# error.` (`.ic syntax error.` for an `.ic` card): the run stops with rc 1 and
+# no raw. (The first cut said this only of `{...}`; fix round, finding 4.) ⚠
+# NOT EVERY STOP IS THAT ERROR (review round 2, finding 2): an empty value, a
+# lone sign, or a name no `.param` defines (`nan`, `x1`, `1{x}`) stops the run
+# earlier, in numparam (`Undefined parameter [nan]`, `Cannot compute
+# substitute`), on a node that exists as well; the clause below still names
+# the syntax error for them (a known limit, measured 2026-11-22 on 45.2).
 proc ase::include_ngspice_clause {card value} {
   if {![ase::include_value_plain $value]} {
     set v [string trim $value]
@@ -28342,7 +28418,7 @@ proc ase::opstate_refusals {sim state} {
 # the file and, if any name stops at a missing instance, says ONE caution:
 # the file, the likely new name when one fits, and the fix (one run with Save
 # ticked, or a hand edit). Never a refusal, and not in Apply Corrections.
-# Rows PF1723os-os10 and PF1723ah6 (end to end) of test_ase_preflight.
+# Rows PF1723os-os14 and PF1723ah6 (end to end) of test_ase_preflight.
 
 # 'Save operating point' (Simulation > Convergence…), from the window's own
 # labels when they are loaded. src/ase.tcl may not depend on
@@ -28412,7 +28488,23 @@ proc ase::opstate_stale_caution {state netlist_text} {
 # master being in a model file; under the include rows' rule such a name
 # emptied the intersection, and the caution lost the new name on every bench
 # whose renamed instance holds such a device (row PF1723os8).
+#
+# ⚠ SEED SENDS ONLY THE `.ic` LINES (review round 2, finding 6):
+# ase::backend::ngspice::opstate_lines re-spells each `.ic` line as `.nodeset`
+# and drops every other line, so under Seed a name on any other line (a
+# hand-edited `.nodeset`) never reaches ngspice and is not counted; Force
+# includes the file whole (row PF1723os13). ⚠ AND THE REMEDY NEEDS AN OP ROW
+# (finding 8): a run with Save ticked and no enabled OP row is refused
+# (`saveneedsop`), so on such a bench the remedy says to enable one (row
+# PF1723os14).
 proc ase::opstate_stale_said {state path text netlist_text {itexts {}}} {
+  if {[ase::opstate_get $state mode seed] ne {force}} {
+    set kept {}
+    foreach ln [split $text \n] {
+      lappend kept [expr {[regexp -nocase {^\.ic\s} [string trim $ln]] ? $ln : {}}]
+    }
+    set text [join $kept \n]
+  }
   set st [dict create simulator [ase::state_get $state simulator ngspice]]
   set sc [ase::preflight_scan $st $netlist_text \
             [list [dict create file $path path $path text $text]]]
@@ -28480,7 +28572,13 @@ proc ase::opstate_stale_said {state path text netlist_text {itexts {}}} {
     append l " With $door ticked, a run whose operating point converges rewrites\
  the file under the new names; if the operating point does not converge, $hand."
   } else {
-    append l " To refresh the file, run once with $door ticked, or $hand."
+    set haveop 0
+    foreach row [ase::state_get $state analyses] {
+      if {[ase::state_get $row enabled 0] eq {1} &&
+          [ase::state_get $row type {}] eq {op}} { set haveop 1 ; break }
+    }
+    append l " To refresh the file, run once with[expr {$haveop ? {} :
+      { an OP analysis enabled and}}] $door ticked, or $hand."
   }
   return $l
 }

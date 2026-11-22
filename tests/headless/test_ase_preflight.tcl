@@ -3519,6 +3519,60 @@ eqcheck PF1723s3c-the-files-hit-line-names-the-include-names-the-outputs-instanc
         $rcs3d [s3c_has $s3dlines "ase:   include file '$NSQ' names 'x1.' 3 times; '$s3cbtn' rewrites the 1 that resolves under 'xdut' to 'xdut.' after asking and leaves the other 2 for you to change ($s3cdoor): 1 .nodeset/.ic name that does not resolve under 'xdut', and 1 outside those cards"] \
         [llength [lsearch -all -glob [concat $s3clines $s3dlines] {*rewrites the 1 in .nodeset/.ic cards*}]]] \
   {1 1 1 1 0}
+## OUTPUTS FITTING SEVERAL DO NOT OVERRIDE (review round 2, finding 3). The
+## outputs-first step adopts the output rows' own intersection only when it
+## is ONE instance; when they fit several, the include rows help pick as they
+## did before the ruling, and here they agree with none: `x1.n1` resolves
+## under xa and xb, `x1.b1` only under xother, so the prefix is `partial` and
+## nothing is offered. Adopting a several-instance intersection would say
+## "'xa' and 'xb' each have everything the refused rows name", which is false.
+set NSS3D [file normalize [file join $RDI ns_s3d.spice]]
+putfile $NSS3D ".nodeset v(x1.b1)=1\n"
+set st3d [ri_state [list [list file $NSS3D]] {{expr v(x1.n1) save 1}}]
+set sc3d [pcall ase::preflight_scan $st3d $NLR [pcall ase::include_texts $st3d $RDI]]
+lassign [rn_gate $st3d] rc3d
+set l3d [lmap x $::said {lindex $x 1}]
+eqcheck PF1723s3d-outputs-fitting-several-instances-do-not-override-and-an-include-row-agreeing-with-none-leaves-the-prefix-partial \
+  [list [lmap g [dg $sc3d renames] {list [dgn $g fit] [dgn $g candidates]}] \
+        [rn_fixes $sc3d absent] [rn_fixes $sc3d incrows] $rc3d \
+        [llength [lsearch -all -glob $l3d {*each have everything*}]] \
+        [s3c_has $l3d "ase:   the netlist has no instance 'x1', and 'xa', 'xb' and 'xother' each have some of what the refused rows name under it but not all, so there is no correction to offer"]] \
+  {{{partial {xa xb xother}}} {{x1.n1 {}}} {{x1.b1 {}}} 1 0 1}
+## UNDER `fold`, OUTPUTS FIRST ACROSS SPELLINGS (review round 2, finding 4).
+## `x1` and `X1` are one instance to ngspice, but each spelling is its own
+## rename group (PF1723s10), so an include row spelled `X1.b1` beside the
+## output `v(x1.a1)` decided alone and was offered xother in the same press
+## that renamed x1 to xdut. The outputs of every spelling folding together
+## point to xdut, so the include-only spelling takes xdut: xdut does not
+## resolve `b1`, so the row keeps its refusal with no correction, and the
+## closing line names it. The second shape keeps the per-record filter of that
+## closing line honest: outputs spelled `x1` (xdut) and `X1` (xother) disagree,
+## so nothing crosses spellings, and the `X1.n1` include row left without a
+## correction belongs to X1's sentence, not to x1's.
+set NSS3E [file normalize [file join $RDI ns_s3e.spice]]
+putfile $NSS3E ".nodeset v(X1.b1)=1\n"
+set st3e [ri_state [list [list file $NSS3E]] {{expr v(x1.a1) save 1}}]
+set it3e [pcall ase::include_texts $st3e $RDI]
+set sc3e [pcall ase::preflight_scan $st3e $NLR $it3e]
+lassign [rn_gate $st3e] rc3e e3e
+set l3e [lmap x $::said {lindex $x 1}]
+set off3e [pcall ase::ui::repair_offer $e3e $st3e $sc3e \
+  [pcall ase::preflight_include_hits $st3e [dg $sc3e renames] [dg $sc3e cs] $RDI $it3e] \
+  [pcall ase::preflight_include_plan $st3e $sc3e $it3e $RDI]]
+set NSS3F [file normalize [file join $RDI ns_s3f.spice]]
+putfile $NSS3F ".nodeset v(X1.n1)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSS3F]] {{expr v(x1.a1) save 1} {expr v(X1.b1) save 1}}]] rc3f
+set l3f [lmap x $::said {lindex $x 1}]
+eqcheck PF1723s3e-under-fold-an-include-spelling-of-the-outputs-instance-takes-the-outputs-rename-and-a-name-it-cannot-resolve-keeps-no-correction \
+  [list [lmap g [dg $sc3e renames] {list [dgn $g prefix] [dgn $g to] [dgn $g fit]}] \
+        [rn_fixes $sc3e incrows] [lmap r [dg $sc3e incrows] {dex $r miss}] $rc3e \
+        [s3c_has $l3e "ase:   include file '$NSS3E' line 1: .nodeset names 'X1.b1', and the netlist has no instance 'X1'"] \
+        [llength [lsearch -all -glob $l3e {*xother*}]] \
+        [s3c_has $l3e "ase: the netlist has no instance 'x1', and every output row naming it resolves under 'xdut', so it looks like 'x1' was renamed 'xdut'; 1 .nodeset/.ic name naming it does not resolve under 'xdut', so it has no correction: change it by hand ($s3cdoor)."] \
+        [dgn $off3e rows] [dgn $off3e incnames] \
+        $rc3f [s3c_has $l3f "ase: the netlist has no instance 'x1', and every refused row naming it resolves under 'xdut', so it looks like 'x1' was renamed 'xdut'."] \
+        [s3c_has $l3f "ase: the netlist has no instance 'X1', and every output row naming it resolves under 'xother', so it looks like 'X1' was renamed 'xother'; 1 .nodeset/.ic name naming it does not resolve under 'xother', so it has no correction: change it by hand ($s3cdoor)."]] \
+  {{{x1 xdut unique} {X1 xdut unique}} {{X1.b1 {}}} 1 1 1 0 1 1 0 1 1 1}
 ## the two stand-downs, each beside the control that makes it count: an
 ## instance an include ADDS (`x5 ...`) and a top-level node only an include
 ## connects (`V5 vsup5 0 1.8`). ⚠ MOVED in the fix round (finding 2): this row
@@ -3819,9 +3873,11 @@ eqcheck PF1723u2-and-alone-it-does-not-refuse-the-run-is-let-through-with-the-on
 ## 2026-11-21, identically on /usr/bin/ngspice 45.2 and ver_53, a `.nodeset`
 ## (and `.ic`) name on a node an existing instance does not have: a plain
 ## number -- `1.5`, `-0.1`, `1.5m`, `1e-3`, `1.5V`, blanks around the `=` or
-## not -- is dropped with the warning at rc 0; ANYTHING ELSE -- `{0.4}`,
-## `{vsup-0.1}`, `'vsup-0.1'`, `'1.5'`, the bare parameter `vsup` -- draws the
-## warning and then the syntax error, rc 1. The table is the receipt's.
+## not -- is dropped with the warning at rc 0; `{0.4}`, `{vsup-0.1}`,
+## `'vsup-0.1'`, `'1.5'` and the bare parameter `vsup` draw the warning and
+## then the syntax error, rc 1. The table is the receipt's. Not every other
+## value stops the run (`0x10`, `1.5,` run on; `nan` stops earlier, in
+## numparam): PF1723u9 holds the measured lists.
 eqcheck PF1723u3-the-caution-says-the-run-stops-for-every-value-but-a-plain-number \
   [list [lmap v [list 1.5 -0.1 1.5m 1e-3 1.5V "{0.4}" "{vsup-0.1}" 'vsup-0.1' '1.5' vsup {}] \
            {pcall ase::include_value_plain $v}] \
@@ -4053,8 +4109,9 @@ file attributes $NS4R -permissions 0644
 ## The user's ruling on 1723_include_stand_downs, parts 1 and 2 ("crash"). An
 ## include name on a node the circuit does not have -- inside an instance that
 ## exists, at the top level, or (case mode distinguish) in another case --
-## refuses the Run when ngspice would stop on it: its value is not a plain
-## number (PF1723u3's table, measured on 45.2 and ver_53) and its card is not
+## refuses the Run when ngspice would stop on it: its value is not one ngspice
+## skips there (PF1723u3's table and PF1723u9's lists, measured on 45.2 and
+## ver_53) and its card is not
 ## inside a `.if` block (PF1723s13 keeps that a caution). A plain number stays a
 ## caution and the run goes on. The refusal names the file, the line and the
 ## name, and offers no correction. Each value kind is driven through the gate.
@@ -4149,6 +4206,44 @@ if {[file writable $NSU7]} {
     [list [t4_has $u7lines "ase: ASE-L offers no correction for the name ngspice would stop on: make '$NSU7' writable, then change it by hand ($t4door)."]] {1}
 }
 file attributes $NSU7 -permissions 0644
+## WHAT NGSPICE SKIPS ON A NODE IT DOES NOT HAVE (review round 2, finding 2).
+## The plain-number regex refused values ngspice runs on, and the refused line
+## then said ngspice stops. On such a name INPpas3 warns and skips the value
+## with nexttok, which ends it at a blank or a `,` without reading it; what
+## stops the run is the value's own expression, rewritten or rejected first
+## (a `{...}`, a quote, a parameter name, a lone sign), or, after a `,`, a
+## word that is not the next name. MEASURED 2026-11-22 on 45.2 and ver_53,
+## `.nodeset v(xdut.nosuch)=<v>` alone and before ` v(out)=0.5`, and as `.ic`
+## on 45.2, identically: every value of the first list ran to the end, every
+## value of the second stopped the run. Each is driven through the predicate
+## and through the gate.
+set u9run [list 0x10 1e+ 1.5, 1k5 1.5) 1..5 5µ 1.5*2 . .e3 -.5 +.5 \
+             1,v(OUT)=0.5 1,,v(OUT)=0.5 1,all=0.5 1(2 1)5 1_5 1%]
+set u9stop [list 1,5 -1,5 .,5 ,1 1\{x\} 1'x' 1\"x\" x1 nan - + +. -. 1(2,3 1,i(v1)=0.3]
+set u9gate {}
+foreach v [concat $u9run $u9stop] {
+  lassign [u4_run ".nodeset v(OUT)=0.3 v(xdut.nosuch)=$v\n"] rc
+  lappend u9gate [list $rc [said_count {ase: caution:*}] [said_count {ase: REFUSED*}]]
+}
+eqcheck PF1723u9-a-value-ngspice-skips-on-a-missing-node-is-a-caution-and-one-it-stops-on-refuses-as-measured \
+  [list [lmap v [concat $u9run $u9stop] {pcall ase::include_value_plain $v}] $u9gate] \
+  [list [concat [lrepeat [llength $u9run] 1] [lrepeat [llength $u9stop] 0]] \
+        [concat [lrepeat [llength $u9run] {0 1 0}] [lrepeat [llength $u9stop] {1 0 1}]]]
+## TWO STOPPING NAMES IN TWO FILES, ALONE (review round 2, finding 9): the head
+## counts the names and the files, and since nothing else refuses no
+## `ase:   and ...` line repeats it below.
+set NSU10A [file normalize [file join $RDI ns_u10a.spice]]
+set NSU10B [file normalize [file join $RDI ns_u10b.spice]]
+putfile $NSU10A ".nodeset v(xdut.q1)={1}\n"
+putfile $NSU10B ".ic v(qtop)='2'\n"
+lassign [rn_gate [ri_state [list [list file $NSU10A] [list file $NSU10B]]]] rcu10 eu10
+set u10lines [lmap x $::said {lindex $x 1}]
+eqcheck PF1723u10-two-stopping-names-in-two-files-alone-are-counted-in-the-head-and-no-and-line-repeats-it \
+  [list $rcu10 \
+        [string match "ase: REFUSED — 2 .nodeset/.ic names in 2 include files name nodes this circuit does not have, and their values are not plain numbers, so ngspice would stop the run with a syntax error on them. Nothing was generated*" $eu10] \
+        [llength [lsearch -all -glob $u10lines {ase:   and *}]] \
+        [llength [lsearch -all -glob $u10lines {ase:   include file *}]]] \
+  {1 1 0 2}
 
 ## --- RULED 2026-11-22: A SAVED OPERATING POINT NAMING A RENAMED INSTANCE ----
 ## The user's ruling on 1723_opstate_seed_stale_names ("caution: Warn before
@@ -4324,6 +4419,51 @@ eqcheck PF1723os10-a-relative-saved-operating-point-is-read-against-the-run-dire
         [t4_has [lindex $os10ok 1] "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
         $rc10 [file isdirectory $RDNY]] \
   {0 1 0 0}
+## THE LIKELY NEW NAME, PER STALE PREFIX (review round 2, finding 1). It is
+## named only when ONE instance fits EVERY counted name under that prefix:
+## `x1.a1` fits only xdut and `x1.b1` only xother, so no new name is said and
+## the hand edit is not spelled out (deciding on the first name alone would
+## have said "replace 'x1.' with 'xdut.'", which seeds a node that does not
+## exist). A NESTED stale prefix keeps its parent path in the new name and in
+## the hand edit: `xdut.x8` looks renamed `xdut.x7`, never `x7`.
+set OPS11 [file normalize [file join $RDI op_split.ic]]
+putfile $OPS11 ".ic v(x1.a1) = 0.5\n.ic v(x1.b1) = 0.5\n"
+set os11 [os_run [list restore 1 mode seed file $OPS11]]
+eqcheck PF1723os11-saved-names-fitting-different-instances-get-no-new-name-and-an-unspelled-hand-edit \
+  [list [lindex $os11 0] [os_count $os11] \
+        [llength [lsearch -all -glob [lindex $os11 1] {*looks renamed*}]] \
+        [t4_has [lindex $os11 1] "ase: caution: the saved operating point '$OPS11' names 2 nodes under instance 'x1', which the netlist does not have, so ngspice drops those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. To refresh the file, run once with $osdoor ticked, or edit it by hand."]] \
+  {0 1 0 1}
+set OPS12 [file normalize [file join $RDI op_nest.ic]]
+putfile $OPS12 ".ic v(xdut.x8.a) = 0.5\n"
+set os12 [os_run [list restore 1 mode seed file $OPS12]]
+eqcheck PF1723os12-a-nested-stale-prefix-keeps-its-parent-path-in-the-new-name-and-the-hand-edit \
+  [list [lindex $os12 0] \
+        [t4_has [lindex $os12 1] "ase: caution: the saved operating point '$OPS12' names 1 node under instance 'xdut.x8', which the netlist does not have ('xdut.x8' looks renamed 'xdut.x7'), so ngspice drops that starting guess with a 'non-existent node' warning (Seed) and runs on without it. To refresh the file, run once with $osdoor ticked, or replace 'xdut.x8.' with 'xdut.x7.' in it by hand."]] \
+  {0 1}
+## SEED SENDS ONLY THE `.ic` LINES (review round 2, finding 6):
+## ase::backend::ngspice::opstate_lines re-spells each `.ic` line as
+## `.nodeset` and drops every other line, so a hand-edited `.nodeset` line
+## never reaches ngspice and is not counted; Force includes the file whole,
+## so there it is.
+set OPS13 [file normalize [file join $RDI op_handns.ic]]
+putfile $OPS13 ".nodeset v(x1.a1) = 0.5\n.ic v(in) = 1\n"
+set os13s [os_run [list restore 1 mode seed file $OPS13]]
+set os13f [os_run [list restore 1 mode force file $OPS13]]
+eqcheck PF1723os13-under-seed-a-saved-line-that-is-not-an-ic-card-is-not-counted-and-under-force-it-is \
+  [list [lindex $os13s 0] [os_count $os13s] \
+        [pcall ase::backend::ngspice::opstate_lines [lindex $os13s 2] restore] \
+        [lindex $os13f 0] [os_count $os13f]] \
+  [list 0 0 [list {.nodeset v(in) = 1}] 0 1]
+## THE REMEDY ON A BENCH WITH NO ENABLED OP ROW (review round 2, finding 8): a
+## run with Save ticked and no enabled OP row is refused (`saveneedsop`,
+## PF1723os9), so the remedy names the OP analysis it needs. Force on a
+## transient-only bench is the usual shape.
+set os14 [os_run [list restore 1 mode force file $OPS] {{expr v(OUT) save 1}} {} {} {{type tran enabled 1 step 1n stop 10n}}]
+eqcheck PF1723os14-with-no-enabled-op-row-the-remedy-says-to-enable-an-op-analysis-with-save-ticked \
+  [list [lindex $os14 0] \
+        [t4_has [lindex $os14 1] "$oshead those 2 initial conditions with a 'non-existent node' warning (Force) and runs on: a transient no longer starts those nodes at their saved values (an operating point analysis ignores them either way). To refresh the file, run once with an OP analysis enabled and $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."]] \
+  {0 1}
 
 ## --- the press's file half: all or nothing ----------------------------------
 set ar [pcall ase::include_apply_plan $PLAN]
@@ -5149,6 +5289,47 @@ if {![file executable $NG]} {
           [string match {*syntax error*} $e5log]] \
     {1 1 {} 1 1 0 0 1 1 1 0}
   pcall ase::session_close e2ek5
+  ## REVIEW ROUND 2, FINDING 2, END TO END: values ngspice SKIPS on a missing
+  ## node although no number grammar reads them (`1.5,` before the next name,
+  ## `0x10`) are cautions, and the run finishes with ngspice's warnings and no
+  ## syntax error; `1,5` (the `5` read as a name) is refused, and its CONTROL,
+  ## the check switched off, dies on the syntax error. PF1723u9 holds the rest
+  ## of the measured lists on the counted arm.
+  set ENF7 [file join $RDE nodeset_u9.spice]
+  putfile $ENF7 "* values ngspice skips\n.nodeset v(out)=1.2 v(xdut.nosuch)=1.5, v(xdut.nosuch2)=0x10\n"
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  putfile [file join $RDE e2e7.state] \
+    "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
+ analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}}\
+ includes [list [list {file {$::PF1723E/nodeset_u9.spice}}]]"
+  pcall ase::session_open e2ek7 [file join $RDE e2e7.state]
+  proc e2e7_st {} { return [ase::sim_choice_set [ase::session_state e2ek7] entry pf1723e] }
+  said_clear
+  set e7id -1
+  set e7rc [catch {set e7id [ase::run_deck [e2e7_st] $NLEF]} e7err]
+  set e7ex [ase::wait $e7id]
+  set e7log [e2e_log]
+  set e7raw [file exists [file join $RDE e2e_tb_ase.raw]]
+  set e7caut [said_count {ase: caution: include file '*nodeset_u9.spice' line 2: .nodeset names 'xdut.nosuch*', which instance 'xdut' does not have; ngspice drops it*}]
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  putfile $ENF7 "* a value ngspice stops on\n.nodeset v(out)=1.2 v(xdut.nosuch)=1,5\n"
+  set e7src [catch {ase::run_deck [e2e7_st] $NLEF} e7s]
+  if {!$e7src} { catch {ase::wait $e7s} }
+  set e7sfiles [glob -nocomplain -tails -directory $RDE *_ase.*]
+  set ::ase_preflight 0
+  set e7cid -1
+  catch {set e7cid [ase::run_deck [e2e7_st] $NLEF]}
+  set e7cex [ase::wait $e7cid]
+  set ::ase_preflight 1
+  set e7clog [e2e_log]
+  eqcheck PF1723ah7-values-ngspice-skips-on-a-missing-node-run-to-the-end-and-one-it-reads-a-name-from-is-refused-end-to-end \
+    [list $e7rc $e7ex $e7raw $e7caut \
+          [string match -nocase {*nodeset on non-existent node*xdut.nosuch2*} $e7log] \
+          [string match {*syntax error*} $e7log] \
+          $e7src [string match {ase: REFUSED — 1 .nodeset/.ic name in 1 include file names a node this circuit does not have*} $e7s] \
+          $e7sfiles $e7cex [string match "*Error: .nodeset syntax error.*" $e7clog]] \
+    {0 0 1 2 1 0 1 1 {} 1 1}
+  pcall ase::session_close e2ek7
   ## RULED 2026-11-22 ("Warn before the run"), END TO END, the measured shape:
   ## a run with Save operating point ticked writes ngspice's own file on the
   ## bench whose DUT is `x1`; the DUT is renamed `xdut`; a Seed run and a Force
