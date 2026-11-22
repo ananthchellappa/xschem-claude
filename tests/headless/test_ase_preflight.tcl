@@ -3480,7 +3480,11 @@ eqcheck PF1723s3-when-the-outputs-alone-point-to-one-instance-they-decide-and-a-
 lassign [rn_gate $stp] rcs3 es3
 set s3lines [lmap x $::said {lindex $x 1}]
 proc s3_has {want} { return [expr {[lsearch -exact $::s3lines $want] >= 0}] }
-set s3off [pcall ase::ui::repair_offer $es3 $stp $scp]
+## the offer as ase::ui::repair_after_refusal asks it, with the hits and the
+## plan (review finding 9), not on the empty-plan defaults
+set s3off [pcall ase::ui::repair_offer $es3 $stp $scp \
+  [pcall ase::preflight_include_hits $stp [dg $scp renames] [dg $scp cs] $RDI $itp] \
+  [pcall ase::preflight_include_plan $stp $scp $itp $RDI]]
 set s3a [pcall ase::preflight_apply $stp $scp]
 set s3next [pcall ase::preflight_scan [dgn $s3a state] $NLR $itp]
 set scp_s [dict merge $scp [dict create itexts $itp ntext $NLR]]
@@ -3495,6 +3499,26 @@ eqcheck PF1723s3b-the-refusal-offers-the-outputs-correction-and-names-the-includ
         [lmap g [dg $s3next renames] {list [dgn $g prefix] [dgn $g to] [dgn $g fit]}] \
         [llength [dgn [pcall ase::preflight_strand $stp $scp_s session] lost]]] \
   {1 1 1 1 0 0 1 1 {{x1 xother unique}} 0}
+## THE FILE'S HIT LINE FOR THAT SHAPE (review finding 4). A file holding both
+## `x1.a1` (rewritten) and `x1.b1` (no correction under xdut) on one .nodeset
+## card said "rewrites the 1 in .nodeset/.ic cards ... and leaves the other 1",
+## as if the other were outside a card; the line says what the other is, and
+## with a comment naming `x1.` as well it says both kinds.
+proc s3c_has {lines want} { return [expr {[lsearch -exact $lines $want] >= 0}] }
+set NSQ [file normalize [file join $RDI ns_q.spice]]
+set s3cdoor [pcall ase::ui::menu_path_include_files]
+set s3cbtn [pcall ase::ui::lbl_repair_apply]
+putfile $NSQ ".nodeset v(x1.a1)=1 v(x1.b1)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSQ]] {{expr v(x1.a1) save 1}}]] rcs3c
+set s3clines [lmap x $::said {lindex $x 1}]
+putfile $NSQ "* x1.b1 was the old tap\n.nodeset v(x1.a1)=1 v(x1.b1)=1\n"
+lassign [rn_gate [ri_state [list [list file $NSQ]] {{expr v(x1.a1) save 1}}]] rcs3d
+set s3dlines [lmap x $::said {lindex $x 1}]
+eqcheck PF1723s3c-the-files-hit-line-names-the-include-names-the-outputs-instance-leaves-without-a-correction \
+  [list $rcs3c [s3c_has $s3clines "ase:   include file '$NSQ' names 'x1.' 2 times; '$s3cbtn' rewrites the 1 that resolves under 'xdut' to 'xdut.' after asking and leaves the other 1, a .nodeset/.ic name that does not resolve under 'xdut', for you to change ($s3cdoor)"] \
+        $rcs3d [s3c_has $s3dlines "ase:   include file '$NSQ' names 'x1.' 3 times; '$s3cbtn' rewrites the 1 that resolves under 'xdut' to 'xdut.' after asking and leaves the other 2 for you to change ($s3cdoor): 1 .nodeset/.ic name that does not resolve under 'xdut', and 1 outside those cards"] \
+        [llength [lsearch -all -glob [concat $s3clines $s3dlines] {*rewrites the 1 in .nodeset/.ic cards*}]]] \
+  {1 1 1 1 0}
 ## the two stand-downs, each beside the control that makes it count: an
 ## instance an include ADDS (`x5 ...`) and a top-level node only an include
 ## connects (`V5 vsup5 0 1.8`). ⚠ MOVED in the fix round (finding 2): this row
@@ -4073,12 +4097,20 @@ eqcheck PF1723u5-a-missing-top-level-node-refuses-on-a-value-ngspice-stops-on-an
 lassign [u4_run ".nodeset v(xdut.nosuch)={vsup}\n"] rcu6 eu6 fu6 stu6
 set scu6 [pcall ase::preflight_scan $stu6 $NLR [pcall ase::include_texts $stu6 $RDI]]
 set u6lines [lmap x $::said {lindex $x 1}]
-set u6off [pcall ase::ui::repair_offer $eu6 $stu6 $scu6]
+## the offer as ase::ui::repair_after_refusal asks it, with the hits and the
+## plan (review finding 9), so {} is the stop rows' answer, not the defaults'
+proc u6_offer {e st sc} {
+  set it [pcall ase::include_texts $st $::RDI]
+  return [pcall ase::ui::repair_offer $e $st $sc \
+    [pcall ase::preflight_include_hits $st [dg $sc renames] [dg $sc cs] $::RDI $it] \
+    [pcall ase::preflight_include_plan $st $sc $it $::RDI]]
+}
+set u6off [u6_offer $eu6 $stu6 $scu6]
 set stu6m [ri_state [list [list file $fu6]] {{expr v(x1.a1) save 1}}]
 said_clear
 set rcu6m [catch {ase::preflight_gate $stu6m $NLR} eu6m]
 set scu6m [pcall ase::preflight_scan $stu6m $NLR [pcall ase::include_texts $stu6m $RDI]]
-set u6moff [pcall ase::ui::repair_offer $eu6m $stu6m $scu6m]
+set u6moff [u6_offer $eu6m $stu6m $scu6m]
 eqcheck PF1723u6-a-stopping-name-has-no-correction-its-head-is-read-by-the-offer-predicate-and-alone-it-puts-up-no-banner \
   [list $rcu6 [pcall ase::preflight_is_name_refusal $eu6] $u6off \
         [t4_has $u6lines "ase: ASE-L offers no correction for the name ngspice would stop on: change it by hand ($t4door)."] \
@@ -4088,6 +4120,23 @@ eqcheck PF1723u6-a-stopping-name-has-no-correction-its-head-is-read-by-the-offer
         [said_count "ase:   include file '$fu6' line 1: .nodeset names 'xdut.nosuch'*"] \
         [dgn $u6moff rows] [said_count "ase: ASE-L offers no correction for the name ngspice would stop on: change it by hand ($t4door)."]] \
   {1 1 {} 1 0 1 1 1 1 1 1}
+## THE ESCAPE LINE (review finding 6): switching the check off does not get a
+## name ngspice would stop on past ngspice (PF1723ah5's control dies on
+## '.nodeset syntax error'), so where such names refuse, the line says so,
+## with their count; a refusal holding none keeps the plain line.
+set u8plain {ase: set ase_preflight 0 to disable this check (the $sim_status guard and the constants-raw rejection stay on).}
+set u8one {ase: set ase_preflight 0 to disable this check (the $sim_status guard and the constants-raw rejection stay on), but ngspice still stops the run on the name it would stop on.}
+set u8two {ase: set ase_preflight 0 to disable this check (the $sim_status guard and the constants-raw rejection stay on), but ngspice still stops the run on the 2 names it would stop on.}
+set u8a [t4_gate [ri_state [list [list file $fu6]]]]
+set u8b [t4_gate $stu6m]
+set NSU8 [file normalize [file join $RDI ns_u8.spice]]
+putfile $NSU8 ".ic v(nosuchtop)={vsup} v(xdut.nosuch)='vsup/2'\n"
+set u8c [t4_gate [ri_state [list [list file $NSU8]]]]
+set u8d [t4_gate [ri_state {} {{expr v(x1.a1) save 1}}]]
+eqcheck PF1723u8-where-names-ngspice-would-stop-on-refuse-the-escape-line-says-ngspice-still-stops-on-them \
+  [list [t4_has $u8a $u8one] [t4_has $u8b $u8one] [t4_has $u8c $u8two] \
+        [t4_has $u8d $u8plain] [t4_has $u8a $u8plain] [t4_has $u8c $u8plain]] \
+  {1 1 1 1 0 0}
 ## a READ-ONLY file: the hand fix says what has to come first
 set NSU7 [file normalize [file join $RDI ns_ro_u7.spice]]
 putfile $NSU7 ".nodeset v(xdut.nosuch)={vsup}\n"
@@ -4116,11 +4165,13 @@ file attributes $NSU7 -permissions 0644
 set OPS [file normalize [file join $RDI op_saved.ic]]
 set OPSTXT "* Intermediate Transient Solution\n* Circuit: * rn_top\n* Recorded at simulation time: 0\n.ic v(in) = 1\n.ic v(x1.a1) = 0.5\n.ic v(x1.inp) = 1\n.ic v(out) = 0.5\n"
 putfile $OPS $OPSTXT
-proc os_run {opstate {outs {{expr v(OUT) save 1}}}} {
-  set st [ri_state {} $outs]
+proc os_run {opstate {outs {{expr v(OUT) save 1}}} {incs {}} {nl {}} {an {}}} {
+  if {$nl eq {}} { set nl $::NLR }
+  set st [ri_state $incs $outs]
   dict set st opstate $opstate
+  if {[llength $an]} { dict set st analyses $an }
   said_clear
-  set rc [catch {ase::preflight_gate $st $::NLR} e]
+  set rc [catch {ase::preflight_gate $st $nl} e]
   return [list $rc [lmap x $::said {lindex $x 1}] $st $e]
 }
 set osdoor "'[pcall ase::ui::lbl_conv_save]' ([pcall ase::ui::lbl_simulation] > [pcall ase::ui::lbl_conv_menu])"
@@ -4128,17 +4179,17 @@ set oshead "ase: caution: the saved operating point '$OPS' names 2 nodes under i
 lassign [os_run [list restore 1 mode seed file $OPS]] rcos1 los1
 eqcheck PF1723os-a-seed-restore-naming-a-missing-instance-is-one-caution-with-the-likely-new-name-and-the-fix-and-the-run-goes-ahead \
   [list $rcos1 [llength [lsearch -all -glob $los1 {ase: caution: the saved operating point*}]] \
-        [t4_has $los1 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed); the run goes ahead without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
+        [t4_has $los1 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
         [llength [lsearch -all -glob $los1 {ase: REFUSED*}]] [expr {[readfile $OPS] eq $OPSTXT}]] \
   {0 1 1 0 1}
 lassign [os_run [list restore 1 mode force file $OPS]] rcos2 los2
 eqcheck PF1723os2-a-force-restore-says-a-transient-no-longer-starts-those-nodes-at-their-saved-values \
   [list $rcos2 [llength [lsearch -all -glob $los2 {ase: caution: the saved operating point*}]] \
-        [t4_has $los2 "$oshead those 2 initial conditions with a 'non-existent node' warning (Force): a transient no longer starts those nodes at their saved values (an operating point analysis ignores them either way); the run goes ahead. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."]] \
+        [t4_has $los2 "$oshead those 2 initial conditions with a 'non-existent node' warning (Force) and runs on: a transient no longer starts those nodes at their saved values (an operating point analysis ignores them either way). To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."]] \
   {0 1 1}
 lassign [os_run [list save 1 restore 1 mode seed file $OPS]] rcos3 los3
-eqcheck PF1723os3-with-save-ticked-too-the-caution-says-this-run-refreshes-the-file-if-its-operating-point-converges \
-  [list $rcos3 [t4_has $los3 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed); the run goes ahead without them. This run has $osdoor ticked, so it rewrites the file under the new names if its operating point converges; if it does not, replace 'x1.' with 'xdut.' in it by hand."]] \
+eqcheck PF1723os3-with-save-ticked-too-the-caution-says-a-run-whose-operating-point-converges-refreshes-the-file \
+  [list $rcos3 [t4_has $los3 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. With $osdoor ticked, a run whose operating point converges rewrites the file under the new names; if the operating point does not converge, replace 'x1.' with 'xdut.' in it by hand."]] \
   {0 1}
 ## THE CONTROLS: every name present; an absent node inside an instance that
 ## exists (a missing instance only is this check's business); Restore not
@@ -4164,19 +4215,22 @@ eqcheck PF1723os4-no-caution-without-a-missing-instance-without-restore-or-witho
         [os_count [os_run [list save 1 mode seed file $OPS]]] \
         [os_count [os_run [list restore 1 mode force file [file join $RDI op_gone.ic]]]] \
         [lindex $os_off 0] [os_count $os_off] \
-        [t4_has [lindex $os_one 1] "ase: caution: the saved operating point '$OPS1' names 1 node under instance 'x1', which the netlist does not have, so ngspice drops that starting guess with a 'non-existent node' warning (Seed); the run goes ahead without it. To refresh the file, run once with $osdoor ticked, or edit it by hand."]] \
+        [t4_has [lindex $os_one 1] "ase: caution: the saved operating point '$OPS1' names 1 node under instance 'x1', which the netlist does not have, so ngspice drops that starting guess with a 'non-existent node' warning (Seed) and runs on without it. To refresh the file, run once with $osdoor ticked, or edit it by hand."]] \
   {0 0 0 0 0 0 1 1}
 ## NOT IN APPLY CORRECTIONS: beside a refusal the stale outputs caused, the
 ## caution is said once and nothing else names the file; the press offers the
-## output row only, and no include plan holds the file.
+## output row only, and no include plan holds the file. ⚠ AND IT CLAIMS NO RUN
+## (review finding 3): this is the shape a rename usually leaves, outputs and
+## saved file stale together, and the caution used to say "the run goes ahead"
+## one line above the REFUSED; it says what ngspice does when it runs.
 lassign [os_run [list restore 1 mode seed file $OPS] {{expr v(x1.a1) save 1}}] rcos5 los5 stos5 eos5
 set scos5 [pcall ase::preflight_scan $stos5 $NLR [pcall ase::include_texts $stos5 $RDI]]
 set offos5 [pcall ase::ui::repair_offer $eos5 $stos5 $scos5]
 eqcheck PF1723os5-the-saved-operating-point-is-never-a-refused-row-nor-in-apply-corrections \
   [list $rcos5 [llength [lsearch -all -glob $los5 "*$OPS*"]] [dgn $offos5 rows] [dgn $offos5 incnames] \
         [llength [pcall ase::preflight_include_plan $stos5 $scos5 [pcall ase::include_texts $stos5 $RDI] $RDI]] \
-        [expr {[readfile $OPS] eq $OPSTXT}]] \
-  {1 1 1 0 0 1}
+        [expr {[readfile $OPS] eq $OPSTXT}] [llength [lsearch -all -glob $los5 {*goes ahead*}]]] \
+  {1 1 1 0 0 1 0}
 ## src/ase.tcl may not depend on src/ase_window.tcl, so the Save label and the
 ## Convergence door are typed there too; with the window's procs renamed away
 ## the fallback must say the same
@@ -4191,6 +4245,85 @@ if {![catch {rename ::ase::ui::lbl_conv_save ::pfo_saved_lcs}]} {
 eqcheck PF1723os6-the-engines-literal-save-label-and-convergence-door-equal-the-windows-own \
   [list [expr {$osf eq $osw}] [expr {$osw eq $osdoor}] $osw] \
   [list 1 1 "'Save operating point' (Simulation > Convergence…)"]
+## AN INSTANCE ONLY AN INCLUDE FILE DEFINES IS NOT MISSING (review finding 1).
+## A stimulus file's `x5 IN s5 rn_amp2` adds an instance the circuit netlist
+## cannot show, and wrnodev writes its nodes (`x5.b1`); the include check
+## stands such a name down (PF1723s4), and so must this one, or it calls x5
+## missing and offers to replace 'x5.' with 'xother.' (the one instance with a
+## `b1`), which would seed the wrong node. Every missing top-level instance
+## stands down once an include file carries a nested include card, whose
+## additions cannot be seen. The CONTROL, the same saved file with no include,
+## is the old caution; beside the include a stale `x1.` is still said, alone.
+set OPS5 [file normalize [file join $RDI op_x5.ic]]
+putfile $OPS5 ".ic v(in) = 1\n.ic v(x5.b1) = 0.5\n"
+set OPS5M [file normalize [file join $RDI op_x5m.ic]]
+putfile $OPS5M ".ic v(x5.b1) = 0.5\n.ic v(x1.a1) = 0.5\n"
+set NS5 [file normalize [file join $RDI stim_x5.spice]]
+putfile $NS5 "* stimulus\nx5 IN s5 rn_amp2\n"
+set NS5N [file normalize [file join $RDI stim_nest.spice]]
+putfile $NS5N "* stimulus\n.include [file join $RDI stim_more.spice]\n"
+set os7a [os_run [list restore 1 mode seed file $OPS5] {{expr v(OUT) save 1}} [list [list file $NS5]]]
+set os7c [os_run [list restore 1 mode seed file $OPS5]]
+set os7n [os_run [list restore 1 mode seed file $OPS5] {{expr v(OUT) save 1}} [list [list file $NS5N]]]
+set os7m [os_run [list restore 1 mode seed file $OPS5M] {{expr v(OUT) save 1}} [list [list file $NS5]]]
+eqcheck PF1723os7-an-instance-only-an-include-file-defines-or-a-nested-include-may-add-is-not-called-missing-in-the-saved-operating-point \
+  [list [lindex $os7a 0] [os_count $os7a] \
+        [os_count $os7c] [llength [lsearch -all -glob [lindex $os7c 1] {*'x5' looks renamed 'xother'*}]] \
+        [os_count $os7n] \
+        [t4_has [lindex $os7m 1] "ase: caution: the saved operating point '$OPS5M' names 1 node under instance 'x1', which the netlist does not have ('x1' looks renamed 'xdut'), so ngspice drops that starting guess with a 'non-existent node' warning (Seed) and runs on without it. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."]] \
+  {0 0 1 1 0 1}
+## A NAME INSIDE A SUBCIRCUIT THE NETLIST DOES NOT DEFINE (review finding 2).
+## wrnodev also writes the internal nodes of a PDK device's own subcircuit
+## (MEASURED on 45.2: `.ic v(x1.xr1.rb)` for a sky130_fd_pr__res_high_po
+## `XR1` inside the DUT), and under the new name such a path resolves
+## `unknown`, its master being in a model file. That answer cannot tell
+## instances apart, so it must not cost the likely new name that the names the
+## netlist can judge give: it is counted, and it is consistent with the
+## instance it was asked under. The include rows' rule is unchanged (a rewrite
+## needs the spelling only a resolved name has): an include file naming the
+## same two is still `partial`.
+set NLRP [string map [list "vs a1 tail 0\n" "vs a1 tail 0\nXR1 a1 tail 0 sky130_fd_pr__res_high_po W=1 L=10\n"] $NLR]
+set OPSP [file normalize [file join $RDI op_pdk.ic]]
+putfile $OPSP ".ic v(in) = 1\n.ic v(x1.a1) = 0.5\n.ic v(x1.xr1.rb) = 0.4\n"
+set os8 [os_run [list restore 1 mode seed file $OPSP] {{expr v(OUT) save 1}} {} $NLRP]
+set NSPK [file normalize [file join $RDI ns_pdk.spice]]
+putfile $NSPK ".nodeset v(x1.a1)=1 v(x1.xr1.rb)=1\n"
+set stpk [ri_state [list [list file $NSPK]]]
+set scpk [pcall ase::preflight_scan $stpk $NLRP [pcall ase::include_texts $stpk $RDI]]
+eqcheck PF1723os8-a-saved-name-inside-a-subcircuit-the-netlist-does-not-define-is-counted-and-does-not-hide-the-likely-new-name \
+  [list [lindex $os8 0] [os_count $os8] \
+        [t4_has [lindex $os8 1] "ase: caution: the saved operating point '$OPSP' names 2 nodes under instance 'x1', which the netlist does not have ('x1' looks renamed 'xdut'), so ngspice drops those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
+        [lmap g [dg $scpk renames] {list [dgn $g prefix] [dgn $g fit]}]] \
+  {0 1 1 {{x1 partial}}}
+## SAVE TICKED WITH NO ENABLED OP ROW (review finding 3): the restore's own
+## refusal (ase::opstate_refusals, `saveneedsop`) stops that run in
+## render_deck, so a caution saying ngspice runs on and that the file is
+## rewritten would be false: the gate says nothing of the saved file, and the
+## refusal speaks. A transient-only bench and one whose OP row is switched off.
+set os9t [os_run [list save 1 restore 1 mode force file $OPS] {{expr v(OUT) save 1}} {} {} {{type tran enabled 1 step 1n stop 10n}}]
+set os9d [os_run [list save 1 restore 1 mode seed file $OPS] {{expr v(OUT) save 1}} {} {} {{type op enabled 0} {type tran enabled 1 step 1n stop 10n}}]
+eqcheck PF1723os9-with-save-ticked-and-no-enabled-op-row-the-restore-refusal-speaks-and-no-caution-is-said \
+  [list [lindex $os9t 0] [os_count $os9t] [lindex [pcall ase::opstate_refusals ngspice [lindex $os9t 2]] 0 0] \
+        [lindex $os9d 0] [os_count $os9d]] \
+  {0 0 saveneedsop 0 0}
+## A PASSING GATE MAKES NOTHING (review finding 5): a relative saved file is
+## taken against the run directory READ ONLY (ase::include_rundir_peek), as
+## the include files are; ase::opstate_path calls ase::rundir, which creates
+## the folder (and, for an empty key, rewrites ::netlist_dir). A relative file
+## in a run directory that exists is still read.
+set os10ok [os_run [list restore 1 mode seed file op_saved.ic]]
+set RDNY [file join $RDI notyet_os10]
+file delete -force $RDNY
+set st10 [ri_state {}]
+dict set st10 rundir $RDNY
+dict set st10 opstate [list restore 1 mode seed file op_saved.ic]
+said_clear
+set rc10 [catch {ase::preflight_gate $st10 $NLR} e10]
+eqcheck PF1723os10-a-relative-saved-operating-point-is-read-against-the-run-directory-and-a-passing-gate-creates-none \
+  [list [lindex $os10ok 0] \
+        [t4_has [lindex $os10ok 1] "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed) and runs on without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
+        $rc10 [file isdirectory $RDNY]] \
+  {0 1 0 0}
 
 ## --- the press's file half: all or nothing ----------------------------------
 set ar [pcall ase::include_apply_plan $PLAN]
@@ -4989,6 +5122,10 @@ if {![file executable $NG]} {
   pcall ase::session_open e2ek5 [file join $RDE e2e5.state]
   proc e2e5_st {} { return [ase::sim_choice_set [ase::session_state e2ek5] entry pf1723e] }
   set e5rc [catch {ase::run_deck [e2e5_st] $NLEF} e5]
+  ## a refusal that fails would leave this run in flight, holding the run lock,
+  ## and every later run_deck (PF1723ah6's) would raise under the wrong row's
+  ## name (review finding 8): wait for it, so each e2e row stands alone
+  if {!$e5rc} { catch {ase::wait $e5} }
   set e5files [glob -nocomplain -tails -directory $RDE *_ase.*]
   set ::ase_preflight 0
   set e5cid -1

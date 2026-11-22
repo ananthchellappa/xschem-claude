@@ -17008,10 +17008,10 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
   ## is ase::include_texts' list, read by the caller, so this proc stays a pure
   ## function of its arguments. Every name that resolves `absent` is a row of
   ## `incrows`; one whose path stops at a missing instance (`miss`) refuses the
-  ## run and joins the rename search beside the output rows; any other is a
-  ## caution (a node an instance that exists does not have: no ruling covers
-  ## refusing it), unless ngspice would stop on it (`stops`, below), which
-  ## then refuses too (ruled 2026-11-22). `unknown` is not a row, which carries
+  ## run and joins the rename search beside the output rows; any other (a node
+  ## an instance that exists does not have, a missing top-level node) refuses
+  ## when ngspice would stop on it (`stops`, below; ruled 2026-11-22) and is
+  ## a caution otherwise. `unknown` is not a row, which carries
   ## over the include-bearing-scope ruling -- and a missing TOP-LEVEL instance that an
   ## include file itself defines (`x5 ...` in a stimulus file) stands down the
   ## same way, because the circuit netlist cannot show it; so does every
@@ -17092,7 +17092,14 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
 # netlist does not define) from being a candidate for every stale name. Only
 # ONE renamed segment per identifier: a rest that stops at a second missing
 # instance does not resolve, so it is never a candidate.
-proc ase::preflight_rename_try {map kind name cs miss} {
+#
+# UNKNOWN 1 (the saved operating point's check only, ase::opstate_stale_said)
+# also answers an instance under which the rest resolves `unknown`, with an
+# empty correction: a node inside a subcircuit this netlist does not define (a
+# PDK device's own `rb`) cannot tell instances apart, so there it is consistent
+# with the instance it was asked under. The include and output rows keep 0: a
+# rewrite needs the spelling only a resolved name has.
+proc ase::preflight_rename_try {map kind name cs miss {unknown 0}} {
   set out {}
   if {[catch {dict get $miss scope} scope] || [catch {dict get $miss index} idx]} {
     return {}
@@ -17110,7 +17117,10 @@ proc ase::preflight_rename_try {map kind name cs miss} {
     set try $parts
     lset try $idx $inst
     set r [ase::netlist_map_resolve $map $kind [join $try .] $cs]
-    if {[dict get $r real] eq {}} { continue }
+    if {[dict get $r real] eq {}} {
+      if {$unknown && [dict get $r status] eq {unknown}} { lappend out [list $inst {}] }
+      continue
+    }
     lappend out [list $inst [dict get $r real]]
   }
   return $out
@@ -18831,7 +18841,8 @@ proc ase::include_ngspice_clause {card value} {
 }
 
 # The caution for ONE include row that does not refuse: a node that is not
-# there inside an instance that is (no ruling covers refusing it), or -- under
+# there inside an instance that is, when ngspice drops it (a row ngspice would
+# stop on -- `stops` -- refuses instead, ruled 2026-11-22), or -- under
 # case mode `distinguish` only -- a name the netlist has in another case, which
 # that mode does not fold (`spelled` names the netlist's spelling; `ambiguous`
 # is two netlist names differing only in case), or any absent name on a card
@@ -19747,6 +19758,21 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
         }
       }
     }
+    ## ...and the names in this file the outputs' instance leaves without a
+    ## correction (ruled 2026-11-22, outputs first): they are in .nodeset/.ic
+    ## cards too, so the other N are not all outside them (review finding 4).
+    ## Matched as the rewrites are, spelling by spelling under `fold`.
+    set m 0
+    foreach r $irefuse {
+      if {[ase::state_get $r correction] ne {} || $to eq {} ||
+          [dict get $r path] ne [dict get $ih path]} { continue }
+      set rp [ase::state_get $r stale]
+      if {$rp eq {} || ![dict exists $rnof $rp] ||
+          [dict get $rnof $rp to] ne $to} { continue }
+      if {$rp eq $pre || (![dict get $scan cs] && [string equal -nocase $rp $pre])} {
+        incr m
+      }
+    }
     set l "ase:   include file '[dict get $ih path]' names '$pre.' $nn\
  time[expr {$nn == 1 ? {} : {s}}]"
     if {$f ne {} && ![dict get $f editable]} {
@@ -19755,6 +19781,20 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     } elseif {$k > 0 && $k >= $nn} {
       append l ", all in .nodeset/.ic cards: '$btn' rewrites them to '$to.' after\
  asking"
+    } elseif {$k > 0 && $m > 0} {
+      set mone [expr {$m == 1}]
+      set mw "[expr {$mone ? {a .nodeset/.ic name that does} :
+        {.nodeset/.ic names that do}}] not resolve under '$to'"
+      append l "; '$btn' rewrites the $k that\
+ resolve[expr {$k == 1 ? {s} : {}}] under '$to' to '$to.' after asking and\
+ leaves the other"
+      if {$m >= $nn - $k} {
+        append l " $m, $mw, for you to change ($door)"
+      } else {
+        append l " [expr {$nn - $k}] for you to change ($door): $m\
+ [string range $mw [expr {$mone ? 2 : 0}] end], and\
+ [expr {$nn - $k - $m}] outside those cards"
+      }
     } elseif {$k > 0} {
       append l "; '$btn' rewrites the $k in .nodeset/.ic cards to '$to.' after\
  asking and leaves the other [expr {$nn - $k}] for you to change ($door)"
@@ -19874,8 +19914,16 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     ::ase::echo $l error
     lappend lines $l
   }
+  ## ⚠ THE ESCAPE DOES NOT GET A NAME NGSPICE WOULD STOP ON PAST NGSPICE (review
+  ## finding 6): with the check off it stops the run itself, on the syntax
+  ## error the refusal names (PF1723ah5's control), so the line says so
   set l "ase: set ase_preflight 0 to disable this check (the \$sim_status guard\
- and the constants-raw rejection stay on)."
+ and the constants-raw rejection stay on)"
+  if {$nst} {
+    append l ", but ngspice still stops the run on\
+ [expr {$nst == 1 ? {the name} : "the $nst names"}] it would stop on"
+  }
+  append l .
   ::ase::echo $l error
   lappend lines $l
   return -code error [join $lines "\n"]
@@ -28294,7 +28342,7 @@ proc ase::opstate_refusals {sim state} {
 # the file and, if any name stops at a missing instance, says ONE caution:
 # the file, the likely new name when one fits, and the fix (one run with Save
 # ticked, or a hand edit). Never a refusal, and not in Apply Corrections.
-# Rows PF1723os-os6 and PF1723ah6 (end to end) of test_ase_preflight.
+# Rows PF1723os-os10 and PF1723ah6 (end to end) of test_ase_preflight.
 
 # 'Save operating point' (Simulation > Convergence…), from the window's own
 # labels when they are loaded. src/ase.tcl may not depend on
@@ -28307,42 +28355,95 @@ proc ase::opstate_save_door {} {
   return $s
 }
 
-# The caution for STATE's saved operating point against NETLIST_TEXT, or {}:
-# the file is read only when Restore is ticked; a file that is not there or
-# cannot be read says nothing here (the restore's own refusals speak of it).
+# The caution for STATE's saved operating point against NETLIST_TEXT, or {}.
+# The file is read only when Restore is ticked. A file that is not there or
+# cannot be read says nothing here: for Seed the restore's own refusal speaks of
+# it (`opstatefile`); for Force nothing checks it before the run (a gap older
+# than this check, and not its business).
+#
+# ⚠ NOTHING HERE MAY CREATE ANYTHING (review finding 5): a gate that passes
+# must not have made the run directory, so a relative file is taken against
+# ase::include_rundir_peek, as the include files are, never through
+# ase::opstate_path (ase::rundir creates the folder and, for an empty key,
+# rewrites ::netlist_dir). ⚠ AND NOTHING IS SAID OF A RUN THE RESTORE'S OWN
+# REFUSALS STOP (review finding 3): Save ticked with no enabled OP row is
+# refused in render_deck (`saveneedsop`), and the caution's account of what
+# ngspice and the save will do would be false. Those refusals are asked on the
+# state with the file already absolute, so they too resolve nothing.
 proc ase::opstate_stale_caution {state netlist_text} {
   if {[ase::opstate_get $state restore 0] ne {1}} { return {} }
-  set path {}
-  catch {set path [ase::opstate_path $state]}
-  if {$path eq {} || ![file isfile $path] || ![file readable $path]} { return {} }
-  if {[catch {open $path r} fh]} { return {} }
+  set f [ase::opstate_get $state file {}]
+  if {$f eq {}} { return {} }
+  set f [ase::expand_path $f]
+  set rd [ase::include_rundir_peek $state]
+  if {[file pathtype $f] ne {absolute} && $rd ne {}} { set f [file join $rd $f] }
+  set abs $state
+  dict set abs opstate file $f
+  set sim [ase::state_get $state simulator [ase::default_simulator]]
+  if {[catch {ase::opstate_refusals $sim $abs} refs] || [llength $refs]} { return {} }
+  if {![file isfile $f] || ![file readable $f]} { return {} }
+  if {[catch {open $f r} fh]} { return {} }
   fconfigure $fh -translation binary
   set txt [read $fh]
   close $fh
-  return [ase::opstate_stale_said $state [file normalize $path] $txt $netlist_text]
+  return [ase::opstate_stale_said $state [file normalize $f] $txt $netlist_text \
+            [ase::include_texts $state $rd]]
 }
 
-# The same, from the file's TEXT at PATH. Pure. The names are read and
-# resolved, and the rename found, exactly as for an include file
-# (ase::preflight_scan with this one file and nothing else of the bench); only
-# a name whose path stops at a missing INSTANCE counts.
-proc ase::opstate_stale_said {state path text netlist_text} {
+# The same, from the file's TEXT at PATH; ITEXTS are the bench's own include
+# files (ase::include_texts). Pure. The names are read and resolved exactly as
+# for an include file (ase::preflight_scan, with this one file as its only
+# include text); only a name whose path stops at a missing INSTANCE counts.
+#
+# ⚠ WHAT THE CIRCUIT NETLIST CANNOT SHOW STANDS DOWN (review finding 1), as it
+# does for an include row in ase::preflight_scan: a missing TOP-LEVEL instance
+# that one of ITEXTS defines (`x5 ...` in a stimulus file, whose nodes wrnodev
+# writes), and every missing top-level instance once one of ITEXTS carries a
+# nested include card. Otherwise x5 is called missing and, when another
+# instance has the same leaf, "renamed", and the hand edit would seed the
+# wrong node.
+#
+# ⚠ THE LIKELY NEW NAME IS DECIDED HERE, FOR THIS FILE ALONE (review finding
+# 2): per stale prefix, the one instance of its scope consistent with every
+# counted name (ase::preflight_rename_common), where a name resolving
+# `unknown` under an instance is consistent with it (ase::preflight_rename_try
+# with UNKNOWN 1). wrnodev writes the internal nodes of a PDK device's own
+# subcircuit (`x1.xr1.rb`), which resolve `unknown` under the new name, the
+# master being in a model file; under the include rows' rule such a name
+# emptied the intersection, and the caution lost the new name on every bench
+# whose renamed instance holds such a device (row PF1723os8).
+proc ase::opstate_stale_said {state path text netlist_text {itexts {}}} {
   set st [dict create simulator [ase::state_get $state simulator ngspice]]
   set sc [ase::preflight_scan $st $netlist_text \
             [list [dict create file $path path $path text $text]]]
+  set topdef [ase::include_top_words $itexts]
+  set topnest [expr {[llength [ase::include_top_nests $itexts]] > 0}]
+  set map [ase::netlist_map $netlist_text]
+  set cs [dict get $sc cs]
   set prefixes {}
+  set grp [dict create]
+  set tries [dict create]
   set n 0
   foreach r [dict get $sc incrows] {
     if {![dict exists $r miss]} { continue }
+    set mz [dict get $r miss]
+    set p [dict get $mz prefix]
+    if {[dict get $mz scope] eq {} &&
+        ($topnest || [dict exists $topdef [string tolower $p]])} { continue }
+    dict lappend grp $p [list i $n]
+    dict set tries i,$n [ase::preflight_rename_try $map voltage \
+                           [dict get $r ident] $cs $mz 1]
     incr n
-    set p [dict get $r miss prefix]
     if {[lsearch -exact $prefixes $p] < 0} { lappend prefixes $p }
   }
   if {!$n} { return {} }
   set to [dict create]
-  foreach g [dict get $sc renames] {
-    if {[dict get $g fit] eq {unique} && [dict get $g to] ne {}} {
-      dict set to [dict get $g prefix] [dict get $g to]
+  dict for {p members} $grp {
+    set common [lindex [ase::preflight_rename_common $tries $members] 0]
+    if {[llength $common] == 1} {
+      ## the prefix as written with its missing (last) segment replaced by the
+      ## instance, in the netlist's own spelling
+      dict set to $p [join [lreplace [split $p .] end end [lindex $common 0]] .]
     }
   }
   set one [expr {$n == 1}]
@@ -28357,24 +28458,27 @@ proc ase::opstate_stale_said {state path text netlist_text} {
  node[expr {$one ? {} : {s}}] under instance[expr {[llength $prefixes] > 1 ? {s} : {}}]\
  [ase::preflight_name_list $prefixes], which the netlist does not have"
   if {[llength $seen]} { append l " ([join $seen {; }])" }
+  ## ⚠ WHAT NGSPICE DOES, NEVER WHAT THIS RUN DOES (review finding 3): the
+  ## caution is said above the escape, and the gate may still refuse the run
+  ## below it (a rename usually strands the outputs and this file together)
   if {[ase::opstate_get $state mode seed] eq {force}} {
     append l ", so ngspice drops [expr {$one ? {that initial condition} :
-      "those $n initial conditions"}] with a 'non-existent node' warning (Force):\
- a transient no longer starts [expr {$one ? {that node at its saved value} :
+      "those $n initial conditions"}] with a 'non-existent node' warning (Force)\
+ and runs on: a transient no longer starts [expr {$one ? {that node at its saved value} :
       {those nodes at their saved values}}] (an operating point analysis ignores\
- [expr {$one ? {it} : {them}}] either way); the run goes ahead."
+ [expr {$one ? {it} : {them}}] either way)."
   } else {
     append l ", so ngspice drops [expr {$one ? {that starting guess} :
-      "those $n starting guesses"}] with a 'non-existent node' warning (Seed); the\
- run goes ahead without [expr {$one ? {it} : {them}}]."
+      "those $n starting guesses"}] with a 'non-existent node' warning (Seed) and\
+ runs on without [expr {$one ? {it} : {them}}]."
   }
   ## the hand edit is named only when every missing instance has its new name
   set hand [expr {[llength $swaps] == [llength $prefixes] ?
     "replace [join $swaps { and }] in it by hand" : {edit it by hand}}]
   set door [ase::opstate_save_door]
   if {[ase::opstate_get $state save 0] eq {1}} {
-    append l " This run has $door ticked, so it rewrites the file under the new\
- names if its operating point converges; if it does not, $hand."
+    append l " With $door ticked, a run whose operating point converges rewrites\
+ the file under the new names; if the operating point does not converge, $hand."
   } else {
     append l " To refresh the file, run once with $door ticked, or $hand."
   }
