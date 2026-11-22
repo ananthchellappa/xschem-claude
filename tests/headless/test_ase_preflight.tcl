@@ -3451,17 +3451,50 @@ eqcheck PF1723s-the-scan-makes-a-row-of-every-absent-include-name-and-corrects-t
 eqcheck PF1723s2-with-every-output-row-correct-the-rename-is-decided-by-the-include-rows \
   [list [llength [dg $SCI absent]] [dg $SCI renames]] \
   {0 {{prefix x1 to xdut fit unique candidates xdut outputs 0 measurements 0 includes 4}}}
-## ⚠ THE RULING: "these rows join the rename search like output rows". `x1.a1`
-## resolves only under xdut and `x1.b1` only under xother, so an output row and
-## an include row that disagree are a PARTIAL match and nothing is offered --
-## where a measurement disagreeing would not cost the outputs their correction.
-set NSP [file join $RDI ns_p.spice]
+## THE RULING: "these rows join the rename search like output rows". ⚠ MOVED,
+## 2026-11-22 (the user's ruling on 1723_include_stand_downs, part 4: "Outputs
+## first, .nodeset breaks ties"): `x1.a1` resolves only under xdut and `x1.b1`
+## only under xother, and the two used to be a PARTIAL match with nothing
+## offered ({partial {xdut xother} 1 1}). When the outputs alone point to one
+## instance they get that correction; the include row that instance cannot
+## resolve keeps `miss`, so it still refuses, with no correction. When the
+## outputs fit several, the include rows still pick one (PF1723aj's
+## `v(x1.OUTP)` beside `x1.a1`).
+set NSP [file normalize [file join $RDI ns_p.spice]]
 putfile $NSP ".nodeset v(x1.b1)=1\n"
 set stp [ri_state [list [list file $NSP]] {{expr v(x1.a1) save 1}}]
-set scp [pcall ase::preflight_scan $stp $NLR [pcall ase::include_texts $stp $RDI]]
-eqcheck PF1723s3-an-include-row-decides-the-rename-as-an-output-row-does \
-  [lmap g [dg $scp renames] {list [dgn $g fit] [dgn $g candidates] [dgn $g outputs] [dgn $g includes]}] \
-  {{partial {xdut xother} 1 1}}
+set itp [pcall ase::include_texts $stp $RDI]
+set scp [pcall ase::preflight_scan $stp $NLR $itp]
+eqcheck PF1723s3-when-the-outputs-alone-point-to-one-instance-they-decide-and-a-disagreeing-include-row-keeps-its-refusal-with-no-correction \
+  [list [lmap g [dg $scp renames] {list [dgn $g fit] [dgn $g candidates] [dgn $g outputs] [dgn $g includes]}] \
+        [rn_fixes $scp absent] [rn_fixes $scp incrows] [lmap r [dg $scp incrows] {dex $r miss}]] \
+  {{{unique xdut 1 1}} {{x1.a1 xdut.a1}} {{x1.b1 {}}} 1}
+## THE REFUSAL FOR THAT SHAPE: the output row's correction, the include row's
+## line with no "looks renamed", a closing line that no longer says EVERY
+## refused row resolves under xdut but names the include name left without a
+## fix and the door, and the press is offered again (the outputs' button, lost
+## when item 7 let the include row decide beside them). Once the outputs are
+## corrected the include row decides alone, so the next scan offers
+## x1.b1 -> xother.b1 (the ruling's stated consequence); the session half
+## applied alone strands nothing, since the include row had no correction.
+lassign [rn_gate $stp] rcs3 es3
+set s3lines [lmap x $::said {lindex $x 1}]
+proc s3_has {want} { return [expr {[lsearch -exact $::s3lines $want] >= 0}] }
+set s3off [pcall ase::ui::repair_offer $es3 $stp $scp]
+set s3a [pcall ase::preflight_apply $stp $scp]
+set s3next [pcall ase::preflight_scan [dgn $s3a state] $NLR $itp]
+set scp_s [dict merge $scp [dict create itexts $itp ntext $NLR]]
+eqcheck PF1723s3b-the-refusal-offers-the-outputs-correction-and-names-the-include-name-left-without-one \
+  [list $rcs3 \
+        [s3_has "ase:   'v(x1.a1)' — voltage 'x1.a1' is not in the netlist. Instance 'x1' looks renamed to 'xdut': 'v(x1.a1)' -> 'v(xdut.a1)'"] \
+        [s3_has "ase:   include file '$NSP' line 1: .nodeset names 'x1.b1', and the netlist has no instance 'x1'"] \
+        [s3_has "ase: the netlist has no instance 'x1', and every output row naming it resolves under 'xdut', so it looks like 'x1' was renamed 'xdut'; 1 .nodeset/.ic name naming it does not resolve under 'xdut', so it has no correction: change it by hand ([pcall ase::ui::menu_path_include_files])."] \
+        [llength [lsearch -all -glob $s3lines {*every refused row naming it*}]] \
+        [llength [lsearch -all -glob $s3lines {*each have some of what*}]] \
+        [dgn $s3off rows] [dgn $s3off rename] \
+        [lmap g [dg $s3next renames] {list [dgn $g prefix] [dgn $g to] [dgn $g fit]}] \
+        [llength [dgn [pcall ase::preflight_strand $stp $scp_s session] lost]]] \
+  {1 1 1 1 0 0 1 1 {{x1 xother unique}} 0}
 ## the two stand-downs, each beside the control that makes it count: an
 ## instance an include ADDS (`x5 ...`) and a top-level node only an include
 ## connects (`V5 vsup5 0 1.8`). ⚠ MOVED in the fix round (finding 2): this row

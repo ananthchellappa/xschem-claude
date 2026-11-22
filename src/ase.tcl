@@ -17144,7 +17144,11 @@ proc ase::preflight_rename_try {map kind name cs miss} {
 # ⚠ ISSUE 1723 item 7: `irows`, the include files' `.nodeset`/`.ic` rows, refuse
 # a run as output rows do, so they DECIDE as output rows do (the ruling: "these
 # rows join the rename search like output rows"). -> {orows mrows renames
-# irows}, and every rename record counts them as `includes`.
+# irows}, and every rename record counts them as `includes`. ⚠ BUT THE OUTPUTS
+# COME FIRST (ruled 2026-11-22, "Outputs first, .nodeset breaks ties"): when
+# the two together leave no single instance and the output rows alone point
+# to one, that one is `unique`, and an include row it does not resolve is left
+# with no correction, still refusing (see the body).
 #
 # ⚠ ONE GROUP PER STALE PREFIX AS WRITTEN, under `fold` too (fix round 2,
 # finding 7). The first cut of items 5-7 folded `x1` and `X1` into one group
@@ -17174,24 +17178,28 @@ proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
   set renames {}
   dict for {p members} $grp {
     set deciders {}
+    set odec {}
     foreach mb $members {
       if {[lindex $mb 0] in {o i}} { lappend deciders $mb }
+      if {[lindex $mb 0] eq {o}} { lappend odec $mb }
     }
     if {![llength $deciders]} { set deciders $members }
-    set common {}
-    set union {}
-    set first 1
-    foreach d $deciders {
-      set names {}
-      foreach t [dict get $tries [join $d ,]] { lappend names [lindex $t 0] }
-      foreach n $names { if {[lsearch -exact $union $n] < 0} { lappend union $n } }
-      if {$first} {
-        set common $names
-        set first 0
-      } else {
-        set keep {}
-        foreach n $common { if {[lsearch -exact $names $n] >= 0} { lappend keep $n } }
-        set common $keep
+    lassign [ase::preflight_rename_common $tries $deciders] common union
+    ## ⚠ OUTPUTS FIRST, THE INCLUDE ROWS BREAK TIES (the user's ruling of
+    ## 2026-11-22 on 1723_include_stand_downs, part 4). When the output and
+    ## include rows together leave no single instance but the output rows
+    ## alone point to one, the outputs get that correction, as they did before
+    ## item 7; an include row that instance cannot resolve keeps `miss` and so
+    ## still refuses, with no correction (the gate names it). Only an empty
+    ## `common` can move: the output rows' intersection holds every instance
+    ## the joint one does, so a joint `several` stays `several` and a joint
+    ## `unique` -- the include rows breaking the outputs' tie -- stays as it
+    ## was. Row PF1723s3.
+    if {[llength $common] != 1 && [llength $odec] && [llength $odec] < [llength $deciders]} {
+      lassign [ase::preflight_rename_common $tries $odec] ocommon ounion
+      if {[llength $ocommon] == 1} {
+        set common $ocommon
+        set union $ounion
       }
     }
     set nc [llength $common]
@@ -17236,6 +17244,29 @@ proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
                        outputs $no measurements $nm includes $ni]
   }
   return [list $orows $mrows $renames $irows]
+}
+
+# The instances every one of DECIDERS resolves under, and those any of them
+# does: -> {common union}, in the first decider's order. TRIES holds each
+# member's ase::preflight_rename_try answer, keyed `<o|m|i>,<index>`. Pure.
+proc ase::preflight_rename_common {tries deciders} {
+  set common {}
+  set union {}
+  set first 1
+  foreach d $deciders {
+    set names {}
+    foreach t [dict get $tries [join $d ,]] { lappend names [lindex $t 0] }
+    foreach n $names { if {[lsearch -exact $union $n] < 0} { lappend union $n } }
+    if {$first} {
+      set common $names
+      set first 0
+    } else {
+      set keep {}
+      foreach n $common { if {[lsearch -exact $names $n] >= 0} { lappend keep $n } }
+      set common $keep
+    }
+  }
+  return [list $common $union]
 }
 
 # The rename records a sentence names, once each. Pure. Under `fold` two
@@ -19740,9 +19771,32 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   foreach g $rsaid {
     if {[dict get $g fit] ne {unique} ||
         [dict get $g outputs] + [dict get $g includes] == 0} { continue }
-    set l "ase: the netlist has no instance '[dict get $g prefix]', and every\
+    ## the include rows the outputs' instance does not resolve (ruled
+    ## 2026-11-22, outputs first): every spelling this record speaks for
+    set left 0
+    foreach r $irefuse {
+      if {[ase::state_get $r correction] ne {}} { continue }
+      set rp [ase::state_get $r stale]
+      if {$rp eq {} || ![dict exists $rnof $rp]} { continue }
+      if {[dict get $scan cs] ? $rp ne [dict get $g prefix] :
+          ![string equal -nocase $rp [dict get $g prefix]]} { continue }
+      set rg [dict get $rnof $rp]
+      if {[dict get $rg fit] ne {unique} || [dict get $rg to] ne [dict get $g to]} { continue }
+      incr left
+    }
+    if {$left} {
+      set one [expr {$left == 1}]
+      set l "ase: the netlist has no instance '[dict get $g prefix]', and every\
+ output row naming it resolves under '[dict get $g to]', so it looks like\
+ '[dict get $g prefix]' was renamed '[dict get $g to]'; $left .nodeset/.ic\
+ name[expr {$one ? {} : {s}}] naming it [expr {$one ? {does} : {do}}] not\
+ resolve under '[dict get $g to]', so [expr {$one ? {it has} : {they have}}] no\
+ correction: change [expr {$one ? {it} : {them}}] by hand ($door)."
+    } else {
+      set l "ase: the netlist has no instance '[dict get $g prefix]', and every\
  refused row naming it resolves under '[dict get $g to]', so it looks like\
  '[dict get $g prefix]' was renamed '[dict get $g to]'."
+    }
     ::ase::echo $l error
     lappend lines $l
   }
