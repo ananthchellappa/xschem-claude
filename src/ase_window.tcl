@@ -7105,6 +7105,9 @@ proc ase::ui::rsel_commit {key} {
   }
   if {[catch {results::select $path $type $opts} res]} { set res {} }
   set how [ase::state_get $res how refused]
+  # issue 1733 (R4): a result loaded by hand, so the next attach_raw of this
+  # viewer reads its data as new data
+  if {$how ne {refused}} { catch {wviewer::attach_forget $key} }
   if {$how ne {refused} && $haswin} { catch {wviewer::regenerate $key} }
   ase::ui::rsel_release $key $b
   set msg [ase::state_get $res msg]
@@ -16617,7 +16620,12 @@ proc ase::ui::auto_plot {key} {
         wviewer::capture_live_view_state $key
         wviewer::clear_subwin $key
         wviewer::auto_plot_strips $key 0
-        wviewer::regenerate $key
+        # issue 1733 (round 2): the rebuild CARRIES every strip as it shows.
+        # clear_subwin kept the other subwindows' view, and a plain rebuild here
+        # fitted them again (measured: a subwindow zoomed to 6n..8n came back
+        # at the full sweep), against R3's "every other subwindow shows exactly
+        # what it showed"
+        wviewer::regenerate $key [wviewer::live_axes $key]
       }
     }
     return
@@ -16637,6 +16645,25 @@ proc ase::ui::auto_plot {key} {
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
   wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
+  # ISSUE 1733 (user ruling 2026-11-22: "yes, re-run which then plots in
+  # Replace mode should retain zoom level, not reset it"). attach_raw has just
+  # kept each strip's view by the same-data or the new-data rule; this is that
+  # view, read before Replace empties the target subwindow, with the strips
+  # that subwindow holds in it (`vsw`), so a strip that comes back there with
+  # the traces it had takes it again once the rows are in. It is matched
+  # INSIDE that subwindow only (wviewer::view_keep_subwin; the review found a
+  # match across subwindows handing one subwindow's zoom to another). Under
+  # Append the strips already there keep theirs the same way, and a new strip
+  # joins its subwindow's X window. Under New SubWin and New Tab the run's
+  # strips are new and fit, so there is nothing to read here; the strips
+  # already on screen keep theirs through the carrying rebuild below.
+  set view {}
+  set vsw {}
+  if {$dest in {replace append}} {
+    set view [wviewer::view_take $key]
+    set vsw [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] \
+               [wviewer::target_index $key]]
+  }
   # R-OUT15: the destination's window half. A viewer this press opened is one
   # empty tab, which IS a new window and a new subwindow already.
   switch -exact -- $dest {
@@ -16664,7 +16691,11 @@ proc ase::ui::auto_plot {key} {
     # taken by attach_raw just above.
     set gis [wviewer::auto_plot_strips $key [llength $rows]]
   }
-  wviewer::regenerate $key   ;# reflect the clear even if every add fails
+  # reflect the clear even if every add fails. It CARRIES every strip as it
+  # shows (issue 1733 review): attach_raw, clear_subwin and new_subwin each
+  # kept the view, and a plain rebuild here threw it away, so `~` under New
+  # SubWin reset the zoom of every subwindow already there, on the same data.
+  wviewer::regenerate $key [wviewer::live_axes $key]
   set ei 0
   foreach o $rows {
     set ex [lindex $exs $ei]
@@ -16676,6 +16707,15 @@ proc ase::ui::auto_plot {key} {
     if {$err ne {}} {
       catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
     }
+  }
+  # issue 1733: the rows are in, so the target subwindow's strips take the view
+  # read above, from that subwindow's old strips only; every other strip keeps
+  # what it shows
+  if {[llength $view]} {
+    set gi0 [lindex $gis 0]
+    if {![string is integer -strict $gi0]} { set gi0 [wviewer::target_index $key] }
+    set nsw [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] $gi0]
+    wviewer::regenerate $key [wviewer::view_keep_subwin $key $view $vsw $nsw]
   }
 }
 

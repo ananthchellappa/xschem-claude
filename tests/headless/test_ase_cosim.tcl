@@ -891,7 +891,13 @@ foreach p {switch_ctx capture_live_view_state regenerate} {
 }
 proc ::wviewer::switch_ctx {t} { return 1 }
 proc ::wviewer::capture_live_view_state {t} { return }
-proc ::wviewer::regenerate {t} { set ::wvregen 1; return }
+# The stand-in takes the real regenerate's arguments: since issue 1733
+# attach_raw hands it the view to keep, and a stand-in narrower than the real
+# proc aborts the whole suite at that call. WV0 pins it to the real signature.
+proc ::wviewer::regenerate {token {keep {}}} { set ::wvregen 1; return }
+eqcheck WV0-regenerate-stand-in-takes-the-real-arguments \
+  [list [info args ::wviewer::regenerate] [pcall info default ::wviewer::regenerate keep wv0_d]] \
+  [list [pcall info args ::wviewer::saved_regenerate] [pcall info default ::wviewer::saved_regenerate keep wv0_d]]
 dict set ::wviewer::windows TESTTOK stub
 
 set ::wvregen 0

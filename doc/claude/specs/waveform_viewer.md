@@ -1493,12 +1493,103 @@ strip "should retain zoom".
 - **Undo and redo** (`wviewer::history_step`, `state_apply`). An axis the
   snapshot pins shows the snapshot's window, as before. An axis it leaves auto
   keeps what the strip shows instead of being fitted again.
+- **A Direct Plot, a re-run and `~` (issue 1733, 2026-11-22).** User report:
+  after a run, a strip zoomed, then another signal sent with Direct Plot: every
+  strip snapped back to the full sweep, because `ase::ui::dp_finish` attaches
+  the session's raw first (`wviewer::attach_raw`) and attach_raw ended in a
+  plain rebuild, which fitted every strip. Ruling, the same day: *"yes, re-run
+  which then plots in Replace mode should retain zoom level, not reset it"*.
+  attach_raw now carries the view, by one of two rules, and records what it
+  attached so the next attach can tell which applies:
+  - **R1, the same data.** attach_raw re-attaching the same file (normalized
+    path), the same analysis and the same VCD list, with every one of those
+    files' mtime and size unchanged since its last attach in this window, and
+    with the database it left current still current: the view is carried
+    exactly as adding a trace carries it (`view_take` before the attach,
+    `view_keep` into the rebuild). A Direct Plot after a zoom, and `~` with no
+    run in between, keep every strip as shown. (`wviewer::attach_stamp`,
+    `wviewer::attach_is_same`, both pure but for the stamp's `file stat`.)
+  - **R2, new data** (anything else, a re-run above all). An axis the user
+    MOVED (`wviewer::view_zoomed`, the same notion as above) is kept; an axis
+    nobody moved is fitted to the new data, over the X window the strip ends up
+    with; a strip nobody zoomed is rebuilt exactly as before. A kept X is
+    dropped when X is no longer the same thing (`wviewer::x_same` over
+    `wviewer::x_resolve`, the notion `view_align` uses: the same analysis and X
+    column, the same X scale; another tran file is the same X, an ac file where
+    a tran was is not), and when the kept window does not overlap the new sweep
+    at all (regenerate fits the strip's X and keeps the window only if
+    `wviewer::x_overlaps` says the two meet; a miss is recorded as fitted). A
+    strip whose X is no longer the same thing keeps a moved Y neither: another
+    analysis is another plot, and a transient's Y window over AC magnitudes
+    leaves the curve off screen (review round, measured on a tran -> ac re-run
+    under Replace), so that strip is rebuilt as if nobody had zoomed it. A miss
+    of the overlap alone keeps a moved Y (the same quantity, another stretch of
+    the sweep). A tracked dataset is never kept: it numbers the old data's
+    datasets. (`wviewer::view_new_data`, pure.) A failed attach (no database
+    read) is new data and leaves no record.
+  - **R3, the run-end plot and `~`.** `ase::ui::auto_plot` reads the view right
+    after attach_raw kept it, with the strips the target subwindow holds in it,
+    and hands it to its last rebuild once the rows are in. Under **Replace** a
+    strip of the target subwindow that comes back with the traces it had (a
+    re-run, or `~` again) takes its view by R1 or R2, matched by traces
+    (`view_map`) **among that subwindow's old strips only**
+    (`wviewer::view_keep_subwin`, its pure half `wviewer::view_within`); a strip
+    there that matches none joins its subwindow's X window (`view_align`).
+    Every strip of every other subwindow shows exactly what it showed: the
+    rebuild that reflects the destination's window half carries the live view
+    (`live_axes`), as attach_raw and `clear_subwin` did before it. So does the
+    rebuild of the press with **nothing ticked** under Replace, which empties
+    the target subwindow to one empty auto strip and attaches nothing (second
+    review round: it was plain, and fitted every other subwindow again, a zoom
+    of 6n..8n coming back at the full sweep). (The first
+    cut matched the old view across every subwindow; once the target's strip
+    count changed, a zoom moved from one subwindow to another, measured in the
+    review round.) Under **Append** the strips already there keep theirs the
+    same way and a new strip joins its subwindow's X window. Under **New
+    SubWin** the subwindows already on screen keep their view by R1 or R2 (the
+    first cut's plain rebuild there reset them, on the same data too; review
+    round) and the new subwindow's strips fit: nothing in their subwindow to
+    take a view from. Under **New Tab** the tab left behind keeps its view in
+    the tab stash (`tab_freeze`) and the new tab's strips fit.
+  - **R4, every other loader** keeps today's behaviour: a file opened from the
+    Location bar (`rawbar_load`), the Select dialog (`ase::ui::rsel_commit`),
+    `display_raw` and `restore` rebuild plain (new data fitted) and DROP
+    attach_raw's record, so the next attach is never taken for the same data
+    even when the hand load ended on that same file. Every other proc that
+    reads, clears or switches a database either puts the current one back as it
+    found it or leaves another one current, which `attach_is_same`'s check of
+    the current database catches. The record goes with the window
+    (`wviewer::forget`). Row `GZP33` derives the population of loaders from the
+    source and requires each to be classified: the loader verbs from the C side
+    (every top-level verb of `src/scheduler.c`, and every sub-verb of its `raw`
+    branch, whose branch calls a function that changes the raw registry, such
+    as `xschem annotate_op` and `xschem raw case <mode>`; the bare `raw case` is
+    a query), a verb held in a variable taken for a loader, and every proc
+    found by a walk that follows Tcl's brace rule into `namespace eval` bodies.
+    What it cannot see (a C branch reaching the registry through another file,
+    a callback script registered outside every proc, `xschem {*}$cmd`, a verb
+    assembled from pieces, scripts outside `src/*.tcl`) is declared in the
+    row's comment; the `cur` check of `attach_is_same` stands behind it.
+  - **R5, the other places attach_raw reaches.** Read, and named here:
+    *tabs*: the record is per viewer window, since every tab of a window draws
+    from the one context's databases; attach_raw rebuilds the tab in front, and
+    another tab still shows its stashed view when selected, as before.
+    *Subwindows*: each strip is judged alone, and the X window a fresh strip
+    joins is its own subwindow's (`view_align`), as before. attach_raw has two
+    callers here, `ase::ui::dp_finish` and `ase::ui::auto_plot`, so no other
+    place is reached.
+  - **Declared limit.** The stamp is `file stat`'s mtime (whole seconds) and
+    size: a rewrite of the same file to the same size within the same second
+    as the attach before it is taken for the same data (R1), and its strips
+    keep both axes as shown. A real re-run takes longer than that between two
+    attaches.
 - **Rebuilds that do not carry**, each for its own reason; row `GZP20` of
   `tests/headless/test_wave_grid.tcl` holds the list against every call site:
-  - new data (`display_raw`, `attach_raw`, `rawbar_load`): the windows on screen
-    fitted the old data. So after a re-run a wheel zoom (stored in the model)
-    is kept and a box zoom is not. Replace keeps the emptied strip's STORED
-    window by `sw_clear_graphs`' rule, and no more.
+  - new data loaded by hand (`display_raw`, `rawbar_load`): the windows on
+    screen fitted the old data. A wheel zoom (stored in the model) is kept and
+    a box zoom is not. `attach_raw` left this list with issue 1733 (above).
+    Replace keeps the emptied strip's STORED window by `sw_clear_graphs`' rule
+    as well.
   - the layout replaced or emptied (`restore`, `clear_all`);
   - another tab's strips (`select_tab`, `new_tab`, `close_tab`): the tab stash
     holds each tab's own view;
@@ -1507,7 +1598,15 @@ strip "should retain zoom".
     rebuild shows it. That turns auto axes into stored ones, as it always did.
 - **Tests:** `tests/headless/test_wave_grid.tcl` rows `GZP*` (counted arm),
   `GZ*` and `GV*` (display arm, including a real Ctrl-G, a real window resize
-  and the real Axes dialog).
+  and the real Axes dialog). Issue 1733: rows `GZP27`-`GZP34` there (the pure
+  rules, attach_raw's order, the loader population, the match inside one
+  subwindow) and `GX9`'s auto_plot legs;
+  band `PV` of `tests/headless/test_ase_plot_outputs.tcl` (display arm) on the
+  real path: a real `dp_finish`, `plot_outputs` under Replace and Append, a
+  rewritten raw whose mtime the band moves, a Location-bar load in between,
+  every strip read back off its rect; its group `PV5` (review round) puts the
+  same rows in two subwindows and plots under Replace and New SubWin, and
+  re-runs a tran as an ac.
 
 ## Graph grid density (viewer plan item 2, 2026-07-29)
 

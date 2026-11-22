@@ -4901,6 +4901,19 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   of `src/op_annot.tcl`, not an issue. `~/private/xschem-private`'s own pointer still
   read 1725 that day, so it advertises 1725 and 1726 as free there: it must skip both.
 
+- **1728–1732** — skipped here: another clone of this repository on this machine has used them
+  for its own issues (the minting check's grep of every clone's `doc/claude/issues/` finds them),
+  and left 1727 to this clone. None of them names anything here. Do not "reclaim" them.
+- **1733**: A Direct Plot, or a re-run plotted under Replace, resets the zoom (user report and
+  ruling 2026-11-22). Fixed by the commit that adds its issue file. Minted 2026-11-22 after both
+  checks (pointer + bands, then every `NUMBERING.md` and issues directory under `~/dev/*`, every
+  other clone's, their worktrees and `~/gc*`); no clone held 1733 or 1734 as an issue.
+- **1734**: A Direct Plot makes an expression trace and a Calculator wave stop drawing (found while
+  measuring 1733; older than it; not fixed). Minted with 1733, same checks.
+- **1735** — skipped here for the reason 1728–1732 are: the same other clone used it the same day.
+  Do not "reclaim" it.
+- 1727 is still free here; after it, take 1736 (1728 to 1735 are taken).
+
 **The next free number is 1727.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**

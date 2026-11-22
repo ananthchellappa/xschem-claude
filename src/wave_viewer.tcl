@@ -820,6 +820,12 @@ namespace eval wviewer {
   # the MODEL said about each strip then, and what each axis was fitted or set
   # to. wviewer::view_take reads the live rects against it. Cleaned on forget.
   variable drawn; array set drawn {}
+  # issue 1733: attached = what wviewer::attach_raw attached last in this window
+  # (wviewer::attach_stamp's record plus `cur`, the current database it left,
+  # and `same`, its own verdict), so the next attach can tell the same data from
+  # new data (wviewer::attach_is_same). Dropped by every hand load and on forget
+  # (wviewer::attach_forget).
+  variable attached; array set attached {}
   # issue 0173: how many times wviewer::leave_ctx could NOT put the xschem
   # context back where enter_ctx found it (a `new_schematic switch` refused
   # under a raised semaphore — landmine 17). Diagnostic only: a refused restore
@@ -1033,6 +1039,8 @@ proc wviewer::forget {token} {
   variable axl; variable delmap
   variable cfgafter; variable fillwh
   variable drawn
+  # issue 1733: the last attach's record, same rule as `drawn`
+  variable attached
   variable b3x0; variable b3y0; variable b3mk
   # RESULTS BATCH item 6: the recorded selection, same rule as every array
   # above -- an undeclared `variable` would make the `unset` below address a
@@ -1134,6 +1142,7 @@ proc wviewer::forget {token} {
   catch {unset cfgafter($token)}
   catch {unset fillwh($token)}
   catch {unset drawn($token)}
+  catch {unset attached($token)}
   foreach id [array names fszafter ${token},*] {
     catch {after cancel $fszafter($id)}
     catch {unset fszafter($id)}
@@ -5068,6 +5077,11 @@ proc wviewer::auto_expr_name {token} {
 # for X, `y1` for Y) is not fitted; an axis it does not name comes from the
 # model or the fit as always, so `{}` is the plain rebuild for that strip.
 # Ignored unless it has exactly one well-formed entry per strip.
+# An entry that also holds `xnew` (wviewer::view_new_data's mark: the X window
+# was made on data this rebuild no longer shows, issue 1733) keeps its X only
+# where the window overlaps what X fits to now (wviewer::x_overlaps); otherwise
+# that strip's X is rebuilt as if the entry did not name it, and the record
+# below says so.
 #
 # `drawn($token)` is recorded here for wviewer::view_take:
 # wviewer::drawn_records of the strips as this rebuild drew them.
@@ -5147,6 +5161,29 @@ proc wviewer::regenerate {token {keep {}}} {
       set gi_ 0
       foreach G_ $gs {
         set k_ [lindex $keep $gi_]
+        # issue 1733: an X window carried onto NEW DATA (`xnew`) stays only
+        # where it overlaps the X this strip fits to on that data; else X is
+        # rebuilt as though nothing were carried (the model's window, or the fit)
+        if {[dict exists $k_ xnew] && [dict exists $k_ x1] && [dict exists $k_ x2]
+            && [llength [dict get $G_ traces]]} {
+          xschem setprop -fast rect 2 $gi_ fullxzoom
+          set f1_ {} ; set f2_ {}
+          catch {set f1_ [xschem getprop rect 2 $gi_ x1]}
+          catch {set f2_ [xschem getprop rect 2 $gi_ x2]}
+          if {[wviewer::x_overlaps [dict get $k_ x1] [dict get $k_ x2] $f1_ $f2_]} {
+            xschem setprop -fast rect 2 $gi_ x1 [dict get $k_ x1]
+            xschem setprop -fast rect 2 $gi_ x2 [dict get $k_ x2]
+          } else {
+            set k_ [wviewer::view_drop $k_ x]
+            lset keep $gi_ $k_
+            set mx1_ [wviewer::dget $G_ x1 {}]
+            set mx2_ [wviewer::dget $G_ x2 {}]
+            if {$mx1_ ne {} && $mx2_ ne {}} {
+              xschem setprop -fast rect 2 $gi_ x1 $mx1_
+              xschem setprop -fast rect 2 $gi_ x2 $mx2_
+            }
+          }
+        }
         if {[llength [dict get $G_ traces]]} {
           if {![dict exists $k_ x1] &&
               ([wviewer::dget $G_ x1 {}] eq {} || [wviewer::dget $G_ x2 {}] eq {})} {
@@ -5228,6 +5265,8 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
   set G [dict replace $G traces $trs]
   wviewer::set_graphs $token [lreplace $gs 0 0 $G]
   if {$rawfile ne {} && [file isfile $rawfile]} {
+    # issue 1733: data loaded by hand, so the next attach_raw is new data
+    wviewer::attach_forget $token
     xschem new_schematic switch $wp
     xschem raw read $rawfile $sim_type
   }
@@ -5254,8 +5293,30 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
 # ase::attach_dbs so it is headless-testable; this proc keeps the ctx switch,
 # the 0194 view-state capture and the regenerate. DEFAULTS TO {} — the
 # three-argument call is byte-for-byte what it always was.
+#
+# ISSUE 1733: IT KEEPS THE VIEW (user report 2026-11-22: a Direct Plot after a
+# zoom snapped every strip back to the full sweep; ruling the same day: "yes,
+# re-run which then plots in Replace mode should retain zoom level, not reset
+# it"). The view on screen is read BEFORE anything changes, and what it hands
+# the regenerate depends on whether the data really changed
+# (wviewer::attach_is_same, against the record of this window's last attach):
+#   SAME DATA -- the file this window attached last, its every file unchanged
+#     on disk, and its database still the current one: the view is carried
+#     exactly as add_trace carries it (wviewer::view_keep). Every Direct Plot
+#     after a run lands here.
+#   NEW DATA -- a re-run rewrote a file, another file arrived, or something
+#     else loaded or switched the viewer's data since: only the axes the user
+#     moved are kept, and only while the strip's X is the same thing (another
+#     analysis or X column is another plot: nothing kept), an X window only
+#     while it overlaps the new sweep (wviewer::view_new_data, regenerate's
+#     `xnew`); every other axis is fitted to the new data, and a strip nobody
+#     zoomed is rebuilt exactly as before.
+# A failed attach is NEW DATA too: the registry may have lost the stale copy.
+# The record (`attached`) is written here and dropped by the hand loads and by
+# wviewer::forget (wviewer::attach_forget).
 proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   variable windows
+  variable attached
   if {![dict exists $windows $token]} { return 0 }
   if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }   ;# never clear a foreign ctx
@@ -5264,9 +5325,24 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   # regenerate below owes the fold. skip_ranges is what keeps a fresh run
   # autozooming instead of being drawn in the outgoing run's window.
   wviewer::capture_live_view_state $token
+  # issue 1733: the view, the data it was drawn on and the files about to be
+  # read, all BEFORE the registry moves
+  set view [wviewer::view_take $token]
+  set was [wviewer::attach_db]
+  set rec [wviewer::attach_stamp $rawfile $sim_type $vcdfiles]
+  set prev {}
+  if {[info exists attached($token)]} { set prev $attached($token) }
+  set same [wviewer::attach_is_same $prev $rec [wviewer::dget $was cur {}]]
   set att [ase::attach_dbs $rawfile $sim_type $vcdfiles]
   foreach v [dict get $att skipped] {
     catch {::ase::echo "ase: digital database not attached (missing or unreadable): $v" error}
+  }
+  set now [wviewer::attach_db]
+  if {[wviewer::dget $att n 0] > 0} {
+    set attached($token) [dict replace $rec cur [wviewer::dget $now cur {}] same $same]
+  } else {
+    set same 0
+    catch {unset attached($token)}
   }
   # CASEMODE ITEM 5: the database this window's Case Mode readout describes has
   # just been replaced, so the cached verdict is about a file that is no longer
@@ -5278,7 +5354,12 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   # re-run of the same file silently discards it and puts the tick back on
   # `auto`. Costs one field write, no resolution. See casemode_reapply.
   wviewer::casemode_reapply $token $rawfile
-  wviewer::regenerate $token
+  if {$same} {
+    set keep [wviewer::view_keep $token $view]
+  } else {
+    set keep [wviewer::view_keep $token [wviewer::view_new_data $view $was $now]]
+  }
+  wviewer::regenerate $token $keep
   return 1
 }
 
@@ -5618,6 +5699,8 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
   wviewer::wave_hilight_clear_set $token
   if {$rawfile ne {} && [file isfile $rawfile] \
       && [wviewer::switch_ctx $token]} {
+    # issue 1733: data loaded by hand, so the next attach_raw is new data
+    wviewer::attach_forget $token
     catch {xschem raw clear}
     # --- R605: THE ATTACH COMES THROUGH R303's ONE DOOR ---------------------
     # doc/claude/specs/results_selection.md section 8. This used to be a bare
@@ -6967,18 +7050,15 @@ proc wviewer::view_align {keep sigs runs fresh {skip {}}} {
       if {![string is integer -strict $j] || $j < $f || $j > $l || $j in $skip} { continue }
       set s [lindex $sigs $j]
       if {[catch {dict size $s}] || ![llength [wviewer::dget $s tr {}]]} { continue }
-      lassign [wviewer::dget $s x {}] mx1 mx2 mlog
+      lassign [wviewer::dget $s x {}] mx1 mx2
       if {$mx1 ne {} && $mx2 ne {}} { continue }
       set e [lindex $keep $j]
       if {[catch {dict size $e}]} { set e {} }
       if {[dict exists $e x1]} { continue }
-      set src [wviewer::x_source [wviewer::dget $s tr {}]]
       set best {}
       set bestd -1
       dict for {i w} $shown {
-        set si [lindex $sigs $i]
-        if {[lindex [wviewer::dget $si x {}] 2] ne $mlog} { continue }
-        if {[wviewer::x_source [wviewer::dget $si tr {}]] ne $src} { continue }
+        if {![wviewer::x_same [lindex $sigs $i] $s]} { continue }
         set d [expr {abs($i - $j)}]
         if {$bestd < 0 || $d < $bestd} { set best $w ; set bestd $d }
       }
@@ -7007,10 +7087,83 @@ proc wviewer::x_source {traces} {
   return [lsort -unique $out]
 }
 
+# PURE: whether two strips (wviewer::axis_sigs entries, or drawn records, which
+# hold one) have THE SAME X: the same X scale and the same databases and X
+# columns behind their traces (wviewer::x_source). The one notion of "the same
+# X" this file has: view_align asks it of two strips on screen, and
+# view_new_data of one strip before and after new data (issue 1733).
+proc wviewer::x_same {sa sb} {
+  if {[catch {dict size $sa}] || [catch {dict size $sb}]} { return 0 }
+  if {[lindex [wviewer::dget $sa x {}] 2] ne [lindex [wviewer::dget $sb x {}] 2]} { return 0 }
+  return [expr {[wviewer::x_source [wviewer::dget $sa tr {}]] eq
+                [wviewer::x_source [wviewer::dget $sb tr {}]]}]
+}
+
 # The view of the strips as they are, for a rebuild that changes none of them:
 # view_take and view_keep in one.
 proc wviewer::live_axes {token} {
   return [wviewer::view_keep $token [wviewer::view_take $token]]
+}
+
+# THE VIEW FOR A REBUILD AFTER ONE SUBWINDOW'S STRIPS WERE REPLACED (issue 1733
+# review). ase::ui::auto_plot reads the view once attach_raw has kept it; then
+# Replace empties the target subwindow (Append plans its strips there) and the
+# rows go in. Handed to view_keep as it was, that view was matched by traces
+# across EVERY subwindow (view_map), so once the target subwindow's strip count
+# changed, a strip of a subwindow the plot never touched could take the view of
+# a strip of the emptied one, and the reverse: measured, a zoom landed on strips
+# nobody zoomed and a zoomed subwindow was reset on the same data.
+#
+# Here `view` (a view_take answer read BEFORE the strips were replaced) is
+# matched inside the subwindow only: `old` ({first last}) are the subwindow's
+# strips in `view`, `new` ({first last}) its strips now, and those take their
+# view from those records alone, by view_entries' rules. Every other strip keeps
+# what it shows NOW (view_take of the live rects, which every rebuild in between
+# carried). A strip of the subwindow that takes from nobody joins its
+# subwindow's X window (view_align), as in view_keep. `{}` (the plain rebuild)
+# on an unknown token or an empty view.
+proc wviewer::view_keep_subwin {token view old new} {
+  variable windows
+  if {![dict exists $windows $token] || ![llength $view]} { return {} }
+  set gs [wviewer::shared_graphs [wviewer::layout_for $token]]
+  set sigs [wviewer::axis_sigs $gs]
+  return [wviewer::view_within [wviewer::view_take $token] $view $sigs $old $new \
+            [wviewer::sw_runs $gs]]
+}
+
+# PURE: view_keep_subwin's answer, one regenerate `keep` entry per strip of
+# `sigs` (wviewer::axis_sigs of the strips about to be drawn). The strips `new`
+# take from `view`'s strips `old` only; every other strip from `live`, a
+# view_take answer with one record per strip of `sigs` (any other length gives
+# those strips nothing, the plain rebuild). `runs` and `skip` are view_align's.
+# A range that is not two integers in order inside its list takes nothing from
+# `view`: every strip is then judged by `live` alone, never by `view` across
+# subwindows.
+proc wviewer::view_within {live view sigs old new runs {skip {}}} {
+  set n [llength $sigs]
+  if {[llength $live] == $n} {
+    set keep [wviewer::view_entries $live $sigs]
+    set lfresh [wviewer::view_fresh $live $sigs]
+  } else {
+    set keep [lrepeat $n {}]
+    set lfresh {}
+  }
+  lassign $old f l
+  lassign $new f2 l2
+  set ok 1
+  foreach v [list $f $l $f2 $l2] { if {![string is integer -strict $v]} { set ok 0 } }
+  if {$ok && ($f < 0 || $l < $f || $l >= [llength $view]
+              || $f2 < 0 || $l2 < $f2 || $l2 >= $n)} { set ok 0 }
+  if {!$ok} {
+    return [wviewer::view_align $keep $sigs $runs $lfresh $skip]
+  }
+  set fresh {}
+  foreach j $lfresh { if {$j < $f2 || $j > $l2} { lappend fresh $j } }
+  set subv [lrange $view $f $l]
+  set subs [lrange $sigs $f2 $l2]
+  set keep [lreplace $keep $f2 $l2 {*}[wviewer::view_entries $subv $subs]]
+  foreach j [wviewer::view_fresh $subv $subs] { lappend fresh [expr {$f2 + $j}] }
+  return [wviewer::view_align $keep $sigs $runs [lsort -integer $fresh] $skip]
 }
 
 # PURE: one regenerate `keep` entry per strip of `sigs` (wviewer::axis_sigs of
@@ -7158,6 +7311,165 @@ proc wviewer::view_drop {e axes} {
   if {[string first x $axes] >= 0} { set e [dict remove $e x1 x2] }
   if {[string first y $axes] >= 0} { set e [dict remove $e y1 y2 ypos1 ypos2] }
   return $e
+}
+
+# --- NEW DATA UNDER A KEPT VIEW (issue 1733) ---------------------------------
+# User report 2026-11-22: a Direct Plot after a zoom snapped every strip back to
+# the full sweep, because wviewer::attach_raw re-read the raw and rebuilt every
+# strip with a plain regenerate. Ruling the same day, extending the fix to a
+# re-run: "yes, re-run which then plots in Replace mode should retain zoom
+# level, not reset it". attach_raw now tells the same data from new data
+# (wviewer::attach_is_same) and carries the view accordingly; the rules are in
+# doc/claude/specs/waveform_viewer.md, "Keeping the view across a rebuild".
+
+# PURE: a wviewer::view_take answer `view` taken on the data `was`, made into
+# the view a rebuild on the data `now` may carry (both wviewer::attach_db
+# answers). Hand it to wviewer::view_keep. Per strip, `cur` keeps only:
+#   * nothing at all when the strip's X is not the same thing on the new data
+#     (wviewer::x_same over wviewer::x_resolve: the analysis, the X column and
+#     the X scale). Another analysis is another plot: a transient's Y window
+#     over AC magnitudes shows nothing of the curve, so a moved Y goes with the
+#     X (issue 1733 review: a tran -> ac re-run left the curve off screen);
+#   * otherwise Y, when Y was moved (wviewer::view_zoomed);
+#   * and X, when X was moved, plus `xnew`, which makes regenerate keep the
+#     window only where it overlaps the new sweep.
+# The tracked dataset is never kept: it numbers the old data's datasets. A
+# strip with nothing moved keeps nothing, so it is rebuilt exactly as a plain
+# regenerate rebuilds it. Records that are not dicts are handed back as they are.
+proc wviewer::view_new_data {view was now} {
+  set out {}
+  foreach r $view {
+    if {[catch {dict size $r}]} { lappend out $r ; continue }
+    set cur [wviewer::dget $r cur {}]
+    set z [wviewer::view_zoomed $cur [wviewer::dget $r left {}]]
+    set c {}
+    if {[wviewer::x_same [wviewer::x_resolve $r $was] [wviewer::x_resolve $r $now]]} {
+      if {{x} in $z} {
+        foreach t {x1 x2} { if {[dict exists $cur $t]} { dict set c $t [dict get $cur $t] } }
+        dict set c xnew 1
+      }
+      if {{y} in $z} {
+        foreach t {y1 y2 ypos1 ypos2} { if {[dict exists $cur $t]} { dict set c $t [dict get $cur $t] } }
+      }
+    }
+    lappend out [dict replace $r cur $c]
+  }
+  return $out
+}
+
+# PURE: whether the X window a1..a2 overlaps b1..b2 by more than a point. A
+# side that is not two numbers overlaps everything (nothing to judge by, so the
+# window is kept), which is also what a fit the engine refused leaves behind.
+proc wviewer::x_overlaps {a1 a2 b1 b2} {
+  foreach v [list $a1 $a2 $b1 $b2] {
+    if {![string is double -strict $v]} { return 1 }
+  }
+  set lo [expr {max(min($a1, $a2), min($b1, $b2))}]
+  set hi [expr {min(max($a1, $a2), max($b1, $b2))}]
+  return [expr {$lo < $hi}]
+}
+
+# PURE: strip `s` (an axis_sigs entry or a drawn record) with each trace that
+# reads the CURRENT database (no `rawfile` key: wviewer::add_trace's "absent
+# means the current DB") given that database's analysis as its `sim_type` and,
+# when it has no X column of its own, the database's own X (its first vector)
+# as its `sweep`. `db` is a wviewer::attach_db answer. So x_same can compare one
+# strip across a change of data: a tran re-run is the same X, an ac file where
+# a tran was is not, and the file's path never enters into it.
+proc wviewer::x_resolve {s db} {
+  if {[catch {dict size $s}]} { return $s }
+  set type [wviewer::dget $db type {}]
+  set x0 [wviewer::dget $db x0 {}]
+  set trs {}
+  foreach tr [wviewer::dget $s tr {}] {
+    if {![catch {dict size $tr}] && ![dict exists $tr rawfile]} {
+      dict set tr sim_type $type
+      if {[string trim [wviewer::dget $tr sweep {}]] eq {}} { dict set tr sweep $x0 }
+    }
+    lappend trs $tr
+  }
+  return [dict replace $s tr $trs]
+}
+
+# The data the CURRENT context draws from, for attach_raw (the context must be
+# the viewer's): `type` (its analysis), `x0` (its first vector, the X a trace
+# with no X column of its own is drawn against) and `cur` (`{path type}` of the
+# current database, as `xschem raw info` spells them). {} when nothing is
+# loaded.
+proc wviewer::attach_db {} {
+  set l -1
+  catch {set l [xschem raw loaded]}
+  if {![string is integer -strict $l] || $l < 0} { return {} }
+  set type {}
+  catch {set type [xschem raw sim_type]}
+  set x0 {}
+  catch {set x0 [lindex [split [xschem raw list] "\n"] 0]}
+  set cur {}
+  catch {
+    set info [wviewer::rawinfo_parse [xschem raw info]]
+    foreach d [dict get $info dbs] {
+      if {[dict get $d idx] == [dict get $info cur]} {
+        set cur [list [dict get $d path] [dict get $d type]]
+      }
+    }
+  }
+  return [dict create type $type x0 $x0 cur $cur]
+}
+
+# What attach_raw is about to read, as it stands on disk: the normalized
+# paths, the requested analysis, and `stamp`, one `{mtime size}` per file (the
+# raw first, then each VCD; `{}` for one that cannot be read). The clock is the
+# file system's, so a rewrite that keeps the size within the same second of the
+# last attach is not seen (declared in the spec).
+proc wviewer::attach_stamp {rawfile sim_type {vcdfiles {}}} {
+  set st {}
+  foreach f [concat [list $rawfile] $vcdfiles] {
+    set s {}
+    catch {
+      file stat $f a_
+      set s [list $a_(mtime) $a_(size)]
+    }
+    lappend st $s
+  }
+  return [dict create path [file normalize $rawfile] sim_type $sim_type \
+            vcds [lmap v $vcdfiles {file normalize $v}] stamp $st]
+}
+
+# PURE: 1 when an attach of `rec` (a wviewer::attach_stamp answer) brings the
+# SAME DATA as the attach that left `prev` (the window's record, {} for none),
+# given that the context's current database is now `cur` (`{path type}`):
+# the same raw, analysis and VCDs, every file's mtime and size unchanged, and
+# the database that attach left current still current. Anything else is new
+# data, an empty or malformed record included.
+proc wviewer::attach_is_same {prev rec cur} {
+  if {[catch {dict size $prev} n] || $n == 0} { return 0 }
+  if {[catch {dict size $rec} n] || $n == 0} { return 0 }
+  foreach k {path sim_type vcds stamp} {
+    if {![dict exists $prev $k] || ![dict exists $rec $k]} { return 0 }
+    if {[dict get $prev $k] ne [dict get $rec $k]} { return 0 }
+  }
+  foreach s [dict get $rec stamp] { if {[llength $s] != 2} { return 0 } }
+  if {![dict exists $prev cur] || ![llength [dict get $prev cur]]} { return 0 }
+  return [expr {[dict get $prev cur] eq $cur}]
+}
+
+# Drop `token`'s record of its last attach, so the next wviewer::attach_raw
+# reads its data as NEW DATA. For every path that loads data into the viewer by
+# hand (the Location bar, Results > Select..., a restore, display_raw).
+# Returns 1 when there was one.
+proc wviewer::attach_forget {token} {
+  variable attached
+  if {![info exists attached($token)]} { return 0 }
+  unset attached($token)
+  return 1
+}
+
+# `token`'s record of its last attach ({} for none): wviewer::attach_stamp's
+# keys plus `cur` and `same` (that attach's own verdict). Read-only.
+proc wviewer::attach_record {token} {
+  variable attached
+  if {![info exists attached($token)]} { return {} }
+  return $attached($token)
 }
 
 # PURE: regenerate's record of the strips it drew, one dict per strip:
@@ -12038,6 +12350,10 @@ proc wviewer::rawbar_load {token path} {
     wviewer::browser_status $token "Location: could not read '[file tail $path]'"
     return 0
   }
+  # issue 1733 (R4): a file loaded by hand. Today's rebuild below is unchanged
+  # (new data fitted), and the next attach_raw must not take its data for the
+  # data it attached last, even when this load ends on that same file again.
+  wviewer::attach_forget $token
   wviewer::regenerate $token
   # $path, NOT the engine's spelling: the Location bar echoes what the user
   # typed and the replay log replays the gesture, not its resolution (R501c).

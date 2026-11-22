@@ -647,11 +647,16 @@ check "GZP19 pinned_axes: an axis is pinned only with BOTH ends given" \
 # is named here with the reason it does not. The population is gx_must + gx_pre
 # + gx_exempt, which GX4 holds equal to every call site, so a new rebuild
 # arrives as a red naming it.
-#   new data (the windows fitted the old data): display_raw attach_raw rawbar_load
+#   new data loaded by hand (the windows fitted the old data): display_raw rawbar_load
 #   the layout replaced or emptied: restore clear_all
 #   another tab's strips (the tab stash holds each tab's view): select_tab new_tab close_tab
 #   gx_pre: the view is frozen into the MODEL first (GX3), so the plain rebuild shows it
-set gvc_plain [concat {display_raw attach_raw rawbar_load restore clear_all
+# attach_raw is NOT in the list since issue 1733 (user report and ruling
+# 2026-11-22: a Direct Plot, and a re-run that plots in Replace mode, keep the
+# zoom). It carries: the same data by add_trace's rule, new data by
+# view_new_data's (GZP27-GZP31 here, band PV of test_ase_plot_outputs on the
+# real path).
+set gvc_plain [concat {display_raw rawbar_load restore clear_all
                        select_tab new_tab close_tab} $gx_pre]
 set gvc_bad {}
 set gvc_carry {}
@@ -674,6 +679,24 @@ check_true "GZP20 ...and the scan found both kinds (add_trace carries, restore d
   [expr {{add_trace} in $gvc_carry && {state_apply} in $gvc_carry && {apply_range} in $gvc_carry
          && {restore} ni $gvc_carry && [llength $gvc_carry] + [llength $gvc_plain]
             == [llength $gx_must] + [llength $gx_pre] + [llength $gx_exempt]}]
+check_true "GZP20 attach_raw is one that carries (issue 1733), and the hand loads are not" \
+  [expr {{attach_raw} in $gvc_carry && {rawbar_load} ni $gvc_carry && {display_raw} ni $gvc_carry}]
+# attach_raw's own ORDER, which GZP21's model-write patterns cannot see: it
+# writes no model, it replaces the DATA. The view and the data the view was
+# drawn on are read before ase::attach_dbs moves the registry, the data it
+# brings after, and the rebuild is handed what the verdict picked.
+set gvc_ab [wvproc_body $wsrc wviewer::attach_raw]
+set gvc_ai [string first {ase::attach_dbs $rawfile} $gvc_ab]
+check_true "GZP21 attach_raw reads the view, the old data and the files BEFORE attach_dbs, the new data after" \
+  [expr {$gvc_ai > 0
+         && [string first {set view [wviewer::view_take $token]} $gvc_ab] >= 0
+         && [string first {set view [wviewer::view_take $token]} $gvc_ab] < $gvc_ai
+         && [string first {set was [wviewer::attach_db]} $gvc_ab] < $gvc_ai
+         && [string first {set rec [wviewer::attach_stamp } $gvc_ab] < $gvc_ai
+         && [string first {wviewer::attach_is_same $prev $rec} $gvc_ab] < $gvc_ai
+         && [string first {set now [wviewer::attach_db]} $gvc_ab] > $gvc_ai}]
+check_true "GZP21 ...same data: view_keep as add_trace hands it; new data: view_keep over view_new_data" \
+  [expr {[regexp {if \{\$same\} \{\s*set keep \[wviewer::view_keep \$token \$view\]\s*\} else \{\s*set keep \[wviewer::view_keep \$token \[wviewer::view_new_data \$view \$was \$now\]\]\s*\}\s*wviewer::regenerate \$token \$keep} $gvc_ab]}]
 # ORDER: the view is read off the rects BEFORE the proc writes the model.
 foreach p $gvc_carry {
   set gvc_b [wvproc_body $wsrc wviewer::$p]
@@ -758,6 +781,696 @@ check "GZP25 x_source: traces on the loaded sweep are one source; a database or 
         [expr {[wviewer::x_source [list $gvm_A]] eq [wviewer::x_source [list [dict replace $gvm_A rawfile /x.raw]]]}] \
         [expr {[wviewer::x_source [list $gvm_A]] eq [wviewer::x_source [list [dict replace $gvm_A sweep vx]]]}]] \
   {1 0 0}
+# ============================================================================
+# GZP27.. — NEW DATA UNDER A KEPT VIEW (issue 1733; user report 2026-11-22: a
+# Direct Plot after a zoom snapped every strip back to the full sweep; ruling the
+# same day: "yes, re-run which then plots in Replace mode should retain zoom
+# level, not reset it"). The pure half; the real path (dp_finish, plot_outputs,
+# a rewritten raw, a hand load in between) is band PV of
+# tests/headless/test_ase_plot_outputs.tcl, display arm.
+# ============================================================================
+# the data a view was drawn on, as wviewer::attach_db answers it
+set gzn_tran  {type tran x0 time cur {/r/a.raw tran}}
+set gzn_tran2 {type tran x0 time cur {/r/b.raw tran}}
+set gzn_ac    {type ac x0 frequency cur {/r/a.raw ac}}
+set gzn_dc1   {type dc x0 v-sweep cur {/r/a.raw dc}}
+set gzn_dc2   {type dc x0 i-sweep cur {/r/a.raw dc}}
+set gzn_s     [lindex [gve_sig [list $gvm_A $gvm_B]] 0]
+# Every answer of a verb issue 1733 added is read through one of these, which
+# answer a VALUE (ABSENT, NOPROC) on any failure, never raise: on a tree without
+# the verb (the pre-fix sources swapped in) these bands ASSERT red, and every
+# row after them still runs, instead of the suite dying on a bare `dict get`.
+proc gzn_dg {d args} {
+  if {[catch {dict get $d {*}$args} v]} { return ABSENT }
+  return $v
+}
+# dget with a default for an absent key, ABSENT for an answer that is no dict
+proc gzn_dd {d k def} {
+  if {[catch {dict exists $d $k} e]} { return ABSENT }
+  if {$e} { return [dict get $d $k] }
+  return $def
+}
+proc gzn_ex {d k} {
+  if {[catch {dict exists $d $k} e]} { return ABSENT }
+  return $e
+}
+proc gzn_args {p} {
+  if {[catch {info args $p} v]} { return NOPROC }
+  return $v
+}
+check "GZP27 x_resolve: a trace on the current database takes its analysis and its X; the path does not enter" \
+  [lmap gzn_t [gzn_dg [pcall {wviewer::x_resolve $gzn_s $gzn_tran}] tr] {
+     list [gzn_dg $gzn_t sim_type] [gzn_dg $gzn_t sweep] [gzn_ex $gzn_t rawfile]}] \
+  {{tran time 0} {tran time 0}}
+check "GZP27 ...a trace on a database of its own, or with an X column of its own, keeps it" \
+  [lmap gzn_t [gzn_dg [pcall {wviewer::x_resolve [lindex [gve_sig [list \
+       [dict replace $gvm_A rawfile /v.vcd sim_type vcd] [dict replace $gvm_B sweep vx]]] 0] $gzn_tran}] tr] {
+     list [gzn_dd $gzn_t sim_type {}] [gzn_dd $gzn_t sweep {}]}] \
+  {{vcd {}} {tran vx}}
+check "GZP27 x_same over x_resolve: a tran re-run, and another tran file, are the same X" \
+  [list [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s $gzn_tran] [wviewer::x_resolve $gzn_s $gzn_tran]}] \
+        [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s $gzn_tran] [wviewer::x_resolve $gzn_s $gzn_tran2]}]] {1 1}
+check "GZP27 ...another analysis, another X column, another X scale, or no data before, are not" \
+  [list [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s $gzn_tran] [wviewer::x_resolve $gzn_s $gzn_ac]}] \
+        [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s $gzn_dc1] [wviewer::x_resolve $gzn_s $gzn_dc2]}] \
+        [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s $gzn_tran] \
+                  [wviewer::x_resolve [dict replace $gzn_s x {{} {} 1}] $gzn_tran]}] \
+        [pcall {wviewer::x_same [wviewer::x_resolve $gzn_s {}] [wviewer::x_resolve $gzn_s $gzn_tran]}]] {0 0 0 0}
+check "GZP27 view_align asks x_same, the one notion of the same X (no second copy of it)" \
+  [list [regexp -all {wviewer::x_same } [wvproc_body $wsrc wviewer::view_align]] \
+        [regexp -all {wviewer::x_source } [wvproc_body $wsrc wviewer::view_align]]] {1 0}
+
+# wviewer::view_new_data, PURE: the view a rebuild on new data may carry
+proc gzn_view {cur {left {}}} {
+  global gvz_left gzn_s
+  if {$left eq {}} { set left $gvz_left }
+  return [list [dict replace $gzn_s left $left cur $cur]]
+}
+proc gzn_cur {v} {
+  if {[catch {dict get [lindex $v 0] cur} c]} { return ABSENT }
+  return $c
+}
+# the first record of a view without its `cur`, ABSENT for an answer that is no view
+proc gzn_rest {v} {
+  if {[catch {dict remove [lindex $v 0] cur} r]} { return ABSENT }
+  return $r
+}
+check "GZP28 nothing moved: nothing kept, so the strip is rebuilt as a plain regenerate rebuilds it" \
+  [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_fit] $gzn_tran $gzn_tran}]] {}
+check "GZP28 X moved: X kept with xnew, the Y nobody moved is NOT, nor the dataset" \
+  [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_zx] $gzn_tran $gzn_tran2}]] {x1 0.2 x2 0.4 xnew 1}
+check "GZP28 both moved: both kept" \
+  [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_zxy] $gzn_tran $gzn_tran}]] \
+  {x1 0.2 x2 0.4 xnew 1 y1 2 y2 3 ypos1 0 ypos2 2}
+check "GZP28 Y moved alone: Y kept, X fitted" \
+  [gzn_cur [pcall {wviewer::view_new_data [gzn_view {x1 0 x2 1 y1 2 y2 3 ypos1 0 ypos2 2 dataset -1}] \
+                     $gzn_tran $gzn_tran}]] {y1 2 y2 3 ypos1 0 ypos2 2}
+# (issue 1733 review: a moved Y kept over another analysis left the curve off
+# screen, a tran window over AC magnitudes)
+check "GZP28 no longer the same X (an ac file where a tran was): another plot, nothing kept, a moved Y neither" \
+  [list [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_zx] $gzn_tran $gzn_ac}]] \
+        [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_zxy] $gzn_tran $gzn_ac}]] \
+        [gzn_cur [pcall {wviewer::view_new_data [gzn_view {x1 0 x2 1 y1 2 y2 3 ypos1 0 ypos2 2 dataset -1}] \
+                           $gzn_tran $gzn_ac}]] \
+        [gzn_cur [pcall {wviewer::view_new_data [gzn_view $gve_zxy] $gzn_dc1 $gzn_dc2}]]] \
+  {{} {} {} {}}
+check "GZP28 a tracked dataset is never kept (it numbers the old data's datasets)" \
+  [gzn_ex [gzn_cur [pcall {wviewer::view_new_data \
+     [gzn_view {x1 0.2 x2 0.4 y1 2 y2 3 ypos1 0 ypos2 2 dataset 3}] $gzn_tran $gzn_tran}]] dataset] 0
+check "GZP28 every other key of the record is handed on; a record that is not a dict is handed back" \
+  [list [gzn_rest [pcall {wviewer::view_new_data [gzn_view $gve_zx] $gzn_tran $gzn_tran}]] \
+        [pcall {wviewer::view_new_data [list {a b c}] $gzn_tran $gzn_tran}]] \
+  [list [dict replace $gzn_s left $gvz_left] {{a b c}}]
+# ...and what view_entries (view_keep's first half) makes of it: the entries
+# regenerate gets, through the very rules every other rebuild uses
+check "GZP29 view_entries over view_new_data: X zoomed, Y not -- X with xnew and left, no Y, no dataset" \
+  [pcall {wviewer::view_entries [wviewer::view_new_data [gzn_view $gve_zx] $gzn_tran $gzn_tran2] \
+            [list $gzn_s]}] [list [dict create x1 0.2 x2 0.4 xnew 1 left $gvz_left]]
+check "GZP29 ...the same strip, the SAME data (view_keep alone): both axes and the dataset, as add_trace" \
+  [pcall {wviewer::view_entries [gzn_view $gve_zx] [list $gzn_s]}] \
+  [list [dict replace $gve_zx left $gvz_left]]
+check "GZP29 ...nothing zoomed on new data: the plain rebuild's empty entry" \
+  [pcall {wviewer::view_entries [wviewer::view_new_data [gzn_view $gve_fit] $gzn_tran $gzn_tran2] \
+            [list $gzn_s]}] {{}}
+
+# wviewer::attach_is_same, PURE: the same data, or new data
+set gzn_rec  {path /r/a.raw sim_type tran vcds {} stamp {{100 4636}}}
+set gzn_prev [dict replace $gzn_rec cur {/r/a.raw tran} same 0]
+check "GZP30 the same file, analysis and VCDs, unchanged on disk, its database still current: the same data" \
+  [pcall {wviewer::attach_is_same $gzn_prev $gzn_rec {/r/a.raw tran}}] 1
+check "GZP30 ...the mtime moved (a same-size rewrite), or the size moved: new data" \
+  [list [pcall {wviewer::attach_is_same $gzn_prev [dict replace $gzn_rec stamp {{101 4636}}] {/r/a.raw tran}}] \
+        [pcall {wviewer::attach_is_same $gzn_prev [dict replace $gzn_rec stamp {{100 4637}}] {/r/a.raw tran}}]] {0 0}
+check "GZP30 ...another file, analysis or VCD list: new data" \
+  [list [pcall {wviewer::attach_is_same $gzn_prev [dict replace $gzn_rec path /r/b.raw] {/r/a.raw tran}}] \
+        [pcall {wviewer::attach_is_same $gzn_prev [dict replace $gzn_rec sim_type ac] {/r/a.raw tran}}] \
+        [pcall {wviewer::attach_is_same $gzn_prev [dict replace $gzn_rec vcds {/r/d.vcd} \
+                  stamp {{100 4636} {100 9}}] {/r/a.raw tran}}]] {0 0 0}
+check "GZP30 ...a VCD rewritten under an unchanged raw: new data" \
+  [pcall {wviewer::attach_is_same [dict replace $gzn_prev vcds {/r/d.vcd} stamp {{100 4636} {100 9}}] \
+            [dict replace $gzn_rec vcds {/r/d.vcd} stamp {{100 4636} {102 9}}] {/r/a.raw tran}}] 0
+check "GZP30 ...another database current now (something loaded or switched since): new data" \
+  [list [pcall {wviewer::attach_is_same $gzn_prev $gzn_rec {/r/x.raw tran}}] \
+        [pcall {wviewer::attach_is_same $gzn_prev $gzn_rec {}}]] {0 0}
+check "GZP30 ...no record, a record with no current database, or a file that could not be read: new data" \
+  [list [pcall {wviewer::attach_is_same {} $gzn_rec {/r/a.raw tran}}] \
+        [pcall {wviewer::attach_is_same [dict replace $gzn_prev cur {}] $gzn_rec {}}] \
+        [pcall {wviewer::attach_is_same [dict replace $gzn_prev stamp {{}}] \
+                  [dict replace $gzn_rec stamp {{}}] {/r/a.raw tran}}]] {0 0 0}
+# the stamp itself, on a real file: both halves are read, and they are the file system's
+set gzn_f [file join $scratch gzn_stamp.raw]
+set fp [open $gzn_f w]; puts -nonewline $fp [string repeat x 37]; close $fp
+file mtime $gzn_f 1000000
+set gzn_st [pcall {wviewer::attach_stamp $gzn_f tran}]
+check "GZP30 attach_stamp: the normalized path, the analysis, and the raw's {mtime size}" \
+  [list [gzn_dd $gzn_st path {}] [gzn_dd $gzn_st sim_type {}] \
+        [gzn_dd $gzn_st vcds {}] [gzn_dd $gzn_st stamp {}]] \
+  [list [file normalize $gzn_f] tran {} {{1000000 37}}]
+file mtime $gzn_f 1000007
+check "GZP30 ...an mtime moved with the size kept moves the stamp, and the verdict" \
+  [list [gzn_dd [pcall {wviewer::attach_stamp $gzn_f tran}] stamp {}] \
+        [pcall {wviewer::attach_is_same [dict replace $gzn_st cur {p t}] \
+                  [wviewer::attach_stamp $gzn_f tran] {p t}}]] {{{1000007 37}} 0}
+file delete $gzn_f
+
+# wviewer::x_overlaps, PURE
+check "GZP31 x_overlaps: inside, across an end, beyond, touching at a point" \
+  [list [pcall {wviewer::x_overlaps 2 4 0 10}] [pcall {wviewer::x_overlaps 8 12 0 10}] \
+        [pcall {wviewer::x_overlaps 12 14 0 10}] [pcall {wviewer::x_overlaps 10 14 0 10}]] {1 1 0 0}
+check "GZP31 ...a side that is not two numbers keeps the window" \
+  [list [pcall {wviewer::x_overlaps 2 4 {} 10}] [pcall {wviewer::x_overlaps 2 x 0 10}]] {1 1}
+# regenerate's `xnew` arm: the window is checked against a fit of the strip,
+# put back when they overlap, and on a miss dropped from the entry the record
+# is written from (so the X reads as fitted at the next rebuild)
+set gzn_rg [wvproc_body $wsrc wviewer::regenerate]
+check_true "GZP31 regenerate fits an xnew strip's X, keeps the window on an overlap, drops it from the record on a miss" \
+  [expr {[string first {[dict exists $k_ xnew]} $gzn_rg] >= 0
+         && [string first {wviewer::x_overlaps} $gzn_rg] > [string first {[dict exists $k_ xnew]} $gzn_rg]
+         && [string first {lset keep $gi_ $k_} $gzn_rg] > [string first {wviewer::x_overlaps} $gzn_rg]
+         && [string first {lset keep $gi_ $k_} $gzn_rg]
+            < [string first {set lefts_ [wviewer::rect_axes} $gzn_rg]}]
+check "GZP32 the signatures of the new-data procs" \
+  [list [gzn_args wviewer::view_new_data] [gzn_args wviewer::x_resolve] [gzn_args wviewer::x_same] \
+        [gzn_args wviewer::attach_is_same] [gzn_args wviewer::attach_stamp] \
+        [pcall {info default wviewer::attach_stamp vcdfiles gzn_d; set gzn_d}] \
+        [gzn_args wviewer::attach_forget] [gzn_args wviewer::attach_record] \
+        [gzn_args wviewer::x_overlaps] [gzn_args wviewer::attach_raw]] \
+  [list {view was now} {s db} {sa sb} {prev rec cur} {rawfile sim_type vcdfiles} {} token token \
+        {a1 a2 b1 b2} {token rawfile sim_type vcdfiles}]
+check "GZP32 attach_forget / attach_record on a window with no record: nothing, no throw" \
+  [list [pcall {wviewer::attach_forget no_such_viewer}] [pcall {wviewer::attach_record no_such_viewer}]] {0 {}}
+
+# R4: WHO MAY CHANGE A VIEWER'S DATA. Every proc that changes the raw registry
+# or the current database (or calls the door that does) is classified, so a new
+# loader arrives as a red naming it. The verdict that same data is the same also
+# asks the CURRENT database to be the one attach_raw left (attach_is_same's
+# `cur`), which catches every loader that leaves another database current; the
+# explicit drops are the hand loads, which can end on the attached file again.
+#
+# THE VERBS are derived from the C side, not listed by hand (review round 3: a
+# hand-kept prefix filter over the scheduler's names missed `xschem
+# annotate_op`, whose branch clears the registry and reads a file into it). A
+# LOADER is a top-level verb of src/scheduler.c, or a sub-verb of its `raw`
+# (alias `raw_query`) branch, whose branch text calls a REGISTRY FUNCTION. The
+# registry functions are extra_rawfile in any mode but 4 (mode 4 only prints
+# the registry; a mode that is no literal counts) and free_rawfile; every
+# function of src/save.c, src/vcd_read.c and src/scheduler.c whose body writes
+# the registry (xctx->raw, xctx->extra_idx, xctx->extra_prev_idx,
+# xctx->extra_raw_n, an extra_raw_arr[] slot); and, to a fixpoint, every
+# function of those three files that calls one of them (among them raw_read,
+# read_rawfile_by_type, raw_read_from_attr, table_read, vcd_read, new_rawfile,
+# raw_select and scheduler.c's raw_case_reread, the names a row below requires
+# the derived set to include; it holds others besides). A
+# function that compares argv[1] is a dispatcher, never a registry function.
+# The text is read with every comment and the inside of every string blanked,
+# so a name in a comment or a message is no call. A branch runs from its
+# `strcmp(argv[1], "...")` to the next one or to its function's closing brace
+# in column 0; a name whose stretch holds no statement is an alias of the next
+# (`raw` of `raw_query`). The `raw` branch's own two names carry the
+# sub-verbs, which are split the same way on `strcmp(argv[2], "...")`. So
+# `raw case` is a loader (raw_case_reread drops the current database and reads
+# it again); its bare form, which the C answers from a field, is the one query
+# form the scan knows (gzr_vbare, pinned on the C below).
+# BLIND on the C side, declared: a branch that reaches the registry through a
+# function of another file (src/draw.c's graph walkers, a schematic load), a
+# function whose body is not closed by a brace in column 0, and a registry
+# write through a pointer alias.
+proc gzr_cblank {src} {
+  set out {}
+  set i 0
+  set n [string length $src]
+  while {[regexp -start $i -indices {/\*|//|"|'} $src m]} {
+    set a [lindex $m 0]
+    append out [string range $src $i [expr {$a - 1}]]
+    set tok [string range $src $a [lindex $m 1]]
+    if {$tok eq {/*}} {
+      set e [string first {*/} $src [expr {$a + 2}]]
+      set e [expr {$e < 0 ? $n - 1 : $e + 1}]
+      append out [regsub -all {[^\n]} [string range $src $a $e] { }]
+    } elseif {$tok eq {//}} {
+      set e [string first "\n" $src $a]
+      set e [expr {$e < 0 ? $n - 1 : $e - 1}]
+      append out [regsub -all {[^\n]} [string range $src $a $e] { }]
+    } else {
+      # a string or character literal: its closing quote, a backslash escaping
+      # the next character; an unclosed one is the quote alone
+      set e $a
+      if {[regexp -start [expr {$a + 1}] -indices "(?:\[^$tok\\\\\\n\]|\\\\.)*$tok" $src mm]
+          && [lindex $mm 0] == $a + 1} {
+        set e [lindex $mm 1]
+      }
+      if {$e > $a} {
+        append out $tok [regsub -all {[^\n]} [string range $src [expr {$a + 1}] [expr {$e - 1}]] { }] $tok
+      } else {
+        append out $tok
+      }
+    }
+    set i [expr {$e + 1}]
+  }
+  append out [string range $src $i end]
+  return $out
+}
+# {name -> body} of every function defined in a blanked text whose name line
+# starts in column 0 and whose body closes with a brace in column 0
+proc gzr_cfuncs {bl} {
+  set out [dict create]
+  foreach {m nm} [regexp -all -inline -indices \
+                    {\n(?:[A-Za-z_][^\n;{}()=]*[ \t*])?([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{} $bl] {
+    set st [lindex $m 1]
+    set e [string first "\n\}" $bl $st]
+    if {$e < 0} { set e [string length $bl] }
+    dict set out [string range $bl {*}$nm] [string range $bl $st $e]
+  }
+  return $out
+}
+# a write to the registry's fields
+proc gzr_cwr {} {
+  return {xctx->(?:raw|extra_idx|extra_prev_idx|extra_raw_n)\s*(?:=[^=]|\+\+|--|[-+]=)|extra_raw_arr\[[^\]]*\]\s*=[^=]}
+}
+# does a blanked text call a function of `k`, or write the registry?
+# (extra_rawfile only in a mode that is not the literal 4)
+proc gzr_ccalls {body k} {
+  if {[regexp [gzr_cwr] $body]} { return 1 }
+  foreach f $k {
+    if {$f eq {extra_rawfile}} {
+      foreach {- a} [regexp -all -inline {\mextra_rawfile\s*\(\s*([^,)]*)} $body] {
+        if {[string trim $a] ne {4}} { return 1 }
+      }
+    } elseif {[regexp "\\m$f\\s*\\(" $body]} {
+      return 1
+    }
+  }
+  return 0
+}
+# the registry functions of a {name -> body} dict, by the rule above
+proc gzr_kset {funcs} {
+  set k {extra_rawfile free_rawfile}
+  dict for {f b} $funcs {
+    if {[regexp {strcmp\(argv\[1\]} $b]} { dict unset funcs $f }
+  }
+  while 1 {
+    set grew 0
+    dict for {f b} $funcs {
+      if {$f ni $k && [gzr_ccalls $b $k]} { lappend k $f ; set grew 1 }
+    }
+    if {!$grew} { return $k }
+  }
+}
+# {name -> 1 loader / 0 not} for the branches `strcmp(argv[<w>], "name")` of
+# the blanked text `bl` (its source `src`, same offsets) between offsets
+# `from` and `to`
+proc gzr_cbranches {src bl w from to k} {
+  set at {}
+  foreach m [regexp -all -inline -indices -start $from "strcmp\\(argv\\\[$w\\\],\\s*\"" $bl] {
+    set a [lindex $m 0]
+    if {$a >= $to} { break }
+    regexp -start $a "strcmp\\(argv\\\[$w\\\],\\s*\"(\[^\"\]*)\"" $src -> nm
+    lappend at [list $a $nm [lindex $m 1]]
+  }
+  set out [dict create]
+  set next {}
+  for {set j [expr {[llength $at] - 1}]} {$j >= 0} {incr j -1} {
+    lassign [lindex $at $j] a nm b
+    set e [expr {$j + 1 < [llength $at] ? [lindex $at [expr {$j + 1}] 0] : $to}]
+    set fe [string first "\n\}" $bl $a]
+    if {$fe >= 0 && $fe < $e} { set e $fe }
+    set body [string range $bl [expr {$b + 1}] [expr {$e - 1}]]
+    if {$fe != $e && ![regexp {[;\{]} $body] && $next ne {}} {
+      set v $next
+    } else {
+      set v [gzr_ccalls $body $k]
+    }
+    if {![dict exists $out $nm] || $v} { dict set out $nm $v }
+    set next $v
+  }
+  return $out
+}
+# the names a {name -> verdict} dict answers `v` for
+proc gzr_cwith {d v} { lsort [dict keys [dict filter $d value $v]] }
+# the method on a C text written here: a helper reaching free_rawfile, an
+# alias head, a registry write, a mode in a variable, mode 4 with the names in
+# a comment and a string, and a branch followed by a function the scan must
+# not give to it
+set gzr_cfx {
+static int qhelper(void)
+{
+  free_rawfile(&xctx->raw, 1, 0);
+  return 1;
+}
+static int qquiet(void)
+{
+  /* extra_rawfile(1, f, NULL, -1.0, -1.0); */
+  Tcl_SetResult(interp, "free_rawfile(): none", TCL_STATIC);
+  return extra_rawfile(4, NULL, NULL, -1.0, -1.0);
+}
+static int xschem_cmds_q(Tcl_Interp *interp, int argc, const char *argv[], int *cmd_found)
+{
+  if(!strcmp(argv[1], "qload")) {
+    qhelper();
+  }
+  else if(!strcmp(argv[1], "qalias") || !strcmp(argv[1], "qread")) {
+    extra_rawfile(1, argv[2], NULL, -1.0, -1.0);
+  }
+  else if(!strcmp(argv[1], "qinfo")) {
+    qquiet();
+  }
+  else if(!strcmp(argv[1], "qwrite")) {
+    xctx->extra_idx = 0;
+  }
+  else if(!strcmp(argv[1], "qmode")) {
+    extra_rawfile(what, NULL, NULL, -1.0, -1.0);
+  }
+  else if(!strcmp(argv[1], "qlast")) {
+    return 0;
+  }
+  return 1;
+}
+static int qafter(void)
+{
+  extra_rawfile(3, NULL, NULL, -1.0, -1.0);
+  return 0;
+}
+}
+set gzr_cfxb [gzr_cblank $gzr_cfx]
+set gzr_cfxk [gzr_kset [gzr_cfuncs $gzr_cfxb]]
+set gzr_cfxd [gzr_cbranches $gzr_cfx $gzr_cfxb 1 0 [string length $gzr_cfx] $gzr_cfxk]
+check "GZP33 the C derivation, on a text written here: a helper's call, an alias, a registry write and a variable mode load; mode 4, a comment, a string and the function after the dispatcher do not" \
+  [list [lsort $gzr_cfxk] [gzr_cwith $gzr_cfxd 1] [gzr_cwith $gzr_cfxd 0] \
+        [string length $gzr_cfxb] [string first {free_rawfile(): none} $gzr_cfxb]] \
+  [list {extra_rawfile free_rawfile qafter qhelper} {qalias qload qmode qread qwrite} {qinfo qlast} \
+        [string length $gzr_cfx] -1]
+set gzr_cb [dict create]
+set gzr_cf [dict create]
+foreach gzr_c {scheduler.c save.c vcd_read.c} {
+  set fp [open [file join $repo src $gzr_c] r]; set gzr_t [read $fp]; close $fp
+  dict set gzr_cb $gzr_c [gzr_cblank $gzr_t]
+  if {$gzr_c eq {scheduler.c}} { set gzr_csrc $gzr_t }
+  set gzr_cf [dict merge $gzr_cf [gzr_cfuncs [dict get $gzr_cb $gzr_c]]]
+}
+set gzr_k [gzr_kset $gzr_cf]
+set gzr_kmiss {}
+foreach gzr_v {raw_read read_rawfile_by_type raw_read_from_attr table_read vcd_read new_rawfile
+               raw_select raw_case_reread} {
+  if {$gzr_v ni $gzr_k} { lappend gzr_kmiss $gzr_v }
+}
+check "GZP33 the registry functions, by writes and calls to a fixpoint, include the readers, raw_select and raw_case_reread (non-vacuity)" \
+  $gzr_kmiss {}
+set gzr_cbl [dict get $gzr_cb scheduler.c]
+set gzr_top [gzr_cbranches $gzr_csrc $gzr_cbl 1 0 [string length $gzr_cbl] $gzr_k]
+# the `raw` branch: its head names the carriers; it ends where the next
+# top-level verb starts or its function closes
+set gzr_a [string first {!strcmp(argv[1], "raw") || !strcmp(argv[1], "raw_query")} $gzr_csrc]
+set gzr_tcarry {}
+set gzr_b [string length $gzr_cbl]
+if {$gzr_a >= 0} {
+  set gzr_h [string range $gzr_csrc $gzr_a [expr {[string first "\n" $gzr_csrc $gzr_a] - 1}]]
+  foreach {- gzr_v} [regexp -all -inline {strcmp\(argv\[1\], "([a-z_]+)"\)} $gzr_h] { lappend gzr_tcarry $gzr_v }
+  if {[regexp -start [expr {$gzr_a + [string length $gzr_h]}] -indices {strcmp\(argv\[1\],\s*"} $gzr_cbl gzr_m]} {
+    set gzr_b [lindex $gzr_m 0]
+  }
+  set gzr_fe [string first "\n\}" $gzr_cbl $gzr_a]
+  if {$gzr_fe >= 0 && $gzr_fe < $gzr_b} { set gzr_b $gzr_fe }
+}
+set gzr_sub [gzr_cbranches $gzr_csrc $gzr_cbl 2 [expr {max($gzr_a, 0)}] $gzr_b $gzr_k]
+set gzr_vload [gzr_cwith $gzr_sub 1]
+set gzr_vother [gzr_cwith $gzr_sub 0]
+set gzr_tload {}
+foreach gzr_v [gzr_cwith $gzr_top 1] { if {$gzr_v ni $gzr_tcarry} { lappend gzr_tload $gzr_v } }
+set gzr_sw {}
+foreach gzr_v {read clear switch switch_back select new case table_read vcd_read} {
+  if {$gzr_v ni $gzr_vload} { lappend gzr_sw +$gzr_v }
+}
+foreach gzr_v {info list value values index add vars} {
+  if {$gzr_v ni $gzr_vother} { lappend gzr_sw -$gzr_v }
+}
+check "GZP33 the raw sub-verbs whose C branch calls a registry function are the loaders: read, clear, the switches, select, new and case among them; info, list, value and add not (non-vacuity both ways)" \
+  [list $gzr_tcarry $gzr_sw] {{raw raw_query} {}}
+set gzr_tw {}
+foreach gzr_v {annotate_op raw_clear raw_read raw_read_from_attr table_read vcd_read} {
+  if {$gzr_v ni $gzr_tload} { lappend gzr_tw +$gzr_v }
+}
+foreach gzr_v {get set getprop redraw netlist} {
+  if {$gzr_v ni [gzr_cwith $gzr_top 0]} { lappend gzr_tw -$gzr_v }
+}
+check "GZP33 ...and the top-level verbs whose C branch calls one: annotate_op, raw_clear, raw_read, raw_read_from_attr, table_read and vcd_read among them; get, set, getprop, redraw and netlist not" \
+  $gzr_tw {}
+# the one query form: `raw case` with no mode answers the database's flag. Its
+# registry call must sit inside the `if(argc > 3)` block its branch opens with,
+# and the rest of the branch must call none, or the bare form is a loader too
+set gzr_vbare {case}
+proc gzr_cbody_split {bl from to} {
+  # {inside outside} of the block that the first `if(argc > 3)` in from..to opens
+  if {![regexp -start $from -indices {if\s*\(\s*argc\s*>\s*3\s*\)\s*\{} $bl m] || [lindex $m 1] >= $to} {
+    return [list {} [string range $bl $from $to]]
+  }
+  set o [lindex $m 1]
+  set d 0
+  for {set i $o} {$i < $to} {incr i} {
+    set c [string index $bl $i]
+    if {$c eq "\{"} { incr d } elseif {$c eq "\}"} { incr d -1 ; if {$d == 0} { break } }
+  }
+  return [list [string range $bl $o $i] [string cat [string range $bl $from [expr {$o - 1}]] [string range $bl [expr {$i + 1}] $to]]]
+}
+set gzr_bare {}
+foreach gzr_v $gzr_vbare {
+  set gzr_p [string first "strcmp(argv\[2\], \"$gzr_v\")" $gzr_csrc $gzr_a]
+  set gzr_q -1
+  if {$gzr_p >= 0 && [regexp -start [expr {$gzr_p + 10}] -indices {strcmp\(argv\[2\],\s*"} $gzr_cbl gzr_m]} {
+    set gzr_q [lindex $gzr_m 0]
+  }
+  if {$gzr_q < 0 || $gzr_q > $gzr_b} { set gzr_q $gzr_b }
+  lassign [gzr_cbody_split $gzr_cbl [expr {max($gzr_p, 0)}] $gzr_q] gzr_in gzr_out
+  lappend gzr_bare [list $gzr_v [expr {$gzr_p >= 0}] [gzr_ccalls $gzr_in $gzr_k] [gzr_ccalls $gzr_out $gzr_k]]
+}
+check "GZP33 the bare-form query (raw case): its branch calls a registry function only inside its if(argc > 3) block" \
+  $gzr_bare {{case 1 1 0}}
+# THE PROCS: a code line is a loader's when it names a loader verb, the door
+# procs (ase::attach_dbs, results::select), or `xschem raw` with a verb that is
+# no plain word (a variable, a substitution, nothing on the line), which is
+# taken for a loader, fail closed; `xschem raw case` with nothing after it in
+# its command is the query form above. Lines are given to the proc whose body
+# holds them (gzr_walk: Tcl's brace rule over each file, a proc nested in a
+# `namespace eval` or another body qualified by the namespaces around it); a
+# line outside every proc -- a string in a quiz bank, a top-level comment -- is
+# no loader.
+# BLIND on the Tcl side, declared: a loader in a callback script registered at
+# the top level (a `trace`, `bind` or `after` outside every proc: its lines
+# belong to no proc); a call whose words are not spelt out on the line, such as
+# `xschem {*}$cmd` (no `raw` word, no loader verb), a verb assembled from
+# pieces (`xschem $v read`) or a script handed to eval/uplevel in a string
+# built elsewhere; a verb word that is quoted or braced (`xschem "raw" read $f
+# tran`, `xschem {annotate_op} $f`), which Tcl hands on as the plain word but
+# the scan's patterns never match; an `xschem` whose line ends in a
+# backslash, its verb continued onto the next line; a proc whose `proc` line
+# ends in a backslash, its body opening on the next line (the walk closes it at
+# the end of its own line, so the body's lines belong to no proc, and the depth
+# row stays green); a renamed or aliased `xschem`; scripts outside src/*.tcl (an
+# xschemrc, a plugin, a schematic's tclcommand); a proc made by anything but a
+# `proc` line whose name is on that line; and a top-level quoted string that
+# carries an unbalanced brace, which shifts the walk (the depth row below sees
+# a shift that does not balance out by the end of the file, never one that
+# does). The `cur` leg of attach_is_same is what stands behind these.
+# {proc -> its lines} for every proc of `src`, and the brace depth at its end
+proc gzr_walk {src} {
+  set stack {}
+  set out [dict create]
+  set depth 0
+  foreach line [split $src "\n"] {
+    set code [regsub -all {\\.} $line {}]
+    if {[regexp {^\s*proc\s+(\S+)\s} $code -> nm]} {
+      set ns {}
+      foreach e $stack { if {[lindex $e 0] eq {ns}} { lappend ns [lindex $e 1] } }
+      if {[string match ::* $nm]} {
+        set q [string range $nm 2 end]
+      } elseif {[llength $ns]} {
+        set q [join [concat $ns [list $nm]] ::]
+      } else {
+        set q $nm
+      }
+      lappend stack [list proc $q $depth]
+    } elseif {[regexp {^\s*namespace\s+eval\s+(\S+)\s+\{} $code -> nm]} {
+      lappend stack [list ns [string trim $nm :] $depth]
+    }
+    set p {}
+    for {set i [expr {[llength $stack] - 1}]} {$i >= 0} {incr i -1} {
+      if {[lindex $stack $i 0] eq {proc}} { set p [lindex $stack $i 1]; break }
+    }
+    if {$p ne {}} { dict lappend out $p $line }
+    # a comment at the top level ends at its newline (Tcl's rule); inside a
+    # braced body its braces count, as Tcl counts them
+    if {!($depth == 0 && [regexp {^\s*#} $code])} {
+      incr depth [expr {[regexp -all {\{} $code] - [regexp -all {\}} $code]}]
+    }
+    while {[llength $stack] && $depth <= [lindex $stack end 2]} {
+      set stack [lrange $stack 0 end-1]
+    }
+  }
+  return [list $out $depth]
+}
+# the loader procs of `src`, by the verbs above (`vbare`: the loader sub-verbs
+# whose bare form, nothing after the verb in its command, is a query)
+proc gzr_scan {src vload tload vbare} {
+  set pat {(?:^|[^A-Za-z0-9_:])(?:::)?xschem\s+raw(?:_query)?(?:\s+(\S*)|\s*$)}
+  set tpat "(?:^|\[^A-Za-z0-9_:\])(?:::)?xschem\\s+(?:[join $tload |])\\M"
+  set seen {}
+  lassign [gzr_walk $src] procs depth
+  dict for {p lines} $procs {
+    foreach l $lines {
+      if {[regexp {^\s*#} $l]} { continue }
+      set hit [expr {[regexp $tpat $l] || [regexp {ase::attach_dbs |results::select } $l]}]
+      foreach {m vi} [regexp -all -inline -indices $pat $l] {
+        set v [expr {[lindex $vi 0] < 0 ? {} : [string range $l {*}$vi]}]
+        set w [string trimright $v "\]\};"]
+        if {$w in $vbare} {
+          set rest [string range $l [expr {[lindex $m 1] + 1}] end]
+          if {$w ne $v || [regexp {^\s*(?:$|[\]\};])} $rest]} { continue }
+          set hit 1
+        } elseif {$w in $vload || ![regexp {^[a-z_]+$} $w]} {
+          set hit 1
+        }
+      }
+      if {$hit} { lappend seen $p; break }
+    }
+  }
+  return [list [lsort -unique $seen] $depth]
+}
+# the method on a text written here: a proc in a namespace eval, the variable
+# verb, a top-level loader verb, an in-place edit (no loader), a line after a
+# proc's close and a top-level comment holding a brace (neither in any proc)
+# (LB is a brace, put in after: a braced literal cannot hold an unbalanced one)
+set gzr_fx [string map [list LB "\{"] {
+namespace eval nsx {
+  proc inner {} {
+    xschem raw read /a.raw tran
+  }
+}
+proc ::varverb {v} { set r [xschem raw $v /a.raw tran] }
+proc topclear {} {
+  # xschem raw read, in a comment, is no code
+  xschem raw_clear
+}
+proc goback {} {
+  set n [xschem raw add w {v(a) 2 *}]; xschem raw switch_back
+}
+proc quiet {} { xschem raw add w {v(a) 2 *} }
+proc casebare {} { set c [xschem raw case]; catch { set c [xschem raw case] } }
+proc casefold {} { xschem raw case fold }
+proc opannot {f} { xschem annotate_op $f }
+# a top-level comment holding a brace LB
+set after_proc [list xschem raw read /b.raw tran]
+}]
+check "GZP33 the scan, on a text written here: nested, variable-verb, top-level, switch_back, raw case with a mode and annotate_op loaders; no edit, bare raw case, comment or line outside a proc" \
+  [gzr_scan $gzr_fx $gzr_vload $gzr_tload $gzr_vbare] {{casefold goback nsx::inner opannot topclear varverb} 0}
+set gzr_seen {}
+set gzr_deep {}
+foreach gzr_f [lsort [glob [file join $repo src *.tcl]]] {
+  set fp [open $gzr_f r]; set gzr_src [read $fp]; close $fp
+  lassign [gzr_scan $gzr_src $gzr_vload $gzr_tload $gzr_vbare] gzr_s gzr_d
+  if {$gzr_d != 0} { lappend gzr_deep [file tail $gzr_f] $gzr_d }
+  set gzr_seen [concat $gzr_seen $gzr_s]
+}
+set gzr_seen [lsort -unique $gzr_seen]
+check "GZP33 the brace walk's running depth is back to 0 at the end of every src/*.tcl file (an unbalanced shift is seen, one that balances out is not)" $gzr_deep {}
+# the hand loads: they drop the record themselves
+set gzr_drop {wviewer::rawbar_load wviewer::display_raw wviewer::restore ase::ui::rsel_commit}
+# the attach itself, its registry sequence, and the door the hand loads go through
+set gzr_attach {wviewer::attach_raw ase::attach_dbs results::select}
+# borrow a database and put the current one back as they found it (the Graph
+# dialog's signal list reads the strip's file, by a verb held in a variable,
+# then switches back; raw_prev_idx switches back and back again)
+set gzr_borrow {wviewer::signal_list_all wviewer::trace_cursor_value wviewer::raw_cursor_restore
+                wviewer::raw_prev_idx graph_fill_listbox
+                ase::cosim_db_inventory ase::optexport_datasets
+                calc::wave_dest calc::wave_dest_drop calc::wave_dest_restore
+                calc::aq_run calc::aq_restore calc::et_run}
+# may leave another database current in a viewer (attach_is_same's `cur` leg
+# sees it), or act on a schematic window's context, not a viewer's
+set gzr_cur {ase::saved_registry_drop op_annot::db_attach op_annot::db_detach
+             create_graph load_raw hi_descend_newwin open_sub_schematic build_widgets}
+set gzr_known [concat $gzr_drop $gzr_attach $gzr_borrow $gzr_cur]
+set gzr_new {}
+foreach gzr_p $gzr_seen { if {$gzr_p ni $gzr_known} { lappend gzr_new $gzr_p } }
+set gzr_gone {}
+foreach gzr_p $gzr_known { if {$gzr_p ni $gzr_seen} { lappend gzr_gone $gzr_p } }
+check "GZP33 every proc that loads or switches data is classified (new: none; stale: none)" \
+  [list $gzr_new $gzr_gone] {{} {}}
+check_true "GZP33 ...and the scan found loaders of each kind (non-vacuity), a variable verb's and switch_back's among them" \
+  [expr {{wviewer::rawbar_load} in $gzr_seen && {wviewer::attach_raw} in $gzr_seen
+         && {calc::wave_dest} in $gzr_seen && {op_annot::db_attach} in $gzr_seen
+         && {graph_fill_listbox} in $gzr_seen && {wviewer::raw_prev_idx} in $gzr_seen}]
+set fp [open [file join $repo src ase_window.tcl] r]; set gzr_asrc [read $fp]; close $fp
+set gzr_nodrop {}
+foreach gzr_p $gzr_drop {
+  set gzr_b [wvproc_body $wsrc $gzr_p]
+  if {$gzr_b eq {}} { set gzr_b [wvproc_body $gzr_asrc $gzr_p] }
+  if {[string first {wviewer::attach_forget } $gzr_b] < 0} { lappend gzr_nodrop $gzr_p }
+}
+check "GZP33 each hand load drops the record (wviewer::attach_forget in its code)" $gzr_nodrop {}
+check_true "GZP33 forget drops it with the window's other per-token state" \
+  [expr {[regexp {catch \{unset attached\(\$token\)\}} [wvproc_body $wsrc wviewer::forget]]
+         && [regexp {variable attached\M} [wvproc_body $wsrc wviewer::forget]]}]
+
+# wviewer::view_within, PURE (issue 1733 review): after one subwindow's strips
+# were replaced (auto_plot under Replace or Append), those strips take their
+# view from THAT subwindow's old strips only, matched by traces, and every other
+# strip from the live rects. The fixtures hold the same traces in two
+# subwindows, which is what made a match across subwindows go wrong. Each
+# scenario has a control: the whole old view against the new strips, the way
+# the first cut handed it to view_keep, answers differently.
+proc gzw_rec {tr cur} {
+  global gvz_left
+  return [dict create x {{} {} 0} y {{} {} 0} tr $tr left $gvz_left cur $cur]
+}
+set gzw_A  [list $gvm_A]
+set gzw_B  [list $gvm_B]
+set gzw_AB [list $gvm_A $gvm_B]
+set gzw_C  [list $gvm_C]
+proc gzw_sigs {args} { lmap t $args {lindex [gve_sig $t] 0} }
+set gzw_zxL [dict replace $gve_zx left $gvz_left]
+# (1) [A][B] | [A][B], the second subwindow zoomed; Replace into the first
+#     with one row: [A] | [B][A]
+set gzw_pre1  [list [gzw_rec $gzw_A $gve_fit] [gzw_rec $gzw_B $gve_fit] \
+                    [gzw_rec $gzw_A $gve_zx] [gzw_rec $gzw_B $gve_zx]]
+set gzw_sig1  [gzw_sigs $gzw_A $gzw_B $gzw_A]
+set gzw_live1 [list [gzw_rec $gzw_A $gve_fit] [gzw_rec $gzw_B $gve_zx] [gzw_rec $gzw_A $gve_zx]]
+check "GZP34 a row unticked: the subwindow it never touched keeps its own zoom, the re-plotted strip its own" \
+  [pcall {wviewer::view_within $gzw_live1 $gzw_pre1 $gzw_sig1 {0 1} {0 0} {{0 0} {1 2}}}] \
+  [list {dataset -1} $gzw_zxL $gzw_zxL]
+check "GZP34 ...control: the whole old view across subwindows gives the second subwindow's B the first's" \
+  [lindex [pcall {wviewer::view_entries $gzw_pre1 $gzw_sig1}] 1] {dataset -1}
+# (2) [AB] | [B][A] zoomed; Replace into the first in multi-plot: [B][A] | [B][A]
+set gzw_pre2  [list [gzw_rec $gzw_AB $gve_fit] [gzw_rec $gzw_B $gve_zx] [gzw_rec $gzw_A $gve_zx]]
+set gzw_sig2  [gzw_sigs $gzw_B $gzw_A $gzw_B $gzw_A]
+set gzw_live2 [list [gzw_rec $gzw_B $gve_fit] [gzw_rec $gzw_A $gve_fit] \
+                    [gzw_rec $gzw_B $gve_zx] [gzw_rec $gzw_A $gve_zx]]
+check "GZP34 a strip split per row: the new strips take nothing of the other subwindow's zoom, which keeps it" \
+  [pcall {wviewer::view_within $gzw_live2 $gzw_pre2 $gzw_sig2 {0 0} {0 1} {{0 1} {2 3}}}] \
+  [list {dataset -1} {} $gzw_zxL $gzw_zxL]
+check "GZP34 ...control: the whole old view across subwindows hands the first subwindow the second's zoom" \
+  [lrange [pcall {wviewer::view_entries $gzw_pre2 $gzw_sig2}] 0 1] [list $gzw_zxL $gzw_zxL]
+# (3) [AB] zoomed in X | [C]; Replace in multi-plot: [B][A] | [C]. The strip that
+#     takes from nobody joins its OWN subwindow's X window, never another's
+set gzw_pre3  [list [gzw_rec $gzw_AB $gve_zx] [gzw_rec $gzw_C $gve_fit]]
+set gzw_sig3  [gzw_sigs $gzw_B $gzw_A $gzw_C]
+set gzw_live3 [list [gzw_rec $gzw_B $gve_fit] [gzw_rec $gzw_A $gve_fit] [gzw_rec $gzw_C $gve_fit]]
+check "GZP34 a fresh strip of the subwindow joins that subwindow's X window; the other subwindow is left alone" \
+  [pcall {wviewer::view_within $gzw_live3 $gzw_pre3 $gzw_sig3 {0 0} {0 1} {{0 1} {2 2}}}] \
+  [list [dict create x1 0.2 x2 0.4 dataset -1 left $gvz_left] {x1 0.2 x2 0.4 left {x1 0 x2 1}} {dataset -1}]
+# (4) the fallbacks
+check "GZP34 a range that does not fit takes nothing from the old view: every strip is judged by the live one" \
+  [list [pcall {wviewer::view_within $gzw_live1 $gzw_pre1 $gzw_sig1 {0 9} {0 0} {{0 0} {1 2}}}] \
+        [pcall {wviewer::view_within $gzw_live1 $gzw_pre1 $gzw_sig1 {0 1} {2 1} {{0 0} {1 2}}}] \
+        [pcall {wviewer::view_within $gzw_live1 $gzw_pre1 $gzw_sig1 {} {0 0} {{0 0} {1 2}}}]] \
+  [lrepeat 3 [list {dataset -1} $gzw_zxL $gzw_zxL]]
+check "GZP34 ...a live view that is not one record per strip gives the strips outside the subwindow nothing" \
+  [pcall {wviewer::view_within {} $gzw_pre1 $gzw_sig1 {0 1} {0 0} {{0 0} {1 2}}}] \
+  [list {dataset -1} {} {}]
+check "GZP34 the signatures, and view_keep_subwin on an unknown window or an empty view: the plain rebuild" \
+  [list [gzn_args wviewer::view_within] [pcall {info default wviewer::view_within skip gzw_d; set gzw_d}] \
+        [gzn_args wviewer::view_keep_subwin] \
+        [pcall {wviewer::view_keep_subwin no_such_viewer $gzw_pre1 {0 1} {0 0}}]] \
+  [list {live view sigs old new runs skip} {} {token view old new} {}]
+
 check "GZP22 the signatures: view_take, view_keep, state_apply's optional view" \
   [list [info args wviewer::view_take] [info args wviewer::view_keep] \
         [pcall {info default wviewer::view_keep drop gvd_d; set gvd_d}] \
@@ -815,8 +1528,18 @@ set fp [open $aw r]; set asrc [read $fp]; close $fp
 # regenerate site in this file is a KNOWN one) and gains the new site's own
 # fold-order leg below, so raising the count cannot be a way of getting a third
 # unaudited site past it.
-check "GX9 ase_window.tcl has exactly the three known regenerate sites" \
-  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 3
+# ⚠ RESTATED 2026-11-22 (issue 1733), from THREE to FOUR, by the same rule:
+# auto_plot's re-plot path ends in a regenerate that hands every strip the view
+# attach_raw left (user ruling 2026-11-22: "yes, re-run which then plots in
+# Replace mode should retain zoom level, not reset it"). It needs no fold of
+# its own -- nothing reaches the rects between the add_trace loop, whose every
+# call folds, and it -- and gains its own order leg below. The count did not
+# move in the review round: the site that reflects the destination's window
+# half was already counted; it now carries the live view (its own leg below).
+# Nor in the second review round: the zero-rows branch's site was counted from
+# the start; it now carries the live view too (its own leg below).
+check "GX9 ase_window.tcl has exactly the four known regenerate sites" \
+  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 4
 # auto_plot's no-plottable-rows branch clears the AUTO strip's traces and
 # regenerates — every other strip carries forward, so it owes the fold, and it
 # must take it BEFORE the model mutation. Since ase_l.md R-OUT14 that mutation is
@@ -832,6 +1555,62 @@ check_true "GX9 auto_plot folds before it clears the auto strip" \
 check_true "GX9 the re-plot path still regenerates after attach_raw" \
   [expr {[string first {wviewer::attach_raw $key} $gx_ap] <
          [string last {wviewer::regenerate $key} $gx_ap]}]
+# issue 1733: the view is read AFTER attach_raw kept it (same data or new) and
+# BEFORE Replace empties the subwindow or Append plans its strips, only for
+# those two destinations, together with the target subwindow's strips in it,
+# and handed to the LAST regenerate, after the rows are in, matched inside that
+# subwindow only (view_keep_subwin; the review measured a match across
+# subwindows moving one subwindow's zoom onto another)
+set gx_av [string first {set view [wviewer::view_take $key]} $gx_ap]
+set gx_aw [string first {set vsw [wviewer::sw_range } $gx_ap]
+check_true "GX9 auto_plot reads the view, and its target subwindow, between attach_raw and the destination's window half" \
+  [expr {$gx_av > [string first {wviewer::attach_raw $key} $gx_ap]
+         && $gx_av < [string last {wviewer::clear_subwin $key} $gx_ap]
+         && $gx_av < [string first {wviewer::plot_sites $key} $gx_ap]
+         && $gx_aw > $gx_av && $gx_aw < [string last {wviewer::clear_subwin $key} $gx_ap]
+         && [regexp {if \{\$dest in \{replace append\}\} \{\s*set view \[wviewer::view_take \$key\]\s*set vsw \[wviewer::sw_range \[dict get \[wviewer::layout_for \$key\] graphs\]\s*\\\s*\[wviewer::target_index \$key\]\]\s*\}} $gx_ap]}]
+check_true "GX9 ...and its last regenerate, after the add_trace loop, hands that view to view_keep_subwin" \
+  [expr {[string last {wviewer::regenerate $key [wviewer::view_keep_subwin $key $view $vsw $nsw]} $gx_ap]
+           == [string last {wviewer::regenerate $key} $gx_ap]
+         && [string last {wviewer::regenerate $key} $gx_ap]
+            > [string last {wviewer::add_trace $key} $gx_ap]
+         && [string last {set nsw [wviewer::sw_range } $gx_ap]
+            > [string last {wviewer::add_trace $key} $gx_ap]}]
+# the rebuild between the destination's window half and the add_trace loop
+# CARRIES every strip as it shows (issue 1733 review: a plain one there threw
+# away what attach_raw, clear_subwin and new_subwin had kept, so `~` under New
+# SubWin reset every subwindow already on screen). It is the first carrying
+# rebuild AFTER attach_raw (the zero-rows branch's own comes before it).
+set gx_ar [string first {wviewer::attach_raw $key} $gx_ap]
+set gx_al [string first {wviewer::regenerate $key [wviewer::live_axes $key]} $gx_ap $gx_ar]
+check_true "GX9 auto_plot's rebuild after the destination's window half carries the live view, before the rows" \
+  [expr {$gx_ar > 0 && $gx_al > $gx_ar
+         && $gx_al > [string last {wviewer::auto_plot_strips $key [llength $rows]} $gx_ap]
+         && $gx_al > [string first {wviewer::plot_sites $key} $gx_ap]
+         && $gx_al < [string first {wviewer::add_trace $key} $gx_ap]}]
+# the zero-rows branch (Replace with nothing ticked) empties the target
+# subwindow and rebuilds; that rebuild CARRIES every strip as it shows too
+# (issue 1733, second review round: a plain one there fitted every OTHER
+# subwindow again, measured on band PV6 of test_ase_plot_outputs). Its order:
+# the fold, the clear, the one empty auto strip, then the carrying rebuild,
+# all before the branch returns and before attach_raw.
+set gx_z0 [string first {if {![llength $rows]} } $gx_ap]
+set gx_zr [string first {return} $gx_ap $gx_z0]
+set gx_zb [string range $gx_ap $gx_z0 $gx_zr]
+set gx_zl [string first {wviewer::regenerate $key [wviewer::live_axes $key]} $gx_zb]
+check_true "GX9 auto_plot's zero-rows rebuild, after the clear and the empty auto strip, carries the live view" \
+  [expr {$gx_z0 > 0 && $gx_zr > $gx_z0 && $gx_zr < $gx_ar && $gx_zl > 0
+         && [string first {wviewer::capture_live_view_state $key} $gx_zb] >= 0
+         && [string first {wviewer::capture_live_view_state $key} $gx_zb]
+            < [string first {wviewer::clear_subwin $key} $gx_zb]
+         && [string first {wviewer::clear_subwin $key} $gx_zb]
+            < [string first {wviewer::auto_plot_strips $key 0} $gx_zb]
+         && [string first {wviewer::auto_plot_strips $key 0} $gx_zb] < $gx_zl}]
+# ...so no plain rebuild is left anywhere in auto_plot: each of its sites
+# hands regenerate a view
+check "GX9 auto_plot has no plain rebuild left (every site it has carries a view)" \
+  [list [regexp -all -line {wviewer::regenerate \$key\s*(;.*)?$} $gx_ap] \
+        [regexp -all {wviewer::regenerate \$key \[} $gx_ap]] {0 3}
 # THE THIRD SITE (results batch item 7): the Select dialog's commit replaces the
 # viewer's data, so it takes the fold BEFORE the door (`results::select`) and
 # regenerates AFTER it -- same order, same reason, and additionally inside the

@@ -105,6 +105,35 @@
 #        blanked Value back and leaves the viewer's whole layout and tab list
 #        byte-identical; with the viewer CLOSED it opens none; a plain click
 #        afterwards still plots (the control)
+#   PV1  issue 1733, R1 (the same data): a zoomed X survives a real Direct Plot
+#        of the session's unchanged raw, single-plot (the strip it did not
+#        touch shows exactly what it showed) and multi-plot (a new strip joins
+#        the zoomed X window)
+#   PV2  R2 (new data): the raw rewritten (a same-size rewrite, the mtime
+#        moved), the axes the user moved are kept and the others fitted to the
+#        new data; a new sweep that does not reach the kept window fits X (and
+#        its control that does); an ac file where the tran was drops the X and
+#        a moved Y with it (another analysis is another plot); a dc file whose
+#        sweep runs over the kept window's own numbers drops them too, where
+#        only x_same (not the overlap rule) can drop the X
+#   PV3  R3: `~` under Replace, same data and after a re-run, single- and
+#        multi-plot, gives the strips the run's rows with the view kept; Append
+#        likewise
+#   PV4  R4: a Location-bar load drops the record, so the next Direct Plot on
+#        the attached file again is new data; a raw read straight into the
+#        viewer moves the current database and the verdict sees it; closing the
+#        viewer drops the record
+#   PV5  R3 across subwindows (the issue 1733 review): `~` under Replace into
+#        one subwindow leaves a subwindow it did not touch exactly as shown,
+#        and the strips it re-plots take their view from their own
+#        subwindow's old strips only (a row unticked; single-plot strip
+#        replaced in multi-plot); `~` under New SubWin keeps every subwindow
+#        already there, the same data and after a re-run; a re-run of another
+#        analysis under Replace fits the strip in X and Y
+#   PV6  R3 with nothing ticked: `~` under Replace empties the target
+#        subwindow (auto_plot's zero-rows branch, no attach) and the other
+#        subwindow shows exactly what it showed, both axes
+#        (PV is not under the ngspice gate: its raws are written by the suite)
 #   PF1  the SHIPPED bench and Monte Carlo draw (seed 35) with `reltol=1e-12`,
 #        which stops the transient ("Timestep too small", rc 1) after the op
 #        point was written: the user is told the run failed and
@@ -1179,6 +1208,9 @@ group PO16 {
 ## for; plot_signals records what it was handed). The landing: the real
 ## wviewer::plot_signals chain on the model, under every choice of the
 ## drop-down -- nothing emptied, no subwindow and no tab made.
+## The first half's stand-ins say nothing about what attach_raw does to the
+## VIEW (issue 1733: a Direct Plot keeps the zoom): that is band PV below, on
+## the real dp_finish, attach_raw and regenerate, with nothing stood in for.
 group PO16k {
     set key [po_session po16k tbpk {{name A expr v(sq) save 1 plot 1}} 1]
     set ::po16k_calls {}
@@ -1241,6 +1273,738 @@ group PO16k {
     po16_tabunstub
     po14_unstub $key
     catch {ase::session_close $key}
+}
+
+# =============================================================================
+# PV -- A DIRECT PLOT AND A RE-RUN KEEP THE ZOOM (issue 1733), display arm
+# =============================================================================
+## User report 2026-11-22: after a run, a strip zoomed, then another signal
+## plotted with Direct Plot: every strip snapped back to the full sweep. Ruling
+## the same day: "yes, re-run which then plots in Replace mode should retain
+## zoom level, not reset it".
+## Everything here is the REAL path, with no stand-in for any viewer door: the
+## real ase::ui::dp_finish (a pick list of {} is a Direct Plot with nothing
+## picked: it attaches and plots nothing), the real ase::ui::plot_outputs under
+## Replace and Append, the real wviewer::attach_raw, rawbar_load and regenerate.
+## The session's results are raws written HERE, so every window is known; the
+## zoom goes onto the RECTS ONLY through the engine's own verb, and the model is
+## left auto (test_wave_grid's GZ fixture rule). Each check reads every strip.
+## A Y that is "the fit over the X the strip shows" is measured, not computed:
+## the engine is asked to fit that rect again (pv_yfit) and must answer what it
+## shows.
+set ::pv_disp {}
+foreach {- b} [regexp -all -inline -line {^\s*group\s+(PV[0-9]+)\s} $::po_src] {
+    lappend ::pv_disp $b
+}
+## A transient raw: time 0..tend, v(a) rising 0..amp, v(b) falling amp..0,
+## v(c) = amp/2 + v(a)/4. Binary, so two writes with the same point count are
+## the same size to the byte.
+proc pv_tran {path tend amp {np 41}} {
+    set f [open $path w]
+    fconfigure $f -translation binary
+    puts -nonewline $f "Title: pv fixture\nDate: Sun Nov 22 00:00:00  2026\nPlotname: Transient Analysis\nFlags: real\nNo. Variables: 4\nNo. Points: $np\nVariables:\n\t0\ttime\ttime\n\t1\tv(a)\tvoltage\n\t2\tv(b)\tvoltage\n\t3\tv(c)\tvoltage\nBinary:\n"
+    for {set i 0} {$i < $np} {incr i} {
+        set t [expr {$tend * $i / ($np - 1.0)}]
+        set a [expr {$amp * $i / ($np - 1.0)}]
+        puts -nonewline $f [binary format q4 [list $t $a [expr {$amp - $a}] [expr {$amp / 2.0 + $a / 4.0}]]]
+    }
+    close $f
+}
+## An ac raw of the same vectors over frequency f1..f2 (complex, as ngspice writes it)
+proc pv_ac {path f1 f2 {np 21}} {
+    set f [open $path w]
+    fconfigure $f -translation binary
+    puts -nonewline $f "Title: pv fixture\nDate: Sun Nov 22 00:00:00  2026\nPlotname: AC Analysis\nFlags: complex\nNo. Variables: 4\nNo. Points: $np\nVariables:\n\t0\tfrequency\tfrequency\n\t1\tv(a)\tvoltage\n\t2\tv(b)\tvoltage\n\t3\tv(c)\tvoltage\nBinary:\n"
+    for {set i 0} {$i < $np} {incr i} {
+        set fr [expr {$f1 + ($f2 - $f1) * $i / ($np - 1.0)}]
+        set m [expr {1.0 / (1.0 + $i)}]
+        puts -nonewline $f [binary format q8 [list $fr 0.0 $m 0.0 [expr {2 * $m}] 0.0 [expr {3 * $m}] 0.0]]
+    }
+    close $f
+}
+## The session: po_session with no fixture copied, its results raw written by pv_tran
+proc pv_session {sub cell outs tend amp} {
+    set key [po_session $sub $cell $outs 0]
+    set ::pv_raw [file join $::scratch $sub ${cell}_ase.raw]
+    pv_tran $::pv_raw $tend $amp
+    return $key
+}
+## Rewrite the session's raw and move its mtime by `dt` seconds past what it
+## was, so the move is certain whatever the file system's clock resolution.
+## Answers {mtime_moved size_moved}.
+proc pv_rewrite {tend amp dt} {
+    file stat $::pv_raw a0
+    pv_tran $::pv_raw $tend $amp
+    file mtime $::pv_raw [expr {$a0(mtime) + $dt}]
+    file stat $::pv_raw a1
+    return [list [expr {$a1(mtime) != $a0(mtime)}] [expr {$a1(size) != $a0(size)}]]
+}
+proc pv_ready {key} {
+    set top [wviewer::window_for $key]
+    for {set i 0} {$i < 300} {incr i} {
+        update
+        if {$top ne {} && [winfo exists $top.drw] && [winfo ismapped $top.drw]} { return 1 }
+        after 20
+    }
+    return 0
+}
+proc pv_drw {key} {
+    if {[catch {wviewer::window_for $key} w]} { return {} }
+    return $w.drw
+}
+## an error message as a value that cannot be taken for a list of answers
+proc pv_err {e} { return ERR:[string map {\{ ( \} ) " " _} $e] }
+## Every strip's {x1 x2 y1 y2}, as doubles, off the rects
+proc pv_axes {key} {
+    if {[catch {xschem new_schematic switch [pv_drw $key]} e]} { return [pv_err $e] }
+    set o {}
+    set n 0 ; catch {set n [xschem get graph_rects]}
+    for {set k 0} {$k < $n} {incr k} {
+        set r {}
+        foreach t {x1 x2 y1 y2} {
+            set v {} ; catch {set v [xschem getprop rect 2 $k $t]}
+            lappend r [expr {[string is double -strict $v] ? double($v) : $v}]
+        }
+        lappend o $r
+    }
+    return $o
+}
+## Every strip's trace vectors, top first
+proc pv_vecs {key} {
+    set gs [pv_gs $key]
+    if {[string match ERR:* $gs]} { return $gs }
+    if {[catch {lmap G $gs { lmap t [wviewer::dget $G traces {}] {wviewer::dget $t vec {}} }} v]} {
+        return [pv_err $v]
+    }
+    return $v
+}
+## {strip traces -> axes}, so strips are matched by what they hold, not by index
+proc pv_byvecs {key} {
+    set o {}
+    if {[catch {
+        foreach v [pv_vecs $key] a [pv_axes $key] { dict set o $v $a }
+    } e]} { return [pv_err $e] }
+    return $o
+}
+## the layout's strips, and each strip's auto flag, as values on any failure
+proc pv_gs {key} {
+    if {[catch {dict get [wviewer::layout_for $key] graphs} gs]} { return [pv_err $gs] }
+    return $gs
+}
+proc pv_auto {key} {
+    set gs [pv_gs $key]
+    if {[string match ERR:* $gs]} { return $gs }
+    if {[catch {lmap G $gs {wviewer::dget $G auto 0}} v]} { return [pv_err $v] }
+    return $v
+}
+## `dict get` that answers ABSENT instead of raising (a band asserts, never aborts)
+proc pv_at {d args} {
+    if {[catch {dict get $d {*}$args} v]} { return ABSENT }
+    return $v
+}
+## the distinct X windows of the strips of subwindow `s` in a pv_bysw answer
+proc pv_swx {d s} {
+    if {[catch {lsort -unique [lmap r [dict values [dict get $d $s]] {lrange $r 0 1}]} v]} { return ABSENT }
+    return $v
+}
+## the engine's own zoom on the rect only; a raise is answered, never thrown
+proc pv_zoom {key gi ax a b} {
+    if {[catch {
+        xschem new_schematic switch [pv_drw $key]
+        xschem graph_axis_zoom $gi $ax $a $b
+    } e]} { update ; return [pv_err $e] }
+    update
+}
+## What the engine fits axis `ax` (x or y) of strip gi to, over what the rect
+## shows; the rect is put back as it was.
+proc pv_fit {key gi ax} {
+    if {[catch {
+        xschem new_schematic switch [pv_drw $key]
+        set t1 ${ax}1 ; set t2 ${ax}2
+        set o1 [xschem getprop rect 2 $gi $t1]
+        set o2 [xschem getprop rect 2 $gi $t2]
+        wviewer::with_edit $key [list xschem setprop -fast rect 2 $gi full${ax}zoom]
+        xschem new_schematic switch [pv_drw $key]
+        set f [list [expr {double([xschem getprop rect 2 $gi $t1])}] \
+                    [expr {double([xschem getprop rect 2 $gi $t2])}]]
+        wviewer::with_edit $key [list xschem setprop -fast rect 2 $gi $t1 $o1]
+        wviewer::with_edit $key [list xschem setprop -fast rect 2 $gi $t2 $o2]
+    } e]} { return [pv_err $e] }
+    return $f
+}
+proc pv_yfit {key gi} { pv_fit $key $gi y }
+## an expected window, spelled as pv_axes spells a double (whatever this Tcl's
+## shortest form is), so a literal in a check cannot disagree by formatting
+proc pv_n {args} { lmap v $args {expr {double($v)}} }
+proc pv_xfit {key gi} { pv_fit $key $gi x }
+## the verdict of the last attach: 1 same data, 0 new data, NOREC. Every
+## answer of a verb this fix added goes through an accessor that answers a
+## VALUE on any failure (ERR:...), so on a tree without the verb the band
+## ASSERTS red instead of aborting and dropping its rows from the verdict.
+proc pv_same {key} {
+    if {[catch {wviewer::attach_record $key} r]} { return ERR:[string map {\{ ( \} )} $r] }
+    if {[catch {dict get $r same} s]} { return NOREC }
+    return $s
+}
+## the whole record of the last attach ({} for none), the same way
+proc pv_record {key} {
+    if {[catch {wviewer::attach_record $key} r]} { return ERR:[string map {\{ ( \} )} $r] }
+    return $r
+}
+## the path of the database the viewer's context draws from now (`cur` of
+## wviewer::attach_db), the same way
+proc pv_curdb {} {
+    if {[catch {wviewer::attach_db} d]} { return ERR:[string map {\{ ( \} )} $d] }
+    if {[catch {dict get $d cur} c]} { return NOCUR }
+    return [lindex $c 0]
+}
+## A dc raw of the same vectors: a sweep v-sweep running x1..x2 (the X column
+## is not `time`, and the analysis is another), real, as ngspice writes it
+proc pv_dc {path x1 x2 {np 41}} {
+    set f [open $path w]
+    fconfigure $f -translation binary
+    puts -nonewline $f "Title: pv fixture\nDate: Sun Nov 22 00:00:00  2026\nPlotname: DC transfer characteristic\nFlags: real\nNo. Variables: 4\nNo. Points: $np\nVariables:\n\t0\tv-sweep\tvoltage\n\t1\tv(a)\tvoltage\n\t2\tv(b)\tvoltage\n\t3\tv(c)\tvoltage\nBinary:\n"
+    for {set i 0} {$i < $np} {incr i} {
+        set x [expr {$x1 + ($x2 - $x1) * $i / ($np - 1.0)}]
+        set a [expr {3.0 + 4.0 * $i / ($np - 1.0)}]
+        puts -nonewline $f [binary format q4 [list $x $a [expr {10.0 - $a}] [expr {$a / 2.0}]]]
+    }
+    close $f
+}
+
+if {$GUI} {
+## (a) R1: the same raw, a REAL Direct Plot, single and multi mode
+group PV1 {
+    set key [pv_session pv1 tbpv1 {} 10e-9 1.0]
+    check "PV1 fixture: the session's results are the raw written here, a tran" \
+        [list [pcall ase::last_rawfile $key] [pcall ase::plot_sim_type [ase::session_state $key]]] [list $::pv_raw tran]
+    check "PV1 fixture: the viewer opens and maps" [list [pcall wviewer::open $key] [pv_ready $key]] {1 1}
+    foreach mode {single multi} {
+        pcall wviewer::set_plot_mode multi $key
+        pcall wviewer::clear_all $key
+        pcall ase::ui::dp_finish $key {v(a)}
+        pcall ase::ui::dp_finish $key {v(b)}
+        update
+        check "PV1 $mode fixture: two strips, and the second Direct Plot was the same data" \
+            [list [lsort [pv_vecs $key]] [pv_same $key]] {{v(a) v(b)} 1}
+        pcall wviewer::set_plot_mode $mode $key
+        update
+        set fit [pv_byvecs $key]
+        pv_zoom $key 0 x 2e-9 4e-9
+        set z [pv_byvecs $key]
+        check "PV1 $mode fixture: X zoomed on both strips, Y as fitted, on the rects only" \
+            [list [lrange [pv_at $z v(a)] 0 1] [lrange [pv_at $z v(b)] 0 1] \
+                  [lrange [pv_at $z v(a)] 2 3] [lrange [pv_at $z v(b)] 2 3]] \
+            [list [pv_n 2e-9 4e-9] [pv_n 2e-9 4e-9] [lrange [pv_at $fit v(a)] 2 3] [lrange [pv_at $fit v(b)] 2 3]]
+        pcall ase::ui::dp_finish $key {v(c)}
+        update
+        set after [pv_byvecs $key]
+        check "PV1 $mode the Direct Plot was the same data (R1)" [pv_same $key] 1
+        if {$mode eq {single}} {
+            ## v(c) went into one of the two strips; the other is untouched
+            set into [lsearch -inline -glob [dict keys $after] {*v(c)*}]
+            set other [expr {$into eq {v(a) v(c)} ? {v(b)} : {v(a)}}]
+            check "PV1 single the pick landed in a strip already there (no third strip)" \
+                [list [llength [dict keys $after]] [expr {$into in {{v(a) v(c)} {v(b) v(c)}}}]] {2 1}
+            check "PV1 single the strip it did not touch shows EXACTLY what it showed (both axes)" \
+                [pv_at $after $other] [pv_at $z $other]
+            check "PV1 single the strip it landed in keeps the zoomed X" \
+                [lrange [pv_at $after $into] 0 1] [pv_n 2e-9 4e-9]
+        } else {
+            check "PV1 multi a new strip, the two old ones show EXACTLY what they showed" \
+                [list [llength [dict keys $after]] [pv_at $after v(a)] [pv_at $after v(b)]] \
+                [list 3 [pv_at $z v(a)] [pv_at $z v(b)]]
+            check "PV1 multi the new strip joins the zoomed X window" \
+                [lrange [pv_at $after v(c)] 0 1] [pv_n 2e-9 4e-9]
+        }
+    }
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (b) R2: the raw REWRITTEN with other data; the overlap and the analysis controls
+group PV2 {
+    set key [pv_session pv2 tbpv2 {} 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::dp_finish $key {v(a)}
+    pcall ase::ui::dp_finish $key {v(b)}
+    update
+    pv_zoom $key 0 x 2e-9 4e-9
+    set z [pv_byvecs $key]
+    ## the same size, the data doubled: only the mtime can tell the rewrite
+    check "PV2 fixture: a same-size rewrite really moved the mtime and not the size" \
+        [pv_rewrite 10e-9 2.0 7] {1 0}
+    pcall ase::ui::dp_finish $key {}
+    update
+    set a [pv_byvecs $key]
+    check "PV2 the rewrite is new data (R2)" [pv_same $key] 0
+    check "PV2 the X the user moved is kept, on every strip" \
+        [list [lrange [pv_at $a v(a)] 0 1] [lrange [pv_at $a v(b)] 0 1]] [list [pv_n 2e-9 4e-9] [pv_n 2e-9 4e-9]]
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    set gi_b [lsearch -exact [pv_vecs $key] v(b)]
+    check "PV2 the Y nobody moved is fitted again to the NEW data, over the kept window" \
+        [list [lrange [pv_at $a v(a)] 2 3] [lrange [pv_at $a v(b)] 2 3]] \
+        [list [pv_yfit $key $gi_a] [pv_yfit $key $gi_b]]
+    check "PV2 ...which is not what it showed (the data did change under it)" \
+        [expr {[lrange [pv_at $a v(a)] 2 3] ne [lrange [pv_at $z v(a)] 2 3]}] 1
+
+    ## Y moved, X not: Y kept, X fitted to the new (longer) sweep. The strips
+    ## are built afresh, so the X nobody moved is the fit.
+    pcall wviewer::clear_all $key
+    pcall ase::ui::dp_finish $key {v(a)}
+    pcall ase::ui::dp_finish $key {v(b)}
+    update
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    set gi_b [lsearch -exact [pv_vecs $key] v(b)]
+    pv_zoom $key $gi_a y 0.25 0.5
+    set z [pv_byvecs $key]
+    check "PV2 fixture: Y zoomed on one strip, X as fitted" \
+        [list [lrange [pv_at $z v(a)] 2 3] [lrange [pv_at $z v(a)] 0 1]] [list {0.25 0.5} [pv_xfit $key $gi_a]]
+    check "PV2 fixture: a same-size rewrite to a longer sweep" [pv_rewrite 15e-9 3.0 14] {1 0}
+    pcall ase::ui::dp_finish $key {}
+    update
+    set a [pv_byvecs $key]
+    check "PV2 Y moved: the Y is kept exactly, and the X nobody moved is fitted to the new sweep" \
+        [list [lrange [pv_at $a v(a)] 2 3] [lrange [pv_at $a v(a)] 0 1] [pv_same $key]] \
+        [list {0.25 0.5} [pv_xfit $key $gi_a] 0]
+    check "PV2 ...that new sweep is the longer one (the X really was refitted)" \
+        [lrange [pv_at $a v(a)] 0 1] [pv_n 0 15e-9]
+
+    ## the new sweep does not reach the kept window: X fits
+    pv_zoom $key 0 x 6e-9 8e-9
+    check "PV2 fixture: X zoomed to 6n..8n on every strip" \
+        [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]] [list [pv_n 6e-9 8e-9]]
+    pv_rewrite 3e-9 1.0 21
+    pcall ase::ui::dp_finish $key {}
+    update
+    check "PV2 a new sweep (0..3n) that does not overlap the kept window (6n..8n): X is fitted" \
+        [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]] [list [pv_n 0 3e-9]]
+    check "PV2 ...which is the engine's fit of that strip, and the Y nobody moved fits with it" \
+        [list [lrange [lindex [pv_axes $key] $gi_b] 0 1] [lrange [lindex [pv_axes $key] $gi_b] 2 3]] \
+        [list [pv_xfit $key $gi_b] [pv_yfit $key $gi_b]]
+    check "PV2 ...while the Y that was moved stays as it was moved" \
+        [lrange [lindex [pv_axes $key] $gi_a] 2 3] {0.25 0.5}
+    check "PV2 control: a window that DOES overlap (1n..2n) on the same new sweep is kept" \
+        [list [pv_zoom $key 0 x 1e-9 2e-9] [pv_rewrite 3e-9 1.5 28] [pcall ase::ui::dp_finish $key {}] \
+              [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]]] [list {} {1 0} {} [list [pv_n 1e-9 2e-9]]]
+
+    ## another analysis through the real attach: the X is not the same thing
+    set acf [file join $::scratch pv2 tbpv2_ac.raw]
+    pv_ac $acf 1e3 1e6
+    pv_zoom $key 0 x 1.2e-9 1.8e-9
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    check "PV2 fixture: before the ac attach the Y of v(a) is still the one the user moved" \
+        [lrange [lindex [pv_axes $key] $gi_a] 2 3] {0.25 0.5}
+    check "PV2 an ac file attached where the tran was" [pcall wviewer::attach_raw $key $acf ac] 1
+    update
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    set ax [lrange [lindex [pv_axes $key] $gi_a] 0 1]
+    ## the frequencies (1e3..1e6) never reach a window of nanoseconds, so this
+    ## X is dropped by the overlap rule (regenerate's xnew arm) as much as by
+    ## x_same: the dc leg below is the one where only x_same can drop it
+    check "PV2 ...is new data, and the zoomed X is dropped on a sweep that misses the window: X is the engine's fit of the frequencies" \
+        [list [pv_same $key] [expr {$ax eq [pv_xfit $key $gi_a]}] [expr {$ax ne [pv_n 1.2e-9 1.8e-9]}]] {0 1 1}
+    ## issue 1733 review: another analysis is another plot, so the Y the user
+    ## moved on the transient is not kept over the frequencies either
+    set ay [lrange [lindex [pv_axes $key] $gi_a] 2 3]
+    check "PV2 ...and the Y moved on the tran is dropped too: Y is the engine's fit over the frequencies" \
+        [list [expr {$ay eq [pv_yfit $key $gi_a]}] [expr {$ay ne {0.25 0.5}}]] {1 1}
+
+    ## another analysis whose X column (v-sweep, not time) runs over the SAME
+    ## numbers as the kept window: regenerate's overlap rule keeps a window
+    ## that meets the new sweep, so only view_new_data's x_same can drop it.
+    ## The tran is attached back first (another analysis again: it fits), then
+    ## zoomed on both axes.
+    set dcf [file join $::scratch pv2 tbpv2_dc.raw]
+    pv_dc $dcf 0 1e-8
+    check "PV2 fixture: the tran attached back after the ac" [pcall wviewer::attach_raw $key $::pv_raw tran] 1
+    update
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    pv_zoom $key $gi_a x 1.2e-9 1.8e-9
+    pv_zoom $key $gi_a y 0.25 0.5
+    check "PV2 fixture: v(a) zoomed to 1.2n..1.8n in X and 0.25..0.5 in Y, on the rects" \
+        [lindex [pv_axes $key] $gi_a] [pv_n 1.2e-9 1.8e-9 0.25 0.5]
+    check "PV2 a dc file (X column v-sweep) attached where the tran was" [pcall wviewer::attach_raw $key $dcf dc] 1
+    update
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    set ax [lrange [lindex [pv_axes $key] $gi_a] 0 1]
+    set dfit [pv_xfit $key $gi_a]
+    ## distinctness, by plain arithmetic on the sweep this suite wrote: the
+    ## engine's fit of the dc X is the written 0..10n, it is not the kept
+    ## window, and the two overlap by far more than a point
+    check "PV2 distinctness: the dc sweep's fit is the written 0..10n, overlaps the kept 1.2n..1.8n, and is not it" \
+        [list [expr {$dfit eq [pv_n 0 1e-8]}] \
+              [expr {[llength $dfit] == 2 && [string is double -strict [lindex $dfit 0]]
+                     && max(1.2e-9, [lindex $dfit 0]) < min(1.8e-9, [lindex $dfit 1])}] \
+              [expr {$dfit ne [pv_n 1.2e-9 1.8e-9]}]] {1 1 1}
+    check "PV2 ...is new data, and the zoomed X is dropped on a sweep that DOES overlap it (x_same, not the overlap): X is the sweep's fit" \
+        [list [pv_same $key] [expr {$ax eq $dfit}] [expr {$ax ne [pv_n 1.2e-9 1.8e-9]}]] {0 1 1}
+    set ay [lrange [lindex [pv_axes $key] $gi_a] 2 3]
+    check "PV2 ...and the Y moved on the tran is dropped with it: Y is the engine's fit over the dc sweep" \
+        [list [expr {$ay eq [pv_yfit $key $gi_a]}] [expr {$ay ne {0.25 0.5}}]] {1 1}
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (c) R3: `~` under Replace (and Append) after a rewrite keeps a zoomed strip's view
+group PV3 {
+    set outs {{name A expr v(a) save 1 plot 1} {name B expr v(b) save 1 plot 1}}
+    set key [pv_session pv3 tbpv3 $outs 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode single $key
+    pcall wviewer::clear_all $key
+    check "PV3 fixture: the drop-down reads Replace, and ~ plots the run's rows into one auto strip" \
+        [list [pcall ase::ui::plot_dest $key] [pcall ase::ui::plot_outputs $key] [pv_vecs $key] \
+              [pv_auto $key]] \
+        {replace 1 {{v(a) v(b)}} 1}
+    update
+    pv_zoom $key 0 x 2e-9 4e-9
+    set z [pv_axes $key]
+    ## no rewrite: the same data, and the strip comes back with the traces it had
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV3 Replace, the same data: the re-plotted strip shows EXACTLY what it showed" \
+        [list [pv_same $key] [pv_vecs $key] [pv_axes $key]] [list 1 {{v(a) v(b)}} $z]
+    check "PV3 fixture: a same-size rewrite (the re-run)" [pv_rewrite 10e-9 2.0 7] {1 0}
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_axes $key]
+    check "PV3 Replace after the re-run: the run's rows, in one auto strip, with the zoomed X kept" \
+        [list [pv_same $key] [pv_vecs $key] \
+              [pv_auto $key] \
+              [lrange [lindex $a 0] 0 1]] [list 0 {{v(a) v(b)}} 1 [pv_n 2e-9 4e-9]]
+    check "PV3 ...and its Y fitted to the new data over that window" \
+        [lrange [lindex $a 0] 2 3] [pv_yfit $key 0]
+
+    ## multi-plot Replace: one auto strip per row, each matched by its traces
+    pcall wviewer::set_plot_mode multi $key
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV3 fixture: multi-plot ~ gives each row its own auto strip" \
+        [lsort [pv_vecs $key]] {v(a) v(b)}
+    pv_zoom $key 0 x 5e-9 7e-9
+    pv_rewrite 10e-9 1.0 14
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV3 multi Replace after a re-run: both strips come back with their rows and the zoomed X" \
+        [list [lsort [pv_vecs $key]] [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]]] \
+        [list {v(a) v(b)} [list [pv_n 5e-9 7e-9]]]
+    check "PV3 ...each Y fitted over that window" \
+        [list [lrange [lindex [pv_axes $key] 0] 2 3] [lrange [lindex [pv_axes $key] 1] 2 3]] \
+        [list [pv_yfit $key 0] [pv_yfit $key 1]]
+
+    ## Append: the strips already there keep theirs
+    check "PV3 fixture: Append picked" [pcall ase::ui::set_plot_dest $key append] append
+    pv_zoom $key 0 x 3e-9 4e-9
+    pv_rewrite 10e-9 2.5 21
+    pcall ase::ui::plot_outputs $key
+    update
+    set gs [pv_gs $key]
+    check "PV3 Append after a re-run: every strip, old and new, shows the zoomed X" \
+        [list [expr {[llength $gs] >= 2}] [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]] [pv_same $key]] \
+        [list 1 [list [pv_n 3e-9 4e-9]] 0]
+    catch {ase::ui::set_plot_dest $key replace}
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (d) R4: a hand load in between: the next attach is never the same data
+group PV4 {
+    set key [pv_session pv4 tbpv4 {} 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::dp_finish $key {v(a)}
+    pcall ase::ui::dp_finish $key {v(b)}
+    update
+    check "PV4 fixture: the second Direct Plot was the same data" [pv_same $key] 1
+    set other [file join $::scratch pv4 other.raw]
+    pv_tran $other 20e-9 5.0
+    pv_zoom $key 0 x 2e-9 4e-9
+    ## the Location bar loads another file: today's rebuild, unchanged
+    check "PV4 the Location bar loads another raw" [pcall wviewer::rawbar_load $key $other] 1
+    update
+    check "PV4 ...and fits it, as it always did, and drops the record" \
+        [list [lsort -unique [lmap r [pv_axes $key] {lrange $r 0 1}]] [pv_same $key]] [list [list [pv_n 0 20e-9]] NOREC]
+    ## ...then the session's own file again, by hand: the data is the session's
+    ## once more and its database is the current one, so only the dropped record
+    ## stops the next attach from claiming the same data
+    check "PV4 the Location bar loads the session's raw back" [pcall wviewer::rawbar_load $key $::pv_raw] 1
+    update
+    pv_zoom $key 0 x 2e-9 4e-9
+    set z [pv_byvecs $key]
+    pcall ase::ui::dp_finish $key {}
+    update
+    set a [pv_byvecs $key]
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    check "PV4 a Direct Plot after a hand load is NEW data, even on the attached file (R1 not claimed)" \
+        [pv_same $key] 0
+    check "PV4 ...the moved X kept, the Y nobody moved fitted over it (not kept as shown)" \
+        [list [lrange [pv_at $a v(a)] 0 1] [lrange [pv_at $a v(a)] 2 3] \
+              [expr {[lrange [pv_at $a v(a)] 2 3] ne [lrange [pv_at $z v(a)] 2 3]}]] \
+        [list [pv_n 2e-9 4e-9] [pv_yfit $key $gi_a] 1]
+    ## a load through no door that drops the record (standing for every other
+    ## loader): the current database moved, and the verdict sees it
+    pcall ase::ui::dp_finish $key {}
+    update
+    check "PV4 fixture: an attach with nothing in between is the same data again" [pv_same $key] 1
+    ## a window where the Y shown is NOT the fit over it, so a refit shows
+    pv_zoom $key 0 x 6e-9 8e-9
+    set z [pv_byvecs $key]
+    pcall wviewer::switch_ctx $key
+    pcall xschem raw read $other tran
+    check "PV4 a raw read straight into the viewer's context makes it the current one" \
+        [pv_curdb] [file normalize $other]
+    pcall ase::ui::dp_finish $key {}
+    update
+    set a [pv_byvecs $key]
+    set gi_a [lsearch -exact [pv_vecs $key] v(a)]
+    check "PV4 ...so the next Direct Plot is new data: the moved X kept, Y fitted over it" \
+        [list [pv_same $key] [lrange [pv_at $a v(a)] 0 1] [lrange [pv_at $a v(a)] 2 3] \
+              [expr {[lrange [pv_at $a v(a)] 2 3] ne [lrange [pv_at $z v(a)] 2 3]}]] \
+        [list 0 [pv_n 6e-9 8e-9] [pv_yfit $key $gi_a] 1]
+    ## the record goes with the window
+    catch {wviewer::close $key}
+    update
+    check "PV4 closing the viewer drops the record with the rest of its per-window state" \
+        [list [pv_record $key] [info exists ::wviewer::attached($key)]] {{} 0}
+    catch {ase::session_close $key}
+}
+
+## (e) R3 ACROSS SUBWINDOWS (issue 1733 review). The run-end plot and `~`
+## rebuild the whole tab, so a strip in a subwindow the plot did not touch must
+## show exactly what it showed, whatever the destination. The strips of the
+## subwindow Replace empties take their view from THAT subwindow's old strips
+## only, matched by traces, never from a strip elsewhere that holds the same
+## traces. New SubWin keeps every subwindow already there. Another analysis on
+## the re-run is another plot, so nothing the user moved on the old one is kept.
+proc pv_sw {key} {
+    set gs [pv_gs $key]
+    if {[string match ERR:* $gs]} { return $gs }
+    if {[catch {lmap G $gs { wviewer::gsw $G }} v]} { return [pv_err $v] }
+    return $v
+}
+## {subwindow tag -> {strip traces -> axes}}: every strip, by where it is and
+## what it holds
+proc pv_bysw {key} {
+    set o {}
+    if {[catch {
+        foreach s [pv_sw $key] v [pv_vecs $key] a [pv_axes $key] { dict set o $s $v $a }
+    } e]} { return [pv_err $e] }
+    return $o
+}
+proc pv_outs {key outs} {
+    set st [ase::session_state $key]
+    dict set st outputs $outs
+    ase::session_update $key $st
+}
+group PV5 {
+    set outs {{name A expr v(a) save 1 plot 1} {name B expr v(b) save 1 plot 1}}
+    set key [pv_session pv5 tbpv5 $outs 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    ## (1) the same rows in two subwindows; the second zoomed; a row unticked;
+    ## Replace into the first
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    pcall ase::ui::set_plot_dest $key newsubwin
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV5 fixture: two subwindows, each holding the run's two rows in strips of their own" \
+        [list [pv_sw $key] [pv_vecs $key]] {{1 1 2 2} {v(b) v(a) v(b) v(a)}}
+    pv_zoom $key 2 x 6e-9 8e-9
+    set z [pv_bysw $key]
+    check "PV5 fixture: the second subwindow zoomed to 6n..8n, the first as fitted" \
+        [list [pv_swx $z 2] [pv_swx $z 1]] [list [list [pv_n 6e-9 8e-9]] [list [pv_n 0 1e-8]]]
+    pv_outs $key {{name A expr v(a) save 1 plot 1} {name B expr v(b) save 1 plot 0}}
+    pcall ase::ui::set_plot_dest $key replace
+    pcall wviewer::set_target_strip 0 $key
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_bysw $key]
+    check "PV5 fixture: Replace put the one ticked row into the first subwindow, the same data" \
+        [list [pv_same $key] [pv_sw $key] [pv_vecs $key]] {1 {1 2 2} {v(a) v(b) v(a)}}
+    check "PV5 Replace: the subwindow it did not touch shows EXACTLY what it showed, strip by strip" \
+        [pv_at $a 2] [pv_at $z 2]
+    check "PV5 ...and the strip it put back takes its OWN subwindow's old view, not the other's zoom" \
+        [pv_at $a 1 v(a)] [pv_at $z 1 v(a)]
+
+    ## (2) one strip of both rows in the first subwindow, one strip per row in
+    ## the second (zoomed); Replace into the first in multi-plot
+    pv_outs $key $outs
+    pcall wviewer::set_plot_mode single $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    pcall ase::ui::set_plot_dest $key newsubwin
+    pcall wviewer::set_plot_mode multi $key
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV5 fixture: one strip of both rows, then a subwindow of one strip per row" \
+        [list [pv_sw $key] [pv_vecs $key]] {{1 2 2} {{v(a) v(b)} v(b) v(a)}}
+    pv_zoom $key 1 x 6e-9 8e-9
+    set z [pv_bysw $key]
+    check "PV5 fixture: the second subwindow zoomed to 6n..8n" [pv_swx $z 2] [list [pv_n 6e-9 8e-9]]
+    pcall ase::ui::set_plot_dest $key replace
+    pcall wviewer::set_target_strip 0 $key
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_bysw $key]
+    check "PV5 fixture: Replace in multi-plot gave the first subwindow a strip per row" \
+        [list [pv_same $key] [pv_sw $key] [pv_vecs $key]] {1 {1 1 2 2} {v(b) v(a) v(b) v(a)}}
+    check "PV5 Replace: the second subwindow shows EXACTLY what it showed" [pv_at $a 2] [pv_at $z 2]
+    check "PV5 ...and the first subwindow's new strips are not given the second's zoom (they fit)" \
+        [pv_swx $a 1] [list [pv_n 0 1e-8]]
+
+    ## (3) New SubWin: every subwindow already there keeps its view, on the same
+    ## data and after a re-run
+    pcall wviewer::set_plot_mode single $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    update
+    pv_zoom $key 0 x 2e-9 4e-9
+    set z [pv_axes $key]
+    check "PV5 fixture: one strip, zoomed to 2n..4n" [lrange [lindex $z 0] 0 1] [pv_n 2e-9 4e-9]
+    pcall ase::ui::set_plot_dest $key newsubwin
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_axes $key]
+    check "PV5 New SubWin, the same data: the first subwindow's strip shows EXACTLY what it showed" \
+        [list [pv_same $key] [pv_sw $key] [lindex $a 0]] [list 1 {1 2} [lindex $z 0]]
+    check "PV5 ...and the new subwindow's strip fits (nothing of its own to take from)" \
+        [lrange [lindex $a 1] 0 1] [pv_n 0 1e-8]
+    ## zoomed again, so the re-run row below does not lean on the row above
+    pv_zoom $key 0 x 2e-9 4e-9
+    set z [pv_axes $key]
+    check "PV5 fixture: a same-size rewrite (the re-run)" [pv_rewrite 10e-9 2.0 7] {1 0}
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_axes $key]
+    check "PV5 New SubWin after the re-run: the zoomed strip keeps its X, its Y fitted to the new data" \
+        [list [pv_same $key] [pv_sw $key] [lrange [lindex $a 0] 0 1] [lrange [lindex $a 0] 2 3]] \
+        [list 0 {1 2 3} [pv_n 2e-9 4e-9] [pv_yfit $key 0]]
+    check "PV5 ...a Y that really moved with the data (not what it showed)" \
+        [expr {[lrange [lindex $a 0] 2 3] ne [lrange [lindex $z 0] 2 3]}] 1
+    check "PV5 ...the strip nobody zoomed, and the new one, fit the new data" \
+        [list [lrange [lindex $a 1] 0 1] [lrange [lindex $a 2] 0 1] [lrange [lindex $a 1] 2 3]] \
+        [list [pv_n 0 1e-8] [pv_n 0 1e-8] [pv_yfit $key 1]]
+
+    ## (4) the re-run is another analysis: another plot, nothing kept
+    pcall ase::ui::set_plot_dest $key replace
+    pv_outs $key {{name A expr v(a) save 1 plot 1}}
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    update
+    pv_zoom $key 0 y 0.25 0.5
+    pv_zoom $key 0 x 2e-9 4e-9
+    check "PV5 fixture: a tran strip zoomed in X and in Y" [pv_axes $key] [list [pv_n 2e-9 4e-9 0.25 0.5]]
+    set st [ase::session_state $key]
+    dict set st analyses {{type op enabled 1} {type dc enabled 0} {type ac enabled 1 start 1e3 stop 1e6 points 10} {type tran enabled 0 stop 10m step 100u}}
+    ase::session_update $key $st
+    file stat $::pv_raw pv5a
+    pv_ac $::pv_raw 1e3 1e6
+    file mtime $::pv_raw [expr {$pv5a(mtime) + 9}]
+    check "PV5 fixture: the re-run is an ac analysis, written where the tran was" \
+        [list [pcall ase::plot_sim_type [ase::session_state $key]] [pcall ase::last_rawfile $key]] [list ac $::pv_raw]
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [lindex [pv_axes $key] 0]
+    check "PV5 another analysis under Replace: the strip is the engine's fit of the new data, X and Y" \
+        [list [pv_same $key] [pv_vecs $key] [lrange $a 0 1] [lrange $a 2 3]] \
+        [list 0 v(a) [pv_xfit $key 0] [pv_yfit $key 0]]
+    check "PV5 ...which is not the transient's Y window (the fit really differs from it)" \
+        [expr {[lrange $a 2 3] ne {0.25 0.5}}] 1
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (f) R3 WITH NOTHING TICKED. `~` under Replace with no row ticked empties the
+## target subwindow down to one empty auto strip (R-OUT14) and never reaches
+## attach_raw (auto_plot's zero-rows branch); every OTHER subwindow must still
+## show exactly what it showed, on both axes. The zoom is put on the rects only,
+## and is measured to differ from what a refit would show. "Never reaches
+## attach_raw" is seen by a spy on the real proc, not read off the attach
+## record: an attach of the same data leaves the record as it was.
+##
+## The spy: every call of wviewer::attach_raw while `script` runs is recorded
+## in ::pv_attached and handed on to the real proc, put back afterwards
+## whatever happens. It takes the real proc's arguments, pinned by a row: a
+## narrower stand-in would turn every call into an error the caller's catch
+## swallows. The spy sees only what runs inside `script`, so the guarded press
+## takes the band's `update` in with it: an attach the press defers to idle
+## time or to a timer already due by then (`after idle`, `after 0`) is seen.
+## A timer that falls due after that one `update` escapes the spy (declared).
+proc pv_spy_attach {script} {
+    set ::pv_attached {}
+    if {[info commands ::wviewer::pv_attach_real] ne {}} { return ERR:spy_nested }
+    rename ::wviewer::attach_raw ::wviewer::pv_attach_real
+    proc ::wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
+        lappend ::pv_attached [list $token $rawfile $sim_type $vcdfiles]
+        return [::wviewer::pv_attach_real $token $rawfile $sim_type $vcdfiles]
+    }
+    set rc [catch {uplevel 1 $script} r]
+    rename ::wviewer::attach_raw {}
+    rename ::wviewer::pv_attach_real ::wviewer::attach_raw
+    if {$rc} { return [pv_err $r] }
+    return $r
+}
+## a proc's arguments, each with its default when it has one (info args,
+## info default)
+proc pv_sig {p} {
+    if {[catch {info args $p} as]} { return [pv_err $as] }
+    lmap a $as { if {[info default $p $a d]} { list $a $d } else { list $a } }
+}
+group PV6 {
+    set outs {{name A expr v(a) save 1 plot 1} {name B expr v(b) save 1 plot 1}}
+    set key [pv_session pv6 tbpv6 $outs 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    pcall ase::ui::set_plot_dest $key newsubwin
+    check "PV6 the attach_raw spy takes the real attach_raw's arguments (info args, info default)" \
+        [pv_spy_attach { pv_sig ::wviewer::attach_raw }] [pv_sig ::wviewer::attach_raw]
+    pv_spy_attach { pcall ase::ui::plot_outputs $key }
+    set ctl $::pv_attached
+    update
+    check "PV6 control: the spy sees the attach a press with rows ticked makes (one call, the session's raw)" \
+        [list [llength $ctl] [lindex $ctl 0 1] [info commands ::wviewer::pv_attach_real]] [list 1 $::pv_raw {}]
+    check "PV6 fixture: two subwindows, each holding the run's two rows in auto strips of their own" \
+        [list [pv_sw $key] [pv_vecs $key] \
+              [pv_auto $key]] \
+        {{1 1 2 2} {v(b) v(a) v(b) v(a)} {1 1 1 1}}
+    pv_zoom $key 2 x 6e-9 8e-9
+    pv_zoom $key 3 y 0.25 0.5
+    set z [pv_bysw $key]
+    check "PV6 fixture: the second subwindow zoomed to 6n..8n, its v(a) strip to 0.25..0.5 in Y" \
+        [list [pv_swx $z 2] [lrange [pv_at $z 2 v(a)] 2 3]] [list [list [pv_n 6e-9 8e-9]] {0.25 0.5}]
+    check "PV6 distinctness: what a refit of those strips would show is not what they show" \
+        [list [expr {[pv_xfit $key 2] ne [pv_n 6e-9 8e-9]}] [expr {[pv_yfit $key 3] ne {0.25 0.5}}] \
+              [expr {[pv_xfit $key 3] ne [pv_n 6e-9 8e-9]}]] {1 1 1}
+    pv_outs $key {{name A expr v(a) save 1 plot 0} {name B expr v(b) save 1 plot 0}}
+    pcall ase::ui::set_plot_dest $key replace
+    pcall wviewer::set_target_strip 0 $key
+    set rec0 [pv_record $key]
+    pv_spy_attach { pcall ase::ui::plot_outputs $key ; update }
+    set att $::pv_attached
+    set a [pv_bysw $key]
+    check "PV6 fixture: nothing ticked under Replace left the first subwindow one empty auto strip" \
+        [list [pv_sw $key] [pv_vecs $key] [pv_auto $key]] {{1 2 2} {{} v(b) v(a)} {1 1 1}}
+    check "PV6 ...and called attach_raw not once (the spy), the attach record left as it was" \
+        [list $att [expr {[pv_record $key] eq $rec0}]] {{} 1}
+    check "PV6 Replace with nothing ticked: the subwindow it did not touch shows EXACTLY what it showed, strip by strip" \
+        [pv_at $a 2] [pv_at $z 2]
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+} else {
+    puts "SKIP: display-only bands [join $::pv_disp ,] (no Tk on this arm)"
 }
 
 # =============================================================================

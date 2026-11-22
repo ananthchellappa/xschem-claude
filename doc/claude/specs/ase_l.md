@@ -1206,7 +1206,13 @@ They should not influence the input to the simulator."* ADE-L is the floor
     anything unknown reads the default). No committed `.state` file changes.
   - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step; the
     survivor keeps the run's strip view, so a zoom survives a re-run), then R-OUT14's auto
-    strips. **Append**: the viewer's append rule in the target subwindow
+    strips. A strip that comes back with the traces it had takes the view it showed (issue
+    1733, user ruling 2026-11-22: *"yes, re-run which then plots in Replace mode should retain
+    zoom level, not reset it"*): as shown for the same data, the axes the user moved for new
+    data (`doc/claude/specs/waveform_viewer.md`, "Keeping the view across a rebuild", R1-R3),
+    matched among the target subwindow's old strips only; every other subwindow shows what it
+    showed. Append keeps the strips already there the same way, and so do New SubWin and New
+    Win for the plot already on screen. **Append**: the viewer's append rule in the target subwindow
     (`wviewer::plot_sites`, the batch may land in an auto strip); nothing is cleared, so a
     second press adds a second copy. **New SubWin** / **New Win**: a new subwindow / viewer tab
     holds the run's auto strips and the previous plot stays where it was; a viewer the press
@@ -1214,6 +1220,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
   - **Nothing ticked**: under Replace an open viewer's target subwindow is emptied to one
     empty auto strip, but only when it holds an auto strip (a subwindow `~` never plotted into
     is not emptied by a press that plots nothing); under the other three nothing changes.
+    Every other subwindow shows exactly what it showed, a zoom included (issue 1733, second
+    review round: the rebuild after the clear was plain and fitted them again, measured on
+    band PV6 of `test_ase_plot_outputs`; it now carries the live view).
   - Failed runs, refusals and the op-only notice are unchanged (R-OUT12/R-OUT13), under every
     choice.
   - **Direct Plot ALWAYS APPENDS** (user 2026-11-16, reversing the 2026-10-16 ruling of issue
