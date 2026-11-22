@@ -25,7 +25,10 @@
 #      proof  {...}                see below. REQUIRED.
 #      only   {...}                optional: ask this only where the expression is
 #                                  true (a key of the Cadence profile, a symbol
-#                                  of a PDK workarea)
+#                                  of a PDK workarea). For the Cadence profile
+#                                  test a command its rc defines, never the
+#                                  cadence namespace: ASE-L creates that in any
+#                                  session (utils/annot_mode.tcl)
 #    }
 #
 #  The id may hold a-z, 0-9, '-' and '_'. It is what the "already answered" list
@@ -956,6 +959,10 @@ startup_quiz::add cadence-compat {
 }
 
 # ---------------------------------------------------------------- Cadence profile
+# Asked only where the profile's rc (src/cadence_style_rc, which every PDK's
+# profile sources) has run: cadence::q_key is defined there and nowhere else. Not
+# the cadence namespace, which utils/annot_mode.tcl creates in any session that
+# opens ASE-L (ase::ui::annot_tran_helper). test_startup_quiz rows A21 and A22.
 startup_quiz::add cad-hilight {
   type mc  kind howto  topic {Cadence profile}
   q   {In the Cadence profile, which keys highlight a net, remove one net's highlight, and
@@ -964,7 +971,7 @@ startup_quiz::add cad-hilight {
   ok  0
   why {9 highlights, stepping to the next style each time; 8 removes one net's highlight
        and 0 clears them all. In the waveform viewer the same three keys do it for traces.}
-  only  {[namespace exists ::cadence]}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
   proof {[P_hasre src/cadence_style_rc {bind \.drw <Key-9>\s+\{xschem hilight_net_interactive;\s+break\}}]
          && [P_hasre src/cadence_style_rc {bind \.drw <Key-8>\s+\{xschem unhilight_net_interactive;\s+break\}}]
          && [P_hasre src/cadence_style_rc {bind \.drw <Key-0>\s+\{xschem unhilight_all;\s+break\}}]
@@ -977,7 +984,7 @@ startup_quiz::add cad-annot {
   a   {{6} {7} {Ctrl+6} {Alt+6}}
   ok  0
   why {6 adds the device info, Alt+6 the node voltages, and Ctrl+6 clears both.}
-  only  {[namespace exists ::cadence]}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
   proof {[P_hasre src/cadence_style_rc {bind \.drw <Key-6>\s+\{cadence::annot_mode op;\s+break\}}]
          && [P_hasre src/cadence_style_rc {bind \.drw <Alt-Key-6>\s+\{cadence::annot_mode opvolt;\s+break\}}]
          && [P_hasre src/cadence_style_rc {bind \.drw <Control-Key-6>\s+\{cadence::annot_mode none;\s+break\}}]
@@ -990,7 +997,7 @@ startup_quiz::add cad-rdw {
   ok  true
   why {1 sends its annotation list, 2 its summary list and 3 everything the run holds; 4
        refreshes. With nothing selected, the key waits for you to click a device.}
-  only  {[namespace exists ::cadence]}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
   proof {[P_has src/cadence_style_rc {rdw::key annotation}] && [P_has src/cadence_style_rc {rdw::key summary}]
          && [P_has src/cadence_style_rc {rdw::key all}] && [P_has src/cadence_style_rc {rdw::key refresh}]
          && [P_proc ::rdw::key]}
@@ -1002,7 +1009,7 @@ startup_quiz::add cad-find {
   ok  true
   why {It works on the sheet in front of you: select, count or list the matches, or rename
        them all in one step.}
-  only  {[namespace exists ::cadence]}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
   proof {[P_has utils/find_helper.tcl {bind .drw <Control-Shift-Key-G> {find_helper::show; break}}]
          && [P_has src/cadence_style_rc find_helper.tcl]}
 }

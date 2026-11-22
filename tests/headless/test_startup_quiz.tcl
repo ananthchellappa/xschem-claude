@@ -648,6 +648,58 @@ check_true "A19 a plain launch, with no profile and no PDK, still has at least 6
 check_true "A20 ... and the conditional ones are the rest ($napply + conditional = $nq)" \
   [expr {[string is integer -strict $nq] && $napply <= $nq && $nq - $napply <= $ncond}]
 
+# The Cadence-profile questions (the ones whose condition names cadence). Their
+# condition must hold where the profile is loaded and nowhere else. The cadence
+# NAMESPACE is no such sign: ASE-L's ase::ui::annot_tran_helper sources
+# utils/annot_mode.tcl, which creates it, in any session that opens ASE-L. So the
+# condition names a command only the profile's rc defines; A22 derives that name
+# from the conditions themselves and checks who defines it.
+set cad_ids {}
+if {[string is integer -strict $nq]} {
+  foreach id $::startup_quiz::order {
+    if {[string match -nocase {*cadence*} [dict get [startup_quiz::get $id] only]]} { lappend cad_ids $id }
+  }
+}
+set cad_before [namespace exists ::cadence]
+set cad_helper [q {ase::ui::annot_tran_helper}]
+set cad_after  [namespace exists ::cadence]
+set cad_elig {}
+foreach id $cad_ids { lappend cad_elig [q {startup_quiz::eligible $id}] }
+check "A21 after ASE-L's annotation helper has created the cadence namespace in this plain session, no Cadence-profile question applies (questions found, namespace before, helper loaded, namespace after, eligible)" \
+  [list [expr {[llength $cad_ids] > 0}] $cad_before $cad_helper $cad_after [lsort -unique $cad_elig]] {1 0 1 1 0}
+set cad_marks {}
+foreach id $cad_ids {
+  if {[regexp {info commands (::[A-Za-z0-9_:]+)\]} [dict get [startup_quiz::get $id] only] -> m]} {
+    if {[lsearch -exact $cad_marks $m] < 0} { lappend cad_marks $m }
+  } else {
+    lappend cad_marks "NO-MARKER($id)"
+  }
+}
+set cad_defs {}
+set cad_pos {}
+if {[llength $cad_marks] == 1 && [string match ::* [lindex $cad_marks 0]]} {
+  set m [lindex $cad_marks 0]
+  set re "(^|\\n)\\s*proc\\s+(::)?[string range $m 2 end]\\s"
+  foreach f [lsort [concat [glob -nocomplain -directory [file join $root src] *.tcl *rc] \
+                           [glob -nocomplain -directory [file join $root utils] *.tcl]]] {
+    if {[regexp -- $re [slurp $f]]} { lappend cad_defs [string range $f [string length $root/] end] }
+  }
+  ## and the condition does say yes where the marker exists
+  set made [expr {![P_proc $m]}]
+  if {$made} { catch {namespace eval [namespace qualifiers $m] {}} ; catch {proc $m args {}} }
+  foreach id $cad_ids { lappend cad_pos [q {startup_quiz::eligible $id}] }
+  if {$made} { catch {rename $m {}} }
+}
+set cad_pdk {}
+foreach f [lsort [glob -nocomplain -directory $root */cadence_style_rc]] {
+  if {[file tail [file dirname $f]] eq {src}} continue
+  lappend cad_pdk [regexp {source \[file join \$_ws \.\. src cadence_style_rc\]} [slurp $f]]
+}
+check "A22 their condition names one command, which only src/cadence_style_rc defines (and every PDK's profile sources that file), and they apply once it exists" \
+  [list [llength $cad_marks] $cad_defs [expr {[llength $cad_pdk] > 0}] [lsort -unique $cad_pdk] [lsort -unique $cad_pos]] \
+  {1 src/cadence_style_rc 1 1 1}
+if {!$cad_before} { catch {namespace delete ::cadence} }
+
 # =====================================================================
 # F* -- the wiring
 # =====================================================================

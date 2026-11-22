@@ -127,9 +127,13 @@ clicked and at no other time, so a person who closes the window without answerin
 writes nothing. Nothing is written in a `--pipe` session.
 
 A question may carry a condition (`only`), an expression evaluated in the running
-session: the four Cadence-profile questions are asked only where the `cadence`
-namespace exists, the two sky130 ones only in the sky130 workarea. Asked for by
-id, a question is shown regardless.
+session: the four Cadence-profile questions are asked only where the profile's rc
+has run (`cadence::q_key`, which only `src/cadence_style_rc` defines, exists), the
+two sky130 ones only in the sky130 workarea. Not where the `cadence` namespace
+exists: `utils/annot_mode.tcl` creates it, and ASE-L sources that file in any
+session (`ase::ui::annot_tran_helper`), so after Tools > Launch ASE-L a session
+without the profile would have been asked about keys it does not have (rows
+`A21`, `A22`). Asked for by id, a question is shown regardless.
 
 ## 7. The question bank
 
