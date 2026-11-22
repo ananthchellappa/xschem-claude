@@ -4101,6 +4101,97 @@ if {[file writable $NSU7]} {
 }
 file attributes $NSU7 -permissions 0644
 
+## --- RULED 2026-11-22: A SAVED OPERATING POINT NAMING A RENAMED INSTANCE ----
+## The user's ruling on 1723_opstate_seed_stale_names ("caution: Warn before
+## the run"). Simulation > Convergence… saves the operating point as ngspice's
+## own `wrnodev` file (`.ic v(<node>) = <value>`, every node by its full path)
+## and restores it as Seed (re-spelt `.nodeset`) or Force (the file included).
+## After a rename its names stop at a missing instance and ngspice drops them
+## with a warning, at rc 0 (measured on 45.2: PF1723ah6 below). When Restore is
+## ticked the pre-flight reads the file, and if any name stops at a missing
+## instance ONE caution names the file, the likely new name when one fits, and
+## the fix; the run goes ahead, never a refusal, and Apply Corrections never
+## touches the file. The file below is wrnodev's shape; `x1.a1` resolves only
+## under xdut and `x1.inp` under xdut and xother, so the rename is unique.
+set OPS [file normalize [file join $RDI op_saved.ic]]
+set OPSTXT "* Intermediate Transient Solution\n* Circuit: * rn_top\n* Recorded at simulation time: 0\n.ic v(in) = 1\n.ic v(x1.a1) = 0.5\n.ic v(x1.inp) = 1\n.ic v(out) = 0.5\n"
+putfile $OPS $OPSTXT
+proc os_run {opstate {outs {{expr v(OUT) save 1}}}} {
+  set st [ri_state {} $outs]
+  dict set st opstate $opstate
+  said_clear
+  set rc [catch {ase::preflight_gate $st $::NLR} e]
+  return [list $rc [lmap x $::said {lindex $x 1}] $st $e]
+}
+set osdoor "'[pcall ase::ui::lbl_conv_save]' ([pcall ase::ui::lbl_simulation] > [pcall ase::ui::lbl_conv_menu])"
+set oshead "ase: caution: the saved operating point '$OPS' names 2 nodes under instance 'x1', which the netlist does not have ('x1' looks renamed 'xdut'), so ngspice drops"
+lassign [os_run [list restore 1 mode seed file $OPS]] rcos1 los1
+eqcheck PF1723os-a-seed-restore-naming-a-missing-instance-is-one-caution-with-the-likely-new-name-and-the-fix-and-the-run-goes-ahead \
+  [list $rcos1 [llength [lsearch -all -glob $los1 {ase: caution: the saved operating point*}]] \
+        [t4_has $los1 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed); the run goes ahead without them. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."] \
+        [llength [lsearch -all -glob $los1 {ase: REFUSED*}]] [expr {[readfile $OPS] eq $OPSTXT}]] \
+  {0 1 1 0 1}
+lassign [os_run [list restore 1 mode force file $OPS]] rcos2 los2
+eqcheck PF1723os2-a-force-restore-says-a-transient-no-longer-starts-those-nodes-at-their-saved-values \
+  [list $rcos2 [llength [lsearch -all -glob $los2 {ase: caution: the saved operating point*}]] \
+        [t4_has $los2 "$oshead those 2 initial conditions with a 'non-existent node' warning (Force): a transient no longer starts those nodes at their saved values (an operating point analysis ignores them either way); the run goes ahead. To refresh the file, run once with $osdoor ticked, or replace 'x1.' with 'xdut.' in it by hand."]] \
+  {0 1 1}
+lassign [os_run [list save 1 restore 1 mode seed file $OPS]] rcos3 los3
+eqcheck PF1723os3-with-save-ticked-too-the-caution-says-this-run-refreshes-the-file-if-its-operating-point-converges \
+  [list $rcos3 [t4_has $los3 "$oshead those 2 starting guesses with a 'non-existent node' warning (Seed); the run goes ahead without them. This run has $osdoor ticked, so it rewrites the file under the new names if its operating point converges; if it does not, replace 'x1.' with 'xdut.' in it by hand."]] \
+  {0 1}
+## THE CONTROLS: every name present; an absent node inside an instance that
+## exists (a missing instance only is this check's business); Restore not
+## ticked; a file that is not there; one name with no single new name
+## (`x1.inp` alone fits xdut and xother) and the singular wording; and the
+## caution said with the save-name check switched off, since it refuses
+## nothing (issue 1425's rule for advice).
+set OPSG [file normalize [file join $RDI op_good.ic]]
+putfile $OPSG ".ic v(in) = 1\n.ic v(xdut.a1) = 0.5\n"
+set OPSN [file normalize [file join $RDI op_nosuch.ic]]
+putfile $OPSN ".ic v(in) = 1\n.ic v(xdut.nosuch) = 0.5\n"
+set OPS1 [file normalize [file join $RDI op_one.ic]]
+putfile $OPS1 ".ic v(x1.inp) = 1\n"
+proc os_count {r} { return [llength [lsearch -all -glob [lindex $r 1] {ase: caution: the saved operating point*}]] }
+set ::ase_preflight 0
+set os_off [os_run [list restore 1 mode seed file $OPS]]
+set ::ase_preflight 1
+set os_one [os_run [list restore 1 mode seed file $OPS1]]
+eqcheck PF1723os4-no-caution-without-a-missing-instance-without-restore-or-without-a-file-and-one-with-the-check-off \
+  [list [os_count [os_run [list restore 1 mode seed file $OPSG]]] \
+        [os_count [os_run [list restore 1 mode seed file $OPSN]]] \
+        [os_count [os_run [list restore 0 mode seed file $OPS]]] \
+        [os_count [os_run [list save 1 mode seed file $OPS]]] \
+        [os_count [os_run [list restore 1 mode force file [file join $RDI op_gone.ic]]]] \
+        [lindex $os_off 0] [os_count $os_off] \
+        [t4_has [lindex $os_one 1] "ase: caution: the saved operating point '$OPS1' names 1 node under instance 'x1', which the netlist does not have, so ngspice drops that starting guess with a 'non-existent node' warning (Seed); the run goes ahead without it. To refresh the file, run once with $osdoor ticked, or edit it by hand."]] \
+  {0 0 0 0 0 0 1 1}
+## NOT IN APPLY CORRECTIONS: beside a refusal the stale outputs caused, the
+## caution is said once and nothing else names the file; the press offers the
+## output row only, and no include plan holds the file.
+lassign [os_run [list restore 1 mode seed file $OPS] {{expr v(x1.a1) save 1}}] rcos5 los5 stos5 eos5
+set scos5 [pcall ase::preflight_scan $stos5 $NLR [pcall ase::include_texts $stos5 $RDI]]
+set offos5 [pcall ase::ui::repair_offer $eos5 $stos5 $scos5]
+eqcheck PF1723os5-the-saved-operating-point-is-never-a-refused-row-nor-in-apply-corrections \
+  [list $rcos5 [llength [lsearch -all -glob $los5 "*$OPS*"]] [dgn $offos5 rows] [dgn $offos5 incnames] \
+        [llength [pcall ase::preflight_include_plan $stos5 $scos5 [pcall ase::include_texts $stos5 $RDI] $RDI]] \
+        [expr {[readfile $OPS] eq $OPSTXT}]] \
+  {1 1 1 0 0 1}
+## src/ase.tcl may not depend on src/ase_window.tcl, so the Save label and the
+## Convergence door are typed there too; with the window's procs renamed away
+## the fallback must say the same
+set osw [pcall ase::opstate_save_door]
+set osf NORENAME
+if {![catch {rename ::ase::ui::lbl_conv_save ::pfo_saved_lcs}]} {
+  catch {rename ::ase::ui::lbl_conv_menu ::pfo_saved_lcm}
+  set osf [pcall ase::opstate_save_door]
+  catch {rename ::pfo_saved_lcm ::ase::ui::lbl_conv_menu}
+  rename ::pfo_saved_lcs ::ase::ui::lbl_conv_save
+}
+eqcheck PF1723os6-the-engines-literal-save-label-and-convergence-door-equal-the-windows-own \
+  [list [expr {$osf eq $osw}] [expr {$osw eq $osdoor}] $osw] \
+  [list 1 1 "'Save operating point' (Simulation > Convergence…)"]
+
 ## --- the press's file half: all or nothing ----------------------------------
 set ar [pcall ase::include_apply_plan $PLAN]
 eqcheck PF1723ac-OK-backs-each-editable-file-up-then-rewrites-it-and-never-opens-the-other \
@@ -4921,6 +5012,53 @@ if {![file executable $NG]} {
           [string match {*syntax error*} $e5log]] \
     {1 1 {} 1 1 0 0 1 1 1 0}
   pcall ase::session_close e2ek5
+  ## RULED 2026-11-22 ("Warn before the run"), END TO END, the measured shape:
+  ## a run with Save operating point ticked writes ngspice's own file on the
+  ## bench whose DUT is `x1`; the DUT is renamed `xdut`; a Seed run and a Force
+  ## transient each restore that file. Each says its one caution before the
+  ## run, reaches ngspice, and finishes at exit 0 with a raw, while ngspice's
+  ## own warning in the log is what the caution said it would do.
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  set NLE6F [file join $RDE e2e_tb_x1.spice]
+  putfile $NLE6F [string map {xdut x1} $NLE]
+  set OP6 [file join $RDE op6.ic]
+  file delete -force $OP6
+  putfile [file join $RDE e2e6.state] \
+    "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
+ analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}} includes {}"
+  pcall ase::session_open e2ek6 [file join $RDE e2e6.state]
+  proc e2e6_st {an op} {
+    set st [ase::sim_choice_set [ase::session_state e2ek6] entry pf1723e]
+    dict set st analyses $an
+    dict set st opstate $op
+    return $st
+  }
+  set e6sid -1
+  set e6src [catch {set e6sid [ase::run_deck [e2e6_st {{type op enabled 1}} {save 1 file op6.ic}] $NLE6F]} e6serr]
+  set e6sex [ase::wait $e6sid]
+  set e6saved [readfile $OP6]
+  said_clear
+  set e6id -1
+  set e6rc [catch {set e6id [ase::run_deck [e2e6_st {{type op enabled 1}} {restore 1 mode seed file op6.ic}] $NLEF]} e6err]
+  set e6ex [ase::wait $e6id]
+  set e6log [e2e_log]
+  set e6said [said_count "ase: caution: the saved operating point '[file normalize $OP6]' names * nodes under instance 'x1', which the netlist does not have ('x1' looks renamed 'xdut'), so ngspice drops those * starting guesses*"]
+  set e6raw [file exists [file join $RDE e2e_tb_ase.raw]]
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  said_clear
+  set e6fid -1
+  set e6frc [catch {set e6fid [ase::run_deck [e2e6_st {{type tran enabled 1 step 1n stop 10n}} {restore 1 mode force file op6.ic}] $NLEF]} e6ferr]
+  set e6fex [ase::wait $e6fid]
+  set e6flog [e2e_log]
+  eqcheck PF1723ah6-a-saved-operating-point-from-before-a-rename-is-one-caution-and-the-seed-and-force-runs-finish-with-ngspices-warning \
+    [list $e6src $e6sex [string match {*.ic v(x1.a1)*} $e6saved] \
+          $e6rc $e6ex $e6raw $e6said [string match -nocase {*nodeset on non-existent node*x1.a1*} $e6log] \
+          $e6frc $e6fex [file exists [file join $RDE e2e_tb_ase.raw]] \
+          [said_count "ase: caution: the saved operating point '[file normalize $OP6]' names * initial conditions with a 'non-existent node' warning (Force)*"] \
+          [string match -nocase {*IC on non-existent node*x1.a1*} $e6flog] \
+          [said_count {ase: REFUSED*}]] \
+    {0 0 1 0 0 1 1 1 0 0 1 1 1 0}
+  pcall ase::session_close e2ek6
   pcall ase::sim_clear
 }
 
