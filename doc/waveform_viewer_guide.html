@@ -460,10 +460,13 @@ height.</td></tr>
 </table>
 
 <h3 id="ref-viewer-keys">9.1 Viewer keys (remappable, see <a href="#rebinding">§10</a>)</h3>
-<p>These live on the <code>WaveViewer</code> binding tag and work anywhere in the
-window, once the plot has the keyboard focus. A viewer that has only just opened
-does not have it yet: click in the plot once
-(<a href="#trouble">§12</a>).</p>
+<p>These live on the <code>WaveViewer</code> binding tag. Once the plot has the
+keyboard (a click in the plot gives it) they work wherever the pointer is. And
+they work without a click while the pointer is over the plot: right after the
+viewer opened, after a second Direct Plot or a finished run brought it to the
+front, and while the keyboard is still in a schematic window, such as the one
+you came from (the note at the head of
+<a href="#ref-graph-keys">§9.3</a>).</p>
 <table>
 <tr><th>Key</th><th>What it does</th><th>Where it works</th><th>Menu twin</th></tr>
 <tr data-seq="Control-Key-n" data-menu="New Tab" data-accel="Ctrl+N">
@@ -705,14 +708,30 @@ only as the engine means it for a graph: one of these letters bare, or
 the few pixels just inside a strip's edge, they do nothing either. No key typed
 into a viewer's plot reaches a schematic editing command, and none brings up the
 "View is Read Only" box.</p>
-<div class="note">One state is outside that. If the pointer rests over a viewer's
-plot while the keyboard focus is in <i>another</i> xschem window (after Alt-Tab,
-or a click on the task bar, with the pointer left where it was), a key you type
-goes to that other window, and the drawing engine runs it where the pointer is:
-in the viewer, as the schematic command the key is. An editing key then brings
-up "View is Read Only", and <kbd>Ctrl-Shift-M</kbd> typed that way does not
-change the plot mode. Move the pointer into the window you are typing in, or
-click in the plot, and the keys are right again.</div>
+<div class="note">The keys follow the pointer. When the pointer comes into a
+viewer's plot, that viewer becomes the window xschem is working in, and it stays
+so while the pointer is anywhere in the viewer's window: the plot, the bars, the
+tab row, the Signal Browser. (A viewer that has just opened is the working
+window already.) A key typed then is the viewer's even while the keyboard focus
+is in a <i>schematic</i> window (after Alt-Tab, or a click on the task bar, with
+the pointer left where it was; or right after the viewer opened, on a desktop
+that leaves the keyboard where it was): <kbd>Ctrl-Shift-M</kbd> flips the plot
+mode, <kbd>a</kbd> and <kbd>b</kbd> place the cursors, and a schematic editing
+key does nothing. The keyboard focus stays where it is, so the schematic's keys
+work again as soon as the pointer is back in the schematic's drawing area.
+Three things to know:
+<ul>
+<li>A pointer that goes from the schematic straight onto the viewer's Signal
+Browser, its bars or its tab row, without crossing the plot, does not make the
+viewer the working window. Unless it was that already, a key typed in the
+schematic is then still the schematic's.</li>
+<li>With the keyboard focus on a viewer's plot, a key stays with that viewer
+wherever the pointer is: over a schematic window, or over another viewer
+(<a href="#trouble">§12</a>).</li>
+<li>A key typed into a window that is not a drawing window (ASE-L, the
+Calculator, the Signal Browser's search box) belongs to that window, wherever
+the pointer is.</li>
+</ul></div>
 <table>
 <tr><th>Key</th><th>What it does</th><th>Where it works</th></tr>
 <tr><td><kbd>a</kbd></td><td>Cursor A on/off, placed at the pointer's x.</td>
@@ -1529,26 +1548,43 @@ output, or turn on save-all-voltages, and re-run.</td></tr>
 window to belong to and you get
 <span class="msg">ase: cannot open the waveform viewer for &lt;session&gt;</span>.</td></tr>
 
-<tr><td>A key brings up "View is Read Only" although the pointer is over a
-plot</td>
-<td>The keyboard focus is in another xschem window, not in the viewer: see the
-note at the head of <a href="#ref-graph-keys">§9.3</a>. Click in the plot, or
-move the pointer into the window you mean to type in.</td></tr>
+<tr><td>A key typed in the <i>schematic</i> brings up "View is Read Only", or
+does something in the viewer's window</td>
+<td>The viewer is still the window xschem is working in, although the keyboard
+is in the schematic and the pointer is not in the viewer. xschem changes its
+working window only when the pointer <i>enters</i> a drawing area, so there are
+two ways into this. (1) The pointer was last in the viewer and now rests outside
+every drawing area: on the schematic window's title bar, its menus or tool bars,
+the desktop, or another program. (2) A viewer has just opened (a Direct Plot
+finished from the schematic, say) while the pointer was resting over the
+schematic, and the pointer has not left the schematic's drawing area since. A
+schematic key typed then is run in the viewer, where an editing key brings up
+the box. Move the pointer into the schematic's drawing area, or out of it and
+back in if it never left: from then on the schematic's keys are the schematic's.
+A click in the schematic does the same on some desktops only: it did under the
+openbox window manager this was tested with, and it did not on a display
+without a window manager.</td></tr>
 
-<tr><td>Right after the viewer opened, a key does nothing, or brings up "View
-is Read Only"</td>
-<td>A viewer that has just opened does not have the keyboard focus on its
-plot yet, and moving the pointer over the plot does not give it. Where the
-focus is instead depends on the desktop: on the viewer window itself, and a key
-does nothing; or still in the schematic window, and a key is run as the
-schematic command it is there (the row above). Click in the plot once; from then
-on the keys work.</td></tr>
+<tr><td>After a viewer opened or came to the front (a second Direct Plot, a run
+that finished), keys typed over the schematic do nothing</td>
+<td>The desktop gave the keyboard to the viewer's window, and the pointer is not
+over the viewer's plot, so the keys belong to nobody. To use the viewer, move
+the pointer over its plot. To go on in the schematic, click in its drawing
+area; if a key then brings up "View is Read Only", see the row above.</td></tr>
+
+<tr><td>A key typed over the schematic acts on the viewer (<kbd>u</kbd> undoes
+there, <kbd>e</kbd> removes its empty strips)</td>
+<td>The keyboard focus is on the viewer's plot (the desktop handed the
+keyboard back to the viewer after Alt-Tab, say) while the pointer was already
+resting over the schematic. A key goes to the window that has the keyboard.
+Click in the schematic's drawing area.</td></tr>
 
 <tr><td>A key "does nothing"</td>
 <td>Most likely it is one of the <a href="#ref-graph-keys">§9.3</a> keys and the
-pointer is not over a strip — those go by where the pointer is, on top of the
-keyboard focus being in the plot. Move the pointer onto a plot and try again; if
-the window has only just opened, see the row above.</td></tr>
+pointer is not over a strip: those go by where the pointer is. Move the pointer
+onto a plot and try again. If the keyboard is in a window that is not a drawing
+window (ASE-L, the Calculator, the Signal Browser's search box), the key belongs
+to that window: click in the plot first.</td></tr>
 
 <tr><td>A drag reorders the stack when you meant to move a trace</td>
 <td>The press must land within about 10 pixels of the curve. Further out is

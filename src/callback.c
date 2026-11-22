@@ -10358,6 +10358,73 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
   return redraw_only;
 }
 
+/* A KEY THAT CAME THROUGH ANOTHER WINDOW'S CANVAS WHILE A WAVEFORM VIEWER IS THE
+ * CURRENT CONTEXT IS THE VIEWER'S TO DECIDE, NOT AN EDITOR KEY.
+ *
+ * callback() runs a key in the CURRENT context, whichever canvas's binding handed
+ * it over. The context follows the pointer (handle_window_switching(), on Enter);
+ * the keyboard focus need not. After Alt-Tab, after a click on the task bar, or
+ * right after a viewer opened on a desktop that leaves the focus where it was, the
+ * focus is in a schematic window while the pointer rests in a viewer. A key typed
+ * then arrives here with the schematic canvas as win_path and the viewer's context
+ * current, and handle_key_press() ran it in the viewer as the schematic command it
+ * is: the "View is Read Only" message box for the schematic's move, wire and
+ * instance keys, a stepped hide_symbols, a reload prompt. The viewer's own key
+ * filter is a binding of the viewer's canvas and never saw such a key.
+ *
+ * So for a key press or release, and only when the current context carries the
+ * viewer flag (xctx->wave_viewer, set by wviewer::open through `xschem set
+ * wave_viewer 1`) and win_path is not that context's canvas, the key is offered to
+ * wviewer::foreign_key (src/wave_viewer.tcl) first. It answers 1 when the pointer
+ * is in that viewer's window and it has done there what Tk would have done had the
+ * key been delivered to the viewer's canvas; callback() then returns at once. Any
+ * other answer (the pointer elsewhere, a context that is flagged but is no viewer
+ * the Tcl side knows, an error) leaves the key to the code below, as before.
+ *
+ * WHERE THE CALL STANDS, and why it stands above everything else callback() does:
+ *  - above the write of the event's pixel into the context (xctx->mousex and its
+ *    siblings, issue 1659): the pixel of this event belongs to another window, and
+ *    the viewer's stored pointer must stay the viewer's;
+ *  - above the semaphore increment: the Tcl side hands a graph key back to the
+ *    engine with the viewer's canvas as its window, and that nested callback() has
+ *    to count as an ordinary first-level one, as it does when Tk delivers the key
+ *    to the viewer's canvas;
+ *  - nothing here switches the context or moves the keyboard focus.
+ * No other context is touched: with an ordinary schematic window current, a key
+ * from another canvas runs exactly as it did. Not under has_x 0: the question is
+ * about a pointer, and there is none.
+ *
+ * The Tcl proc may close the viewer (its Control-q), so nothing of xctx is read
+ * after the call. The keysym goes over as number and as name; the name is the one
+ * Tk gives a binding as %K.
+ *
+ * THIS IS ONE OF TWO DOORS. A schematic canvas also has key bindings of its own that
+ * never come here (the Cadence profile binds several dozen), and they act on the
+ * current context as well. A binding tag that set_bindings puts first on every
+ * schematic canvas asks the same Tcl proc before any of them runs
+ * (wviewer::key_door); a key Tk delivers is settled there, and this function
+ * answers for whatever reaches callback() some other way.
+ * Rows: SWK34 of tests/headless/test_wave_subwindows.tcl (both arms, the proc a
+ * recorder) and KM14 of tests/headless/test_wave_viewer.tcl (the real proc).
+ * Spec: doc/claude/specs/waveform_viewer.md, "A key that came through another
+ * window". */
+static int viewer_takes_foreign_key(const char *win_path, int event, KeySym key, int state)
+{
+  char ev[40], ks[40], st[40];
+  const char *name;
+
+  if(!has_x || !xctx || !xctx->wave_viewer) return 0;
+  if(event != KeyPress && event != KeyRelease) return 0;
+  if(!win_path || !strcmp(win_path, xctx->current_win_path)) return 0;
+  name = XKeysymToString(key);
+  my_snprintf(ev, S(ev), "%d", event);
+  my_snprintf(ks, S(ks), "%lu", (unsigned long)key);
+  my_snprintf(st, S(st), "%d", state);
+  if(tclvareval("wviewer::foreign_key {", xctx->current_win_path, "} ", ev, " ", ks,
+                " {", name ? name : "", "} ", st, NULL) != TCL_OK) return 0;
+  return !strcmp(tclresult(), "1");
+}
+
 /* main window callback */
 /* mx and my are set to the mouse coord. relative to window  */
 /* win_path: set to .drw or sub windows .x1.drw, .x2.drw, ...  */
@@ -10393,6 +10460,10 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
                          ((xctx->ui_state2 & MENUSTARTWIRE) && (xctx->ui_state & MENUSTART)) ||
                          (persistent_command && (xctx->last_command & STARTWIRE));
   struct stat buf;
+
+  /* a key from another window's canvas while a waveform viewer is the current context:
+   * see viewer_takes_foreign_key() above */
+  if(viewer_takes_foreign_key(win_path, event, key, state)) return 0;
 
   /* this fix uses an alternative method for getting mouse coordinates on KeyPress/KeyRelease
    * events. Some remote connection softwares do not generate the correct coordinates

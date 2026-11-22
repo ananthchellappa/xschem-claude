@@ -513,6 +513,8 @@ refuses object mutation). Two survivors were closed in `strip_bindings` /
   `wviewer::btn2_filter` instead of swallowed. The contract above is unchanged:
   the filter accepts the **press** only well inside a strip, so it can still
   never reach `start_pan_logged`, and Ctrl/Alt+MMB stay inert.
+  (2026-11-22: "well inside" is `wviewer::pan_inset_px`, which follows the
+  Tk scaling; see "A key that came through another window", the rider.)
 - **Arrows intercepted, never forwarded** (`wviewer::arrow_pan`): bare
   Left/Right/Up/Down pan the graph, every modified arrow is swallowed. See the
   item-19 note above for what each forwarded form used to do.
@@ -545,7 +547,13 @@ keep. A key that reaches the engine through ANOTHER window's canvas while the
 viewer's context is current is outside it: see the limits. Amended again the
 same day, third repair: the second sentence read "the engine gives it the
 focus when the pointer comes in from another window", which is false for the
-state every viewer is in right after it opens.) The read-only flag
+state every viewer is in right after it opens. Amended 2026-11-22: both of
+those states are closed. A key typed in a schematic window while the viewer's
+context is current and the pointer is in the viewer is now handed to this same
+filter, and so is a key typed while the viewer's toplevel holds the keyboard
+(where an open still leaves it) and the pointer is over the plot; see "A key
+that came through another window" below. The sentences above about the click
+are history.) The read-only flag
 was never that guarantee: it stops object mutation, and several of the verbs below
 are not mutations (a reload prompt, a Save form, a new window, a view toggle),
 while `m` and `d` are forwarded with read-only lifted.
@@ -676,7 +684,10 @@ driver killed it. The comparand's procs are in
   the canvas and come back. Ctrl-Shift-M does not depend on the context
   (`waveform_viewer_modes.md` §9.1), and Escape aborts in whichever context is
   current, as it did before.
-- **The same rule the other way round is NOT closed, and it still brings up
+- **CLOSED 2026-11-22** (overnight batch item 03b; "A key that came through
+  another window" below). What follows is the limit as it was declared on
+  2026-11-21, kept as the record of what was measured; row KM14 now holds the
+  opposite. **The same rule the other way round is NOT closed, and it still brings up
   the box the user reported.** The viewer's context current and the keyboard
   focus on another window's canvas: the pointer came into the viewer's plot
   (the engine made its context current and gave its canvas the focus), then
@@ -709,7 +720,10 @@ driver killed it. The comparand's procs are in
   viewer's plot gives its canvas the focus, after which the chord is the
   viewer's again. The row turns red the day the engine stops running such a
   key in the viewer.
-- **A viewer that has just opened takes no key until one click in its plot.**
+- **CLOSED 2026-11-22** (the same item; `wviewer::top_key`). The limit as
+  it was declared on 2026-11-21, kept as the record. The open still leaves the
+  focus on the toplevel (row G1f holds that); a key typed there with the
+  pointer over the plot is now the viewer's (row KM23). **A viewer that has just opened takes no key until one click in its plot.**
   `wviewer::open` leaves the viewer's context the current one and asks for the
   focus on the viewer's toplevel, not on the plot canvas. The engine hands a
   canvas the focus only when an Enter switches the context to it, and the
@@ -749,7 +763,9 @@ the band test behind the middle-button pan's press (SWK25, and a CG-mmb leg of
 `test_wave_viewer` whose press is generated three pixels inside a strip's
 edge), the
 readout bar after a typed Control-s (KM7), and the chord's silence in the
-command window (KM1). G1f holds the limit of the viewer that has just opened.
+command window (KM1). G1f held the limit of the viewer that has just opened
+(until 2026-11-22; it now holds where the open leaves the focus, and KM23
+that a key typed there with the pointer over the plot is the viewer's).
 Added in the fourth repair, once more each for a break no row caught: the
 gate in the right-hand one of two subwindows and after the window changed its
 size (KM9 with real keys, SWK27 on both arms), the graph keys on a second tab
@@ -758,6 +774,261 @@ cursor keys in the Cadence profile as well as the stock one (KM2), and a
 second viewer window open beside the first (KM15 with real keys; SWK19 and
 SWK27 hold the wrapper and the gate with two canvases in the registry on both
 arms).
+
+## A key that came through another window (2026-11-22)
+
+Overnight batch of 2026-11-21, item 03b, and its first repair of 2026-11-22.
+Two contracts:
+
+- **A key typed in a schematic window is the viewer's while the viewer's
+  context is the current one and the pointer is in the viewer's window.** The
+  context becomes a viewer's when the pointer comes into its plot, or when
+  the viewer opens. The key does what it does when the plot has the keyboard
+  focus: the viewer's own chords run (Ctrl-Shift-M flips the plot mode), a
+  graph key goes to the graph, anything else does nothing. No editor verb
+  runs in the viewer.
+- **A viewer takes its keys right after it opens or is raised, without a
+  click, while the pointer is over its plot.** Where the desktop hands the
+  keyboard to the viewer's window, by that window's own door (rule 3); where
+  it leaves the keyboard in a schematic window, by the first contract. With
+  the keyboard on the viewer's window and the pointer anywhere but over the
+  plot, a key does what it did before this item: nothing, but for the keys
+  Tk's own `all` tag binds.
+
+**Why.** The engine runs a key in the CURRENT context, whichever canvas's
+binding handed it over, and the context follows the pointer (an Enter on a
+drawing canvas switches it) while the keyboard focus need not. After Alt-Tab,
+after a click on the task bar, or right after a viewer opened on a desktop
+that leaves the focus where it was, the focus is in a schematic window and the
+pointer rests in a viewer. Measured in that state on the product of
+2026-11-21, with a real pointer and real server-side keys on the test display,
+the Cadence workarea profile:
+
+| key | what it did |
+|-----|-------------|
+| Ctrl-Shift-M | the "View is Read Only" message box; the mode stayed |
+| `w`, `s`, bare `b`, `m` on a trace | the same box |
+| Alt-b | stepped `hide_symbols`, a global |
+| any key, its release included | wrote the OTHER window's pixel into the viewer's context as its pointer |
+| `i` (a binding of the schematic canvas itself: `bind .drw <Key-i>` of `src/cadence_style_rc`) | the same box, and the engine was never called |
+| `q` (another such binding) | a modal property dialog over the viewer |
+| right after an open, the focus on the viewer's toplevel | nothing at all, for every viewer key |
+
+The work order named the engine as the door. The tree has a second one: a
+schematic canvas carries key bindings of its own that never call the engine
+(the command palette, the descend key, and in the Cadence profile several
+dozen `bind .drw` lines), and their scripts act on the current context too.
+A guard in `callback()` alone would have left `i`, `q`, Control-2 and the
+rest of them running in the viewer.
+
+**The rule.** One decision, `wviewer::foreign_key`, behind three doors.
+
+1. **The canvas door.** Every schematic canvas carries the binding tag
+   `wviewer::key_door_tag` FIRST in its tag list (`set_bindings` in
+   `src/xschem.tcl` calls `wviewer::key_door_attach`), the canvas of a second
+   schematic window like the main one (row KM21). Its two bindings, for a key
+   press and a key release, ask `wviewer::key_door` before any binding of the
+   canvas runs, and `break` when a viewer took the key. A viewer is asked
+   only while ITS context is the current one. While a schematic's context is
+   current the proc asks the engine for the current context and, when that
+   is not the canvas's own, for its viewer flag, and stops there. A viewer's
+   own canvas does not carry the tag (`wviewer::strip_bindings` takes it off
+   again).
+2. **The engine's door.** `viewer_takes_foreign_key()` in `src/callback.c`,
+   called above everything else `callback()` does: for a key press or
+   release, with the viewer flag on the current context (`xctx->wave_viewer`)
+   and a window that is not that context's canvas, it asks the same proc and
+   returns at once when the answer is 1. It stands above the write of the
+   event's pixel into the context (issue 1659), so the viewer's stored
+   pointer stays the viewer's, and above the semaphore increment, so the
+   graph key the filter hands back to the engine counts as an ordinary
+   first-level call (row KM17 sends a graph key by this door and sees cursor
+   B toggle). Not under `has_x` 0. A key Tk delivers is settled at the canvas
+   door; this one answers for whatever reaches `callback()` another way (a
+   script's `xschem callback`, a binding that forwards).
+3. **The viewer window's own door.** A viewer's toplevel carries the binding
+   tag `wviewer::top_key_tag` first in its tag list (`wviewer::open` calls
+   `wviewer::top_key_attach` for a fresh window). `wviewer::open` leaves the
+   keyboard focus inside a viewer on that toplevel, and until this date no
+   key was bound there. The tag's two bindings ask `wviewer::top_key`, which
+   hands the key to `foreign_key` when the pointer is over that viewer's PLOT
+   canvas. The tag is one of its own, not a binding on the toplevel's path:
+   the path is a tag of every widget inside the toplevel too. The binding
+   does not `break`; Tk goes on with the toplevel's own tags as before (row
+   KM23 types F10 there: the viewer's own menu is posted).
+4. **The decision.** `wviewer::foreign_key W T N K s` takes the key when `W`
+   is a viewer's canvas and the pointer is in that viewer's window: Tk is
+   asked which window of this application is under the pointer (`winfo
+   containing`), so the plot, the bars, the tab row and the Signal Browser
+   all count, and a window lying over the viewer counts as itself. Anywhere
+   else it answers 0 and the key runs as it always did. (The viewer window's
+   own door asks for the plot before it asks this proc: rule 3.)
+5. **What it does with a key it takes.** What Tk would have done had the key
+   been delivered to the viewer's canvas: for each binding tag of the canvas,
+   from the first through `WaveViewer`, the binding Tk would run for the key,
+   with the pointer's pixel in the canvas as the event's. That is the filter
+   (the canvas's own key binding) and then the viewer's shortcut, so an rc
+   binding on the tag and the Caps Lock dispatch are honoured and nothing
+   keeps a second list of chords. A script's `break` stops the walk, and so
+   does an error in one, which goes to the background error handler: both as
+   with a key Tk delivers (row KM14). `wviewer::tag_key_seq` chooses the
+   binding from what `bind <tag>` lists, by Tk's rules: a sequence that names
+   the keysym beats one that does not; then the one that asks for more
+   modifiers wins when its modifiers include the other's; of two that ask
+   for different ones, the one bound later. `wviewer::key_seq_event` reads
+   one listed sequence; `wviewer::key_subst` fills the `%` fields. Tk itself
+   cannot be asked: `event generate` sends a key to the window that has the
+   focus, which is the window the key came from.
+6. **Nothing moves.** Neither the keyboard focus nor the context, by any of
+   the three doors. Taking the focus for the viewer would leave the
+   schematic's keys dead when the pointer goes back there.
+7. **The open is as it was.** Both arms of `wviewer::open` (a fresh window,
+   and one it only raises, which is what auto-plot asks for after a run) ask
+   for the focus by a plain `focus <toplevel>`, as before this item (rows G1f
+   and KM18; KM18 records the calls and holds that the one naming the
+   toplevel is not forced). Rule 3 is what gives a viewer its keys after it.
+
+**Decided by the lead** (work order 03b; not ruled on by the user):
+the pointer decides, and the key works rather than being dropped; a release
+follows its press; a key typed in a window that is no xschem drawing window
+(ASE-L, the Calculator, the Signal Browser's panes and search box) stays
+there; no new chord; and the mirror state is unchanged (first limit below).
+
+**Decided by the crews** (holes in the work order; the build, then the
+repair):
+- The canvas door (rule 1). Rejected: the engine's door alone, which leaves
+  the canvas-bound keys of the Cadence profile running in the viewer.
+- For a key from a schematic canvas, "the pointer over the plot" is read as
+  "the pointer in the viewer's window, the viewer's context current".
+  Rejected: the plot canvas only, which leaves the same editor verb running
+  when the pointer rests on the viewer's status bar. Also rejected, in the
+  repair: asking which viewer the pointer is in before asking which context
+  is current. A pointer that reached the viewer's bars without crossing the
+  plot leaves a schematic's context current, and the schematic then runs
+  the key in its own context: no editor verb runs in a viewer, so the state
+  is not one this item is about. And with `mouse_follows_focus` off the
+  context follows the keyboard focus on purpose; a key typed in a schematic
+  must stay the schematic's there whatever the pointer rests on.
+- With the viewer's context current and the pointer in no viewer, the key is
+  NOT taken (second limit). Rejected: taking every key that arrives while a
+  viewer's context is current, which would let Control-d typed into a
+  schematic clear a viewer the user is not pointing at. Not done either:
+  switching the context to the canvas the key was typed in. It would cure
+  the limit, and it is the engine's most delicate path; returned to the user
+  as a ruling to make.
+- (Amended 2026-11-22, the repair.) The build had `wviewer::open` give the
+  plot canvas the focus, in both arms, as the work order suggested. While
+  this application holds the keyboard a plain `focus` moves it, so the keys
+  typed next went to the viewer wherever the pointer was. Measured with real
+  keys after the raise auto-plot asks for, the pointer over the schematic:
+  `e` deleted the empty strips, `u` undid in the viewer, Control-d cleared
+  the traces; before the item the same keys did nothing. That contradicts
+  the work order's own third promise (nothing changes for a schematic window
+  the pointer is over). The repair took the work order's other road: the
+  open as it was, and a door on the toplevel (rule 3).
+- The viewer window's own door asks for the pointer over the PLOT, not
+  anywhere in the viewer's window. Rejected: the whole window. A key this
+  door declines does nothing, where one the canvas door declines runs as an
+  editor key, so there is no reason to be wide; and the raise at the end of
+  an open takes the keyboard from whatever widget of this application had
+  it, the Signal Browser's search box included, where the next character
+  typed must not run a viewer shortcut.
+- A viewer's own canvas does not carry the canvas door's tag: with the focus
+  on one viewer's plot and the pointer in another viewer, the key stays with
+  the first. Rejected: routing between viewers, which the mirror-state
+  decision excludes. (Not ruled on; returned as a ruling to make.)
+
+**Limits, declared.**
+- **The mirror state is unchanged.** The focus on a viewer's plot and the
+  pointer over a schematic window, or over another viewer: the key goes to
+  the filter of the viewer that has the focus, which swallows it, and a
+  shortcut of that viewer's tag runs. A graph key does nothing there (the
+  filter forwards one only while its own context is current).
+- **The viewer's context current and the pointer in no viewer.** The engine
+  switches the context only on an Enter of a drawing canvas. So a viewer
+  stays the current context (a) while the pointer, last in the viewer, rests
+  outside every drawing canvas: on a title bar, a menubar or toolbar, the
+  desktop, another application; and (b) right after it opened, while a
+  pointer that was resting over a schematic canvas has not left that canvas.
+  A key typed in a schematic canvas then still runs in the viewer's context
+  as an editor key: Ctrl-Shift-M and `w` bring up "View is Read Only".
+  Measured with real keys in (a) after a click on the schematic window's
+  title bar and with the pointer on the bare desktop, and in (b) on a
+  display with no window manager. It is the engine's general rule for any
+  window, not this item's, and it is what the user's report is about
+  wherever it is reached; returned as a ruling to make.
+- **Only a pointer crossing ends that state.** The pointer moved into the
+  schematic's canvas, or out of it and back in, brings the Enter the engine
+  switches on. A click in the schematic does not by itself: the engine
+  switches nothing on a button press. Under openbox, the window manager of
+  the test display, the click does end it, because that window manager's
+  button grab makes the server send a Leave and an Enter around the press;
+  on a display with no window manager (`AUDIT_WM=none`) the same click left
+  the viewer's context current and the next `w` brought up the box. The
+  user's Windows X server is not measured.
+- **A pointer that reaches a viewer's bars, tab row or Signal Browser
+  straight from a schematic**, without crossing the plot, has not switched
+  the context: a key typed in the schematic is the schematic's, in the
+  schematic's context. Measured with real keys for the Signal Browser pane
+  and the status bar. The same place reached through the plot gives the
+  viewer the key.
+- **After an open or a raise the keyboard is on the viewer's toplevel**
+  wherever the desktop activates the viewer, as before this item. With the
+  pointer over a schematic the keys typed then do nothing (rows KM18 and
+  KM23), until a click in the schematic gives its canvas the keyboard. If
+  the viewer's context is still the current one then, the second limit
+  applies.
+- `mouse_follows_focus` off was not measured. There the engine switches the
+  context on FocusIn and not on Enter (read from
+  `handle_window_switching()`), so a pointer coming into a plot does not make
+  the viewer's context current, and while it is not, the canvas door hands
+  the viewer nothing.
+- A binding of the user's on the tag that `wviewer::key_seq_event` does not
+  read runs only for a key Tk delivers to the plot: a sequence of more than
+  one event, a multi-press, a virtual event, and a sequence with Meta or
+  Extended. Alt is read as Mod1, as the engine reads it.
+- Of a binding script's `%` fields, W, x, y, X, Y, N, K, s and T are filled;
+  any other becomes `??`.
+- The tags after `WaveViewer` are not run for the viewer, and a key the
+  canvas door took goes no further: in that state Tab moves no focus and F10
+  or an Alt-letter opens no menu, in either window (row KM14 types F10).
+- The choice among sequences is Tk 8.6's. Row SWK31 holds
+  `wviewer::tag_key_seq` to answers that were measured against Tk on the day
+  it was written; it asks Tk nothing and would stay green under a Tk that
+  chooses differently. Row KM19 asks Tk itself in every run, on the display
+  arm: for every sequence of the live tag, and for three sequences of its
+  own that ask for different modifiers, bound in each of the six orders.
+- Nothing here was run on the Windows build. `XKeysymToString`, which the
+  engine's door calls, is in Tk's Xlib layer there; that was read, not
+  measured.
+
+**The middle-button pan's inset** (a rider of the same item). The press of
+the pan is taken only `wviewer::pan_inset_px` pixels inside a strip: 8, as it
+always was, wherever the engine's border rounded up is no more than 8 pixels,
+and `wviewer::graph_border_px` where it is wider. The fixed 8 fell short above
+a Tk scaling of 1.6: measured in item 03 at scaling 2.0, a press 9 pixels
+inside a strip panned the viewer's schematic canvas.
+
+Rows. `test_wave_viewer` (display; the pointer moved for real by a warp, the
+key generated on the window that has the focus; KM14 and KM16 send a chord
+with Alt to the engine's entry): KM14 the chord by the canvas door and by the
+engine's, its release, the stored pointer, a key bound behind the viewer's
+tags, an error in a binding, and the pointer deciding; KM16 the editor keys;
+KM17 the graph keys in both profiles, by the canvas door and by the engine's;
+KM18 a viewer that has just opened and one that is only raised: where the
+focus is left and by what calls, the keys typed over the schematic, the chord
+without a click; KM19 parity with Tk on the live tag and for the order of
+binding; KM20 the control and two viewers; KM21 an ordinary second schematic
+window, expected values taken before the change, and a key typed in it with
+the pointer in the plot; KM22 the Signal Browser's search box; KM23 the
+viewer window's own door; G1f the focus after an open and the tag on the
+toplevel.
+`test_wave_subwindows` (both arms): SWK30 `key_seq_event`, SWK31
+`tag_key_seq` against the answers measured on the day, SWK32 the installer's
+own table, SWK33 `key_subst`, SWK34 the engine's question with the proc a
+recorder (on the windowless arm: that it is never asked) and the refusals of
+`foreign_key` and `top_key`, SWK35 the pan's inset, and a leg of SWK19 for
+the chord with exactly one cursor showing.
 
 ## A viewer context says so: `wave_viewer` (issue 0172, 2026-07-31)
 

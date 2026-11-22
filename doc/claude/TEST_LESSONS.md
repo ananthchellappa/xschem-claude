@@ -72,6 +72,11 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   every row; no label sat near a selected wire and off it, so "near counts as on" passed
   too. Give a fixture the member the rule must refuse and the member it must not care
   about (rows `LP1`–`LP4`, `LM1`).
+- **`check` compares strings.** An expected list written over several lines is not `eq`
+  to the list a row built: canonicalise the literal (`lrange {…} 0 end`). And an error
+  string from a `pcall` can have the very length the row expects of its list
+  (`ERR:invalid command name "x"` is four words): test the elements' type before
+  unpacking, or a row written to fail on the unchanged product throws there instead.
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -139,6 +144,41 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   caller raises out of a menu command. For a notice use `catch { ::xschem::notify {…} }`.
   A suite renames `alert_` to a recorder to stop a hang; keep that rename when moving a
   spy to the notice channel.
+- **A window mapped, re-mapped or raised under the real pointer gets an Enter from the
+  server, and the engine answers an Enter that switches the context with `focus
+  <canvas>`.** A row that asks where an OPEN leaves the keyboard focus must park the
+  pointer off every window first (`ptr_park` in `test_wave_viewer`), or assert the window
+  under the pointer with the answer: the first `G1f` and `KM18` of overnight item 03b asked
+  for the focus on the plot canvas and read green on a product that left it on the toplevel
+  until they did.
+- **A plain `focus <w>` moves the keyboard whenever this application holds it**, between
+  toplevels too; only when another application has it does Tk just note `<w>` for later.
+  So "plain, never `-force`" does not make a focus call harmless: an open that focused the
+  viewer's plot took the next keys typed over the schematic. Ask what the keys typed next
+  DO, with the pointer where a user leaves it (row `KM18`), not only where the focus is.
+  To see which calls a proc makes, rename `::focus` to a recorder around it; the engine's
+  own `focus -force <canvas>` for a new window is in that list too, so filter by target.
+- **A viewer shortcut that runs leaves the viewer's context current.** A control that
+  follows it and warps the pointer to where it already is gets no Enter and reads the
+  wrong context: take the pointer off every window and back first (`ptr_park`, `ptr_back`).
+- **`tk::MenuUnpost {}` does not take down a menu posted from a menubar** (F10, an
+  Alt-letter): hand it the posted menu, which is the window that has the focus then, and
+  release the grab. A menu left up answers `winfo containing` for every later row.
+- **`event generate <w> <Motion> -warp 1` moves the real pointer**, and the server sends
+  the crossing events itself. `winfo containing` answers `{}` over a window-manager frame
+  and over another application: raise the window before warping into it, and assert the
+  window under the pointer instead of assuming it.
+- **Tk hands a generated key to the window that has the focus, whichever window it is
+  generated on.** To send a key "to" a canvas, give it the focus and confirm with `focus
+  -displayof`. Code that must act for a window without the focus has to choose the binding
+  itself (`wviewer::tag_key_seq`), and its fence is parity with real delivery on the live
+  tag (row `KM19`). Tk's choice among bindings is not transitive: of two sequences that
+  ask for different modifiers the later bound wins, so three of them can answer by order.
+- **A key that opens a modal on a product that still mis-routes it must not be sent
+  there.** Ask first, with a key nobody has a use for (the left Shift key), whether the
+  product routes a key the way the row needs, and report `not-sent` (rows `KM16`, `KM19`).
+  An error raised inside a binding is a background error, and Tk's dialog for it blocks
+  the suite: record it for the leg with `interp bgerror {} <recorder>`.
 - **`update idletasks` runs no timers**, so the suite watchdog cannot fire inside a loop
   of it.
 - **A synthetic double click with a second press (`4, 5, 4, -3, 5`) on a free device PIN

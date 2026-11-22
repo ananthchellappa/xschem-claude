@@ -30,7 +30,19 @@
 #     pan, 0149) and f / Z / Ctrl-z itself. The viewer's own shortcuts, Ctrl-W
 #     among them, are bindings of the WaveViewer tag, not arms of the filter.
 #     Everything else is silently swallowed — readonly alone
-#     would pop the readonly_block MODAL on every editing key). Button-3 is
+#     would pop the readonly_block MODAL on every editing key).
+#     A KEY TYPED IN ANOTHER xschem drawing window is handed to the same two
+#     bindings while this viewer's context is the current one (the pointer
+#     came into the plot last, or the viewer has just opened) and the pointer
+#     is in this viewer's window (wviewer::foreign_key, behind a binding tag
+#     on every schematic canvas and behind a guard in the engine's
+#     callback()). So is a key
+#     typed while the viewer's own toplevel holds the keyboard, which is
+#     where wviewer::open leaves it, and the pointer is over the plot
+#     (wviewer::top_key, behind a binding tag on the toplevel). A viewer so
+#     takes its keys whichever of these windows the desktop gives the
+#     keyboard to (2026-11-22; doc/claude/specs/waveform_viewer.md, "A key
+#     that came through another window"). Button-3 is
 #     forwarded only over a graph (kills the schematic context menu, keeps
 #     the C engine's graph pan/zoom), double-clicks are swallowed entirely
 #     (D9: dbl-click would open graph_edit_properties whose writeback is
@@ -1640,6 +1652,10 @@ proc wviewer::open {token} {
   wviewer::tabbar_refresh $token
   wviewer::retitle $token
   bind $top <FocusIn> "+[list wviewer::retitle $token]"
+  # a key Tk hands this toplevel itself (where the open leaves the keyboard
+  # focus, below) is the viewer's while the pointer is over the plot:
+  # wviewer::top_key, with the key doors
+  wviewer::top_key_attach $top
   # WM-close (or any external destroy) must also clean the registry; every
   # descendant's <Destroy> carries the toplevel bindtag, hence the %W guard
   bind $top <Destroy> "+if {{%W} eq {$top}} {[list wviewer::forget $token]}"
@@ -7492,6 +7508,8 @@ proc wviewer::bands_px {bbs xo yo zoom} {
 # inner border, so a press in that outermost band is NOT graph-routed and would
 # reach the schematic canvas pan instead — the exact gesture issue 0149 removed
 # from this window. 8 px covers the 5-pixel border at tk scaling 1.5.
+# (2026-11-22: the border grows with the Tk scaling, so the pan's press no
+# longer relies on this default: btn2_filter gives wviewer::pan_inset_px.)
 proc wviewer::strip_at_pixel_inset {canvas px py {inset 8}} {
   return [wviewer::band_at_inset [wviewer::strip_bands_px $canvas] $px $py $inset]
 }
@@ -7523,6 +7541,24 @@ proc wviewer::graph_border_px {} {
   if {[info commands tk] eq {}} { return 8 }
   if {[catch {set sc [tk scaling]}]} { return 8 }
   return [expr {int(ceil(5.0 * $sc)) + 1}]
+}
+
+# The inset the press of the middle-button pan must clear (wviewer::btn2_filter):
+# the 8 pixels it has always been wherever those cover the engine's border, and
+# the key gate's border (wviewer::graph_border_px) where the engine's is wider.
+# The engine's border grows with the Tk scaling, and a fixed 8 pixels fell short
+# of it on a display that scales more: a press nine pixels inside a strip was
+# then taken by the filter, refused by the engine's graph test, and panned the
+# viewer's schematic canvas, the gesture issue 0149 took out of this window.
+# graph_border_px is the engine's border rounded up plus one pixel, so one less
+# is that border rounded up: while it is no more than 8 the answer stays 8 and
+# nothing changes for such a display. The factor of the engine's border is not
+# restated here; graph_border_px carries it and row SWK25 of
+# tests/headless/test_wave_subwindows.tcl holds it against src/callback.c.
+proc wviewer::pan_inset_px {} {
+  set b [wviewer::graph_border_px]
+  if {$b - 1 <= 8} { return 8 }
+  return $b
 }
 
 proc wviewer::strip_handle_at_pixel {canvas px py} {
@@ -9612,7 +9648,7 @@ proc wviewer::trace_drag_drop {W} {
 # pinned — so it is forwarded instead.
 #
 # The PRESS decides, and only the press: it is accepted only when it lands
-# `inset` pixels inside a strip, so it cannot fall in the seam where
+# wviewer::pan_inset_px pixels inside a strip, so it cannot fall in the seam where
 # waves_selected refuses to graph-route and start_pan_logged would take over.
 # The motions and the release then follow that decision, so a refused press can
 # never leak a half-canvas-pan. Ctrl+MMB (the pin-type edit chord, a mutating
@@ -9624,7 +9660,7 @@ proc wviewer::btn2_filter {W T px py state} {
   if {$T == 4} {
     set mmb($token) 0
     if {$state & 12} { return }                       ;# Control | Mod1
-    if {[wviewer::strip_at_pixel_inset $W $px $py] < 0} { return }
+    if {[wviewer::strip_at_pixel_inset $W $px $py [wviewer::pan_inset_px]] < 0} { return }
     set mmb($token) 1
     catch {focus $W}
   }
@@ -20723,17 +20759,26 @@ proc wviewer::over_graph {wp} {
 # the graph, and a key they refuse stays in the viewer. Escape, the one other
 # key the filter forwards, is asked of key_has_row first.
 #
-# WHAT THE FILTER CANNOT SEE. It is a binding of the viewer's own canvas. A key
-# that reaches the engine through ANOTHER window's canvas while this viewer's
-# context is the current one (the keyboard focus in that window, the pointer
-# resting over this plot) is run by the engine in this context and never
-# passes through here. A limit, declared in
-# doc/claude/specs/waveform_viewer.md under "What the key filter forwards".
-# Nor does it see a key typed while the keyboard focus is on the viewer's
-# toplevel and not on this canvas, which is where wviewer::open leaves it: such
-# a key reaches neither this proc nor the WaveViewer tag, and nothing happens
-# until a click in the plot. Declared there with the limits; row G1f of
-# tests/headless/test_wave_viewer.tcl holds it.
+# WHAT THE FILTER DOES NOT SEE BY ITSELF. It is a binding of the viewer's own
+# canvas, so Tk hands it a key only while that canvas has the keyboard focus.
+# Two states used to fall outside it (declared as limits on 2026-11-21, closed
+# on 2026-11-22; doc/claude/specs/waveform_viewer.md, "A key that came through
+# another window"):
+#   * the focus in ANOTHER xschem drawing window, this viewer's context the
+#     current one and the pointer in this viewer's window. Tk hands the key to
+#     that window's canvas, where a binding tag that stands before the
+#     canvas's own bindings asks wviewer::key_door; that proc hands it to
+#     wviewer::foreign_key (below key_filter), which runs this canvas's own
+#     bindings for it, the filter first, and the engine is handed nothing.
+#     (A key that reaches the engine's callback() some other way, a script's
+#     `xschem callback` say, is offered to foreign_key by the engine.)
+#   * a viewer that has just opened, or was raised by a second open.
+#     wviewer::open leaves the focus inside the viewer on its TOPLEVEL, as it
+#     always did. A key Tk hands the toplevel while the pointer is over the
+#     plot now goes to wviewer::top_key (a binding tag on the toplevel), which
+#     hands it to foreign_key the same way.
+# A key typed into a window that is no xschem drawing window (ASE-L, the
+# Calculator, the Signal Browser's search box) stays in that window.
 
 # 1 when the global Tcl variable `name` holds a true value, read the way the
 # engine reads its own flags (tclgetboolvar): a number that is not zero or one
@@ -21079,6 +21124,363 @@ proc wviewer::key_filter {W T x y N K s} {
       wviewer::key_cursor_tail $W $N
     }
   }
+}
+
+# --- a key that came through ANOTHER window's canvas (2026-11-22) -------------
+#
+# The engine runs a key in the current context, whichever canvas's binding
+# handed it over, and the context follows the pointer while the keyboard focus
+# need not. After Alt-Tab, after a click on the task bar, or right after a
+# viewer opened on a desktop that leaves the focus where it was, the focus is
+# in a schematic window and the pointer rests in this viewer. A key typed then
+# used to run here as the schematic command it is: the "View is Read Only"
+# box for the schematic's move, wire and instance keys, hide-symbols stepped.
+#
+# callback() (src/callback.c, viewer_takes_foreign_key) now offers such a key
+# to wviewer::foreign_key first: a key press or release whose window is not the
+# current context's canvas while that context is a viewer's. foreign_key takes
+# it when the pointer is in that viewer's window, and then does what Tk would
+# have done had the key been delivered to the viewer's canvas: for each binding
+# tag of the canvas, from the first through WaveViewer, it runs the binding Tk
+# would run for the key (wviewer::tag_key_seq chooses it from `bind <tag>`,
+# so nothing here lists a chord: the canvas's own key binding is the filter
+# above, the tag's are the viewer's shortcuts, an rc binding and the Caps Lock
+# dispatch included), with the pointer's pixel in the canvas as the event's.
+# Tk cannot be asked to do it: `event generate` sends a key to the window that
+# has the focus, which is the window this key came from.
+#
+# FROM A SCHEMATIC CANVAS THERE ARE TWO DOORS, and foreign_key stands behind
+# both. The engine's is only one of them: a schematic canvas also carries key
+# bindings of its own that never call the engine (the command palette, the
+# descend key, and in
+# the Cadence profile several dozen `bind .drw` lines: i places an instance,
+# q edits properties, Control-2 makes the window editable). Tk runs those
+# scripts, and they act on the current context too: measured in the focus
+# state above, i brought up the read-only box and q a property dialog over
+# the viewer. So every schematic canvas carries the binding tag
+# wviewer::key_door_tag FIRST in its tag list (set_bindings, src/xschem.tcl,
+# through wviewer::key_door_attach): its two bindings ask wviewer::key_door
+# before any binding of the canvas runs, and `break` when the viewer took the
+# key. The engine's door stays for whatever reaches callback() some other
+# way (a script's `xschem callback`, a binding that forwards).
+#
+# A THIRD DOOR is the viewer's own toplevel (wviewer::top_key, below the
+# canvas door). wviewer::open leaves the keyboard focus inside a viewer on
+# its toplevel, in both of its arms (a fresh window, and one it only raises,
+# which is what auto-plot asks for after a run), and no key is bound there:
+# a key typed then did nothing until a click in the plot, or until the
+# pointer came into the plot from another drawing window. Such a key is now
+# the viewer's while the pointer is over the plot, and nobody's otherwise, as
+# before. (The first build of this item had the open give the plot canvas
+# the focus instead. While this application holds the keyboard a plain
+# `focus` moves it, so the keys typed next went to the viewer wherever the
+# pointer was: measured over the schematic after a raise, e deleted the empty
+# strips and Control-d cleared the traces. Taken back the same day.)
+#
+# None of the doors moves the keyboard focus or the context. The tags after
+# WaveViewer (the widget's class, the toplevel, `all`) are not run for the
+# viewer. A key the canvas tag took goes no further at all; one that came by
+# the engine's door goes on down the tags of the window that has the focus,
+# and one that came by the toplevel's door goes on down the toplevel's own
+# tags, as it did before there was a door.
+
+# PURE: a binding sequence, as `bind <tag>` lists it, read as ONE key event:
+# {type number name mods}, or {} for a sequence this side does not read.
+#   type    2 for a key press, 3 for a release
+#   number  the keysym number the event must have, or {}
+#   name    the keysym name it must have, or {}; both {} is any key. A
+#           one-character name is also given as its number (a letter's or a
+#           digit's keysym is its character code); a bare character, which is
+#           how bind lists an unmodified press of a printable key, has the
+#           number only.
+#   mods    the modifier bits the sequence asks for (the X state bits)
+# NOT READ: a sequence of more than one event, a virtual event, an event that
+# is no key press or release, a multi-press (Double, Triple, Quadruple), and a
+# sequence with a modifier whose state bit depends on the display's keymap and
+# cannot be asked of Tk (Meta, Extended). Alt is read as Mod1, as the engine
+# reads it.
+proc wviewer::key_seq_event {seq} {
+  set n [string length $seq]
+  if {$n == 0} { return {} }
+  if {$n == 1} {
+    if {$seq eq {<} || $seq eq { }} { return {} }
+    return [list 2 [scan $seq %c] {} 0]
+  }
+  if {[string index $seq 0] ne {<} || [string index $seq end] ne {>}} { return {} }
+  set body [string range $seq 1 end-1]
+  if {[string first < $body] >= 0 || [string first > $body] >= 0} { return {} }
+  set parts [split $body -]
+  set mods 0
+  set i 0
+  foreach p $parts {
+    switch -- $p {
+      Control { set b 4 }
+      Shift   { set b 1 }
+      Lock    { set b 2 }
+      Alt     { set b 8 }
+      Mod1    { set b 8 }
+      Mod2    { set b 16 }
+      Mod3    { set b 32 }
+      Mod4    { set b 64 }
+      Mod5    { set b 128 }
+      B1      { set b 256 }
+      B2      { set b 512 }
+      B3      { set b 1024 }
+      B4      { set b 2048 }
+      B5      { set b 4096 }
+      default { break }
+    }
+    set mods [expr {$mods | $b}]
+    incr i
+  }
+  set rest [lrange $parts $i end]
+  switch -- [lindex $rest 0] {
+    Key        { set type 2 }
+    KeyPress   { set type 2 }
+    KeyRelease { set type 3 }
+    default    { return {} }
+  }
+  if {[llength $rest] == 1} { return [list $type {} {} $mods] }
+  if {[llength $rest] != 2} { return {} }
+  set name [lindex $rest 1]
+  if {$name eq {}} { return {} }
+  set num {}
+  if {[string length $name] == 1} { set num [scan $name %c] }
+  return [list $type $num $name $mods]
+}
+
+# PURE: the sequence of `seqs` Tk runs for one key event, or {} when none
+# matches.
+#   seqs  the sequences bound on ONE tag, in the order `bind <tag>` gives them
+#         (the most recently bound first)
+#   T     2 for a key press, 3 for a release
+#   N K   the event's keysym, as number and as name (%N and %K of a binding)
+#   s     its modifier state (%s)
+# Tk's rules, measured against real delivery on Tk 8.6 (row KM19 of
+# tests/headless/test_wave_viewer.tcl holds this proc to them on the live tag,
+# with real keys):
+#   * a sequence matches when its type is the event's, its keysym (if it names
+#     one) is the event's, and every modifier it asks for is in the state; a
+#     modifier the state has and the sequence does not ask for is no obstacle;
+#   * a sequence that names the keysym beats one that does not;
+#   * between two that are level there, the one that asks for more modifiers
+#     wins when its modifiers include the other's; otherwise the one bound
+#     later wins. Tk takes the candidates from the oldest to the newest and
+#     keeps the one it holds only against a candidate that asks for less, and
+#     so does this loop.
+proc wviewer::tag_key_seq {seqs T N K s} {
+  if {![string is integer -strict $s] || ![string is integer -strict $N]} { return {} }
+  set best {}
+  set bdet 0
+  set bmods 0
+  foreach seq [lreverse $seqs] {
+    set ev [wviewer::key_seq_event $seq]
+    if {$ev eq {}} { continue }
+    lassign $ev pt pnum pname pmods
+    if {$pt != $T} { continue }
+    if {$pnum ne {}} {
+      if {$pnum != $N} { continue }
+      set det 1
+    } elseif {$pname ne {}} {
+      if {$pname ne $K} { continue }
+      set det 1
+    } else {
+      set det 0
+    }
+    if {($s & $pmods) != $pmods} { continue }
+    if {$best ne {}} {
+      if {$det < $bdet} { continue }
+      if {$det == $bdet && $pmods != $bmods && ($pmods & $bmods) == $pmods} { continue }
+    }
+    set best $seq
+    set bdet $det
+    set bmods $pmods
+  }
+  return $best
+}
+
+# PURE: binding script `script` with its %-fields replaced from the dict
+# `fields` (one letter each), the way Tk replaces them before it runs a
+# binding: %% is a percent sign, a field the dict lacks becomes ??, which is
+# what Tk gives a field the event does not carry.
+proc wviewer::key_subst {script fields} {
+  set out {}
+  set n [string length $script]
+  for {set i 0} {$i < $n} {incr i} {
+    set c [string index $script $i]
+    if {$c ne {%} || $i + 1 >= $n} {
+      append out $c
+      continue
+    }
+    incr i
+    set f [string index $script $i]
+    if {$f eq {%}} {
+      append out %
+    } elseif {[dict exists $fields $f]} {
+      append out [dict get $fields $f]
+    } else {
+      append out ??
+    }
+  }
+  return $out
+}
+
+# The question the three doors ask (callback() in src/callback.c,
+# wviewer::key_door, wviewer::top_key): a key press (`T` 2) or release (3),
+# keysym number `N` and name `K`, state `s`, that Tk or the engine handed to
+# another window is offered to the viewer whose canvas is `W`.
+# Answers 1 when the key was taken for the viewer, and the caller then runs
+# nothing of its own for it; 0 when it is not the viewer's, and the caller
+# goes on as it always did.
+#
+# TAKEN: `W` is a viewer's canvas and the pointer is in that viewer's window
+# (the plot, or the bars, the tab row and the Signal Browser around it; Tk is
+# asked which window of this application is under the pointer, so a window
+# lying over the viewer counts as itself). NOT taken: the pointer anywhere
+# else. There a key typed into a schematic window is more likely meant for
+# that window than for a viewer whose context merely stayed current, and the
+# viewer's own shortcuts (Clear All, Close) must not answer it.
+#
+# The event's pixel is the pointer's place in the canvas, as it is for a key
+# Tk delivers there; outside the plot it is outside every strip, and the
+# filter then forwards no graph key. A script's `break` stops the walk of the
+# tags; so does an error in one, which goes to the background error handler.
+# Both are what Tk does with a key it delivers.
+# %W %x %y %X %Y %N %K %s %T are replaced; any other field becomes ??.
+proc wviewer::foreign_key {W T N K s} {
+  if {$T != 2 && $T != 3} { return 0 }
+  if {[info commands winfo] eq {}} { return 0 }
+  if {[catch {
+    set tok [wviewer::token_for_canvas $W]
+    set tags {}
+    if {$tok ne {} && [winfo exists $W]} { set tags [bindtags $W] }
+    set last [lsearch -exact $tags WaveViewer]
+    lassign [winfo pointerxy $W] X Y
+    set under [winfo containing -displayof $W $X $Y]
+    set mine [expr {$under ne {} && [winfo toplevel $under] eq [winfo toplevel $W]}]
+  }]} { return 0 }
+  if {$last < 0 || !$mine} { return 0 }
+  # a keysym with no name: Tk gives a binding ?? for %K, and the name of no
+  # sequence
+  if {$K eq {}} { set K ?? }
+  set fields [dict create W $W T $T N $N K $K s $s X $X Y $Y \
+    x [expr {$X - [winfo rootx $W]}] y [expr {$Y - [winfo rooty $W]}]]
+  foreach tag [lrange $tags 0 $last] {
+    if {![winfo exists $W]} { break }
+    set seq [wviewer::tag_key_seq [bind $tag] $T $N $K $s]
+    if {$seq eq {}} { continue }
+    set code [catch {uplevel #0 [wviewer::key_subst [bind $tag $seq] $fields]} res opts]
+    if {$code == 1} {
+      catch {after idle [list {*}[interp bgerror {}] $res $opts]}
+      break
+    } elseif {$code == 3} {
+      break
+    }
+  }
+  return 1
+}
+
+# The binding tag every schematic canvas carries first in its tag list.
+proc wviewer::key_door_tag {} { return WaveViewerKeyDoor }
+
+# The tag's question, for a key press (`T` 2) or release (3) Tk is about to
+# hand the bindings of canvas `W`: 1 when a viewer took the key (the binding
+# then `break`s), else 0 and the canvas's own bindings run as always. A viewer
+# is asked only when ITS context is the current one and `W` is not its canvas;
+# whether it takes the key is foreign_key's answer. The context becomes a
+# viewer's when the pointer comes into its PLOT (the engine switches on an
+# Enter of a drawing canvas), so a pointer that went straight onto a viewer's
+# bars or its Signal Browser from a schematic has not made the key the
+# viewer's: the schematic runs it in its own context. While a schematic's
+# context is the current one the engine is asked for the current context and,
+# when that is not this canvas's own, for its viewer flag; nothing more runs.
+proc wviewer::key_door {W T N K s} {
+  if {[catch {
+    set cur [xschem get current_win_path]
+    set v [expr {$cur ne $W && [xschem get wave_viewer] == 1}]
+  }] || !$v} { return 0 }
+  return [wviewer::foreign_key $cur $T $N $K $s]
+}
+
+# Put the tag first in the tag list of schematic canvas `cv`, and bind its two
+# sequences the first time. Called by set_bindings for every drawing canvas
+# it binds. Returns 1 when the canvas carries the tag afterwards, else 0 (no
+# Tk, no such window).
+proc wviewer::key_door_attach {cv} {
+  if {[info commands bindtags] eq {} || ![winfo exists $cv]} { return 0 }
+  set tag [wviewer::key_door_tag]
+  if {[bind $tag <KeyPress>] eq {}} {
+    bind $tag <KeyPress>   {if {[wviewer::key_door %W %T %N %K %s]} { break }}
+    bind $tag <KeyRelease> {if {[wviewer::key_door %W %T %N %K %s]} { break }}
+  }
+  set tags [bindtags $cv]
+  if {[lsearch -exact $tags $tag] < 0} { bindtags $cv [linsert $tags 0 $tag] }
+  return 1
+}
+
+# Take the tag off canvas `cv` again: a viewer's own canvas does not carry it.
+# Its keys are the filter's, and a key typed into one viewer while the pointer
+# rests in another stays with the viewer that has the focus, as it always did.
+proc wviewer::key_door_detach {cv} {
+  if {[info commands bindtags] eq {} || ![winfo exists $cv]} { return 0 }
+  set tags [bindtags $cv]
+  set i [lsearch -exact $tags [wviewer::key_door_tag]]
+  if {$i < 0} { return 0 }
+  bindtags $cv [lreplace $tags $i $i]
+  return 1
+}
+
+# The binding tag a viewer's TOPLEVEL carries first in its tag list. A tag of
+# its own and not a binding on the toplevel's path: the path is a tag of every
+# widget inside the toplevel as well, and a key typed into the Signal
+# Browser's search box must stay there.
+proc wviewer::top_key_tag {} { return WaveViewerTopKeys }
+
+# The tag's question, for a key press (`T` 2) or release (3) Tk hands viewer
+# toplevel `top` ITSELF, which is where wviewer::open leaves the keyboard
+# focus. The key is the viewer's when the pointer is over that viewer's PLOT
+# canvas: wviewer::foreign_key then runs the canvas's own bindings for it, as
+# for a key that came through a schematic canvas. Answers what foreign_key
+# answers, else 0.
+# Narrower than the canvas door on purpose (the plot, not the whole window).
+# A key the canvas door declines runs as an editor key in the viewer's
+# context; one this door declines is nobody's, as every key typed there was
+# before 2026-11-22. And the raise at the end of an open takes the keyboard
+# from whatever widget of this application had it, the Signal Browser's
+# search box included: a character meant for that box, typed with the pointer
+# still in it, must not run a viewer shortcut.
+# The binding does not `break`: Tk goes on with the toplevel's own tags, so
+# F10, which `all` binds, posts the viewer's menu there as it always did
+# (row KM23 of tests/headless/test_wave_viewer.tcl).
+proc wviewer::top_key {top T N K s} {
+  variable windows
+  if {$T != 2 && $T != 3} { return 0 }
+  if {[info commands winfo] eq {}} { return 0 }
+  set wp {}
+  dict for {tok rec} $windows {
+    if {[wviewer::dget $rec top {}] eq $top} { set wp [wviewer::dget $rec win_path {}] ; break }
+  }
+  if {$wp eq {}} { return 0 }
+  if {[catch {
+    set under [winfo containing -displayof $wp {*}[winfo pointerxy $wp]]
+  }] || $under ne $wp} { return 0 }
+  return [wviewer::foreign_key $wp $T $N $K $s]
+}
+
+# Put the tag first in the tag list of viewer toplevel `top`, and bind its two
+# sequences the first time. wviewer::open calls it for a fresh window. Returns
+# 1 when the toplevel carries the tag afterwards, else 0 (no Tk, no such
+# window).
+proc wviewer::top_key_attach {top} {
+  if {[info commands bindtags] eq {} || ![winfo exists $top]} { return 0 }
+  set tag [wviewer::top_key_tag]
+  if {[bind $tag <KeyPress>] eq {}} {
+    bind $tag <KeyPress>   {wviewer::top_key %W %T %N %K %s}
+    bind $tag <KeyRelease> {wviewer::top_key %W %T %N %K %s}
+  }
+  set tags [bindtags $top]
+  if {[lsearch -exact $tags $tag] < 0} { bindtags $top [linsert $tags 0 $tag] }
+  return 1
 }
 
 # Button-3 filter (item 19, D2): forward Button-3 press+release EVERYWHERE in
@@ -21723,6 +22125,9 @@ proc wviewer::strip_bindings {wp} {
   foreach seq [bind $wp] {
     if {[lsearch -exact $keepseqs $seq] < 0} { bind $wp $seq {} }
   }
+  # the tag set_bindings puts first on every schematic canvas is not a
+  # viewer's (wviewer::key_door_detach): the tags below go in by index
+  wviewer::key_door_detach $wp
   # issue 0171: the viewer's OWN key defaults (Ctrl-D = Clear All) live on the
   # shared `WaveViewer` bindtag, which the sweep above cannot reach and an rc
   # file can bind before any viewer exists. Inserted at index 1 — right after

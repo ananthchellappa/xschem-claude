@@ -17607,6 +17607,11 @@ global env has_x OS autofocus_mainwindow hi_descend_key
     # through the generic <KeyPress> -> C input-binding table; remap via
     # `xschem bind` or keybindings.csv.)
     bind $topwin <KeyRelease> "xschem callback %W %T %x %y %N 0 0 %s"
+    # A key typed here while a waveform viewer's context is the current one and
+    # the pointer rests in that viewer is the viewer's, whatever this canvas
+    # binds for it: a binding tag placed before the canvas's own asks first
+    # (wviewer::key_door, src/wave_viewer.tcl, where the reasons are).
+    if {[info commands ::wviewer::key_door_attach] ne {}} { wviewer::key_door_attach $topwin }
     if {$autofocus_mainwindow} {
       bind $topwin <Motion> "focus $topwin; xschem callback %W %T %x %y 0 0 0 %s"
     } else {

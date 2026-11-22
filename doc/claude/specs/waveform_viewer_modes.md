@@ -396,11 +396,21 @@ follow it there (GH6 descends into the submenu and runs its `-postcommand`).
   keyboard focus in another window. The chord typed then is that window's key;
   it reaches the engine through that window's canvas and never this binding
   (`waveform_viewer.md`, "What the key filter forwards", the limits; row KM14).
+  (Closed 2026-11-22, overnight batch item 03b: while the viewer's context is
+  the current one and the pointer is in the viewer's window such a key is
+  handed to the viewer, and the chord flips the mode with the keyboard in a
+  schematic window. `waveform_viewer.md`, "A key that came through another
+  window", where the limits that remain are declared; rows KM14, KM18, KM20
+  and KM21.)
 
 - The binding is a tag of the plot canvas, so the chord needs the keyboard
   focus there. A viewer that has just opened has it on its toplevel: the chord
   does nothing until one click in the plot (same section, the limits; row
   G1f of `test_wave_viewer`). (Added 2026-11-21, third repair of this item.)
+  (Closed 2026-11-22: the open still leaves the focus on the toplevel, and a
+  key typed there while the pointer is over the plot is handed to the
+  viewer's bindings, so the chord works right after an open with no click.
+  `wviewer::top_key`; rows G1f, KM18 and KM23.)
 
 - The plot mode is kept per tab. With several tabs the chord flips the mode of
   the active one and leaves the others as they were (row KM6).

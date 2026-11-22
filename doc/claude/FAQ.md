@@ -14,6 +14,73 @@ Newest entries on top.
 
 ---
 
+## Q97. I press a key with the pointer over the waveform viewer and get "View is Read Only", or nothing. Which window does a key go to?
+
+- **Asked:** 2026-11-21 (the user's report was Ctrl-Shift-M in the viewer)
+- **Project state:** branch `fluid-editing`, overnight batch of 2026-11-21,
+  items 03 and 03b (`doc/claude/overnight_batch_2026_11_21/`).
+
+**With the pointer over a viewer's plot the key is the viewer's, whichever of
+three windows has the keyboard.** It does what the guide's key tables say:
+Ctrl-Shift-M flips the plot mode, `a` and `b` place the cursors, `m` drops a
+marker, and a schematic editing key does nothing. The three windows: the
+viewer's plot (after a click there); the viewer's own window, which is where
+an open or a raise leaves the keyboard on a desktop that activates the viewer;
+and a schematic window (after Alt-Tab, after a click on the task bar, or
+because the desktop left the keyboard there when the viewer opened). A viewer
+that has just opened needs no click.
+
+- **Why it used to fail.** xschem's engine runs a key in the window the
+  POINTER last entered, and Tk delivers a key to the window that has the
+  FOCUS. With the focus in the schematic and the pointer in the viewer, the
+  key went through the schematic's canvas and ran in the viewer as the
+  schematic command it is: the schematic's move for Ctrl-Shift-M, hence the
+  box. And a viewer that had just opened held the focus on its toplevel, where
+  no viewer key is bound at all.
+- **What changed.** A key typed in a schematic window is handed to the
+  viewer's own key bindings, with the pointer's place in the plot, while the
+  viewer is the window xschem is working in (the pointer came into its plot
+  last, or it has just opened) and the pointer is still in the viewer's
+  window. It is caught twice: by a binding tag that stands first on every
+  schematic canvas (it also catches the keys a profile binds on the canvas
+  itself, like the Cadence profile's `i` and `q`, which never reach the
+  engine), and by a guard at the top of the engine's `callback()`. A key typed
+  while the viewer's own toplevel holds the keyboard is handed over the same
+  way while the pointer is over the plot, by a binding tag on that toplevel.
+  None of this moves the keyboard focus, so the schematic's keys are the
+  schematic's again once the pointer is back in its drawing area. The open
+  itself is as it was: it leaves the keyboard on the viewer's toplevel. (The
+  first build of item 03b had the open give the plot canvas the focus. With
+  the keyboard in xschem that made the keys typed next over the schematic
+  viewer keys, Clear All among them, each time a finished run brought the
+  viewer to the front; the repair of the same day took it back.)
+- **What did not change.** (1) A key typed into a window that is no drawing
+  window (ASE-L, the Calculator, the Signal Browser's search box) belongs to
+  that window. (2) With the keyboard focus on a viewer's plot, the key stays
+  with that viewer wherever the pointer is: over a schematic, or over another
+  viewer. (3) xschem changes its working window only when the pointer ENTERS
+  a drawing area. So a viewer stays the working window while the pointer
+  rests on a title bar, a menu or the desktop after it was last in the
+  viewer, and a viewer that has just opened is the working window while the
+  pointer still rests over the schematic it was over. A key typed in the
+  schematic then still runs in the viewer, and an editing key brings up "View
+  is Read Only". Move the pointer into the schematic's drawing area, or out
+  of it and back in if it never left. A click there cures it only where the
+  window manager makes the pointer leave and re-enter around the click:
+  openbox on the test display does, a display with no window manager does
+  not, and the Windows X server is not measured. (4) A pointer that goes from
+  a schematic straight onto a viewer's Signal Browser or bars, without
+  crossing the plot, does not make the viewer the working window.
+- **Where.** `doc/claude/specs/waveform_viewer.md`, "A key that came through
+  another window"; `wviewer::foreign_key`, `wviewer::key_door`,
+  `wviewer::top_key` in `src/wave_viewer.tcl`;
+  `viewer_takes_foreign_key()` in `src/callback.c`; rows KM14, KM16 to KM23
+  and G1f of `tests/headless/test_wave_viewer.tcl`. User guide:
+  `doc/waveform_viewer_guide.html`, the note at the head of section 9.3 and
+  the first rows about keys in section 12.
+
+---
+
 ## Q96. I double-click a wire three times and press Delete. Are the wire labels deleted with the net now? What is left behind?
 
 - **Asked:** 2026-11-21
@@ -74,6 +141,8 @@ select_grow_connected x y` and the form without coordinates do the same.
 Rows: `tests/headless/test_dblclick_connected_grow.tcl`, bands L (the command, both
 arms of the regression) and G (the gesture, display arm). The command takes the
 labels under either profile; only the double click is tied to `cadence_compat`.
+
+---
 
 ## Q95. In ASE-L's Select On Design I can only pick nets. How do I save the current into a pin of a transistor, a resistor or a block?
 

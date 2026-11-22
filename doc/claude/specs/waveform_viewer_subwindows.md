@@ -568,6 +568,12 @@ Plot Mode entry shows it as its accelerator. Decisions taken with it:
   the focus on its toplevel, so the chord, like every viewer key, does
   nothing there until one click in the plot (`waveform_viewer.md`, the limits
   of "What the key filter forwards"; row G1f of `test_wave_viewer`).
+  (Amended 2026-11-22, overnight batch item 03b. The lead withdrew "with the
+  plot area focused": the chord now also works with the keyboard in a
+  schematic window while the viewer's context is current and the pointer is
+  in the viewer's window, and with the keyboard on the viewer's own toplevel
+  (right after an open or a raise, with no click) while the pointer is over
+  the plot. `waveform_viewer.md`, "A key that came through another window".)
 - Tk runs a binding when the event carries more modifiers than the binding
   names, so Ctrl-Alt-Shift-M runs it too, as Ctrl-Alt-D already runs Clear All.
 - With `graph_use_ctrl_key` set it is the plot mode all the same (the Ctrl-B
@@ -614,7 +620,9 @@ the source, in both directions), GX1's `gx_must`
 `test_wave_subwindows` SWK19 to SWK25 and SWK27 to SWK29 (both arms), SWK26
 and one leg of SWK28 (display; SWK26 is the Caps Lock states of `m` with the
 engine recorded), `test_wave_viewer` KM0 to KM15 and G1f (display, real keys). `test_wave_add_graph_undo` AF3. Red proofs are in the suite
-header.
+header. For a key that came through another window (2026-11-22):
+`test_wave_viewer` KM14, KM16 to KM23 and G1f, `test_wave_subwindows` SWK30
+to SWK35 and the one-cursor leg of SWK19.
 
 ## 16. As built — the viewer has no destination (2026-10-16)
 

@@ -109,6 +109,21 @@
 #         second canvas of the registry, its gesture bits read out of the C
 #         source; SWK28 graphown against the tag's defaults; SWK29 row_mods and
 #         key_has_row.
+#   SWK30-SWK35 both arms (2026-11-22): a key that came through another
+#         window (doc/claude/specs/waveform_viewer.md, the section of that
+#         name). SWK30 one sequence of a `bind` listing read as a key event;
+#         SWK31 the choice among the sequences of a tag, against what Tk ran
+#         (measured on the day; the row asks Tk nothing); SWK32 the
+#         installer's own table, walked sequence by
+#         sequence with `bind` a recorder; SWK33 the %-fields of a script;
+#         SWK34 the engine's question to wviewer::foreign_key, the proc a
+#         recorder (on the windowless arm: that it is never asked), the
+#         proc's own refusals and those of wviewer::top_key, the door of a
+#         viewer's own toplevel; SWK35 the inset of the middle-button pan's
+#         press at a walk of Tk scalings (pan_inset_px, and btn2_filter with
+#         its strips and the engine's entry recorded). And one more leg of
+#         SWK19: the chord with no cursor, cursor A alone, cursor B alone and
+#         both.
 #   SWK26 DISPLAY: the Caps Lock states of m, real keys, with the forward to
 #         the engine, the pixel test and the wrapper recorded. SWK28 has a
 #         DISPLAY leg too: graphown against the live tag.
@@ -389,6 +404,38 @@
 #        cursor flags answered as on: the wrapper flips the first viewer of
 #        the registry whichever canvas it is called for, or does nothing
 #        while a cursor shows                        -> SWK19, each
+# A KEY THAT CAME THROUGH ANOTHER WINDOW, AND TWO RIDERS (2026-11-22; rows
+# SWK30 to SWK35 and one leg of SWK19). RED FIRST, on the product before the
+# change: SWK30, SWK31, SWK32, SWK33, SWK35 and the second check of SWK34 on
+# both arms, the first check of SWK34 on the display arm. Green there by
+# construction: the SWK19 leg (a row for a break; the product was right) and
+# the first check of SWK34 without a display (the engine never asked anyone
+# there). The third check of SWK34 (the refusals of wviewer::top_key, added by
+# the repair of 2026-11-22) was red on both arms on the product of the build
+# and on the one before the item: the proc did not exist. No break of this
+# header was built again by the repair; the rows it names are as they were.
+# BREAKS of the product, each built on the committed work, run on
+# both arms and put back; the rows of test_wave_viewer that went red with
+# them are in that suite's header:
+#   tag_key_seq: the first match wins, or the state's modifiers must equal
+#        the sequence's                               -> SWK31, SWK32, each
+#   tag_key_seq walks the newest binding first, or has no rule that a keysym
+#        beats none                                   -> SWK31, each
+#   key_seq_event reads Lock as no modifier           -> SWK30, SWK32
+#   key_seq_event reads a release as a press          -> SWK30, SWK31
+#   key_subst without its %% rule                     -> SWK33
+#   btn2_filter asks strip_at_pixel_inset with no inset of its own again;
+#        pan_inset_px answers the key gate's border at every scaling; it
+#        answers 8 at every scaling                   -> SWK35, each
+#   the Ctrl-Shift-M wrapper does nothing while exactly one cursor shows
+#                                                     -> SWK19
+#   src/callback.c, rebuilt:
+#   the guard without its has_x test      -> SWK34, on the windowless arm only
+#   no guard; the guard for every context; for a press only; also for a key
+#        from the context's own canvas; the event's pixel written into the
+#        context above it; no keysym name handed over
+#                                         -> SWK34, on the display arm, each
+#   (display arm) the key-door tag left on the viewer's own canvas -> SWA9
 # NOT caught in this suite, measured on both arms: the pixel gate saying no on
 # every tab but the first, and two breaks of the Cadence profile alone (the
 # marker keys forwarded without the edit bracket, the cursor tail skipped for a
@@ -1243,6 +1290,36 @@ if {[catch {
   set ::wviewer::windows $p19reg2
   check "SWK19 ...with two viewers in the registry the wrapper flips the one whose canvas the key came from, the second like the first, with the engine's cursor flags answered as both on; for a canvas in neither entry it calls nothing (the wrapper's three answers, what set_plot_mode was called with)" \
     [list $p19two $::swk19_spm] {{recorded recorded {}} {{invert swk19/b} {invert swk19/a}}}
+  # ...and whatever cursors show (2026-11-22). The leg above answers the
+  # engine's cursor flags as both on, and the real-key rows of test_wave_viewer
+  # press the chord with no cursor and with both: a wrapper that does nothing
+  # while exactly ONE cursor shows passed all of them. Here the same registry
+  # of two entries is asked once per cursor state, the flags answered as none,
+  # A alone, B alone and both: the wrapper flips the viewer it is called for
+  # each time.
+  set ::wviewer::windows [dict create \
+    swk19/a [dict create win_path .swk19a.drw top .swk19a] \
+    swk19/b [dict create win_path .swk19b.drw top .swk19b]]
+  if {$p19spm} { rename ::wviewer::set_plot_mode ::wviewer::__swk19_real_spm }
+  proc ::wviewer::set_plot_mode {args} { lappend ::swk19_spm $args ; return recorded }
+  set ::swk19_gf 0
+  rename ::xschem ::swk19w_xschem
+  proc ::xschem {args} {
+    if {$args eq {get graph_flags}} { return $::swk19_gf }
+    return [uplevel 1 [list ::swk19w_xschem {*}$args]]
+  }
+  set p19cur {}
+  foreach ::swk19_gf {0 2 4 6} {
+    set ::swk19_spm {}
+    lappend p19cur [list [pcall {wviewer::plot_mode_toggle_at .swk19b.drw}] $::swk19_spm]
+  }
+  rename ::xschem {}
+  rename ::swk19w_xschem ::xschem
+  rename ::wviewer::set_plot_mode {}
+  if {$p19spm} { rename ::wviewer::__swk19_real_spm ::wviewer::set_plot_mode }
+  set ::wviewer::windows $p19reg2
+  check "SWK19 ...and whichever cursors show: with the engine's cursor flags answered as none, cursor A alone, cursor B alone and both, the wrapper flips the viewer it is called for each time (per state: its answer, what set_plot_mode was called with)" \
+    $p19cur [lrepeat 4 {recorded {{invert swk19/b}}}]
   # the state as the engine reduces it: Shift, Caps Lock, Num Lock, Button-1 and
   # every bit above the modifier range dropped
   check "SWK20 chord_state: Shift, Caps Lock, Num Lock, Button-1 and the high bits drop out; Control, Alt, Super, Mod3 and Mod5 stay" \
@@ -1412,6 +1489,207 @@ if {[catch {
           [lmap {N st} {97 4 97 5 97 261 97 0 1 0} {pcall {wviewer::key_has_row $N $st $kh_rows}}] \
           [pcall {wviewer::key_has_row 65307 0 {}}] [pcall {wviewer::key_has_row 65307 x $kh_rows}]] \
     {{1 1 1 1 1 0 0 0 0} {1 1 1 0 0} 0 0}
+
+  # ---- SWK30-SWK34: A KEY THAT CAME THROUGH ANOTHER WINDOW (2026-11-22) -------
+  # Both arms. The engine offers a key that reached it through another
+  # window's canvas, while a viewer's context is current, to
+  # wviewer::foreign_key, and that proc runs the viewer canvas's own bindings
+  # for it: it has to choose, from what `bind <tag>` lists, the binding Tk
+  # would run (doc/claude/specs/waveform_viewer.md, "A key that came through
+  # another window"). These rows hold the pure parts and the engine's question;
+  # the real thing, with a pointer and real key events, is rows KM14 and KM16
+  # to KM22 of test_wave_viewer.
+  #
+  # SWK30: one sequence of a `bind` listing read as a key event: its type, the
+  # keysym as number and as name, the modifier bits. A bare character is how
+  # bind lists an unmodified press of a printable key.
+  check "SWK30 key_seq_event reads a sequence as bind lists it: a bare character, a named key, modifiers (Alt as Mod1), a release, a sequence with no keysym; and answers {} for what it does not read: more than one event, a virtual event, a button, a multi-press, Meta, Extended, a spelling bind never lists, the empty string" \
+    [lmap q {d - 9 <Key-space> <Key-F5> <Control-Key-d> <Control-Shift-Key-D> <Control-Lock-Key-d>
+             <Control-Shift-Lock-Key-M> <Alt-Key-x> <Mod1-Key-x> <Mod4-Key-y> <Control-B1-Key-w>
+             <Key> <Control-Key> <KeyRelease> <KeyRelease-x> <Control-KeyRelease-x>
+             ab <Key-a><Key-b> <<Foo>> <Button-1> <Double-Key-x> <Meta-Key-m> <Extended-Key-o>
+             <Control-d> {} <} {pcall {wviewer::key_seq_event $q}}] \
+    [lrange {{2 100 {} 0} {2 45 {} 0} {2 57 {} 0} {2 {} space 0} {2 {} F5 0} {2 100 d 4} {2 68 D 5} {2 100 d 6}
+     {2 77 M 7} {2 120 x 8} {2 120 x 8} {2 121 y 64} {2 119 w 260}
+     {2 {} {} 0} {2 {} {} 4} {3 {} {} 0} {3 120 x 0} {3 120 x 4}
+     {} {} {} {} {} {} {} {} {} {}} 0 end]
+  # SWK31: the choice among the sequences of one tag, by Tk's rules. Each
+  # expected answer below is what Tk 8.6 itself ran for that event with the
+  # focus on a canvas carrying the tag, measured by a probe with generated
+  # keys on the day the row was written. This row asks Tk nothing:
+  # it holds the chooser to those answers, on both arms, and would stay green
+  # under a Tk that chooses differently. Tk is asked in every run by row KM19
+  # of test_wave_viewer, on the display arm: for the sequences of the live
+  # tag, and for three sequences of its own bound in the six orders. The
+  # listing is in bind's order, the most recently bound first.
+  set k31 {}
+  # a keysym beats none whatever the modifiers; a superset of modifiers wins
+  set k31a {<Control-Key-d> d <Control-Key>}
+  lappend k31 [lmap {N K s} {100 d 4 101 e 4 100 d 0 100 d 20 101 e 0} {pcall {wviewer::tag_key_seq $k31a 2 $N $K $s}}]
+  # ...also when the sequence without a keysym is the only rival and asks for
+  # a modifier the other does not
+  lappend k31 [pcall {wviewer::tag_key_seq {d <Control-Key>} 2 100 d 4}]
+  # two that ask for different modifiers, neither more than the other: the
+  # later bound wins, in both orders of binding
+  lappend k31 [list [pcall {wviewer::tag_key_seq {<Shift-Key-X> <Control-Key-X>} 2 88 X 5}] \
+                    [pcall {wviewer::tag_key_seq {<Control-Key-X> <Shift-Key-X>} 2 88 X 5}]]
+  # three, of which one asks for more than another and the third is level
+  # with both: the six orders of binding
+  lappend k31 [lmap l {{<Control-Mod2-Key-X> <Shift-Mod2-Key-X> <Control-Key-X>}
+                       {<Control-Mod2-Key-X> <Control-Key-X> <Shift-Mod2-Key-X>}
+                       {<Control-Key-X> <Shift-Mod2-Key-X> <Control-Mod2-Key-X>}
+                       {<Shift-Mod2-Key-X> <Control-Key-X> <Control-Mod2-Key-X>}
+                       {<Shift-Mod2-Key-X> <Control-Mod2-Key-X> <Control-Key-X>}
+                       {<Control-Key-X> <Control-Mod2-Key-X> <Shift-Mod2-Key-X>}} \
+                 {pcall {wviewer::tag_key_seq $l 2 88 X 21}}]
+  # press and release are different events; a named key goes by its name
+  set k31b {x <KeyRelease> <Control-KeyRelease-x> <Key-Escape>}
+  lappend k31 [list [pcall {wviewer::tag_key_seq $k31b 3 120 x 4}] [pcall {wviewer::tag_key_seq $k31b 3 120 x 0}] \
+                    [pcall {wviewer::tag_key_seq $k31b 3 121 y 0}] [pcall {wviewer::tag_key_seq $k31b 2 120 x 4}] \
+                    [pcall {wviewer::tag_key_seq $k31b 2 65307 Escape 0}] [pcall {wviewer::tag_key_seq $k31b 2 121 y 0}] \
+                    [pcall {wviewer::tag_key_seq {} 2 120 x 0}] [pcall {wviewer::tag_key_seq $k31b 2 120 x nostate}]]
+  check "SWK31 tag_key_seq chooses as Tk does: a sequence naming the keysym beats one that does not, then the one asking for more modifiers, and an extra modifier in the state is no obstacle; of two asking for different modifiers the later bound wins; three in the six orders of binding; a release is not a press and a named key goes by its name; nothing matches an empty listing or a state that is no number" \
+    $k31 [lrange {{<Control-Key-d> <Control-Key> d <Control-Key-d> {}}
+          d
+          {<Shift-Key-X> <Control-Key-X>}
+          {<Control-Mod2-Key-X> <Control-Mod2-Key-X> <Control-Key-X> <Shift-Mod2-Key-X> <Shift-Mod2-Key-X> <Control-Mod2-Key-X>}
+          {<Control-KeyRelease-x> <KeyRelease> <KeyRelease> x <Key-Escape> {} {} {}}} 0 end]
+  # SWK32: the viewer's own table. Every sequence the installer binds on the
+  # WaveViewer tag, the Caps Lock dispatch included, must be one the chooser
+  # reads, and for the event a sequence names (its keysym, exactly its
+  # modifiers) the chooser must answer that sequence, with Num Lock on top as
+  # without. The table is taken from the product: `bind` is a recorder for the
+  # leg (it keeps what the installer binds and lists it the most recent first,
+  # as Tk does) and the installer runs once more against it; the real command,
+  # where there is one, and the installer's once-only flag are put back.
+  set ::swk32_seqs {}
+  array unset ::swk32_scr
+  set k32_bind [expr {[info commands ::bind] ne {}}]
+  if {$k32_bind} { rename ::bind ::swk32_real_bind }
+  proc ::bind {tag args} {
+    if {[llength $args] == 0} { return [lreverse $::swk32_seqs] }
+    set seq [lindex $args 0]
+    if {[llength $args] == 1} {
+      if {[info exists ::swk32_scr($seq)]} { return $::swk32_scr($seq) }
+      return {}
+    }
+    if {![info exists ::swk32_scr($seq)]} { lappend ::swk32_seqs $seq }
+    set ::swk32_scr($seq) [lindex $args 1]
+    return {}
+  }
+  set k32_tb NO-FLAG
+  catch {set k32_tb $::wviewer::tagbinds}
+  set ::wviewer::tagbinds 0
+  set k32_inst [pcall {wviewer::install_default_binds}]
+  set k32_list [bind WaveViewer]
+  if {$k32_tb ne {NO-FLAG}} { set ::wviewer::tagbinds $k32_tb }
+  rename ::bind {}
+  if {$k32_bind} { rename ::swk32_real_bind ::bind }
+  set k32_unread {} ; set k32_wrong {} ; set k32_n 0
+  foreach seq $k32_list {
+    set ev [pcall {wviewer::key_seq_event $seq}]
+    if {[llength $ev] != 4 || ![string is integer -strict [lindex $ev 1]] ||
+        ![string is integer -strict [lindex $ev 3]]} { lappend k32_unread $seq ; continue }
+    lassign $ev k32T k32N k32K k32m
+    if {$k32K eq {}} { set k32K [format %c $k32N] }
+    foreach k32s [list $k32m [expr {$k32m | 16}]] {
+      set got [pcall {wviewer::tag_key_seq $k32_list $k32T $k32N $k32K $k32s}]
+      if {$got ne $seq} { lappend k32_wrong [list $seq $k32s $got] }
+    }
+    incr k32_n
+  }
+  # the Caps Lock dispatch is what the chooser lands on for a Lock chord, the
+  # base script for the plain one
+  set k32_cl [list \
+    [string match {wviewer::case_key *} [pcall {set ::swk32_scr([wviewer::tag_key_seq $k32_list 2 68 D 6])}]] \
+    [string match {wviewer::clear_all_at *} [pcall {set ::swk32_scr([wviewer::tag_key_seq $k32_list 2 100 d 4])}]] \
+    [string match {wviewer::plot_mode_toggle_at *} [pcall {set ::swk32_scr([wviewer::tag_key_seq $k32_list 2 77 M 5])}]]]
+  check "SWK32 every sequence the installer binds on the WaveViewer tag is one the chooser reads, and for the event each names the chooser answers that sequence, with Num Lock on top as without; Caps Lock + Ctrl-D lands on the dispatcher, Ctrl-d on Clear All, Ctrl-Shift-M on the plot mode (the installer ran, sequences not read, wrong answers, the three scripts; the sequences walked are all the installer bound and more than none; bind and the once-only flag are back)" \
+    [list $k32_inst $k32_unread $k32_wrong $k32_cl \
+          [expr {$k32_n > 0 && $k32_n == [llength $::swk32_seqs]}] \
+          [expr {([info commands ::bind] ne {}) == $k32_bind}] \
+          [expr {$k32_tb eq {NO-FLAG} || $::wviewer::tagbinds eq $k32_tb}]] \
+    {1 {} {} {1 1 1} 1 1 1}
+  # SWK33: the %-fields of a binding script
+  check "SWK33 key_subst replaces the fields it is given, makes %% a percent sign and ?? of a field it is not given, and leaves a lone percent sign at the end" \
+    [list [pcall {wviewer::key_subst {a %W b %% %K %s %A %x,%y %} {W .c K d s 4 x 1 y 2}}] \
+          [pcall {wviewer::key_subst {wviewer::case_key %W %K %s <Control-Key-d> <Control-Shift-Key-D>} {W .v.drw K D s 6}}] \
+          [pcall {wviewer::key_subst {} {W .c}}]] \
+    {{a .c b % d 4 ?? 1,2 %} {wviewer::case_key .v.drw D 6 <Control-Key-d> <Control-Shift-Key-D>} {}}
+  # SWK34: the engine's question. callback() offers a key to
+  # wviewer::foreign_key when, and only when, the current context carries the
+  # viewer flag, the event is a key press or release, and the canvas it came
+  # through is not the current context's. The current context is flagged for
+  # the leg (and unflagged after it), foreign_key is a recorder, and the key
+  # is the left Shift key, which the engine has no use for. With the recorder
+  # answering 1 the engine must stop there: the pointer it stores for the
+  # context stays where a Motion put it. Without a display the engine does
+  # not ask at all (there is no pointer to ask about), so on that arm every
+  # leg reads zero calls: that half was true before the engine asked anyone
+  # and proves only that it stays so.
+  set k34_cur [xschem get current_win_path]
+  set k34_flag [pcall {xschem get wave_viewer}]
+  set ::swk34 {} ; set ::swk34_ans 1
+  set k34_had [expr {[info commands ::wviewer::foreign_key] ne {}}]
+  if {$k34_had} { rename ::wviewer::foreign_key ::wviewer::__swk34_real_fk }
+  proc ::wviewer::foreign_key {args} { lappend ::swk34 $args ; return $::swk34_ans }
+  proc k34_ptr {} { return [list [xschem get mousex] [xschem get mousey]] }
+  set k34 {}
+  proc k34_leg {win ev ks st} {
+    # the pointer put where a Motion on the context's own canvas puts it, then
+    # the event: what foreign_key was handed, and whether the stored pointer
+    # is still where the Motion left it
+    xschem callback $::k34_cur 6 30 40 0 0 0 0
+    set p0 [k34_ptr]
+    set ::swk34 {}
+    xschem callback $win $ev 300 310 $ks 0 0 $st
+    return [list $::swk34 [expr {[k34_ptr] eq $p0}]]
+  }
+  # flag off: never asked, and the engine goes on with the key
+  xschem set wave_viewer 0
+  lappend k34 [k34_leg .swk34.other 2 65505 0]
+  xschem set wave_viewer 1
+  # flag on, another canvas: a press, then a release
+  lappend k34 [k34_leg .swk34.other 2 65505 0]
+  lappend k34 [k34_leg .swk34.other 3 65505 1]
+  # the same press with the recorder answering 0
+  set ::swk34_ans 0
+  lappend k34 [k34_leg .swk34.other 2 65505 0]
+  set ::swk34_ans 1
+  # the context's own canvas, and an event that is no key
+  lappend k34 [lindex [k34_leg $k34_cur 2 65505 0] 0]
+  lappend k34 [lindex [k34_leg .swk34.other 6 0 0] 0]
+  xschem callback $k34_cur 6 30 40 0 0 0 0
+  xschem set wave_viewer [expr {$k34_flag eq {1} ? 1 : 0}]
+  rename ::wviewer::foreign_key {}
+  if {$k34_had} { rename ::wviewer::__swk34_real_fk ::wviewer::foreign_key }
+  rename k34_ptr {}
+  rename k34_leg {}
+  if {$::arm eq {nogui}} {
+    set k34_want [list {{} 0} {{} 0} {{} 0} {{} 0} {} {}]
+  } else {
+    set k34_press [list $k34_cur 2 65505 Shift_L 0]
+    set k34_want [list {{} 0} [list [list $k34_press] 1] \
+                       [list [list [list $k34_cur 3 65505 Shift_L 1]] 1] [list [list $k34_press] 0] {} {}]
+  }
+  check "SWK34 the engine offers a key to wviewer::foreign_key only with the viewer flag on the current context, for a press or a release, from a canvas that is not the context's own; taken, the key stops there and the pointer the context stores stays where it was; refused, the engine goes on with it and stores the event's pixel; without a display it is never offered (per leg, what the proc was handed and whether the stored pointer stayed: flag off; flag on, a press; a release; the press refused; then what it was handed for a key on the context's own canvas and for a pointer motion; the flag as it was before the row)" \
+    [list $k34 [pcall {xschem get wave_viewer}]] [list $k34_want $k34_flag]
+  # the proc's own refusals, before it asks anything about the pointer: an
+  # event that is no key, a canvas that is no viewer's. Without Tk it refuses
+  # everything.
+  check "SWK34 ...and foreign_key itself answers 0 for an event that is no key press or release and for a canvas that is no viewer's" \
+    [list [pcall {wviewer::foreign_key .swk34.other 4 65505 Shift_L 0}] \
+          [pcall {wviewer::foreign_key .swk34.other 2 65505 Shift_L 0}] \
+          [pcall {wviewer::foreign_key .swk34.other 3 65505 Shift_L 0}]] {0 0 0}
+  # the viewer toplevel's own door (wviewer::top_key, 2026-11-22): the same
+  # refusals, for an event that is no key and for a toplevel that is no
+  # viewer's. The door with a pointer and keys is row KM23 of test_wave_viewer.
+  check "SWK34 ...and top_key, the door of a viewer's own toplevel, answers 0 for an event that is no key press or release and for a toplevel that is no viewer's; its tag has a name of its own, not the canvas door's" \
+    [list [pcall {wviewer::top_key .swk34top 4 65505 Shift_L 0}] \
+          [pcall {wviewer::top_key .swk34top 2 65505 Shift_L 0}] \
+          [pcall {wviewer::top_key .swk34top 3 65505 Shift_L 0}] \
+          [pcall {expr {[wviewer::top_key_tag] ne {} && [wviewer::top_key_tag] ne [wviewer::key_door_tag]}}]] {0 0 0 1}
+
   # the filter itself, on a path that is no viewer's, with the forward and the
   # pixel test replaced by recorders: it hands the decision the profile of the
   # moment and the engine's LIVE table
@@ -1576,6 +1854,72 @@ if {[catch {
   rename ::wviewer::__swk25_real_sbp ::wviewer::strip_bands_px
   check "SWK25 ...strip_at_pixel_inset, the press test of the middle-button pan, with its bands answered by a recorder: three pixels inside the top edge of the first strip, and inside the bottom edge of the second, is no strip with the proc's own inset and the strip itself with inset 0; the middle of each strip is that strip; with an inset given, the pixel one short of it is no strip and the pixel at it is (the answers, the canvas the bands were asked for)" \
     [list $kb_s [lsort -unique $::swk25_asked]] {{-1 0 -1 1 0 1 -1 0} .swk25}
+  # SWK35 (2026-11-22): the inset the middle-button pan's press must clear
+  # grows with the Tk scaling. The filter used a fixed 8 pixels, the engine's
+  # border is its factor times the scaling: above the scaling where that
+  # passes 8 pixels a press just inside the filter's inset was taken by the
+  # filter, refused by the engine's graph test, and panned the viewer's
+  # schematic canvas. The `tk` command is SWK25's recorder again. First leg:
+  # wviewer::pan_inset_px at a walk of scalings is 8 wherever the engine's
+  # border rounded up is no more than 8 (nothing changes there), and beyond
+  # that no smaller than the engine's border and less than two pixels larger.
+  if {$kb_tk} { rename ::tk ::swk25_real_tk }
+  proc ::tk {args} {
+    if {$args eq {scaling}} { return $::swk25_sc }
+    if {[info commands ::swk25_real_tk] ne {}} { return [uplevel 1 [list ::swk25_real_tk {*}$args]] }
+    return -code error "no tk here"
+  }
+  set k35_walk {} ; set k35_seen {}
+  foreach ::swk25_sc {1.0 1.25 1.4 1.5 1.6 1.7 2.0 3.0} {
+    set k35_px [pcall {wviewer::pan_inset_px}]
+    lappend k35_seen $k35_px
+    if {![string is integer -strict $k35_px] || ![string is double -strict $kb_f]} {
+      lappend k35_walk 0
+    } elseif {ceil($kb_f * $::swk25_sc) <= 8} {
+      lappend k35_walk [expr {$k35_px == 8}]
+    } else {
+      lappend k35_walk [expr {$k35_px >= $kb_f * $::swk25_sc && $k35_px < $kb_f * $::swk25_sc + 2}]
+    }
+  }
+  # Second leg: the filter itself. A registry entry made for the leg, its
+  # strips answered by a recorder (two strips, one under the other, each far
+  # deeper than any inset asked for here), every call of the engine's event
+  # entry recorded and not passed on. A middle-button press at a depth below
+  # the first strip's top edge is followed by its release; what counts is
+  # whether the press reached the engine. At a scaling where 8 pixels cover
+  # the engine's border the answers are the ones the filter gave before this
+  # row existed: 7 pixels deep refused, 8 taken. At scaling 2.0 a press 8, 9
+  # or 10 pixels deep is refused and one 11 deep is taken; at 3.0, 15 refused
+  # and 16 taken.
+  set k35_reg $::wviewer::windows
+  set ::wviewer::windows [dict create swk35/a [dict create win_path .swk35 top .swk35top]]
+  rename ::wviewer::strip_bands_px ::wviewer::__swk35_real_sbp
+  proc ::wviewer::strip_bands_px {wp} { return {{0 0 200 100} {0 100 200 200}} }
+  set ::swk35_cb {}
+  rename ::xschem ::swk35_xschem
+  proc ::xschem {args} {
+    if {[lindex $args 0] eq {callback}} { lappend ::swk35_cb [lrange $args 1 2] ; return {} }
+    return [uplevel 1 [list ::swk35_xschem {*}$args]]
+  }
+  set k35_press {}
+  foreach {::swk25_sc k35_d} {1.0 7 1.0 8 1.25 8 1.5 8 2.0 8 2.0 9 2.0 10 2.0 11 3.0 15 3.0 16} {
+    set ::swk35_cb {}
+    pcall {wviewer::btn2_filter .swk35 4 100 $k35_d 0}
+    set k35_took [expr {[lsearch -exact $::swk35_cb {.swk35 4}] >= 0}]
+    pcall {wviewer::btn2_filter .swk35 5 100 $k35_d 512}
+    lappend k35_press $k35_took
+  }
+  rename ::xschem {}
+  rename ::swk35_xschem ::xschem
+  rename ::wviewer::strip_bands_px {}
+  rename ::wviewer::__swk35_real_sbp ::wviewer::strip_bands_px
+  set ::wviewer::windows $k35_reg
+  rename ::tk {}
+  if {$kb_tk} { rename ::swk25_real_tk ::tk }
+  check "SWK35 the inset of the middle-button pan's press follows the Tk scaling: pan_inset_px is 8 at every scaling where the engine's border rounded up is no more than 8 pixels and clears the engine's border beyond (the factor read out of waves_selected, the tk command answered by a recorder), and its answers are not all one number; btn2_filter hands the engine a press only that deep inside a strip (the walk of scalings, more than one answer; then press by press whether the engine got it: scaling 1.0 at 7 and 8 pixels deep, 1.25 and 1.5 at 8, 2.0 at 8, 9, 10 and 11, 3.0 at 15 and 16; the tk command is back as it was)" \
+    [list $k35_walk [expr {[llength [lsort -unique $k35_seen]] > 1}] $k35_press \
+          [expr {([info commands ::tk] ne {}) == $kb_tk}]] \
+    {{1 1 1 1 1 1 1 1} 1 {0 1 1 1 0 0 0 1 0 1} 1}
   # SWK27: the gate itself, on a registry entry made for the row and with the
   # engine's getters answered by a recorder (zoom 1, origin 0, so a band is its
   # own pixels). One condition is moved per leg.
@@ -5334,7 +5678,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 280 } else { set expect 576 }
+if {$::arm eq {nogui}} { set expect 289 } else { set expect 585 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

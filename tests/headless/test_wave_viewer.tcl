@@ -130,13 +130,43 @@
 #              the four profiles
 #         KM15 two viewer windows open at once: each takes its own b and its
 #              own chord
-#         KM14 a limit, declared: a key that reaches the engine through another
-#              window's canvas while the viewer's context is current
+#         KM14 (restated 2026-11-22; until then a declared limit) a key typed
+#              with the focus on another window's canvas and the pointer in
+#              the viewer's plot is the viewer's: Ctrl-Shift-M by both doors
+#              (the binding tag on the schematic canvas, the engine's event
+#              entry), its release, the pointer the viewer's context stores,
+#              a key that a tag behind the viewer's own binds (F10), an error
+#              in a binding, and the pointer deciding
+#         KM16 from that state the editor keys do nothing (w, y, i, Alt-b, the
+#              Cadence profile's s and b, and the three that open something)
+#         KM17 from that state the graph keys act on the graph, both profiles,
+#              typed on the main canvas and handed to the engine's event entry
+#         KM23 a key typed while the viewer's own toplevel holds the keyboard
+#              (where an open leaves it) is the viewer's with the pointer over
+#              the plot and nobody's otherwise
+#         KM18 a viewer that has just opened, and one that an open only
+#              raises: where the focus is left and by what calls, the keys
+#              typed over the schematic after it, and the chord without a
+#              click in the focus state the display gives and with the focus
+#              forced onto the main canvas
+#         KM19 parity with Tk: every sequence of the WaveViewer tag, and six of
+#              the row's own, chosen the same with the focus on the plot and
+#              with the focus elsewhere; three sequences of the row's own in
+#              the six orders of binding
+#         KM20 the control (a key over the schematic is the schematic's, with
+#              one viewer and with two) and two viewers (the chord goes to the
+#              one under the pointer)
+#         KM21 the fence: an ordinary second schematic window is untouched;
+#              and a key typed in that window with the pointer in the plot is
+#              the viewer's
+#         KM22 a key typed into the Signal Browser's search box stays there
 #         KM12 the fence: over a graph embedded in a schematic the same chords
 #              do what they did before
-#         G1f  (with the G rows) a limit, declared: after an open the keyboard
-#              focus is on the viewer's toplevel and the pointer coming into
-#              the plot brings none, so no viewer key works until a click
+#         G1f  (with the G rows; until 2026-11-22 a declared limit, restated
+#              that day by the build of item 03b and again by its repair)
+#              after an open, and after an open that only raises the window,
+#              the keyboard focus inside the viewer's toplevel is on the
+#              toplevel, which carries the viewer's key tag
 #         CG-mmb (its second check) the middle-button pan's press three pixels
 #              inside a strip's edge leaves the canvas where it was
 #       NOTHING DANGEROUS IS SENT. Several of these chords are a reload, a Save
@@ -157,14 +187,19 @@
 #       graph.forward leg and its Escape leg. The legs of the second repair
 #       (KM1's walk of the tag, KM2's d, KM6, KM7's readout, KM9's first
 #       pixel, KM13's question to the comparand, KM14) were written against a
-#       product that was right; each is held by a break below. KM14's first
-#       check is held by none: it states what the unchanged engine does. Its
-#       second check sends the chord and goes red with it. The legs of the
+#       product that was right; each is held by a break below. (KM14 was
+#       then a declared limit of two checks: the first stated what the
+#       unchanged engine did and no break held it, the second sent the chord
+#       and went red with it. Item 03b restated the row on 2026-11-22 and both
+#       checks are gone; the last section of this header has its breaks.)
+#       The legs of the
 #       third repair (KM1's tag walk in the Cadence profile and its
 #       command-window leg, KM7's typed Control-s, KM9's window of more than
 #       two strips, CG-mmb's press in the border, G1f) were written against a
 #       product that was right as well; each is held by a break of the
-#       second list below, G1f by the change it says has not been made.
+#       second list below. (G1f was then a declared limit too, held by the
+#       change it said had not been made. It has been restated since: the
+#       last section.)
 #       The legs of the fourth repair (KM2's two profiles, KM6's graph keys
 #       on the second tab, KM7's chord with the cursors showing, KM9's two
 #       subwindows and its window made taller, KM15) were written against a
@@ -226,7 +261,10 @@
 #           canvas is then panned for the rest of the suite and CG-shift-b1,
 #           WB-click, WB-lmb-drag, WB-mmb-drag, SD4 and IX-fit follow it
 #         the cursor tail skipped for a typed Control-s -> KM7
-#         wviewer::open gives the focus to the plot canvas -> G1f
+#         wviewer::open gives the focus to the plot canvas -> G1f (as G1f
+#           stood then. The row has been restated twice since; the break,
+#           built again against the rows as they stand, is in the last
+#           section of this header.)
 #       THE FOURTH REPAIR's breaks. This suite was green under each before
 #       the repair (measured by the attack that found them). Each was built,
 #       went red on the one row named and on no other row of this suite, on
@@ -253,6 +291,137 @@
 #       NOT measured again (the engine would have to be rebuilt):
 #         ENGINE (src/callback.c, rebuilt): a graph guard put in front of the
 #           Cadence arm of `case 's'`        -> KM12, measured by the build
+#       A KEY THAT CAME THROUGH ANOTHER WINDOW (2026-11-22; rows KM14, KM16
+#       to KM23 and G1f; the build of overnight item 03b, then its first
+#       repair the same day).
+#       RED FIRST on the product before the item, on the display arm: G1f;
+#       every check of KM14 but "the pointer decides"; KM16 to KM20; of KM21
+#       the tag check and the check for a key typed in the second window;
+#       KM23. Green there by construction: KM14's "the pointer decides",
+#       KM21's first check (a fence: its expected values were taken there),
+#       KM22 (a control), the fixtures.
+#       RED on the product of the build, before the repair, on the display arm
+#       and again with an action log open: G1f, KM18, KM23 and the error check
+#       of KM14. The repair's other new legs were right on that product,
+#       each written for a break the attack built and no row caught (below):
+#       KM14's F10 check, KM17's b by the engine's entry, KM21's check for
+#       the second window. The open's calls of `focus`, which KM18 records,
+#       were plain there too. KM19's order-of-binding leg was right there as
+#       well; of the breaks below it sees those of tag_key_seq named "the
+#       first match wins", "the newest binding first" and "modifiers equal",
+#       which the row's first half sees too.
+#       BREAKS of the product. Each was built on a scratch copy of the tree
+#       (made the same as this tree before and after every break), run on the
+#       display arm, and EVERY row that went red is named. All were built by
+#       the repair, with the rows as they stand, except the two under "THE
+#       BUILD'S MEASUREMENT" and the paragraph after them.
+#       The rows of test_wave_subwindows that go red with the breaks of the
+#       pure procs are in that suite's header.
+#         src/wave_viewer.tcl:
+#         foreign_key never takes the key   -> KM14 (every check but the
+#           fixture and "the pointer decides"), KM16 to KM20, KM21 (the
+#           second-window check), KM23
+#         key_door never takes it (the engine's door alone)
+#                                            -> KM14 (the chord, its release,
+#                                               Caps Lock, the status bar,
+#                                               F10), KM16, KM17, KM19, KM21
+#                                               (the second-window check)
+#         key_door answers for the main window's canvas only
+#                                            -> KM21 (the second-window check)
+#         the tag's KeyPress binding without its break
+#                                            -> KM14 (the chord, its release,
+#                                               Caps Lock, the status bar,
+#                                               F10), KM16 to KM20, KM21 (the
+#                                               second-window check)
+#         the tag without its KeyRelease binding -> KM14 (the release)
+#         the tag put last in a canvas's tag list -> KM14 (the fixture, the
+#           chord, its release, Caps Lock, the status bar, F10), KM16 to
+#           KM20, KM21 (the tag, the second-window check)
+#         foreign_key does not ask where the pointer is
+#                                            -> KM14 (the pointer decides)
+#         foreign_key takes the key only with the pointer on the plot canvas
+#                                            -> KM14 (the status bar)
+#         foreign_key runs the WaveViewer tag only (no filter)
+#                                            -> KM14 (every check but the
+#                                               fixture and "the pointer
+#                                               decides"), KM16, KM17, KM19,
+#                                               KM21 (the second-window
+#                                               check), KM23
+#         foreign_key runs the canvas's own binding only (no tag)
+#                                            -> KM14 (the chord, its release,
+#                                               the engine's entry, Caps
+#                                               Lock, the status bar), KM18,
+#                                               KM19, KM20, KM21 (the
+#                                               second-window check), KM23
+#         foreign_key runs every tag of the viewer's canvas, the ones behind
+#           WaveViewer too                   -> KM14 (F10)
+#         an error in a binding does not stop the walk of the tags
+#                                            -> KM14 (the error)
+#         the filter is handed the pointer's place on the screen, not its
+#           pixel in the canvas              -> KM14 (the chord, the engine's
+#                                               entry), KM23
+#         foreign_key gives the viewer's canvas the focus
+#                                            -> KM14 (the chord, the engine's
+#                                               entry, the status bar, F10),
+#                                               KM23
+#         foreign_key takes a press only     -> KM14 (the release, the
+#                                               engine's entry, Caps Lock,
+#                                               F10), KM16, KM19, KM21 (the
+#                                               second-window check), KM23
+#         a key with no keysym name handed on with an empty name
+#                                            -> KM14 (that check)
+#         the fields of a script without the keysym name
+#                                            -> KM14 (the chord, the engine's
+#                                               entry), KM23
+#         tag_key_seq: the first match wins; it walks the newest binding
+#           first; no rule that a keysym beats none; Lock read as no
+#           modifier                         -> KM19, each
+#         tag_key_seq wants the state's modifiers equal to the sequence's
+#                                            -> KM14 (the chord, its release,
+#                                               the engine's entry, Caps
+#                                               Lock, the status bar), KM16,
+#                                               KM19, KM23
+#         key_seq_event reads a release as a press -> KM14 (the release, the
+#           engine's entry, Caps Lock, F10), KM16, KM19, KM21 (the
+#           second-window check), KM23
+#         THE OPEN (the repair):
+#         wviewer::open gives the plot canvas the focus, in its fresh arm or
+#           in the arm that only raises (what the build had)
+#                                            -> G1f, KM18, each
+#         wviewer::open asks for the focus with -force, in its fresh arm or
+#           in the arm that only raises      -> KM18, each
+#         THE VIEWER WINDOW'S OWN DOOR (the repair):
+#         top_key never takes the key        -> KM18, KM23
+#         the open does not put the tag on the toplevel -> G1f, KM18, KM23
+#         the tag put last in the toplevel's tag list -> G1f
+#         top_key takes the key with the pointer anywhere in the viewer's
+#           window; its KeyPress binding breaks; the tag without its
+#           KeyRelease binding               -> KM23, each
+#         the door bound on the toplevel's PATH, which is a tag of every
+#           window inside it, not on a tag of its own -> G1f, KM22, and with
+#           them CA5, KM2, KM4 to KM7, KM9 to KM11 and KM15: every key
+#           typed on the plot canvas then reaches the filter twice
+#         src/callback.c, rebuilt:
+#         no guard                           -> KM14 (the engine's entry),
+#                                               KM16, KM17
+#         the guard for a press only         -> KM14 (the engine's entry),
+#                                               KM16
+#         the event's pixel written into the context above the guard; no
+#           keysym name handed over          -> KM14 (the engine's entry),
+#                                               each
+#         the guard counted as a level of callback() (the semaphore up while
+#           the viewer's side runs)          -> KM17
+#         THE BUILD'S MEASUREMENT, not built again by the repair:
+#         the canvas door's tag left on the viewer's own canvas -> KM1, KM3
+#           to KM7, KM10, KM11, and the suite then stalls until its driver's
+#           timeout
+#         the guard also for a key from the context's own canvas -> the
+#           suite stalls until its driver's timeout (row SWK34 of
+#           test_wave_subwindows names it)
+#       NOT caught in this suite (the build's measurement): the guard asking
+#       under has_x 0, the guard asking for every context, key_subst without
+#       its %% rule, and the three breaks of the middle-button pan's inset.
+#       Rows SWK34, SWK33 and SWK35 of test_wave_subwindows catch them.
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -639,6 +808,30 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return 0
   }
 
+  # THE REAL POINTER, PARKED where no window of this application is (a corner
+  # of the screen), and put back. A window that is mapped, re-mapped or raised
+  # under the pointer gets an Enter from the server, and the engine answers an
+  # Enter that switches the context by giving that canvas the keyboard focus:
+  # a row that asks where an OPEN leaves the focus has to keep the pointer out
+  # of it. ptr_park answers 1 when the pointer rests over no window of this
+  # application afterwards.
+  proc ptr_park {} {
+    set ::ptr_park_was [winfo pointerxy .]
+    set sw [winfo screenwidth .] ; set sh [winfo screenheight .]
+    foreach {x y} [list [expr {$sw - 3}] [expr {$sh - 3}] 2 [expr {$sh - 3}] [expr {$sw - 3}] 2 2 2] {
+      if {[winfo containing $x $y] ne {}} { continue }
+      event generate . <Motion> -warp 1 -x [expr {$x - [winfo rootx .]}] -y [expr {$y - [winfo rooty .]}]
+      for {set i 0} {$i < 6} {incr i} { update ; after 15 }
+      if {[winfo containing {*}[winfo pointerxy .]] eq {}} { return 1 }
+    }
+    return 0
+  }
+  proc ptr_back {} {
+    event generate . <Motion> -warp 1 -x [expr {[lindex $::ptr_park_was 0] - [winfo rootx .]}] \
+                                      -y [expr {[lindex $::ptr_park_was 1] - [winfo rooty .]}]
+    for {set i 0} {$i < 6} {incr i} { update ; after 15 }
+  }
+
   proc toplevel_count {} {
     set n 0
     foreach c [winfo children .] {
@@ -681,9 +874,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set ::kf_calls 0
   set ::kf_errs 0
   set ::kf_last {}
+  # kf_at (2026-11-22): the canvas, the pixel and the keysym name of the last
+  # call. A key that came through another window carries the pointer's pixel,
+  # computed by the viewer's side, and a name the engine supplied.
+  set ::kf_at {}
   proc ::wviewer::key_filter {W T x y N K s} {
     incr ::kf_calls
     set ::kf_last [list $T $N $s]
+    set ::kf_at [list $W $x $y $K]
     if {[catch {::wviewer::key_filter_orig $W $T $x $y $N $K $s} e]} {
       incr ::kf_errs
       puts "  key_filter ERROR: $e"
@@ -800,52 +998,66 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   set vtop [wviewer::window_for $tok]
   set vdrw $vtop.drw
 
-  # --- G1f: A LIMIT, DECLARED: where the keyboard focus is after an open ------
-  # doc/claude/specs/waveform_viewer.md, "What the key filter forwards". A key
-  # reaches the viewer's key filter and the WaveViewer tag only while the plot
-  # canvas has the keyboard focus. wviewer::open leaves the viewer's context
-  # the current one and asks for the focus on the viewer's TOPLEVEL. The engine
-  # hands a canvas the focus when the pointer's entering SWITCHES the context
-  # to it; into a window whose context is the current one already the pointer
-  # brings no focus (autofocus_mainwindow off, as it ships). So right after an
-  # open no viewer key works until one click in the plot, or until the pointer
-  # has been over another xschem canvas and come back.
+  # --- G1f: where the keyboard focus is after an open -------------------------
+  # doc/claude/specs/waveform_viewer.md, "A key that came through another
+  # window". wviewer::open leaves the keyboard focus inside the viewer on the
+  # viewer's TOPLEVEL, in both of its arms (a fresh window, and one it only
+  # raises). Until 2026-11-22 this row held that as a declared limit: no key
+  # is bound on a toplevel, so right after an open no viewer key worked until
+  # a click in the plot. The first build of overnight item 03b had the open
+  # put the focus on the plot canvas instead. While this application holds
+  # the keyboard that sends the next keys to the viewer wherever the pointer
+  # is, and the repair of the same day took it back: the open is as it was,
+  # and a key Tk hands the toplevel is the viewer's while the pointer is over
+  # the plot (wviewer::top_key, behind a binding tag the toplevel carries
+  # first; row KM23 sends the keys, row KM18 the keys after an open).
   # What is read is Tk's own record of where the focus goes inside the
   # toplevel (focus -lastfor), which does not wait for the window manager to
-  # hand this application the focus. Four legs: straight after the open of the
-  # row above, nothing served in between; an Enter on the plot with the
-  # viewer's context current and the focus where the open asks for it; the
-  # same Enter with autofocus_mainwindow switched on for it (the canvas's own
-  # Enter binding then asks for the focus); an Enter on the plot after the
-  # main window's context was made current.
-  # The row turns red the day an open gives the plot canvas the focus, and
-  # then that sentence of the spec and the guide's troubleshooting row go.
+  # hand this application the focus. Legs: straight after the open of the row
+  # above, nothing served in between; the tag, first on the toplevel and on
+  # no window inside it (every descendant is walked); then, with the canvas
+  # mapped, the focus put on the PLOT CANVAS by command (where a click leaves
+  # it) and the same token opened again, which only raises the window and
+  # takes the focus back to the toplevel, as it did before the item; and an
+  # Enter on the plot from the main window's context still switches the
+  # context to the viewer and puts the focus on its canvas.
+  # The real pointer is parked off every window for the raise (ptr_park): the
+  # raise re-maps the viewer, a re-map under the pointer brings an Enter, and
+  # the engine's answer to an Enter that switches the context is to put the
+  # focus on the canvas whatever the open did.
   set g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vtop}]]
-  set g1f_af 1
-  catch {set g1f_af $::autofocus_mainwindow}
+  set g1f_tag no-such-tag
+  catch {set g1f_tag [wviewer::top_key_tag]}
+  set g1f_kids {}
+  set g1f_todo [list $vtop]
+  while {[llength $g1f_todo]} {
+    set g1f_w [lindex $g1f_todo 0]
+    set g1f_todo [lrange $g1f_todo 1 end]
+    foreach g1f_c [winfo children $g1f_w] { lappend g1f_kids $g1f_c ; lappend g1f_todo $g1f_c }
+  }
+  set g1f_car 0
+  foreach g1f_c $g1f_kids { if {[lsearch -exact [bindtags $g1f_c] $g1f_tag] >= 0} { incr g1f_car } }
+  lappend g1f [expr {[lindex [bindtags $vtop] 0] eq $g1f_tag}] [expr {[llength $g1f_kids] > 0}] $g1f_car
   if {![viewer_ready $vtop]} {
-    puts "skip: G1f's two Enter legs need a mapped viewer canvas"
-    check "G1f a limit, declared: straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, not on the plot canvas" \
-      $g1f {1 1}
+    puts "skip: G1f's raise and Enter legs need a mapped viewer canvas"
+    check "G1f straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, where the open has always left it; the toplevel carries the viewer's key tag first and no window inside it carries it (context the viewer's, focus on the toplevel, the tag first on the toplevel, windows inside it more than none, how many of them carry the tag)" \
+      $g1f {1 1 1 1 0}
   } else {
     for {set i 0} {$i < 10} {incr i} { update; after 20 }
-    catch {focus $vtop}
-    xschem new_schematic switch $vdrw
-    event generate $vdrw <Enter> -x 40 -y 40
+    set g1f_parked [ptr_park]
+    catch {focus $vdrw}
     update
-    lappend g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vtop}]]
-    set ::autofocus_mainwindow 1
-    event generate $vdrw <Enter> -x 40 -y 40
-    update
-    lappend g1f [expr {[focus -lastfor $vtop] eq $vdrw}]
-    set ::autofocus_mainwindow $g1f_af
-    catch {focus $vtop}
+    lappend g1f $g1f_parked [expr {[focus -lastfor $vtop] eq $vdrw}] [wviewer::open $tok] \
+                [expr {[wviewer::window_for $tok] eq $vtop}]
+    for {set i 0} {$i < 20} {incr i} { update; after 20 }
+    lappend g1f [expr {[focus -lastfor $vtop] eq $vtop}]
+    ptr_back
     xschem new_schematic switch .drw
     event generate $vdrw <Enter> -x 40 -y 40
     update
     lappend g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vdrw}]]
-    check "G1f a limit, declared: straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, not on the plot canvas; an Enter on the plot while that context is current leaves it there, and puts it on the canvas with autofocus_mainwindow on; an Enter that switches the context to the viewer puts it on the plot canvas (autofocus_mainwindow as the suite runs; after the open: context the viewer's, focus on the toplevel; after the first Enter: the same two; with autofocus_mainwindow on: focus on the canvas; after an Enter from the main window's context: context the viewer's, focus on the canvas)" \
-      [list $g1f_af $g1f] {0 {1 1 {1 1} 1 {1 1}}}
+    check "G1f straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, where the open has always left it; the toplevel carries the viewer's key tag first and no window inside it carries it; an open of the same token, which only raises the window, takes the focus from the plot canvas back to the toplevel; an Enter that switches the context to the viewer puts it on the plot canvas (after the open: context the viewer's, focus on the toplevel, the tag first on the toplevel, windows inside it more than none, how many of them carry the tag; the raise: the pointer parked off every window, the focus was put on the plot canvas, the open's answer, the same window, the focus on the toplevel after it; after an Enter from the main window's context: context the viewer's, focus on the canvas)" \
+      $g1f {1 1 1 1 0 1 1 1 1 1 {1 1}}
     xschem new_schematic switch $vdrw
   }
 
@@ -3112,7 +3324,8 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         #
         # THE WITNESSES. ::km_fwd lists every KeyPress the engine is handed, as
         # keysym and state, while the wrapper passes each call on unchanged;
-        # ::km_via lists the same calls with the canvas each came through.
+        # ::km_via lists the same calls with the canvas each came through, and
+        # ::km_rel the KeyRelease calls the same way (2026-11-22).
         # ::km_log lists the viewer's action-log lines. km_snap is the state a
         # refused key must leave alone.
         #
@@ -3123,6 +3336,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         # chord the row fails at the pre-flight and the engine never sees the key.
         set ::km_fwd {}
         set ::km_via {}
+        set ::km_rel {}
         set ::km_would {}
         set ::km_swallow 0
         set ::km_esc 0
@@ -3133,6 +3347,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
             if {$::km_swallow} { lappend ::km_would $kmrec ; return {} }
             lappend ::km_fwd $kmrec
             lappend ::km_via [list [lindex $args 1] [lindex $args 5] [lindex $args 8]]
+          }
+          if {[lindex $args 0] eq {callback} && [lindex $args 2] == 3} {
+            lappend ::km_rel [list [lindex $args 1] [lindex $args 5] [lindex $args 8]]
           }
           if {$args eq {escape}} { incr ::km_esc }
           return [uplevel 1 [list ::km_real_xschem {*}$args]]
@@ -4474,74 +4691,1041 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                 [wviewer::token_for_canvas $km_vdrw2] [xschem get current_win_path] [wviewer::plot_mode $tok]] \
           [list 0 {} {} $vdrw single]
 
-        # --- KM14: A LIMIT, DECLARED --------------------------------------------
-        # doc/claude/specs/waveform_viewer.md, "What the key filter forwards", the
-        # limits. The filter sees a key only when it arrives at the viewer's own
-        # canvas. The engine runs a key in the CURRENT context, whichever canvas
-        # it came through, and the context follows the pointer while the keyboard
-        # focus need not. So with the viewer's context current and the focus on
-        # the schematic window's canvas, a key goes through that canvas to the
-        # engine and runs in the viewer, as the editor key it is there. The row
-        # builds the two facts of that state by command (the focus forced onto
-        # the main window's canvas, the viewer's context made current) and
-        # generates Ctrl-Shift-M on the main canvas. No C file is in this item's
-        # change, and no break of the viewer's Tcl turns this row red; it turns
-        # red the day a key that came through another canvas stops running in a
-        # viewer's context, and then the limit in the spec and the guide's note
-        # about it go.
-        wviewer::set_plot_mode single $tok
-        set km14 not-sent
-        for {set i 0} {$i < 100} {incr i} {
-          focus -force .drw
-          update
-          if {[focus -displayof .drw] eq {.drw}} {
-            xschem new_schematic switch $vdrw
-            set km_c14 [::km_real_xschem get current_win_path]
-            set ::km_via {} ; set km_mb14 $::mb_hits ; set km_k14 $::kf_calls
-            event generate .drw <KeyPress> -keysym M -state 5 -x 40 -y 40
-            update
-            set km14 [list [expr {$km_c14 eq $vdrw}] $::km_via [expr {$::kf_calls - $km_k14}] \
-                           [expr {$::mb_hits - $km_mb14}] [wviewer::plot_mode $tok] \
-                           [expr {[::km_real_xschem get current_win_path] eq $vdrw}]]
-            event generate .drw <KeyRelease> -keysym M -state 5 -x 40 -y 40
-            update
-            break
+        # --- KM14, KM16 to KM22: A KEY THAT CAME THROUGH ANOTHER WINDOW (2026-11-22) --
+        # doc/claude/specs/waveform_viewer.md, "A key that came through another
+        # window". The engine runs a key in the CURRENT context, and the context
+        # follows the pointer while the keyboard focus need not: with the focus
+        # in a schematic window and the pointer resting in a viewer, a key used
+        # to run in the viewer as the schematic command it is. KM14 held that as
+        # a declared limit until this date; it now holds the opposite. Such a key
+        # is the viewer's: its canvas's own bindings run for it (the filter, then
+        # the WaveViewer tag), the focus and the context stay where they are, and
+        # no editor verb runs. Two doors lead there from a schematic canvas and
+        # both are pressed:
+        #   * a key Tk delivers to the schematic canvas meets a binding tag that
+        #     stands before the canvas's own bindings (wviewer::key_door);
+        #   * the engine's event entry, called with the schematic canvas as the
+        #     key's window, asks the same proc (callback(), src/callback.c).
+        # A third door is the viewer's own toplevel, where an open leaves the
+        # keyboard (wviewer::top_key): rows KM23 and KM18.
+        #
+        # HOW THE STATE IS BUILT (km_far). The pointer is MOVED FOR REAL, by a
+        # warp: the server itself sends the crossing and motion events. It goes
+        # out to the main window's canvas (the engine makes that window's
+        # context current) and then into the viewer's plot (the engine makes the
+        # viewer's context current and hands its canvas the focus). The keyboard
+        # focus is then forced back onto the main window's canvas, which is what
+        # Alt-Tab does with no pointer move. Nothing switches the context by
+        # command. km_far answers the state it got (the focus window, the
+        # current context, the window under the pointer, the pointer's pixel)
+        # and every row puts the first three into what it checks, for each key
+        # it sends. Where a row moves the pointer once more after km_far (the
+        # status-bar legs) it reads the state again after that move and checks
+        # that; the pre-flight of KM16 checks what its key did instead. (The
+        # window the pointer is sent into is raised first, so that it is the
+        # one there.)
+        # HOW A KEY IS SENT (km_type). The key is GENERATED on the main window's
+        # canvas, which has the focus; Tk delivers a generated key to the focus
+        # window and runs that window's bindings. No suite can make the server
+        # type a key, so these are Tk's events, not the server's: a probe with
+        # real server-side keys measured the same on the day of the change.
+        # KM14 and KM16 do not type a chord with Alt: this suite's main canvas
+        # carries a probe binding for every Alt key (the G1s leg's), which on a
+        # product without the canvas door answers in the key's place. Those
+        # chords go to the engine's event entry with the main canvas as their
+        # window (km_eng), the second door. KM19 does type its events with Alt
+        # on the main canvas, once it has seen the canvas door take a key
+        # there, and counts the runs of that probe binding, which must be none.
+        proc km_pump {n} { for {set i 0} {$i < $n} {incr i} { update ; after 15 } }
+        proc km_warp {w px py} {
+          event generate $w <Motion> -warp 1 -x $px -y $py
+          km_pump 6
+        }
+        proc km_far {fw vdrw px py} {
+          raise . ; update
+          km_warp .drw 60 60
+          raise [winfo toplevel $vdrw] ; update
+          km_warp $vdrw $px $py
+          for {set i 0} {$i < 100} {incr i} {
+            focus -force $fw ; update
+            if {[focus -displayof $fw] eq $fw} { break }
+            after 50
           }
+          km_pump 2
+          return [list [focus -displayof $fw] [::km_real_xschem get current_win_path] \
+                       [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]] \
+                       [list [expr {[winfo pointerx $vdrw] - [winfo rootx $vdrw]}] \
+                             [expr {[winfo pointery $vdrw] - [winfo rooty $vdrw]}]]]
+        }
+        proc km_type {fw ks st {type KeyPress}} {
+          event generate $fw <$type> -keysym $ks -state $st -x 40 -y 40
+          update
+        }
+        proc km_eng {N st} {
+          xschem callback .drw 2 40 40 $N 0 0 $st
+          update
+          xschem callback .drw 3 40 40 $N 0 0 $st
+          update
+        }
+        # the pointer the current context stores (schematic units)
+        proc km_stored {} { return [list [::km_real_xschem get mousex] [::km_real_xschem get mousey]] }
+        # where the real pointer was before the band moved it; it is put back
+        set km_ptr0 [winfo pointerxy .]
+
+        # The main canvas of this suite carries a probe binding for every Alt
+        # key (the G1s leg's). Its command exists for this band as a counter:
+        # in the state of these rows the canvas door stands before it, and it
+        # must not run.
+        set ::km_altprobe 0
+        proc ::wvtest_alt_arm_probe {} { incr ::km_altprobe }
+
+        # --- KM14: the chord, by both doors, and its release ---------------------
+        set km_tag no-such-tag
+        catch {set km_tag [wviewer::key_door_tag]}
+        check "KM14 fixture: the main window's canvas carries the key-door tag first in its tag list; the viewer's canvas does not carry it, and its own tag is still followed by WaveViewer" \
+          [list [expr {[lindex [bindtags .drw] 0] eq $km_tag}] [lsearch -exact [bindtags $vdrw] $km_tag] \
+                [lindex [bindtags $vdrw] [expr {[lsearch -exact [bindtags $vdrw] $vdrw] + 1}]]] \
+          {1 -1 WaveViewer}
+        wviewer::set_plot_mode single $tok
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set km14p0 [km_stored]
+        set ::km_via {} ; set ::km_log {} ; set km_mb14 $::mb_hits ; set km_k14 $::kf_calls ; set ::kf_at {}
+        km_type .drw M 5
+        set km14 [list $km14s $::km_via [expr {$::kf_calls - $km_k14}] $::kf_last $::kf_at \
+                       [expr {$::mb_hits - $km_mb14}] [wviewer::plot_mode $tok] [km_status $vtop] $::km_log \
+                       [::km_real_xschem get current_win_path] [focus -displayof .drw] \
+                       [expr {[km_stored] eq $km14p0}]]
+        check "KM14 with the keyboard focus on the main window's canvas and the pointer in the viewer's plot, a Ctrl-Shift-M typed there is the viewer's: its key filter gets it at the pointer's pixel, the plot mode flips, the status bar follows, one action-log line, no message box, and the engine is handed nothing; the focus, the context and the pointer the viewer's context stores stay as they were (the state: focus window, current context, window under the pointer, the pointer's pixel in the plot; what the engine was handed; calls of the filter, the event it got, its canvas, pixel and keysym name; boxes; the mode; the status bar; the log lines; the context and the focus after; the stored pointer unmoved)" \
+          $km14 [list [list .drw $vdrw $vdrw [list $kmx $kmy]] {} 1 {2 77 5} [list $vdrw $kmx $kmy M] \
+                      0 multi multi [list [list wviewer::set_plot_mode multi $tok]] $vdrw .drw 1]
+        set km_k14 $::kf_calls ; set ::km_log {} ; set ::km_via {} ; set ::km_rel {}
+        km_type .drw M 5 KeyRelease
+        check "KM14 ...the release follows its press: the filter gets it as a release, nothing more happens, and the engine is not handed it at all (calls of the filter, the event it got, the mode, log lines, boxes since the press, the presses and the releases the engine was handed, the stored pointer unmoved)" \
+          [list [expr {$::kf_calls - $km_k14}] $::kf_last [wviewer::plot_mode $tok] $::km_log \
+                [expr {$::mb_hits - $km_mb14}] $::km_via $::km_rel [expr {[km_stored] eq $km14p0}]] \
+          [list 1 {3 77 5} multi {} 0 {} {} 1]
+        # the engine's door: its event entry called with the main canvas as the
+        # key's window, press then release, in the same state built again
+        wviewer::set_plot_mode single $tok
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set km14p0 [km_stored]
+        set ::km_via {} ; set ::km_log {} ; set km_mb14 $::mb_hits ; set km_k14 $::kf_calls ; set ::kf_at {}
+        xschem callback .drw 2 40 40 77 0 0 5
+        update
+        set km14e [list $km14s $::km_via [expr {$::kf_calls - $km_k14}] $::kf_last $::kf_at \
+                        [expr {$::mb_hits - $km_mb14}] [wviewer::plot_mode $tok] [km_status $vtop] $::km_log]
+        xschem callback .drw 3 40 40 77 0 0 5
+        update
+        lappend km14e [expr {$::kf_calls - $km_k14}] $::kf_last [wviewer::plot_mode $tok] \
+                      [::km_real_xschem get current_win_path] [focus -displayof .drw] [expr {[km_stored] eq $km14p0}]
+        check "KM14 ...and the engine's own event entry, called with the main canvas as the key's window while the viewer's context is current and the pointer is in the plot, hands the key to the viewer the same way: press, then release (the state; what the entry was called with; calls of the filter after the press, the event it got, its canvas, pixel and keysym name; boxes; the mode; the status bar; the log lines; after the release: calls of the filter, the event it got, the mode; the context, the focus, the stored pointer unmoved)" \
+          $km14e [list [list .drw $vdrw $vdrw [list $kmx $kmy]] {{.drw 77 5}} 1 {2 77 5} [list $vdrw $kmx $kmy M] \
+                       0 multi multi [list [list wviewer::set_plot_mode multi $tok]] \
+                       2 {3 77 5} multi $vdrw .drw 1]
+        # Caps Lock: with it on, Control-m is the chord (the tag's Caps Lock
+        # dispatch, which is handed the event's keysym name and state)
+        wviewer::set_plot_mode single $tok
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set ::km_via {} ; set ::km_log {} ; set km_mb14 $::mb_hits
+        km_type .drw m 6
+        km_type .drw m 6 KeyRelease
+        check "KM14 ...with Caps Lock on, a Control-m typed there is the chord as well: the tag's Caps Lock dispatch runs and the mode flips (the state, the last event the filter got, the mode, the log lines, what the engine was handed, boxes)" \
+          [list [lrange $km14s 0 2] $::kf_last [wviewer::plot_mode $tok] $::km_log $::km_via [expr {$::mb_hits - $km_mb14}]] \
+          [list [list .drw $vdrw $vdrw] {3 77 6} multi [list [list wviewer::set_plot_mode multi $tok]] {} 0]
+        # a key with no keysym name (the engine hands over an empty name for
+        # one): Tk gives a binding ?? for it, and so does the viewer's side. The
+        # proc is called as the engine calls it; a background error is recorded
+        # for the leg instead of raised.
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set ::km_bg {}
+        set km_bg0 [interp bgerror {}]
+        proc ::km_bgerr {msg opts} { lappend ::km_bg $msg }
+        interp bgerror {} ::km_bgerr
+        set ::kf_at {} ; set km_k14 $::kf_calls ; set km_e14 $::kf_errs
+        set km_fk [list [catch {wviewer::foreign_key $vdrw 2 99999999 {} 0} km_r] $km_r]
+        km_pump 4
+        interp bgerror {} $km_bg0
+        rename ::km_bgerr {}
+        check "KM14 ...a key the engine has no keysym name for is handed to the filter with ?? for the name, as Tk hands it to a binding, and raises nothing (the state, the proc's answer, calls of the filter, the name it got, filter errors, background errors)" \
+          [list [lrange $km14s 0 2] $km_fk [expr {$::kf_calls - $km_k14}] [lindex $::kf_at 3] \
+                [expr {$::kf_errs - $km_e14}] $::km_bg] \
+          [list [list .drw $vdrw $vdrw] {0 1} 1 ?? 0 {}]
+        # the pointer anywhere in the viewer's window: on its status bar, below
+        # the plot, with the viewer's context still the current one
+        wviewer::set_plot_mode single $tok
+        km_far .drw $vdrw $kmx $kmy
+        set km_sb $vtop.wvstatus.l
+        km_warp $km_sb 20 4
+        set km14s [list [focus -displayof .drw] [::km_real_xschem get current_win_path] \
+                        [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]]]
+        set ::km_via {} ; set ::km_log {} ; set km_mb14 $::mb_hits ; set ::kf_at {}
+        km_type .drw M 5
+        km_type .drw M 5 KeyRelease
+        check "KM14 ...and with the pointer on the viewer's status bar, below the plot, the chord typed on the main canvas flips the mode the same way; the filter is handed a pixel below the plot (the state, the mode, the log lines, what the engine was handed, boxes, the filter's pixel at or below the canvas's height)" \
+          [list $km14s [wviewer::plot_mode $tok] $::km_log $::km_via [expr {$::mb_hits - $km_mb14}] \
+                [expr {[llength $::kf_at] == 4 && [lindex $::kf_at 2] >= [winfo height $vdrw]}]] \
+          [list [list .drw $vdrw $km_sb] multi [list [list wviewer::set_plot_mode multi $tok]] {} 0 1]
+        wviewer::set_plot_mode single $tok
+        # THE TAGS BEHIND WaveViewer are not run for the viewer. The viewer's
+        # canvas carries `all` behind its own tags, and `all` binds F10: it
+        # posts the first menu of the window's menubar and takes a grab. Typed
+        # on the main canvas in the state of this row, F10 reaches the filter
+        # and goes no further: nothing holds a grab, the focus stays. A menu a
+        # product has posted all the same is taken down again (the posted menu
+        # is the window that has the focus then).
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set ::km_via {} ; set km_k14 $::kf_calls
+        km_type .drw F10 0
+        km_type .drw F10 0 KeyRelease
+        km_pump 4
+        set km_f10 [list [lrange $km14s 0 2] [expr {$::kf_calls - $km_k14}] $::km_via [grab current] \
+                         [focus -displayof .drw] [expr {[bind all <Key-F10>] ne {}}]]
+        set km_g10 [grab current]
+        if {$km_g10 ne {}} {
+          set km_m10 [focus -displayof .drw]
+          if {$km_m10 ne {} && [winfo class $km_m10] eq {Menu}} { catch {tk::MenuUnpost $km_m10} }
+          catch {$km_g10 postcascade none}
+          catch {grab release $km_g10}
+          update
+        }
+        focus -force .drw
+        update
+        check "KM14 ...a key that a tag behind WaveViewer binds goes no further than the viewer's own tags: F10, which `all` binds to post a menubar's first menu, typed on the main canvas in that state reaches the filter and posts nothing in either window (the state, calls of the filter for press and release, what the engine was handed, the window holding a grab, the focus after, and that `all` binds the key)" \
+          $km_f10 [list [list .drw $vdrw $vdrw] 2 {} {} .drw 1]
+        # AN ERROR IN A BINDING STOPS THE KEY, as it does when Tk delivers it.
+        # A binding of the row's own on the first tag of the viewer's canvas,
+        # which stands before the canvas's own tag and its filter, raises an
+        # error for F7. Tk is asked first, with the focus on the viewer's
+        # canvas: the filter is not called and the error goes to the
+        # background handler. Then the viewer's side, called as the engine
+        # calls it in the state of this row: the same two answers.
+        set km_etag [lindex [bindtags $vdrw] 0]
+        set km_ebind [bind $km_etag <Key-F7>]
+        bind $km_etag <Key-F7> {error km-boom}
+        set ::km_bg {}
+        set km_bg0 [interp bgerror {}]
+        proc ::km_bgerr {msg opts} { lappend ::km_bg $msg }
+        interp bgerror {} ::km_bgerr
+        for {set i 0} {$i < 100} {incr i} {
+          focus -force $vdrw ; update
+          if {[focus -displayof $vdrw] eq $vdrw} { break }
+          after 50
+        }
+        set km_k14 $::kf_calls
+        event generate $vdrw <KeyPress> -keysym F7 -x $kmx -y $kmy
+        update
+        km_pump 4
+        set km_err [list [expr {$km_etag ne $vdrw}] [focus -displayof $vdrw] [expr {$::kf_calls - $km_k14}] $::km_bg]
+        set km14s [km_far .drw $vdrw $kmx $kmy]
+        set ::km_bg {} ; set km_k14 $::kf_calls
+        lappend km_err [lrange $km14s 0 2] [list [catch {wviewer::foreign_key $vdrw 2 65476 F7 0} km_r] $km_r] \
+                       [expr {$::kf_calls - $km_k14}]
+        km_pump 4
+        lappend km_err $::km_bg
+        interp bgerror {} $km_bg0
+        rename ::km_bgerr {}
+        bind $km_etag <Key-F7> $km_ebind
+        check "KM14 ...an error in a binding stops the key there, by the viewer's side as by Tk: with a binding of the row's own that raises an error on the first tag of the viewer's canvas, the filter behind it is not called and the error goes to the background handler once (the tag is not the canvas's own; Tk's half: the focus on the viewer's canvas, calls of the filter, background errors; the viewer's side: the state, the proc's answer, calls of the filter, background errors)" \
+          $km_err [list 1 $vdrw 0 {km-boom} [list .drw $vdrw $vdrw] {0 1} 0 {km-boom}]
+        # THE POINTER DECIDES. The viewer's context current (made so by command:
+        # a viewer that has just opened leaves it so without the pointer in it),
+        # the focus on the main canvas and the pointer over the main canvas: the
+        # key is not the viewer's. Both doors ask, the viewer declines, and the
+        # engine gets the key as it always did. The key is the left Shift key,
+        # which the engine has no use for.
+        raise . ; update
+        km_warp .drw 60 60
+        for {set i 0} {$i < 100} {incr i} {
+          focus -force .drw ; update
+          if {[focus -displayof .drw] eq {.drw}} { break }
           after 50
         }
         xschem new_schematic switch $vdrw
-        check "KM14 a limit, declared: with the viewer's context current and the keyboard focus on the main window's canvas, a Ctrl-Shift-M typed there goes through that canvas to the engine and runs in the viewer's context (the context was the viewer's, the canvas and chord the engine got, calls of the viewer's key filter, message boxes, the plot mode, the context still the viewer's)" \
-          $km14 [list 1 {{.drw 77 5}} 0 1 single 1]
-        # ...and the two ways the state ends, each from the state built again.
-        # The pointer enters the window that has the focus: an Enter on the main
-        # canvas makes the main window's context the current one. Or a click in
-        # the viewer's plot: it gives the viewer's canvas the focus, and the
-        # same chord, generated with the focus left where the click put it, is
-        # the viewer's own again.
-        set km14b {}
-        focus -force .drw
-        update
-        xschem new_schematic switch $vdrw
-        event generate .drw <Enter> -x 40 -y 40
-        update
-        lappend km14b [::km_real_xschem get current_win_path]
-        xschem new_schematic switch $vdrw
-        lappend km14b [focus -displayof .drw]
-        wb_ev $vdrw <ButtonPress-1>   -x $kmx -y $kmy
-        wb_ev $vdrw <ButtonRelease-1> -x $kmx -y $kmy -state 0x100
-        update
-        lappend km14b [expr {[focus -displayof $vdrw] eq $vdrw}]
+        set ::km_via {} ; set km_k14 $::kf_calls
+        km_type .drw Shift_L 0
+        km_type .drw Shift_L 1 KeyRelease
+        check "KM14 ...the pointer decides: with the viewer's context current, the focus on the main canvas and the pointer over the main canvas, a key typed there is not the viewer's: its filter is not called and the engine gets the key through the main canvas (the context, the window under the pointer, calls of the filter, what the engine was handed)" \
+          [list [::km_real_xschem get current_win_path] [winfo containing {*}[winfo pointerxy .]] \
+                [expr {$::kf_calls - $km_k14}] $::km_via] \
+          [list $vdrw .drw 0 {{.drw 65505 0}}]
+
+        # --- KM16: the editor keys do nothing --------------------------------------
+        # The keys that ran an editor verb in a viewer from this state, stock
+        # profile then Cadence. Typed on the main canvas: w (the wire), y (it
+        # flips enable_stretch, a global), i (the canvas's own binding for it,
+        # cadence_style_rc's line, which this suite puts on the main canvas: it
+        # places an instance and never calls the engine), and in the Cadence
+        # profile s (the snapped wire) and bare b. Through the engine's entry:
+        # Alt-b (it steps hide-symbols). Each is sent with the pointer in the
+        # middle of strip 0, s and b two pixels inside the strip's top edge,
+        # where they are no graph key either (in the middle they are the
+        # graph's: row KM17). Each press and its release must reach the viewer's
+        # filter and nothing else: no message box, no Save form, no window, no
+        # wire, no instance, the two globals and the engine's state unmoved.
+        # Then the three that open something once the engine runs them: Alt-s
+        # (a reload prompt), Control-Alt-s (the Save-as-symbol form) and
+        # Control-Alt-t (a new schematic), through the engine's entry. They are
+        # sent only when a key the engine has no use for (the left Shift key),
+        # sent the same way, was seen to reach the viewer's filter in this state.
+        # On a product that still runs such a key in the viewer they are not
+        # sent, and the row says so and fails.
+        proc km_edstate {vdrw tok} {
+          return [list [km_snap $vdrw $tok] [::km_real_xschem get wires] [::km_real_xschem get instances] \
+                       [toplevel_count] $::km_sacd $::enable_stretch]
+        }
+        set km16 {}
+        set km16_want {}
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set km_hs16 $::hide_symbols
+        set km_es16 $::enable_stretch
+        set km_ring [list $kmx [expr {int([lindex [lindex [ca_bands $vdrw] 0] 1]) + 2}]]
+        foreach km_prof {0 1} {
+          set ::cadence_compat $km_prof
+          set km_fam {w w 0 mid tk y y 0 mid tk i i 0 mid tk Alt-b 98 8 mid eng}
+          if {$km_prof} { lappend km_fam s s 0 ring tk b b 0 ring tk }
+          set km_dng {Alt-s 115 8 mid eng Ctrl-Alt-s 115 12 mid eng Ctrl-Alt-t 116 12 mid eng}
+          foreach {km_nm km_ks km_st km_at km_door} [concat $km_fam $km_dng] {
+            lappend km16_want [list $km_prof $km_nm [list .drw $vdrw $vdrw] 2 0 \
+                                    [expr {$km_door eq {eng} ? [list [list .drw $km_ks $km_st]] : {}}] 1]
+          }
+          # the pre-flight for the three that open something
+          km_far .drw $vdrw $kmx $kmy
+          set km_k16 $::kf_calls
+          km_eng 65505 0
+          if {$::kf_calls - $km_k16 == 2} {
+            set km_fam [concat $km_fam $km_dng]
+          } else {
+            lappend km16 [list $km_prof not-sent {Alt-s Ctrl-Alt-s Ctrl-Alt-t}]
+          }
+          foreach {km_nm km_ks km_st km_at km_door} $km_fam {
+            if {$km_at eq {ring}} { set km_s16 [km_far .drw $vdrw {*}$km_ring] } else { set km_s16 [km_far .drw $vdrw $kmx $kmy] }
+            set km_e0 [km_edstate $vdrw $tok]
+            set ::km_via {} ; set km_mb16 $::mb_hits ; set km_k16 $::kf_calls
+            if {$km_door eq {eng}} {
+              km_eng $km_ks $km_st
+            } else {
+              km_type .drw $km_ks $km_st
+              km_type .drw $km_ks $km_st KeyRelease
+            }
+            lappend km16 [list $km_prof $km_nm [lrange $km_s16 0 2] [expr {$::kf_calls - $km_k16}] \
+                               [expr {$::mb_hits - $km_mb16}] $::km_via [expr {[km_edstate $vdrw $tok] eq $km_e0}]]
+            # put back whatever a product that ran the key has moved
+            catch {::km_real_xschem abort_operation}
+            catch {::km_real_xschem set hide_symbols $km_hs16}
+            set ::hide_symbols $km_hs16
+            set ::enable_stretch $km_es16
+          }
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        rename km_edstate {}
+        check "KM16 from the same state the editor keys do nothing in the viewer, stock profile then Cadence: typed on the main canvas w, y and i (a binding of the main canvas itself) and in the Cadence profile s and b two pixels inside the strip's edge; through the engine's entry Alt-b, and then Alt-s, Control-Alt-s and Control-Alt-t, which are sent only once a key was seen to reach the viewer's filter that way (per key: the profile, the key, the state it was sent in, calls of the filter for press and release, boxes, what the engine's entry was called with, and whether mode, graph flags, engine state, read-only flag, hide-symbols, windows, rects, markers, cursors, view, wires, instances, toplevels, Save forms and enable_stretch are all as before); the profile is back" \
+          [list $km16 [list $::cadence_compat $::autotrim_wires]] [list $km16_want [list $km_cad0 $km_at0]]
+
+        # --- KM17: the graph keys act on the graph --------------------------------
+        # From the same state, stock profile then Cadence: a bare b in the middle
+        # of strip 0 is handed to the engine through the VIEWER's canvas and
+        # toggles cursor B (on, and off again); a bare m on a trace makes one
+        # marker; no message box. In the Cadence profile plain s goes to the
+        # engine as Control-s (the cursor swap), as it does with the focus on
+        # the plot.
+        # And the same b by the ENGINE's door: the engine's event entry is
+        # called with the main canvas as the key's window, hands the key to
+        # the viewer's side, and the filter hands it back to the engine with
+        # the viewer's canvas as its window. That second call is made from
+        # inside the first, and the engine runs a graph key only when it is not
+        # already busy with another event: cursor B must toggle all the same,
+        # on and off again.
+        # The state each key was sent in is part of the row: a key sent with
+        # the focus anywhere but on the main canvas would reach the viewer by
+        # plain delivery and prove nothing about the doors.
+        set km17_on {}
+        set km17_b0 [lindex [ca_bands $vdrw] 0]
+        if {[llength $km17_b0] == 4} {
+          for {set y [expr {int([lindex $km17_b0 1]) + 14}]} {$y < int([lindex $km17_b0 3]) - 14} {incr y} {
+            if {[wb_at $vdrw 0 $kmx $y 3] >= 0} { set km17_on [list $kmx $y] ; break }
+          }
+        }
+        set km17 {}
+        set km17_want {}
+        foreach km_prof {0 1} {
+          set ::cadence_compat $km_prof
+          set km_mb17 $::mb_hits
+          set km_st17 {}
+          set km_sw17 {}
+          lappend km_st17 [lrange [km_far .drw $vdrw $kmx $kmy] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+          set ::km_via {}
+          km_type .drw b 0 ; km_type .drw b 0 KeyRelease
+          set km_v1 $::km_via
+          set km_on1 [expr {[km_gf $vdrw] & 4}]
+          lappend km_st17 [lrange [km_far .drw $vdrw $kmx $kmy] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+          km_type .drw b 0 ; km_type .drw b 0 KeyRelease
+          set km_on2 [expr {[km_gf $vdrw] & 4}]
+          # the engine's door
+          lappend km_st17 [lrange [km_far .drw $vdrw $kmx $kmy] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+          set ::km_via {}
+          km_eng 98 0
+          set km_e17 [list $::km_via [expr {[km_gf $vdrw] & 4}]]
+          lappend km_st17 [lrange [km_far .drw $vdrw $kmx $kmy] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+          km_eng 98 0
+          lappend km_e17 [expr {[km_gf $vdrw] & 4}]
+          set km_m17 no-pixel-on-the-trace-so-not-typed
+          if {[llength $km17_on] == 2} {
+            catch {wviewer::delete_all_markers_at $vdrw}
+            set km_mk0 [km_mk $vdrw]
+            lappend km_st17 [lrange [km_far .drw $vdrw {*}$km17_on] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+            set ::km_via {}
+            km_type .drw m 0 ; km_type .drw m 0 KeyRelease
+            set km_m17 [list $::km_via [expr {[km_mk $vdrw] - $km_mk0}]]
+            catch {wviewer::delete_all_markers_at $vdrw}
+          }
+          set km_s17 {}
+          if {$km_prof} {
+            lappend km_st17 [lrange [km_far .drw $vdrw $kmx $kmy] 0 2] ; lappend km_sw17 [list .drw $vdrw $vdrw]
+            set ::km_via {}
+            km_type .drw s 0 ; km_type .drw s 0 KeyRelease
+            set km_s17 $::km_via
+          }
+          lappend km17 [list $km_prof $km_st17 $km_v1 $km_on1 $km_on2 $km_e17 $km_m17 $km_s17 [expr {$::mb_hits - $km_mb17}]]
+          lappend km17_want [list $km_prof $km_sw17 [list [list $vdrw 98 0]] 4 0 \
+                                  [list [list [list .drw 98 0] [list $vdrw 98 0]] 4 0] \
+                                  [list [list [list $vdrw 109 0]] 1] \
+                                  [expr {$km_prof ? [list [list $vdrw 115 4]] : {}}] 0]
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        check "KM17 from the same state the graph keys act on the graph, stock profile then Cadence: a bare b in the middle of strip 0 goes to the engine through the viewer's canvas and toggles cursor B; the same b handed to the engine's own event entry with the main canvas as its window comes back through the viewer's canvas and toggles it as well; a bare m on the trace makes one marker; and in the Cadence profile plain s goes to the engine as Control-s (per profile: the state each key was sent in, focus window, context and window under the pointer; what the engine was handed for the typed b, B on, B off again; for the b by the engine's entry: what the engine was handed, B on, B off again; for m: what the engine was handed and the markers made; what it was handed for s; boxes); the profile is back and no marker is left" \
+          [list $km17 [list $::cadence_compat $::autotrim_wires] [km_mk $vdrw]] [list $km17_want [list $km_cad0 $km_at0] 0]
+
+        # --- KM23: the viewer window's OWN door (2026-11-22, the repair) ---------
+        # wviewer::open leaves the keyboard focus inside a viewer on the viewer's
+        # TOPLEVEL (row G1f), where no key is bound: until this date a key typed
+        # then did nothing. Such a key is now the viewer's while the pointer is
+        # over the plot (wviewer::top_key, behind a binding tag the toplevel
+        # carries first), and nobody's otherwise, as before. The state is built
+        # as in the rows above, with the focus forced onto the viewer's
+        # toplevel instead of the main canvas; the keys are generated on the
+        # toplevel, which has the focus. Legs:
+        #   * Ctrl-Shift-M: the filter gets it at the pointer's pixel, the mode
+        #     flips, one log line, no box, the engine is handed nothing; the
+        #     focus stays on the toplevel and the context where it was. Its
+        #     release reaches the filter as a release.
+        #   * a bare b in the middle of strip 0 goes to the engine through the
+        #     viewer's canvas and toggles cursor B, on and off again.
+        #   * F10, which `all` binds: the filter gets it, and Tk then goes on
+        #     with the toplevel's own tags as it did before there was a door,
+        #     so the viewer's own menubar takes the grab. (From a schematic
+        #     canvas the same key posts nothing: row KM14.) The menu is taken
+        #     down again.
+        #   * the pointer on the viewer's status bar, inside the window but not
+        #     over the plot: the chord does nothing. This door is narrower than
+        #     the canvas door on purpose (the comment on wviewer::top_key).
+        #   * the pointer over the main canvas: e, u and Control-d, which are
+        #     shortcuts of the viewer's tag (Delete Empty Strips, Undo, Clear
+        #     All), do nothing: the filter is not called, no log line, the
+        #     viewer's layout as it was. These are the keys a user types on
+        #     into the schematic after an open or a raise took the keyboard.
         wviewer::set_plot_mode single $tok
-        set ::km_fwd {} ; set km_mb15 $::mb_hits ; set km_k15 $::kf_calls
-        event generate $vdrw <KeyPress> -keysym M -state 5 -x $kmx -y $kmy
-        event generate $vdrw <KeyRelease> -keysym M -state 5 -x $kmx -y $kmy
-        update
-        lappend km14b [expr {$::kf_calls > $km_k15}] [wviewer::plot_mode $tok] \
-                      [expr {$::mb_hits - $km_mb15}] $::km_fwd
-        check "KM14 ...and the state ends two ways: an Enter on the main canvas makes the main window's context the current one; a click in the viewer's plot gives its canvas the focus, and the chord generated there without forcing the focus is the viewer's again (the context after the Enter, the focus before the click, whether the click gave the viewer's canvas the focus, whether its key filter was called, the plot mode, message boxes, what the engine was handed)" \
-          $km14b [list .drw .drw 1 1 multi 0 {}]
+        set km23 {}
+        set km23s [km_far $vtop $vdrw $kmx $kmy]
+        set ::km_via {} ; set ::km_log {} ; set km_mb23 $::mb_hits ; set km_k23 $::kf_calls ; set ::kf_at {}
+        km_type $vtop M 5
+        lappend km23 [list [lrange $km23s 0 2] $::km_via [expr {$::kf_calls - $km_k23}] $::kf_last $::kf_at \
+                           [expr {$::mb_hits - $km_mb23}] [wviewer::plot_mode $tok] [km_status $vtop] $::km_log \
+                           [::km_real_xschem get current_win_path] [focus -displayof $vtop]]
+        set km_k23 $::kf_calls ; set ::km_log {} ; set ::km_rel {}
+        km_type $vtop M 5 KeyRelease
+        lappend km23 [list [expr {$::kf_calls - $km_k23}] $::kf_last [wviewer::plot_mode $tok] $::km_log $::km_via $::km_rel]
         wviewer::set_plot_mode single $tok
+        set km23b {}
+        foreach km_leg {on off} {
+          set km23s [km_far $vtop $vdrw $kmx $kmy]
+          set ::km_via {}
+          km_type $vtop b 0 ; km_type $vtop b 0 KeyRelease
+          lappend km23b [list [lrange $km23s 0 2] $::km_via [expr {[km_gf $vdrw] & 4}]]
+        }
+        lappend km23 $km23b
+        set km23s [km_far $vtop $vdrw $kmx $kmy]
+        set km_k23 $::kf_calls
+        km_type $vtop F10 0
+        km_pump 4
+        set km_g23 [grab current]
+        lappend km23 [list [lrange $km23s 0 2] [expr {$::kf_calls - $km_k23}] \
+                           [expr {$km_g23 ne {} && [winfo class $km_g23] eq {Menu} && [winfo toplevel $km_g23] eq $vtop}]]
+        if {$km_g23 ne {}} {
+          set km_m23 [focus -displayof $vtop]
+          if {$km_m23 ne {} && [winfo class $km_m23] eq {Menu}} { catch {tk::MenuUnpost $km_m23} }
+          catch {$km_g23 postcascade none}
+          catch {grab release $km_g23}
+          update
+        }
+        km_type $vtop F10 0 KeyRelease
+        km_far $vtop $vdrw $kmx $kmy
+        km_warp $vtop.wvstatus.l 20 4
+        set km23s [list [focus -displayof $vtop] [::km_real_xschem get current_win_path] \
+                        [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]]]
+        set ::km_via {} ; set ::km_log {} ; set km_k23 $::kf_calls
+        km_type $vtop M 5 ; km_type $vtop M 5 KeyRelease
+        lappend km23 [list $km23s [expr {$::kf_calls - $km_k23}] [wviewer::plot_mode $tok] $::km_log $::km_via]
+        wviewer::set_plot_mode single $tok
+        raise . ; update
+        km_warp .drw 60 60
+        for {set i 0} {$i < 100} {incr i} {
+          focus -force $vtop ; update
+          if {[focus -displayof $vtop] eq $vtop} { break }
+          after 50
+        }
+        km_pump 2
+        set km23s [list [focus -displayof $vtop] [::km_real_xschem get current_win_path] \
+                        [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]]]
+        set km_l23 [wviewer::layout_for $tok]
+        set ::km_via {} ; set ::km_log {} ; set km_k23 $::kf_calls ; set km_mb23 $::mb_hits
+        foreach {km_ks km_st} {e 0 u 0 d 4} {
+          km_type $vtop $km_ks $km_st ; km_type $vtop $km_ks $km_st KeyRelease
+        }
+        lappend km23 [list $km23s [expr {$::kf_calls - $km_k23}] $::km_log $::km_via [expr {$::mb_hits - $km_mb23}] \
+                           [expr {[wviewer::layout_for $tok] eq $km_l23}]]
+        check "KM23 a key typed while the viewer's own toplevel holds the keyboard, which is where an open leaves it, is the viewer's while the pointer is over the plot and nobody's otherwise: Ctrl-Shift-M reaches the filter at the pointer's pixel and flips the mode, its release follows, a bare b toggles cursor B through the viewer's canvas, and F10 reaches the filter and then posts the viewer's own menu, as it did before there was a door; with the pointer on the viewer's status bar the chord does nothing; with the pointer over the main canvas e, u and Control-d do nothing (the chord: the state, focus window, context and window under the pointer; what the engine was handed; calls of the filter, the event it got, its canvas, pixel and keysym name; boxes; the mode; the status bar; the log lines; the context and the focus after. The release: calls of the filter, the event it got, the mode, log lines, presses and releases the engine was handed. b twice: the state, what the engine was handed, cursor B. F10: the state, calls of the filter, a menu of the viewer's own window holds the grab. The status bar: the state, calls of the filter, the mode, log lines, what the engine was handed. Over the main canvas: the state, calls of the filter, log lines, what the engine was handed, boxes, the viewer's layout as before)" \
+          $km23 [list [list [list $vtop $vdrw $vdrw] {} 1 {2 77 5} [list $vdrw $kmx $kmy M] 0 multi multi \
+                            [list [list wviewer::set_plot_mode multi $tok]] $vdrw $vtop] \
+                      [list 1 {3 77 5} multi {} {} {}] \
+                      [list [list [list $vtop $vdrw $vdrw] [list [list $vdrw 98 0]] 4] \
+                            [list [list $vtop $vdrw $vdrw] [list [list $vdrw 98 0]] 0]] \
+                      [list [list $vtop $vdrw $vdrw] 1 1] \
+                      [list [list $vtop $vdrw $vtop.wvstatus.l] 0 single {} {}] \
+                      [list [list $vtop .drw .drw] 0 {} {} 0 1]]
+        # back to the state the rows below start from
+        raise $vtop ; update
+        km_warp $vdrw $kmx $kmy
+
+        # --- KM18, KM20: a viewer that has just opened; two viewers -------------
+        # A second viewer is opened (a second session, as in KM15) while the
+        # focus is on the main window's canvas, and nothing clicks in it.
+        #   KM18 The open leaves the focus inside the viewer on its toplevel
+        #        (Tk's own record, which does not wait for the window manager)
+        #        and asks for it plainly: every call of `focus` made during
+        #        the open is recorded, and the calls that name the viewer's
+        #        toplevel are one, without -force. With the pointer still over
+        #        the main canvas, u, e and Control-d (shortcuts of the viewer's
+        #        tag) typed where the display left the keyboard do nothing in
+        #        the viewer: the filter is not called, no log line, the layout
+        #        as it was. They are sent only when the display gave the
+        #        keyboard to the new viewer; left in the main canvas they
+        #        would run in the viewer's context as editor keys, which is
+        #        the limit the spec declares, and the row prints a skip line.
+        #        The pointer is then moved into the new plot, and Ctrl-Shift-M
+        #        is typed in the window that has the keyboard, whichever one
+        #        this display gave it to: the new viewer's mode flips. Then
+        #        the other focus state: the focus forced onto the main canvas,
+        #        the same chord flips it back. Then the open that only raises
+        #        a viewer, as auto-plot asks for it after a run: the viewer's
+        #        own focus put on its plot canvas (where a click leaves it),
+        #        the pointer and the keyboard on the main canvas, a second
+        #        open of the same token. It takes the viewer's focus back to
+        #        the toplevel, by one plain call, and the same three keys typed
+        #        where the display left the keyboard do nothing in the viewer.
+        #   KM20 With both viewers open and the focus on the main canvas, the
+        #        chord goes to the viewer the pointer is in, the first and then
+        #        the second, and to no other. And the control: with the pointer
+        #        over the main canvas and the focus there, y flips
+        #        enable_stretch as it always did, through the main canvas, with
+        #        one viewer open (asked first) and with two.
+        proc km_ctl {} {
+          # pointer and focus on the main canvas; y; the context, what the
+          # engine was handed, whether enable_stretch flipped, calls of the
+          # viewer's filter
+          raise . ; update
+          km_warp .drw 60 60
+          for {set i 0} {$i < 100} {incr i} {
+            focus -force .drw ; update
+            if {[focus -displayof .drw] eq {.drw}} { break }
+            after 50
+          }
+          set es0 $::enable_stretch
+          set ::km_via {} ; set k0 $::kf_calls
+          km_type .drw y 0 ; km_type .drw y 0 KeyRelease
+          set r [list [::km_real_xschem get current_win_path] $::km_via \
+                      [expr {$::enable_stretch != $es0}] [expr {$::kf_calls - $k0}]]
+          set ::enable_stretch $es0
+          return $r
+        }
+        set km20_one [km_ctl]
+        wviewer::set_plot_mode single $tok
+        set km_tok3 [ase::session_key sky130_tests test_nfet_final km_third_viewer]
+        set km_ss3 [file join $scratch km_session3.state]
+        ase::state_save $km_ss3 $st
+        ase::session_open $km_tok3 $km_ss3
+        set km_win18 [llength [xschem windows]]
+        raise . ; update
+        km_warp .drw 60 60
+        focus -force .drw ; update
+        # every call of `focus` while an open runs, for the row
+        proc km_open_rec {tk} {
+          set ::km_focus {}
+          rename ::focus ::km_real_focus
+          proc ::focus {args} { lappend ::km_focus $args ; return [uplevel 1 [list ::km_real_focus {*}$args]] }
+          set c [catch {wviewer::open $tk} r]
+          rename ::focus {}
+          rename ::km_real_focus ::focus
+          if {$c} { return "threw ($r)" }
+          return $r
+        }
+        # the calls among them that ask for the focus on window `w`: a query
+        # (-displayof, -lastfor) is not one
+        proc km_asks {w} {
+          set r {}
+          foreach c $::km_focus {
+            if {[lindex $c end] eq $w && [lindex $c 0] ne {-displayof} && [lindex $c 0] ne {-lastfor}} { lappend r $c }
+          }
+          return $r
+        }
+        # u, e and Control-d typed on window `fw`: the window under the
+        # pointer, calls of the viewer's filter, log lines, what the engine was
+        # handed, boxes, and whether the layout of viewer `tk` is as before
+        proc km_three {fw tk} {
+          set l0 [wviewer::layout_for $tk]
+          set ::km_via {} ; set ::km_log {} ; set k0 $::kf_calls ; set mb0 $::mb_hits
+          foreach {ks st} {u 0 e 0 d 4} {
+            event generate $fw <KeyPress> -keysym $ks -state $st -x 40 -y 40
+            update
+            event generate $fw <KeyRelease> -keysym $ks -state $st -x 40 -y 40
+            update
+          }
+          return [list [winfo containing {*}[winfo pointerxy .]] [expr {$::kf_calls - $k0}] $::km_log $::km_via \
+                       [expr {$::mb_hits - $mb0}] [expr {[wviewer::layout_for $tk] eq $l0}]]
+        }
+        set km_open3 [km_open_rec $km_tok3]
+        set km_vtop3 [wviewer::window_for $km_tok3]
+        set km_vdrw3 $km_vtop3.drw
+        set km_rdy3 0
+        if {$km_vtop3 ne {}} { set km_rdy3 [viewer_ready $km_vtop3] }
+        km_pump 15
+        set km18 [list $km_open3 $km_rdy3]
+        set km18_want {1 1}
+        if {$km_rdy3} {
+          catch {wviewer::set_plot_mode single $km_tok3}
+          lappend km18 [expr {[focus -lastfor $km_vtop3] eq $km_vtop3}] [km_asks $km_vtop3]
+          lappend km18_want 1 [list [list $km_vtop3]]
+          lassign [km_mid $km_vdrw3 0] km_x18 km_y18
+          # the pointer has not moved since the open: it is over the main canvas
+          set km_f18 {}
+          for {set i 0} {$i < 60} {incr i} {
+            update
+            set km_f18 [focus -displayof .]
+            if {$km_f18 ne {}} { break }
+            after 50
+          }
+          if {$km_f18 eq $km_vtop3 || $km_f18 eq $km_vdrw3} {
+            lappend km18 [km_three $km_f18 $km_tok3]
+            lappend km18_want [list .drw 0 {} {} 0 1]
+          } else {
+            puts "skip: KM18's keys typed over the schematic right after the open -- this display left the keyboard on '$km_f18', not in the new viewer"
+          }
+          # the pointer comes in from where it was when the viewer opened (over
+          # the main canvas); no click
+          raise $km_vtop3 ; update
+          km_warp $km_vdrw3 $km_x18 $km_y18
+          set km_f18 {}
+          for {set i 0} {$i < 60} {incr i} {
+            update
+            set km_f18 [focus -displayof .]
+            if {$km_f18 ne {}} { break }
+            after 50
+          }
+          if {$km_f18 eq {}} {
+            puts "skip: KM18's first chord (typed where the display left the keyboard after the open) -- this application has no keyboard focus on this display"
+          } else {
+            puts "note: KM18 after the open and the pointer's move into the new plot the keyboard focus is on [expr {$km_f18 eq $km_vdrw3 ? {the new viewer's plot canvas} : ($km_f18 eq $km_vtop3 ? {the new viewer's toplevel} : ($km_f18 eq {.drw} ? {the main window's canvas} : $km_f18))}]"
+            set km_mb18 $::mb_hits
+            event generate $km_f18 <KeyPress> -keysym M -state 5 -x 40 -y 40
+            update
+            event generate $km_f18 <KeyRelease> -keysym M -state 5 -x 40 -y 40
+            update
+            lappend km18 [list [wviewer::plot_mode $km_tok3] [km_status $km_vtop3] [wviewer::plot_mode $tok] \
+                               [expr {$::mb_hits - $km_mb18}]]
+            lappend km18_want {multi multi single 0}
+          }
+          catch {wviewer::set_plot_mode single $km_tok3}
+          # the other focus state
+          set km_s18 [km_far .drw $km_vdrw3 $km_x18 $km_y18]
+          set km_mb18 $::mb_hits
+          km_type .drw M 5 ; km_type .drw M 5 KeyRelease
+          lappend km18 [list [lrange $km_s18 0 2] [wviewer::plot_mode $km_tok3] [km_status $km_vtop3] \
+                             [wviewer::plot_mode $tok] [expr {$::mb_hits - $km_mb18}]]
+          lappend km18_want [list [list .drw $km_vdrw3 $km_vdrw3] multi multi single 0]
+          catch {wviewer::set_plot_mode single $km_tok3}
+          # the open that only raises, as auto-plot asks for it after a run:
+          # the viewer's own focus on its plot canvas, the pointer and the
+          # keyboard on the main canvas
+          catch {focus $km_vdrw3}
+          update
+          raise . ; update
+          km_warp .drw 60 60
+          for {set i 0} {$i < 100} {incr i} {
+            focus -force .drw ; update
+            if {[focus -displayof .drw] eq {.drw}} { break }
+            after 50
+          }
+          km_pump 2
+          set km_r18 [list [list [focus -displayof .] [::km_real_xschem get current_win_path] \
+                                 [winfo containing {*}[winfo pointerxy .]] \
+                                 [expr {[focus -lastfor $km_vtop3] eq $km_vdrw3}]]]
+          lappend km_r18 [km_open_rec $km_tok3]
+          km_pump 20
+          lappend km_r18 [expr {[focus -lastfor $km_vtop3] eq $km_vtop3}] [km_asks $km_vtop3] \
+                         [expr {[llength [xschem windows]] - $km_win18}]
+          set km_f18 [focus -displayof .]
+          if {$km_f18 eq $km_vtop3 || $km_f18 eq $km_vdrw3} {
+            lappend km_r18 [km_three $km_f18 $km_tok3]
+          } else {
+            puts "skip: KM18's keys typed over the schematic right after the raise -- this display left the keyboard on '$km_f18', not in the raised viewer"
+            lappend km_r18 [list .drw 0 {} {} 0 1]
+          }
+          lappend km18 $km_r18
+          lappend km18_want [list [list .drw .drw .drw 1] 1 1 [list [list $km_vtop3]] 1 [list .drw 0 {} {} 0 1]]
+          # the pointer out of every window and back over the main canvas: the
+          # rows below start from the main window's context whatever a
+          # product did with the keys above
+          ptr_park
+          ptr_back
+          focus -force .drw ; update
+        }
+        rename km_open_rec {}
+        rename km_asks {}
+        rename km_three {}
+        check "KM18 a viewer that has just opened takes its keys without a click and takes none that are typed over the schematic: the open leaves the focus inside the viewer on its toplevel and asks for it by one plain call; with the pointer still over the main canvas u, e and Control-d typed where the display left the keyboard do nothing in the viewer; with the pointer moved into the new plot, Ctrl-Shift-M typed in the window the display gave the keyboard to flips the new viewer's mode; with the focus forced onto the main canvas it does the same; and an open that only raises the viewer, the pointer and the keyboard on the main canvas, takes the viewer's own focus from its plot canvas back to the toplevel by one plain call, after which the same three keys do nothing in the viewer (the open's answer, the canvas mapped, the focus inside the toplevel on the toplevel, the calls of focus that name the toplevel; the three keys: the window under the pointer, calls of the filter, log lines, what the engine was handed, boxes, the layout as before; after the first chord: the new viewer's mode and status bar, the first viewer's mode, boxes; after the second: the state it was typed in, the same four; the raise: the state before it, focus window, context, window under the pointer and the viewer's own focus on its plot canvas; the open's answer; the focus inside the toplevel on the toplevel after it; the calls of focus that name the toplevel; one window more than before the open; the three keys as above)" \
+          $km18 $km18_want
+        set km20 {}
+        set km20_want {}
+        if {$km_rdy3} {
+          lappend km20 [km_ctl]
+          lappend km20_want [list .drw {{.drw 121 0}} 1 0]
+          foreach {km_w km_t km_wx km_wy} [list $vdrw $tok $kmx $kmy $km_vdrw3 $km_tok3 $km_x18 $km_y18] {
+            wviewer::set_plot_mode single $tok
+            catch {wviewer::set_plot_mode single $km_tok3}
+            set km_s20 [km_far .drw $km_w $km_wx $km_wy]
+            set ::km_log {} ; set km_mb20 $::mb_hits
+            km_type .drw M 5 ; km_type .drw M 5 KeyRelease
+            lappend km20 [list [lrange $km_s20 0 2] [wviewer::plot_mode $tok] [wviewer::plot_mode $km_tok3] \
+                               $::km_log [expr {$::mb_hits - $km_mb20}]]
+          }
+          lappend km20_want \
+            [list [list .drw $vdrw $vdrw] multi single [list [list wviewer::set_plot_mode multi $tok]] 0] \
+            [list [list .drw $km_vdrw3 $km_vdrw3] single multi [list [list wviewer::set_plot_mode multi $km_tok3]] 0]
+        }
+        check "KM20 the control and two viewers: with the pointer over the main canvas and the focus there, y flips enable_stretch through the main canvas and the viewer's filter is not called, with one viewer open and with two; with two viewers open and the focus on the main canvas, Ctrl-Shift-M goes to the viewer the pointer is in and to no other (with one viewer: the context, what the engine was handed, enable_stretch flipped, calls of the filter; with two: the same four, then per viewer, the first and then the second: the state the chord was typed in, the first viewer's mode, the second's, the log lines, boxes)" \
+          [list $km20_one $km20] [list [list .drw {{.drw 121 0}} 1 0] $km20_want]
+        catch {wviewer::close $km_tok3}
+        catch {ase::session_close $km_tok3}
+        km_pump 10
+        raise $vtop ; update
+        km_warp $vdrw $kmx $kmy
         xschem new_schematic switch $vdrw
+        wviewer::set_plot_mode single $tok
+        check "KM18 fixture: the second viewer is closed again: as many windows as before it, no toplevel of its own, the first viewer's context current, single" \
+          [list [expr {[llength [xschem windows]] - $km_win18}] [wviewer::window_for $km_tok3] \
+                [xschem get current_win_path] [wviewer::plot_mode $tok]] \
+          [list 0 {} $vdrw single]
+        rename km_ctl {}
+
+        # --- KM19: PARITY with what Tk does --------------------------------------
+        # The viewer's side chooses, from what `bind WaveViewer` lists, the
+        # binding Tk would run. Here Tk is asked itself, on the live tag. Every
+        # sequence of the tag (the defaults, the Caps Lock dispatch, and six
+        # bindings of the row's own of the kinds an rc can add: a new chord, a
+        # named key, Alt, a chord that competes with a Caps Lock sequence, a
+        # release, a sequence with no keysym) is made to record its own name
+        # and break. For every sequence that names a keysym the event it names
+        # is generated, as it stands and with Num Lock, with Caps Lock and with
+        # Alt on top, twice: with the focus on the viewer's canvas (Tk chooses)
+        # and with the focus on the main canvas and the pointer in the plot (the
+        # viewer's side chooses). The two recordings must be the same list, and
+        # some binding must have run. The pointer rests two pixels inside the
+        # strip's edge, where the filter forwards no graph key. The main canvas's
+        # own binding for Alt keys must not have run in the second half.
+        # THE ORDER OF BINDING. Tk's choice is not transitive: of two sequences
+        # that ask for different modifiers the later bound wins, so three of
+        # them can answer by the order they were bound in. The live tag holds
+        # no such three, so the row brings its own: three sequences for F8 on a
+        # tag of its own, put first on the viewer's canvas, bound in each of
+        # the six orders. For each order Tk is asked which one runs for the
+        # event that matches all three (the focus on the viewer's canvas), and
+        # the chooser is asked the same of what `bind` lists for that tag. The
+        # six pairs must agree, and the six answers must not all be one
+        # sequence, or the order was not what the leg moved.
+        set km19_save {}
+        foreach km_seq [bind WaveViewer] { lappend km19_save $km_seq [bind WaveViewer $km_seq] }
+        set km19_own {<Control-Key-r> <Key-F5> <Alt-Key-j> <Control-Alt-Key-D> <KeyRelease-u> <Control-Key>}
+        foreach km_seq $km19_own { bind WaveViewer $km_seq break }
+        set km19_all [bind WaveViewer]
+        set ::km19_hit {}
+        foreach km_seq $km19_all { bind WaveViewer $km_seq "[list set ::km19_hit $km_seq]\nbreak" }
+        set km19_ev {}
+        set km19_unread {}
+        foreach km_seq $km19_all {
+          set km_e {}
+          catch {set km_e [wviewer::key_seq_event $km_seq]}
+          if {[llength $km_e] != 4 || ![string is integer -strict [lindex $km_e 3]]} { lappend km19_unread $km_seq ; continue }
+          lassign $km_e km_T km_N km_K km_m
+          if {$km_K eq {}} {
+            if {$km_N eq {}} { continue }
+            set km_K [format %c $km_N]
+          }
+          foreach km_s [lsort -unique -integer [list $km_m [expr {$km_m | 16}] [expr {$km_m | 2}] [expr {$km_m | 8}]]] {
+            lappend km19_ev [list [expr {$km_T == 3 ? {KeyRelease} : {KeyPress}}] $km_K $km_s]
+          }
+        }
+        set km19_tk {} ; set km19_vw {}
+        for {set i 0} {$i < 100} {incr i} {
+          focus -force $vdrw ; update
+          if {[focus -displayof $vdrw] eq $vdrw} { break }
+          after 50
+        }
+        set km19_f1 [focus -displayof $vdrw]
+        foreach km_e $km19_ev {
+          lassign $km_e km_ty km_K km_s
+          set ::km19_hit {}
+          event generate $vdrw <$km_ty> -keysym $km_K -state $km_s -x [lindex $km_ring 0] -y [lindex $km_ring 1]
+          update
+          lappend km19_tk $::km19_hit
+        }
+        # the order of binding: Tk first, then the chooser, per order
+        set km19_ptag KM19OrderTag
+        set km19_three {<Control-Mod2-Key-F8> <Shift-Mod2-Key-F8> <Control-Key-F8>}
+        set km19_pairs {}
+        set km19_tags0 [bindtags $vdrw]
+        bindtags $vdrw [linsert $km19_tags0 0 $km19_ptag]
+        foreach km_ord {{0 1 2} {0 2 1} {1 0 2} {1 2 0} {2 0 1} {2 1 0}} {
+          foreach km_seq [bind $km19_ptag] { bind $km19_ptag $km_seq {} }
+          foreach km_i $km_ord {
+            set km_seq [lindex $km19_three $km_i]
+            bind $km19_ptag $km_seq "[list set ::km19_hit $km_seq]\nbreak"
+          }
+          set ::km19_hit {}
+          event generate $vdrw <KeyPress> -keysym F8 -state 21 -x [lindex $km_ring 0] -y [lindex $km_ring 1]
+          update
+          set km_c {}
+          catch {set km_c [wviewer::tag_key_seq [bind $km19_ptag] 2 65477 F8 21]}
+          lappend km19_pairs [list $::km19_hit $km_c]
+        }
+        foreach km_seq [bind $km19_ptag] { bind $km19_ptag $km_seq {} }
+        bindtags $vdrw $km19_tags0
+        set km19_pdiff {}
+        set km19_pran {}
+        foreach km_pr $km19_pairs {
+          if {[lindex $km_pr 0] ne [lindex $km_pr 1] || [lindex $km_pr 0] eq {}} { lappend km19_pdiff $km_pr }
+          lappend km19_pran [lindex $km_pr 0]
+        }
+        set km19_s2 [km_far .drw $vdrw {*}$km_ring]
+        # Several of these chords are an editor verb once the main canvas or the
+        # engine runs them in the viewer (Control-q quits). They are typed on
+        # the main canvas only when a key neither has a use for (the left Shift
+        # key) was seen to go to the viewer's filter there and NOT to the
+        # engine: the canvas door took it. Otherwise the half is not sent.
+        set ::km_via {} ; set km_k19 $::kf_calls ; set km_ap19 $::km_altprobe
+        km_type .drw Shift_L 0
+        km_type .drw Shift_L 1 KeyRelease
+        if {$::kf_calls - $km_k19 == 2 && $::km_via eq {}} {
+          foreach km_e $km19_ev {
+            lassign $km_e km_ty km_K km_s
+            set ::km19_hit {}
+            event generate .drw <$km_ty> -keysym $km_K -state $km_s -x 40 -y 40
+            update
+            lappend km19_vw $::km19_hit
+          }
+          set km19_diff {}
+          foreach km_e $km19_ev km_a $km19_tk km_b $km19_vw {
+            if {$km_a ne $km_b} { lappend km19_diff [list $km_e $km_a $km_b] }
+          }
+        } else {
+          set km19_diff not-sent
+        }
+        set km_ap19 [expr {$::km_altprobe - $km_ap19}]
+        # the tag as it was: the row's own sequences off, every script back
+        foreach km_seq $km19_own { bind WaveViewer $km_seq {} }
+        foreach {km_seq km_scr} $km19_save { bind WaveViewer $km_seq $km_scr }
+        set km19_back {}
+        foreach km_seq [bind WaveViewer] { lappend km19_back $km_seq [bind WaveViewer $km_seq] }
+        check "KM19 for every sequence of the WaveViewer tag, the Caps Lock dispatch and six bindings of the row's own included, the binding that runs for a key typed with the focus on the main canvas and the pointer in the plot is the one Tk runs for the same key with the focus on the viewer's canvas; and for three sequences of the row's own, bound on a tag of its own in each of the six orders, the chooser answers what Tk ran (the focus for Tk's half, the state for the other; sequences of the tag the viewer's side does not read; events for which the two differ; the events walked are no fewer than the tag's sequences, which are more than none, and some binding ran in Tk's half; runs of the main canvas's own binding for Alt keys; the tag is back as it was; the orders of binding: how many were asked, those where the two differ or Tk ran nothing, the answers are more than one sequence, the canvas's tags back as they were)" \
+          [list $km19_f1 [lrange $km19_s2 0 2] $km19_unread $km19_diff \
+                [expr {[llength $km19_ev] >= [llength $km19_all] && [llength $km19_save] > 0}] \
+                [expr {[llength [lsearch -all -not -exact $km19_tk {}]] > 0}] $km_ap19 \
+                [expr {$km19_back eq $km19_save}] \
+                [llength $km19_pairs] $km19_pdiff [expr {[llength [lsort -unique $km19_pran]] > 1}] \
+                [expr {[bindtags $vdrw] eq $km19_tags0}]] \
+          [list $vdrw [list .drw $vdrw $vdrw] {} {} 1 1 0 1 6 {} 1 1]
+
+        # --- KM21: an ordinary second schematic window: nothing changes -------------
+        # The fence for "viewer contexts only". A second window is opened the
+        # way a viewer's is and left an ordinary empty schematic. With the focus
+        # on the main canvas and the pointer in that window (its context is the
+        # current one), each key runs in the second window as the editor key it
+        # is, as before this item: typed on the main canvas, the schematic's
+        # move with nothing selected does nothing, w starts a wire, y flips
+        # enable_stretch, and in the Cadence profile s starts the snapped wire;
+        # through the engine's entry Alt-b steps hide-symbols. The expected
+        # values were taken on the product before the change. The message box
+        # answers cancel for the row.
+        set km21 {}
+        set km21_want {}
+        set km21_tag no-window
+        set km21b no-window
+        xschem new_schematic switch .drw
+        set km21_w0 [llength [xschem windows]]
+        xschem load_new_window -window {}
+        set km_ow [xschem get current_win_path]
+        set km21_ok [expr {$km_ow ne {.drw} && $km_ow ne $vdrw && [winfo exists $km_ow]}]
+        if {$km21_ok} {
+          for {set i 0} {$i < 300} {incr i} {
+            update
+            if {[winfo ismapped $km_ow]} { break }
+            after 20
+          }
+          km_pump 10
+          rename ::tk_messageBox ::km21_suite_mb
+          proc ::tk_messageBox {args} { incr ::mb_hits ; return cancel }
+          foreach km_prof {0 1} {
+            set ::cadence_compat $km_prof
+            set km_fam {Ctrl-Shift-M M 5 tk w w 0 tk y y 0 tk Alt-b 98 8 eng}
+            if {$km_prof} { lappend km_fam s s 0 tk }
+            foreach {km_nm km_ks km_st km_door} $km_fam {
+              set km_s21 [km_far .drw $km_ow 120 120]
+              set km_ui0 [::km_real_xschem get ui_state]
+              set km_hs0 $::hide_symbols
+              set km_es0 $::enable_stretch
+              set ::km_via {} ; set km_mb21 $::mb_hits ; set km_k21 $::kf_calls
+              if {$km_door eq {eng}} {
+                xschem callback .drw 2 40 40 $km_ks 0 0 $km_st
+                update
+              } else {
+                km_type .drw $km_ks $km_st
+              }
+              lappend km21 [list $km_prof $km_nm [lrange $km_s21 0 2] $::km_via \
+                                 [expr {[::km_real_xschem get ui_state] != $km_ui0}] \
+                                 [expr {($::hide_symbols - $km_hs0 + 3) % 3}] \
+                                 [expr {$::enable_stretch != $km_es0}] \
+                                 [expr {$::mb_hits - $km_mb21}] [expr {$::kf_calls - $km_k21}] \
+                                 [::km_real_xschem get wave_viewer]]
+              if {$km_door eq {eng}} {
+                xschem callback .drw 3 40 40 $km_ks 0 0 $km_st
+                update
+              } else {
+                km_type .drw $km_ks $km_st KeyRelease
+              }
+              catch {::km_real_xschem abort_operation}
+              catch {::km_real_xschem set hide_symbols $km_hs0}
+              set ::hide_symbols $km_hs0
+              set ::enable_stretch $km_es0
+            }
+          }
+          set ::cadence_compat $km_cad0
+          set ::autotrim_wires $km_at0
+          rename ::tk_messageBox {}
+          rename ::km21_suite_mb ::tk_messageBox
+          foreach km_prof {0 1} {
+            foreach {km_nm km_ks km_st km_ui km_hs km_es} [list Ctrl-Shift-M 77 5 0 0 0 w 119 0 1 0 0 y 121 0 0 0 1 \
+                                                      Alt-b 98 8 0 1 0 {*}[expr {$km_prof ? {s 115 0 1 0 0} : {}}]] {
+              lappend km21_want [list $km_prof $km_nm [list .drw $km_ow $km_ow] [list [list .drw $km_ks $km_st]] \
+                                      $km_ui $km_hs $km_es 0 0 0]
+            }
+          }
+          set km21_tag [expr {[lindex [bindtags $km_ow] 0] eq $km_tag}]
+          # THE OTHER WAY ROUND: the keyboard on the SECOND window's canvas and
+          # the pointer in the viewer's plot. The canvas door is a tag of every
+          # schematic canvas, not of the main one only, so a key typed there is
+          # the viewer's as well. In the Cadence profile: i, which is a binding
+          # of the canvas itself (this suite's line on the main canvas, cloned
+          # onto the new window's canvas) and never calls the engine; then
+          # Ctrl-Shift-M.
+          set ::cadence_compat 1
+          set km21b [list [expr {[bind $km_ow <Key-i>] ne {}}]]
+          set km_s21 [km_far $km_ow $vdrw $kmx $kmy]
+          set km_e21 [list [::km_real_xschem get instances] [::km_real_xschem get ui_state] [toplevel_count]]
+          set ::km_via {} ; set km_mb21 $::mb_hits ; set km_k21 $::kf_calls
+          km_type $km_ow i 0 ; km_type $km_ow i 0 KeyRelease
+          lappend km21b [list [lrange $km_s21 0 2] [expr {$::kf_calls - $km_k21}] [expr {$::mb_hits - $km_mb21}] $::km_via \
+                              [expr {[list [::km_real_xschem get instances] [::km_real_xschem get ui_state] [toplevel_count]] eq $km_e21}]]
+          catch {::km_real_xschem abort_operation}
+          wviewer::set_plot_mode single $tok
+          set km_s21 [km_far $km_ow $vdrw $kmx $kmy]
+          set ::km_via {} ; set ::km_log {} ; set km_mb21 $::mb_hits
+          km_type $km_ow M 5 ; km_type $km_ow M 5 KeyRelease
+          lappend km21b [list [lrange $km_s21 0 2] [wviewer::plot_mode $tok] $::km_log $::km_via [expr {$::mb_hits - $km_mb21}]]
+          wviewer::set_plot_mode single $tok
+          set ::cadence_compat $km_cad0
+          set ::autotrim_wires $km_at0
+          xschem new_schematic switch $km_ow
+          catch {xschem set_modify 0}
+          xschem new_schematic destroy $km_ow {}
+          km_pump 10
+        }
+        raise $vtop ; update
+        km_warp $vdrw $kmx $kmy
+        xschem new_schematic switch $vdrw
+        check "KM21 an ordinary second schematic window is not a viewer's business: with the focus on the main canvas and the pointer in that window, each key goes to the engine through the main canvas and runs in the second window as it did before this item, stock profile then Cadence: typed, Ctrl-Shift-M, w, y and the Cadence profile's s; through the engine's entry, Alt-b (the window opened; per key: the profile, the key, the state it was sent in, what the engine was handed, the engine's state moved, the step of hide-symbols, enable_stretch flipped, boxes, calls of the viewer's filter, the window's viewer flag; the windows left behind; the profile back)" \
+          [list $km21_ok $km21 [expr {[llength [xschem windows]] - $km21_w0}] [list $::cadence_compat $::autotrim_wires]] \
+          [list 1 $km21_want 0 [list $km_cad0 $km_at0]]
+        check "KM21 ...and that window's canvas carried the key-door tag first in its tag list, as every schematic canvas does" \
+          $km21_tag 1
+        check "KM21 ...and the other way round, the keyboard on that second window's canvas and the pointer in the viewer's plot, a key typed there is the viewer's as it is from the main canvas, in the Cadence profile: i, a binding of that canvas itself, reaches the viewer's filter and brings up no box, and Ctrl-Shift-M flips the viewer's mode (the canvas has the binding for i; for i: the state, focus window, context and window under the pointer, calls of the filter for press and release, boxes, what the engine was handed, instances, engine state and toplevels as before; for the chord: the state, the mode, the log lines, what the engine was handed, boxes)" \
+          $km21b [list 1 [list [list $km_ow $vdrw $vdrw] 2 0 {} 1] \
+                         [list [list $km_ow $vdrw $vdrw] multi [list [list wviewer::set_plot_mode multi $tok]] {} 0]]
+
+        # --- KM22: a key typed into the Signal Browser's search box stays there ----
+        # A window that is no xschem drawing window keeps its keys. The Signal
+        # Browser is shown, its search entry is given the focus, the pointer is
+        # in the plot: a typed b goes into the entry, the viewer's filter is not
+        # called, the engine is handed nothing and cursor B does not move.
+        wviewer::set_plot_mode single $tok
+        set km22 {}
+        set km_be $vtop.wvbrowser.wvsearch.pat
+        set km_bw0 [wviewer::browser_shown $tok]
+        catch {wviewer::browser_toggle 1 $tok}
+        km_pump 10
+        if {![winfo exists $km_be] || ![winfo ismapped $km_be]} {
+          set km22 no-search-entry
+        } else {
+          lassign [km_mid $vdrw 0] km_x22 km_y22
+          raise $vtop ; update
+          km_warp $vdrw $km_x22 $km_y22
+          $km_be delete 0 end
+          for {set i 0} {$i < 100} {incr i} {
+            focus -force $km_be ; update
+            if {[focus -displayof $km_be] eq $km_be} { break }
+            after 50
+          }
+          set km_gf22 [expr {[km_gf $vdrw] & 4}]
+          set ::km_via {} ; set km_k22 $::kf_calls
+          event generate $km_be <KeyPress> -keysym b -x 5 -y 5
+          update
+          event generate $km_be <KeyRelease> -keysym b -x 5 -y 5
+          update
+          set km22 [list [expr {[focus -displayof $km_be] eq $km_be}] \
+                         [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]] \
+                         [$km_be get] [expr {$::kf_calls - $km_k22}] $::km_via \
+                         [expr {([km_gf $vdrw] & 4) == $km_gf22}]]
+          $km_be delete 0 end
+          event generate $km_be <KeyRelease> -keysym space
+          update
+        }
+        if {!$km_bw0} { catch {wviewer::browser_toggle 0 $tok} }
+        km_pump 10
+        check "KM22 a key typed into the Signal Browser's search box stays there: with the focus in the entry and the pointer in the plot, a typed b goes into the entry, the viewer's key filter is not called, the engine is handed nothing and cursor B does not move (the focus on the entry, the window under the pointer, the entry's text, calls of the filter, what the engine was handed, cursor B as before); the browser is hidden again as it was" \
+          [list $km22 [wviewer::browser_shown $tok]] [list [list 1 $vdrw b 0 {} 1] $km_bw0]
+
+        # the pointer back where the band found it, the focus on the plot canvas
+        # and the viewer's context current, as the rows after this band expect
+        event generate . <Motion> -warp 1 -x [expr {[lindex $km_ptr0 0] - [winfo rootx .]}] \
+                                          -y [expr {[lindex $km_ptr0 1] - [winfo rooty .]}]
+        km_pump 6
+        focus -force $vdrw
+        update
+        xschem new_schematic switch $vdrw
+        wviewer::set_plot_mode single $tok
+        lassign [km_mid $vdrw 0] kmx kmy
+        foreach km_p {km_pump km_warp km_far km_type km_eng km_stored} { rename $km_p {} }
+        rename ::wvtest_alt_arm_probe {}
 
         # --- KM12: nothing changes outside a viewer -----------------------------
         # The fence for the decision that this item changes no key over a graph
