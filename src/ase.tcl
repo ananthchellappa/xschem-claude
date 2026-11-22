@@ -16924,7 +16924,8 @@ proc ase::netlist_map_resolve {map kind name cs} {
 #             that field's text
 #      irow = the same, for a `.nodeset`/`.ic` name of an include file, plus
 #             {file <as stored> path <resolved> line <n> card nodeset|ic
-#             start <s> end <e> value <v> spelled <the netlist's spelling or {}>}
+#             start <s> end <e> value <v> spelled <the netlist's spelling or {}>
+#             cond 0|1 stops 0|1}
 #             (issue 1723 item 7; only when ITEXTS is given)
 #      rename = see ase::preflight_rename_solve (issue 1723)
 #
@@ -17009,8 +17010,9 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
   ## `incrows`; one whose path stops at a missing instance (`miss`) refuses the
   ## run and joins the rename search beside the output rows; any other is a
   ## caution (a node an instance that exists does not have: no ruling covers
-  ## refusing it). `unknown` is not a row, which carries over the
-  ## include-bearing-scope ruling -- and a missing TOP-LEVEL instance that an
+  ## refusing it), unless ngspice would stop on it (`stops`, below), which
+  ## then refuses too (ruled 2026-11-22). `unknown` is not a row, which carries
+  ## over the include-bearing-scope ruling -- and a missing TOP-LEVEL instance that an
   ## include file itself defines (`x5 ...` in a stimulus file) stands down the
   ## same way, because the circuit netlist cannot show it; so does every
   ## missing top-level name once an include file carries a nested include card
@@ -17031,6 +17033,12 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
           ambiguous [dict get $r ambiguous] why [dict get $r why] fixkind {}]
         set cond [ase::state_get $ci cond 0]
         dict set row cond $cond
+        ## `stops`: ngspice stops the run on this name if it is absent -- its
+        ## value is not a plain number (ase::include_value_plain) and its card
+        ## is not inside a `.if` block. A row without `miss` refuses on it
+        ## (the user's ruling of 2026-11-22: "Refuse only when ngspice will
+        ## stop"); a row with `miss` refuses whatever its value.
+        dict set row stops [expr {!$cond && ![ase::include_value_plain [dict get $ci value]]}]
         if {[dict exists $r miss]} {
           set mz [dict get $r miss]
           if {[dict get $mz scope] eq {} && ($topnest ||
@@ -17053,15 +17061,16 @@ proc ase::preflight_scan {state netlist_text {itexts {}}} {
           continue
         }
         ## ⚠ A CASE-ONLY SPELLING UNDER `distinguish` (`real` set, or
-        ## `ambiguous`) IS A ROW, a caution naming the netlist's spelling (fix
-        ## round, finding 2). It used to stand down, on the claim that ngspice
-        ## folds a card's names to lower case. MEASURED 2026-11-21 on ver_53
-        ## with `-D casemode=distinguish -D casemodewrite`, the flags ASE-L
-        ## passes: it does not -- `v(XDUT.mid)={0.4}` beside `xdut` is
-        ## `Nodeset on non-existent node`, then `.nodeset syntax error`, rc 1,
-        ## and a plain value is dropped. It never refuses (no `miss`: the ruling
-        ## refuses on a missing instance only) and is never rewritten (its
-        ## `fixkind` stays empty).
+        ## `ambiguous`) IS A ROW naming the netlist's spelling (fix round,
+        ## finding 2). It used to stand down, on the claim that ngspice folds a
+        ## card's names to lower case. MEASURED 2026-11-21 on ver_53 with
+        ## `-D casemode=distinguish -D casemodewrite`, the flags ASE-L passes:
+        ## it does not -- `v(XDUT.mid)={0.4}` beside `xdut` is `Nodeset on
+        ## non-existent node`, then `.nodeset syntax error`, rc 1, and a plain
+        ## value is dropped. It carries no `miss`, so it never joins the rename
+        ## search, and it is never rewritten (its `fixkind` stays empty); like
+        ## an absent node inside an instance that exists, it refuses when
+        ## `stops` and is a caution otherwise (the ruling of 2026-11-22).
         lappend incrows $row
       }
     }
@@ -18798,8 +18807,16 @@ proc ase::include_ngspice_clause {card value} {
 # inside a `.if` block (`cond`; a missing instance is then `condmiss`), whose
 # branch ASE-L cannot tell ngspice takes. Pure.
 proc ase::preflight_include_caution {row} {
+  return "ase: caution: [ase::preflight_include_said $row]"
+}
+
+# The sentence ase::preflight_include_caution says of ROW, without its
+# `ase: caution:` head: "include file '<path>' line <n>: .<card> names '<name>',
+# ..." and what ngspice does with it. Pure. ase::preflight_gate says the same
+# sentence as a refused row's line when the row `stops` (ruled 2026-11-22).
+proc ase::preflight_include_said {row} {
   set id [dict get $row ident]
-  set at "ase: caution: include file '[dict get $row path]' line\
+  set at "include file '[dict get $row path]' line\
  [dict get $row line]: .[dict get $row card] names '$id'"
   set head "$at,"
   set clause [ase::include_ngspice_clause [dict get $row card] [dict get $row value]]
@@ -19236,12 +19253,20 @@ proc ase::preflight_refusal {{lead {}} {rdnote {}}} {
 # below (`ase: REFUSED — <n> output expression(s) name(s) something this
 # circuit does not have.`, or, when the include files alone refuse -- issue
 # 1723 item 7 -- `ase: REFUSED — <n> .nodeset/.ic name(s) in <m> include
-# file(s) stop(s) at an instance this circuit does not have.`); rows PF1723m and
-# PF1723x drive the real gate's error through it, so a reworded head reds there
-# rather than silently losing the offer.
+# file(s) stop(s) at an instance this circuit does not have.`, or, when only
+# names ngspice would stop on refuse -- ruled 2026-11-22 -- `ase: REFUSED — <n>
+# .nodeset/.ic name(s) in <m> include file(s) name(s) a node / nodes this
+# circuit does not have, ...`); rows PF1723m, PF1723x and PF1723u6 drive the
+# real gate's error through it, so a reworded head reds there rather than
+# silently losing the offer. The last carries no correction of its own, so the
+# offer stays down for it unless a stale measurement it now speaks of has one
+# (ase::ui::repair_offer answers {} when the press would rewrite nothing).
 proc ase::preflight_is_name_refusal {err} {
   set first [lindex [split $err "\n"] 0]
   if {[regexp {^ase: REFUSED — [0-9]+ output expressions? names? something this circuit does not have\.} $first]} {
+    return 1
+  }
+  if {[regexp {^ase: REFUSED — [0-9]+ \.nodeset/\.ic names? in [0-9]+ include files? names? (?:a node|nodes) this circuit does not have,} $first]} {
     return 1
   }
   return [regexp {^ase: REFUSED — [0-9]+ \.nodeset/\.ic names? in [0-9]+ include files? stops? at an instance this circuit does not have\.} $first]
@@ -19458,17 +19483,25 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
   set itexts [ase::include_texts $state $incrd]
   set scan [ase::preflight_scan $state $netlist_text $itexts]
   set rows [dict get $scan absent]
-  ## `miss` refuses; the rest of the include rows are cautions, said whether or
-  ## not anything refuses, because ngspice will act on them either way
+  ## `miss` refuses; so does any other absent name ngspice would stop on
+  ## (`stops`: a value that is not a plain number, outside a `.if` block -- the
+  ## user's ruling of 2026-11-22, "Refuse only when ngspice will stop", for a
+  ## node an instance that exists does not have, a missing top-level node, and
+  ## a case-only spelling under `distinguish`). The rest of the include rows
+  ## are cautions, said whether or not anything refuses, because ngspice will
+  ## act on them either way.
   set irefuse {}
+  set istop {}
   foreach r [dict get $scan incrows] {
     if {[dict exists $r miss]} {
       lappend irefuse $r
+    } elseif {[ase::state_get $r stops 0]} {
+      lappend istop $r
     } else {
       ::ase::echo [ase::preflight_include_caution $r]
     }
   }
-  if {![llength $rows] && ![llength $irefuse]} { return {} }
+  if {![llength $rows] && ![llength $irefuse] && ![llength $istop]} { return {} }
   # COUNT EXPRESSIONS, NOT IDENTIFIERS. `[llength $rows]` is the number of
   # offending identifiers, and one output row naming two absent nodes was
   # reported as "2 output expressions". The per-identifier detail lines below
@@ -19483,6 +19516,16 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
  warning when its value is a plain number, and stops the run with a syntax\
  error when it is anything else (a {...} or '...' expression, or a parameter\
  name)."
+  ## the names ngspice would stop on, kept apart from `ihead`: they stop at no
+  ## missing instance, and no correction is offered for them
+  set nst [llength $istop]
+  set nsf [llength [lsort -unique [lmap r $istop {dict get $r path}]]]
+  set one [expr {$nst == 1}]
+  set shead "$nst .nodeset/.ic name[expr {$one ? {} : {s}}] in $nsf include\
+ file[expr {$nsf == 1 ? {} : {s}}] [expr {$one ? {names a node} : {name nodes}}]\
+ this circuit does not have, and [expr {$one ? {its value is not a plain number} :
+ {their values are not plain numbers}}], so ngspice would stop the run with a\
+ syntax error on [expr {$one ? {it} : {them}}]."
   set rdnote "Nothing was generated: no deck, no raw,\
  no log. Any files already in [ase::rundir $state] are from an earlier run."
   if {$nex} {
@@ -19492,11 +19535,15 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
  token, and what lands in the run directory is a raw file holding TWELVE\
  MATHEMATICAL CONSTANTS (Plotname: constants) which reads back as a perfectly\
  valid result. $rdnote"
-  } else {
+  } elseif {$nin} {
     ## ISSUE 1723 item 7: the include files ALONE refuse -- the user's state, a
     ## session whose outputs were corrected while its nodeset file still named
     ## the old instance. ase::preflight_is_name_refusal reads this head too.
     set head "ase: REFUSED — $ihead $rdnote"
+  } else {
+    ## only names ngspice would stop on (ruled 2026-11-22); the offer
+    ## predicate reads this head as well
+    set head "ase: REFUSED — $shead $rdnote"
   }
   ::ase::echo $head error
   set lines [list $head]
@@ -19574,6 +19621,20 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
       append l ". Instance '$p' looks renamed to '[dict get $g to]': '$id' ->\
  '$fixed'"
     }
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  ## THE NAMES NGSPICE WOULD STOP ON (ruled 2026-11-22), one line each naming
+  ## the file, the line and the name, and what ngspice does with it
+  ## (ase::preflight_include_said). No correction: ASE-L cannot know which node
+  ## was meant, and a case-only spelling is not rewritten.
+  if {$nst && ($nex || $nin)} {
+    set l "ase:   and $shead"
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  foreach r $istop {
+    set l "ase:   [ase::preflight_include_said $r]"
     ::ase::echo $l error
     lappend lines $l
   }
@@ -19732,6 +19793,23 @@ proc ase::preflight_gate {state netlist_text {netlistpath {}}} {
     lappend lines $l
   } elseif {$nin || [llength $incs]} {
     set l "ase: $door opens the include files, to change the names above by hand."
+    ::ase::echo $l error
+    lappend lines $l
+  }
+  ## the names ngspice would stop on are changed by hand; a read-only file has
+  ## to be made writable first, since the door opens it without Save
+  if {$nst} {
+    set ro {}
+    foreach r $istop {
+      set p [dict get $r path]
+      if {[lsearch -exact $ro $p] < 0 &&
+          ![dict get [ase::include_edit_facts $p] writable]} { lappend ro $p }
+    }
+    set first {}
+    if {[llength $ro]} { set first "make [ase::preflight_name_list $ro] writable, then " }
+    set l "ase: ASE-L offers no correction for the\
+ [expr {$nst == 1 ? {name} : "$nst names"}] ngspice would stop on:\
+ ${first}change [expr {$nst == 1 ? {it} : {them}}] by hand ($door)."
     ::ase::echo $l error
     lappend lines $l
   }

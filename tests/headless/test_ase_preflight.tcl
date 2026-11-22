@@ -3483,9 +3483,14 @@ set sd_b [ri_rows "V5 vsup5 0 1.8\n.nodeset v(vsup5)=1.8\n"]
 set sd_bc [ri_rows ".nodeset v(vsup5)=1.8\n"]
 eqcheck PF1723s4-what-the-circuit-netlist-cannot-show-stands-down \
   [list $sd_a $sd_ac $sd_b $sd_bc] {0 1 0 1}
-## A CASE-ONLY SPELLING UNDER `distinguish` IS A CAUTION NAMING THE NETLIST'S
-## SPELLING (finding 2): not a refusal (it has no `miss`, and the ruling refuses
-## only on a missing instance), never silent, never rewritten.
+## A CASE-ONLY SPELLING UNDER `distinguish` NAMES THE NETLIST'S SPELLING
+## (finding 2), and is never rewritten (its `fixkind` stays empty). ⚠ MOVED,
+## 2026-11-22 (the user's ruling on 1723_include_stand_downs, part 2: "Refuse
+## only when ngspice will stop"): both names were cautions and the gate let the
+## run through (rc 0, two cautions). The `{0.4}` value is one ngspice stops on,
+## so that name refuses the Run, by a line naming the netlist's spelling; the
+## plain `0.4` stays a caution. Neither carries `miss`, so neither joins the
+## rename search.
 set ::sim_case_mode distinguish
 set NSCS [file join $RDI ns_case.spice]
 putfile $NSCS ".nodeset v(XDUT.a1)={0.4} v(xdut.A1)=0.4\n"
@@ -3493,12 +3498,13 @@ set stcs [ri_state [list [list file $NSCS]]]
 set sccs [pcall ase::preflight_scan $stcs $NLR [pcall ase::include_texts $stcs $RDI]]
 lassign [rn_gate $stcs] rccs ecs
 set ::sim_case_mode fold
-eqcheck PF1723s4b-a-case-only-spelling-under-distinguish-is-a-caution-naming-the-netlists-spelling \
+eqcheck PF1723s4b-a-case-only-spelling-under-distinguish-names-the-netlists-spelling-refusing-a-value-ngspice-stops-on-and-cautioning-a-plain-one \
   [list [lmap r [dg $sccs incrows] {list [dgn $r ident] [dex $r miss] [dgn $r spelled] [dgn $r correction]}] \
         $rccs [said_count {ase: caution:*}] \
-        [said_count "ase: caution: include file '[file normalize $NSCS]' line 1: .nodeset names 'XDUT.a1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is '{0.4}'."] \
-        [said_count "ase: caution: include file '[file normalize $NSCS]' line 1: .nodeset names 'xdut.A1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice drops it with a 'non-existent node' warning, so that guess is lost."]] \
-  {{{XDUT.a1 0 xdut.a1 {}} {xdut.A1 0 xdut.a1 {}}} 0 2 1 1}
+        [said_count "ase:   include file '[file normalize $NSCS]' line 1: .nodeset names 'XDUT.a1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is '{0.4}'."] \
+        [said_count "ase: caution: include file '[file normalize $NSCS]' line 1: .nodeset names 'xdut.A1', which the netlist spells 'xdut.a1': under case mode distinguish ngspice does not fold case, so ngspice drops it with a 'non-existent node' warning, so that guess is lost."] \
+        [said_count {ase: caution:*XDUT.a1*}] [said_count {*looks renamed*}]] \
+  {{{XDUT.a1 0 xdut.a1 {}} {xdut.A1 0 xdut.a1 {}}} 1 1 1 1 0 0}
 ## A NESTED `.include` AT AN INCLUDE FILE'S TOP LEVEL (fix round, finding 10).
 ## The nested file is not followed (a carried-over limit), so what it adds at
 ## the top level cannot be seen -- the include-bearing-scope ruling of
@@ -3730,14 +3736,23 @@ eqcheck PF1723t2-each-refused-name-gets-its-own-line-with-file-line-name-and-cor
         [said_count "ase:   include file '$NSA' line 3: .nodeset names 'x1.mid', and the netlist has no instance 'x1'. Instance 'x1' looks renamed to 'xdut': 'x1.mid' -> 'xdut.mid'"] \
         [said_count "ase:   include file '$NSB' line 2: .nodeset names 'x1.a1'*"] \
         [said_count {ase:   include file * names 'xdut.nosuch'*}] \
-        [said_count {ase:   include file * names 'nosuchtop'*}]] {1 1 1 0 0}
+        [said_count {ase:   include file * names 'nosuchtop'*}]] {1 1 1 0 1}
+## ⚠ MOVED, 2026-11-22 (the user's ruling on 1723_include_stand_downs, parts 1
+## and 2: "Refuse only when ngspice will stop"): the last leg was 0. NSB's
+## `.ic v(nosuchtop)={vsup}` is a missing top-level node whose value ngspice
+## stops on, so it is a refused name with a line of its own now, below the
+## stale-instance lines (row PF1723u5); `xdut.nosuch=1` stays a caution.
 eqcheck PF1723t3-the-refusal-names-the-button-the-console-command-and-the-door-and-never-the-old-sentence \
   [list [said_count "ase: Nothing is rewritten automatically: '[pcall ase::ui::lbl_repair_apply]' * rewrites the 4 .nodeset/.ic names above in 2 include files, after asking: each file is backed up beside itself first and written at once, not at Save State. `ase::preflight_fix_includes <key>` does the same from the console, and [pcall ase::ui::menu_path_include_files] shows the files."] \
         [said_count {*does not edit your files*}] [said_count {*there yourself*}]] {1 0 0}
-eqcheck PF1723u-an-absent-node-in-an-instance-that-exists-is-a-caution-saying-what-ngspice-will-do \
+## ⚠ MOVED, 2026-11-22 (the ruling on 1723_include_stand_downs, part 1): the
+## `nosuchtop={vsup}` leg asserted a caution and the count was 2. A value
+## ngspice stops on is refused now (rows PF1723u4, PF1723u5), so it is no
+## caution, and the one caution left is the plain number's.
+eqcheck PF1723u-an-absent-node-in-an-instance-that-exists-with-a-plain-number-is-a-caution-saying-what-ngspice-will-do \
   [list [said_count "ase: caution: include file '$NSB' line 3: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice drops it with a 'non-existent node' warning, so that guess is lost."] \
-        [said_count "ase: caution: include file '$NSB' line 4: .ic names 'nosuchtop', which the netlist does not have; ngspice stops the run with '.ic syntax error', because such a name's value must be a plain number and this one is '{vsup}'."] \
-        [said_count {ase: caution:*}]] {1 1 2}
+        [said_count "ase: caution: include file '$NSB' line 4: .ic names 'nosuchtop'*"] \
+        [said_count {ase: caution:*}]] {1 0 1}
 set NSC [file join $RDI ns_c.spice]
 putfile $NSC ".nodeset v(xdut.nosuch)=1\n"
 lassign [rn_gate [ri_state [list [list file $NSC]]]] rcu eu
@@ -3976,6 +3991,82 @@ if {[file writable $NS4R]} {
           [t4_has $t4r "ase: $t4door opens the include files, to change the names above by hand."]] {1 1}
 }
 file attributes $NS4R -permissions 0644
+
+## --- RULED 2026-11-22: REFUSE ONLY WHEN NGSPICE WILL STOP --------------------
+## The user's ruling on 1723_include_stand_downs, parts 1 and 2 ("crash"). An
+## include name on a node the circuit does not have -- inside an instance that
+## exists, at the top level, or (case mode distinguish) in another case --
+## refuses the Run when ngspice would stop on it: its value is not a plain
+## number (PF1723u3's table, measured on 45.2 and ver_53) and its card is not
+## inside a `.if` block (PF1723s13 keeps that a caution). A plain number stays a
+## caution and the run goes on. The refusal names the file, the line and the
+## name, and offers no correction. Each value kind is driven through the gate.
+proc u4_run {txt} {
+  set f [file normalize [file join $::RDI ns_u4.spice]]
+  putfile $f $txt
+  set st [ri_state [list [list file $f]]]
+  said_clear
+  set rc [catch {ase::preflight_gate $st $::NLR} e]
+  return [list $rc $e $f $st]
+}
+set u4legs {}
+foreach v [list "{0.4}" "{vsup-0.1}" 'vsup-0.1' '1.5' vsup {} 1.5 -0.1 1.5m 1e-3 1.5V] {
+  lassign [u4_run ".nodeset v(OUT)=0.3 v(xdut.nosuch)=$v\n"] rc e f
+  lappend u4legs [list $rc \
+    [string match "ase: REFUSED — 1 .nodeset/.ic name in 1 include file names a node this circuit does not have, and its value is not a plain number, so ngspice would stop the run with a syntax error on it. Nothing was generated*" $e] \
+    [said_count "ase:   include file '$f' line 1: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice stops the run with '.nodeset syntax error'*"] \
+    [said_count {ase: caution:*}]]
+}
+lassign [u4_run ".nodeset v(OUT)=0.3 v(xdut.nosuch)={vsup}\n"] rcu4 eu4 fu4
+eqcheck PF1723u4-a-node-an-existing-instance-lacks-refuses-the-run-for-every-value-ngspice-stops-on-and-a-plain-number-stays-a-caution \
+  [list {*}$u4legs \
+        [said_count "ase:   include file '$fu4' line 1: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice stops the run with '.nodeset syntax error', because such a name's value must be a plain number and this one is '{vsup}'."] \
+        [llength [glob -nocomplain -directory $RDI *_ase.*]]] \
+  [list {1 1 1 0} {1 1 1 0} {1 1 1 0} {1 1 1 0} {1 1 1 0} {1 1 1 0} \
+        {0 0 0 1} {0 0 0 1} {0 0 0 1} {0 0 0 1} {0 0 0 1} 1 0]
+## a missing TOP-LEVEL node: the same rule
+lassign [u4_run ".ic v(nosuchtop)={vsup}\n"] rcu5 eu5 fu5
+set u5said [said_count "ase:   include file '$fu5' line 1: .ic names 'nosuchtop', which the netlist does not have; ngspice stops the run with '.ic syntax error', because such a name's value must be a plain number and this one is '{vsup}'."]
+lassign [u4_run ".ic v(nosuchtop)=1\n"] rcu5p eu5p
+eqcheck PF1723u5-a-missing-top-level-node-refuses-on-a-value-ngspice-stops-on-and-is-a-caution-on-a-plain-number \
+  [list $rcu5 [string match {ase: REFUSED — 1 .nodeset/.ic name in 1 include file names a node this circuit does not have*} $eu5] \
+        $u5said $rcu5p [said_count {ase: caution: include file * .ic names 'nosuchtop', which the netlist does not have; ngspice drops it*}] \
+        [said_count {ase: REFUSED*}]] {1 1 1 0 1 0}
+## NO CORRECTION, AND THE OFFER: a stopping name alone is refused with the head
+## the offer predicate reads, and the press would rewrite nothing, so no banner
+## (ase::ui::repair_offer answers {}); beside a renamed output the output head
+## leads, the stopping name follows on an `and` line, and the outputs keep
+## their offer. The door is named for the hand fix.
+lassign [u4_run ".nodeset v(xdut.nosuch)={vsup}\n"] rcu6 eu6 fu6 stu6
+set scu6 [pcall ase::preflight_scan $stu6 $NLR [pcall ase::include_texts $stu6 $RDI]]
+set u6lines [lmap x $::said {lindex $x 1}]
+set u6off [pcall ase::ui::repair_offer $eu6 $stu6 $scu6]
+set stu6m [ri_state [list [list file $fu6]] {{expr v(x1.a1) save 1}}]
+said_clear
+set rcu6m [catch {ase::preflight_gate $stu6m $NLR} eu6m]
+set scu6m [pcall ase::preflight_scan $stu6m $NLR [pcall ase::include_texts $stu6m $RDI]]
+set u6moff [pcall ase::ui::repair_offer $eu6m $stu6m $scu6m]
+eqcheck PF1723u6-a-stopping-name-has-no-correction-its-head-is-read-by-the-offer-predicate-and-alone-it-puts-up-no-banner \
+  [list $rcu6 [pcall ase::preflight_is_name_refusal $eu6] $u6off \
+        [t4_has $u6lines "ase: ASE-L offers no correction for the name ngspice would stop on: change it by hand ($t4door)."] \
+        [llength [lsearch -all -glob $u6lines {*looks renamed*}]] \
+        $rcu6m [string match {ase: REFUSED — 1 output expression names something*} $eu6m] \
+        [said_count "ase:   and 1 .nodeset/.ic name in 1 include file names a node this circuit does not have, and its value is not a plain number, so ngspice would stop the run with a syntax error on it."] \
+        [said_count "ase:   include file '$fu6' line 1: .nodeset names 'xdut.nosuch'*"] \
+        [dgn $u6moff rows] [said_count "ase: ASE-L offers no correction for the name ngspice would stop on: change it by hand ($t4door)."]] \
+  {1 1 {} 1 0 1 1 1 1 1 1}
+## a READ-ONLY file: the hand fix says what has to come first
+set NSU7 [file normalize [file join $RDI ns_ro_u7.spice]]
+putfile $NSU7 ".nodeset v(xdut.nosuch)={vsup}\n"
+file attributes $NSU7 -permissions 0444
+if {[file writable $NSU7]} {
+  puts "skip: PF1723u7 (this user can write a 0444 file, so no include is read-only)"
+} else {
+  set u7lines [t4_gate [ri_state [list [list file $NSU7]]]]
+  eqcheck PF1723u7-a-stopping-name-in-a-read-only-include-is-said-to-need-making-writable-before-the-hand-fix \
+    [list [t4_has $u7lines "ase: ASE-L offers no correction for the name ngspice would stop on: make '$NSU7' writable, then change it by hand ($t4door)."]] {1}
+}
+file attributes $NSU7 -permissions 0644
 
 ## --- the press's file half: all or nothing ----------------------------------
 set ar [pcall ase::include_apply_plan $PLAN]
@@ -4758,6 +4849,45 @@ if {![file executable $NG]} {
           [expr {[readfile $ENF4] eq $ENF4TXT}]] \
     {0 0 1 0 0 0 1 1}
   pcall ase::session_close e2ek4
+  ## RULED 2026-11-22 ("Refuse only when ngspice will stop"), END TO END: a
+  ## node instance xdut does not have, with a `{...}` value, is refused before
+  ## ngspice; the CONTROL (the check switched off) reaches ngspice and dies on
+  ## the syntax error, which is what makes the refusal worth having; the same
+  ## name with a plain number runs to the end with its one caution and
+  ## ngspice's own warning in the log.
+  set ENF5 [file join $RDE nodeset_u5.spice]
+  putfile $ENF5 "* an absent node inside an instance that exists\n.nodeset v(out)=1.2 v(xdut.nosuch)={vsup-0.1}\n"
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  putfile [file join $RDE e2e5.state] \
+    "design {lib aselib cell e2e_tb view schematic} rundir [list $RDE] models {}\
+ analyses {{type op enabled 1}} outputs {{expr v(out) save 1 plot 0}}\
+ includes [list [list {file {$::PF1723E/nodeset_u5.spice}}]]"
+  pcall ase::session_open e2ek5 [file join $RDE e2e5.state]
+  proc e2e5_st {} { return [ase::sim_choice_set [ase::session_state e2ek5] entry pf1723e] }
+  set e5rc [catch {ase::run_deck [e2e5_st] $NLEF} e5]
+  set e5files [glob -nocomplain -tails -directory $RDE *_ase.*]
+  set ::ase_preflight 0
+  set e5cid -1
+  catch {set e5cid [ase::run_deck [e2e5_st] $NLEF]}
+  set e5cex [ase::wait $e5cid]
+  set ::ase_preflight 1
+  set e5clog [e2e_log]
+  foreach f [glob -nocomplain -directory $RDE *_ase.*] { file delete $f }
+  putfile $ENF5 "* an absent node inside an instance that exists\n.nodeset v(out)=1.2 v(xdut.nosuch)=0.5\n"
+  said_clear
+  set e5id -1
+  set e5rc2 [catch {set e5id [ase::run_deck [e2e5_st] $NLEF]} e5err]
+  set e5ex [ase::wait $e5id]
+  set e5log [e2e_log]
+  eqcheck PF1723ah5-a-node-an-existing-instance-lacks-is-refused-before-ngspice-which-would-have-died-and-a-plain-number-runs-with-its-caution \
+    [list $e5rc [string match {ase: REFUSED — 1 .nodeset/.ic name in 1 include file names a node this circuit does not have*} $e5] \
+          $e5files $e5cex [string match "*Error: .nodeset syntax error.*" $e5clog] \
+          $e5rc2 $e5ex [file exists [file join $RDE e2e_tb_ase.raw]] \
+          [said_count "ase: caution: include file '*nodeset_u5.spice' line 2: .nodeset names 'xdut.nosuch', which instance 'xdut' does not have; ngspice drops it*"] \
+          [string match -nocase {*nodeset on non-existent node*xdut.nosuch*} $e5log] \
+          [string match {*syntax error*} $e5log]] \
+    {1 1 {} 1 1 0 0 1 1 1 0}
+  pcall ase::session_close e2ek5
   pcall ase::sim_clear
 }
 
