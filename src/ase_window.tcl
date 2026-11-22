@@ -12769,6 +12769,7 @@ proc ase::ui::incdlg_heads {} { return {{As stored} {Resolved path} Exists} }
 proc ase::ui::incdlg_exists_word {e} { return [expr {$e ? {yes} : {no}}] }
 proc ase::ui::lbl_incdlg_missing {p} { return "$p does not exist." }
 proc ase::ui::lbl_incdlg_unresolved {why} { return "This path does not resolve: $why" }
+proc ase::ui::lbl_incdlg_ro_title {p} { return "$p (read only)" }
 
 # The dialog for KEY, or {} when it is not open.
 proc ase::ui::incdlg_win {key} {
@@ -12878,6 +12879,13 @@ proc ase::ui::incdlg_open {key} {
   if {[catch {textwindow $p $ro} e]} {
     ase::ui::incdlg_status $key $e
     return {}
+  }
+  ## ruled 2026-11-22 (issue 1723, ruling 1 part 3): a window with no Save is
+  ## locked and says so, here and not in the stock textwindow, whose `ro` the
+  ## Help and Keys windows also use. textwindow has inserted the text by now.
+  if {$ro ne {}} {
+    $::textwindow_w.text configure -state disabled
+    wm title $::textwindow_w [ase::ui::lbl_incdlg_ro_title $p]
   }
   return $::textwindow_w
 }

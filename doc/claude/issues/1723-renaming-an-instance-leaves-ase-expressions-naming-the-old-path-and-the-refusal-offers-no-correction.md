@@ -1,6 +1,6 @@
 # 1723 — renaming an instance leaves ASE-L's saved expressions naming the old path, and the refusal offers no correction
 
-**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-21 fix=taken open=3 by=port-1723`
+**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-22 fix=taken open=3 by=port-1723`
 
 Asked by the user on 2026-11-19: build a way out for a user who has no Claude Code to edit the state
 files for them. Items 1 to 3 below are the agreed scope. Item 4 is recorded, not scheduled. Items 5
@@ -196,7 +196,8 @@ writes only plain numbers. **Not built**: it does not fall out of item 7's scan 
 reads the `includes` files, and the saved operating point is not one of them. Folding it in would mean
 either a refusal nobody has ruled on (the run works today) or a new caution path. Re-saving the
 operating point once (Save operating point, one run) replaces the file with the new names. Recorded as
-an open question, not a defect.
+an open question, not a defect. *(Ruled 2026-11-22, ruling 2: one caution before the run, never a
+refusal. Crew A builds it; see "The rulings of 2026-11-22" at the foot of this file.)*
 
 ## Items 5-7 as built (crew 1723i, 2026-11-21)
 
@@ -280,20 +281,34 @@ model file's folder, so its press stays the session-only one. The sabotage sweep
   entries and of `::ASE_DEFAULT_MODELS`. The sky130A workarea sets `::PDK_ROOT`; the gf180mcuD and
   ihp-sg13g2 workareas set neither (measured 2026-09-08, `src/op_param_lists.tcl`'s PDK-identity
   comment). A PDK file outside those folders is judged by its permissions alone.
+  **Ruled by the user on 2026-11-22 ("Keep the current rule"): no product change.** Two sky130
+  folders stay outside the rule: the 5 V standard-cell deck
+  (`sky130A/models/libs.ref/sky130_fd_sc_hvl/spice`, which `::SKYWATER_HVL_STDCELLS` names) and the
+  `sky130_fd_pr` device models
+  (`sky130A/models/libs.ref/sky130_fd_pr/spice`, reached by relative `.include` from `combined/` and
+  named by no setting). A file there that the user can write is editable; Apply Corrections'
+  confirmation names it, with its backup, before anything is written, and Cancel changes nothing.
 - **An include row that disagrees with the outputs costs the outputs their correction.** Include rows
   decide like output rows (the ruling), so an output naming `x1.a1` (only `xdut` has `a1`) and a
   `.nodeset` naming `x1.b1` (only `xother` has `b1`) are a `partial` fit and nothing is offered (row
-  `PF1723s3`). Before item 7 the outputs alone decided.
+  `PF1723s3`). Before item 7 the outputs alone decided. *(Ruled 2026-11-22, ruling 1 part 4: the
+  outputs are to decide first and the `.nodeset` names to break ties. Crew A builds it; see "The
+  rulings of 2026-11-22".)*
 - Only `v(...)` names are read; a card inside a `.subckt` body of an include names that subcircuit's
   own nodes and is not read; an inline `;` or ` $` comment ends what is read of a line. *(The fix
   round below made the comment rule ngspice's own, `//` and `#` lines included; fix round 2 added `$`
   comment lines, `v (...)` with a blank, and the `\\` continuation.)*
 - An absent top-level node is a caution, not a refusal: an include file may add it, and the scan stands
-  down only when an include file's own element card connects it.
+  down only when an include file's own element card connects it. *(Ruled 2026-11-22, ruling 1 part
+  1: such a name whose value is not a plain number is to refuse the Run. Crew A builds it; see "The
+  rulings of 2026-11-22".)*
 - Open goes through the stock `textwindow`: its Save writes in text mode, so a CRLF file comes back
   LF, and "read only" means no Save button (the text can still be typed into, but not written).
   *(Fix round 2: read only now means a file the user cannot write, and Save asks before it writes over
-  a file that changed since the window read it.)*
+  a file that changed since the window read it. Ruled 2026-11-22, ruling 1 part 3: ASE-L's Open now
+  also locks such a window against typing and titles it read only; the stock window is unchanged.
+  A file the user cannot read opens as an empty window, and the reason goes only to the console:
+  issue 1732, parked.)*
 - The Include Files window is refilled when it opens and after its own Add and Remove; a Session >
   Revert while it is open leaves its rows stale until it is reopened.
 - Apply Corrections writes the files before the session; the session half is in-memory and is undone
@@ -483,6 +498,8 @@ The fixes:
     writes over a file that changed since: `textwindow_disk_changed` decides it. A "no" keeps the
     window and writes nothing. This is the stock text window, so every XSCHEM door that opens one
     with Save gets the question. Rows `PF1723ai` (the decision, counted) and `FX1723Ih` (the presses).
+    *(Ruled 2026-11-22, ruling 3: kept in every window, and its message no longer names ASE-L's Apply
+    Corrections. Row `FX1723Ii`.)*
 13. **End to end** (`PF1723ah3`, `/usr/bin/ngspice`): an include holding a `$` line inside its card,
     `v (x1.d1)` and a `\\` continuation is refused before ngspice. With the check off, ngspice dies on
     the syntax error. After `ase::preflight_fix_includes`, all three names are rewritten and the run
@@ -499,7 +516,11 @@ The fixes:
   port already did. A `*` line joined into a card by a `\\` before it is read like any continuation;
   ngspice dies on such a card anyway.
 - **The text window's question compares the file's text as read in text mode.** A change in line ends
-  alone (CRLF ↔ LF) is not seen. The window keeps a copy of what it read while it is open.
+  alone (CRLF ↔ LF) is not seen. The window keeps a copy of what it read while it is open. A file
+  deleted after the window read it counts as changed, so Save still asks, and the question's
+  "replacing what is in the file now" then speaks of a file that is gone; yes writes it back, no
+  writes nothing. *(Found 2026-11-22 by the review of ruling 3's build; the message before that
+  ruling had the same shape. Recorded, not fixed.)*
 - **`G2sens` in `test_ase_dialogs` is red on the display arm**, the same row and values at
   `a464b7f6b`, at `2f1b8bca7` and here. That is issue 1436, not this one.
 
@@ -683,13 +704,81 @@ Still open: **item 4** (unscheduled); **the pixels** of the Include Files window
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question
 above.
 
+## The rulings of 2026-11-22 (the user, from the sign-off page)
+
+The user ruled six questions from a sign-off page that gave, for each, the options, what each one
+means, and a recommendation. Each entry is the user's choice, then what it means. What was built for
+a ruling is recorded where it was built.
+
+1. **The include-file cases left without a ruling**, in four parts:
+   1. *A missing node inside an instance that exists: "Refuse only when ngspice will stop".* A
+      `.nodeset`/`.ic` name on such a node whose value is not a plain number refuses the Run before
+      ngspice starts, naming the file, the line and the name; a plain number stays a caution and the
+      run goes on. Names inside a `.if` block stay cautions. A missing top-level node follows the same
+      rule. No correction is offered: the user fixes the name in Setup > Include Files… > Open.
+   2. *A case-only mismatch under case mode `distinguish`: "Refuse only when ngspice will stop".* The
+      same rule; the refusal names the netlist's spelling. A plain number stays a caution, and nothing
+      is rewritten.
+   3. *Opening an include file the user cannot write: "Lock it and say read only".* Setup > Include
+      Files… > Open shows such a file as text that cannot be typed into, under a title that says read
+      only. Only ASE-L's Open changes; XSCHEM's Help and Keys windows (the stock text window with
+      `ro`) stay as they are.
+   4. *Who decides a rename when the outputs and the include rows disagree: "Outputs first, .nodeset
+      breaks ties".* When the outputs alone point to one instance, they get that correction; a
+      `.nodeset` name that instance cannot resolve still refuses the Run and is named, with no fix
+      offered. When the outputs fit several instances, the `.nodeset` names still help pick one, as
+      before. Every correction offered before is still offered, and the refusal's closing line is
+      reworded for the shape where include rows are left without a fix.
+2. **Stale names in the saved operating point restored by Simulation > Convergence…: "Warn before the
+   run".** With Restore ticked, ASE-L checks the saved file's names before the run. If any stop at a
+   missing instance, one caution names the file, the likely new name (`x1` → `xdut`) when one fits, and
+   the fix: one run with Save ticked, or a hand edit. It is worded for Seed or Force (Force matters only
+   for a transient's initial point). The run goes ahead: never a refusal, and not part of Apply
+   Corrections. This answers the open question in "Measured (2026-11-21)".
+3. **The text window's question before Save overwrites a file changed on disk: "Keep everywhere,
+   neutral message".** Every text window with Save keeps asking. The message no longer names ASE-L or
+   Apply Corrections; it says another program, or XSCHEM itself, may have rewritten the file.
+4. **Which PDK files Apply Corrections may edit: "Keep the current rule".** No product change. Apply
+   keeps protecting `PDK_ROOT` and the model-file folders only; recorded, with the two sky130 folders
+   left outside the rule, in the known limits of items 5-7.
+5. **What this port publishes.** Ruled; nothing in this series changes for it.
+6. **The startup quiz's settings.** Not this issue's subject; nothing in this series changes for it.
+
+**Built for ruling 1 part 3 and ruling 3 (crew B, 2026-11-22).** `ase::ui::incdlg_open`, after
+`textwindow $p ro`, disables the window's text widget and titles it `ase::ui::lbl_incdlg_ro_title`
+(the path, then "(read only)"). The stock `textwindow` is unchanged. Row `FX1723Ie3` moved: it now
+reads the title, the widget's state, an insert that changes nothing, and that the writable window's
+text widget is still in state `normal`. Row `FX1723Ie4` opens the stock window with `ro` directly and
+holds it as it was. `textwindow_ask_overwrite`'s message (`src/xschem.tcl`) now says "another
+program, or XSCHEM itself, may have rewritten it"; row `FX1723Ii` drives the real proc with
+`tk_messageBox` replaced by a recorder, on both arms, so it is counted on the headless one.
+`FX1723Ie3` and `FX1723Ie4` open real windows and run on the display arm only. `FX1723Ie3` and
+`FX1723Ii` were watched red on `dd4a88de3`'s code first. Sabotage, each from a scratch wrapper that
+redefines the proc before sourcing the suite (no tracked file changed): the lock moved into the stock
+`textwindow` reddens `FX1723Ie4` alone; the title set without the lock reddens `FX1723Ie3` on its
+state and insert legs; a label that drops "(read only)" reddens `FX1723Ie3` on its read-only leg; the
+new clause with the ASE-L cause kept beside it, and a box defaulting to yes, each redden `FX1723Ii` on
+that leg alone. Ruling 3 asked for its message to follow in a patch to the public handoff: it goes
+as that handoff's `0009` (`doc/claude/issue_1723/public_handoff/`, not applied yet), and the lock
+goes with it, which no ruling asked for, so that the two trees' `ase::ui::incdlg_open` stays the
+same; each change takes its rows. A file the user cannot read, which the review of this build found,
+is issue 1732 (parked).
+
+Still open: **item 4** (unscheduled); **one `:0` run of `test_ase_window`**, owed again; and the
+builds of **ruling 1 parts 1, 2 and 4 and ruling 2** (crew A), recorded where they land. On
+2026-11-22, in the private clone, the user cleared the looks of the repair banner, the Include Files
+window and the confirmation, and that clone's `:0` run of `test_ase_window` (391 checks there). All
+of that came before rows `FX1723Ie3` (moved), `FX1723Ie4` and `FX1723Ii` landed, so the `:0` run is
+owed again for those three. In this tree no `:0` run of the `FX1723` bands has been made.
+
 ## Ported from the private clone (2026-11-21)
 
 The user asked on 2026-11-21 that this tree be able to take ASE-L's rename corrections and Apply
 Corrections from `~/private/xschem-private`. Its six 1723 commits were replayed here with
 `git am -3`, keeping their subjects, plus this note. A seventh, fix round 4, came later and follows
-this note, its subject kept too. The number is kept: this branch's `NUMBERING.md` left 1721 to 1723
-to that clone, and its 1723 line says the number came with the port.
+this note, its subject kept too. An eighth, for the user's rulings of 2026-11-22, came after that.
+The number is kept: this branch's `NUMBERING.md` left 1721 to 1723 to that clone, and its 1723 line
+says the number came with the port.
 
 - **Commit ids in this file and in `doc/claude/issue_1723/receipts/` name the private clone's
   history**, which this one does not hold: `777efaf24`, `e73fb41ae`, `ed635d969`, `2f1b8bca7`,
@@ -706,3 +795,16 @@ to that clone, and its 1723 line says the number came with the port.
   feature this tree does not have, next to the 1723 lines. The port keeps only the 1723 lines there:
   the repair banner and an open confirmation end when a run starts. Every other added or removed
   line is the private commits' own.
+- **"The rulings of 2026-11-22" is the private clone's record; this branch builds two of them.** The
+  eighth commit was made for the port from five private ones: `df8231d15` (the read-only lock),
+  `e3a6dd95f` (the neutral question), and `196a9bfd5`, `f5e921abd` and `977efb48e` (the record and
+  its review fixes). It carries the product changes of ruling 1 part 3 and ruling 3, with rows
+  `FX1723Ie3`, `FX1723Ie4` and `FX1723Ii`, and the record's lines as the private file has them, apart
+  from the stamp (it keeps `tree=f09888cda`, as above) and three passages written for this tree: the
+  section's opening paragraph, the entries for rulings 5 and 6 (which change nothing here), and the
+  closing paragraph, which says the clears it names were made in the private clone. The builds of
+  ruling 1 parts 1, 2 and 4 and ruling 2 (crew A there) are not in this branch, and neither is the
+  private quiz spec's ruling 6 note: this tree's `doc/claude/specs/startup_quiz.md` is unchanged.
+  `dd4a88de3` is a private commit too; issue 1732, named in the known limits, is the private clone's
+  number; and the handoff folder the record names, `doc/claude/issue_1723/public_handoff/`, is the
+  private one this series was cut from.

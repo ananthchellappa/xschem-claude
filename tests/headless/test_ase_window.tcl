@@ -4963,6 +4963,14 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [list ok 1 $fi_rel 1 1 1 $fi_mod 1]
     destroy $fi_twm
     ## a file the user cannot write still opens with no Save
+    ## ⚠ MOVED by the ruling of 2026-11-22 (issue 1723, ruling 1 part 3, "lock"):
+    ## the window had no Save but took typing, which Dismiss then threw away
+    ## without a word. It is now locked, and its title says read only. The
+    ## typing leg is the widget's own insert, which is what Tk's Text class
+    ## binding calls for a typed key; a disabled text widget ignores it. The
+    ## last leg is the writable window opened above: its text widget is still
+    ## in state normal, so the lock is this file's alone (FX1723If below types
+    ## into that window and saves it).
     file attributes $fi_var -permissions 0444
     if {[file writable $fi_var]} {
       puts "skip: FX1723Ie3 (this user can write a 0444 file)"
@@ -4971,11 +4979,29 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       fi_press $fiw.btns.open
       set fi_twr [lindex [fi_textwins] end]
-      check "FX1723Ie3 Open shows a file the user cannot write with no Save" \
-        [list [wm title $fi_twr] [winfo exists $fi_twr.buttons.save]] [list $fi_var 0]
+      set fi_twt [wm title $fi_twr]
+      set fi_rb [$fi_twr.text get 1.0 {end - 1 chars}]
+      catch {$fi_twr.text insert 1.0 "* typed\n"}
+      set fi_ra [$fi_twr.text get 1.0 {end - 1 chars}]
+      check "FX1723Ie3 Open shows a file the user cannot write with no Save, its text widget disabled so an insert changes nothing, and a title naming the path and saying read only" \
+        [list $fi_twt [string match {*read only*} $fi_twt] \
+              [expr {[string first $fi_var $fi_twt] >= 0}] \
+              [winfo exists $fi_twr.buttons.save] [$fi_twr.text cget -state] \
+              [expr {$fi_rb eq $fi_vartxt}] [expr {$fi_ra eq $fi_vartxt}] \
+              [$fi_tw1.text cget -state]] \
+        [list [pcall_ux {ase::ui::lbl_incdlg_ro_title $fi_var}] 1 1 0 disabled 1 1 normal]
       destroy $fi_twr
     }
     file attributes $fi_var -permissions 0644
+    ## the control for the same ruling: only ASE-L's Open locks. XSCHEM's own
+    ## text window with ro, as Help > Help and Help > Keys open it, is the stock
+    ## window it was.
+    textwindow $fi_var ro
+    set fi_stk $::textwindow_w
+    check "FX1723Ie4 textwindow with ro, called directly as Help and Keys call it, keeps the bare path as its title and a text widget in state normal" \
+      [list [wm title $fi_stk] [winfo exists $fi_stk.buttons.save] [$fi_stk.text cget -state]] \
+      [list $fi_var 0 normal]
+    destroy $fi_stk
     $fiw.tv selection set 3
     update
     set fi_nw [llength [fi_textwins]]
@@ -5063,6 +5089,45 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
 } else {
   puts "FX1723I legs skipped (no DISPLAY)"
 }
+
+# =============================================================================
+# FX1723Ii -- THE TEXT WINDOW'S OVERWRITE QUESTION IS WORDED FOR EVERY DOOR
+# =============================================================================
+# Ruled 2026-11-22 (issue 1723, ruling 3, "keep_plain"): every text window with
+# Save keeps asking before it writes over a file that changed on disk, and the
+# question's words no longer name an ASE-L tool, since the same window opens
+# from Show netlist, Edit file (danger!), Edit Netlist and the .save entries.
+# FX1723Ih above answers the question by replacing textwindow_ask_overwrite,
+# so it never sees the words; this row drives the real proc with Tk's message
+# box replaced by a recorder, so it runs on BOTH arms (counted on the headless
+# one) and shows nothing. Both answers are driven, so the row also holds the
+# box's yes/no shape, and that yes answers 1 and no answers 0. Whether a write
+# follows is FX1723Ih's (textwindow_save, display arm).
+set ::fx_ii_boxes {}
+set ::fx_ii_answer no
+set fx_ii_had [llength [info commands ::tk_messageBox]]
+if {$fx_ii_had} { rename ::tk_messageBox ::fx_ii_real_tk_messageBox }
+proc ::tk_messageBox {args} { lappend ::fx_ii_boxes $args ; return $::fx_ii_answer }
+proc fx_ii_opt {box opt} {
+  if {[catch {dict get $box $opt} v]} { return MISSING }
+  return $v
+}
+set fx_ii_f [file join $scratch fx1723ii ns_any.spice]
+set fx_ii_no [pcall_ux {textwindow_ask_overwrite .fx1723ii $fx_ii_f}]
+set ::fx_ii_answer yes
+set fx_ii_yes [pcall_ux {textwindow_ask_overwrite .fx1723ii $fx_ii_f}]
+rename ::tk_messageBox {}
+if {$fx_ii_had} { rename ::fx_ii_real_tk_messageBox ::tk_messageBox }
+set fx_ii_box [lindex $::fx_ii_boxes 0]
+set fx_ii_msg [fx_ii_opt $fx_ii_box -message]
+check "FX1723Ii textwindow_ask_overwrite driven with a recording tk_messageBox: a yes/no box defaulting to no, its message opens with the path, names no ASE-L tool and says another program or XSCHEM itself may have rewritten the file" \
+  [list [llength $::fx_ii_boxes] $fx_ii_no $fx_ii_yes \
+        [fx_ii_opt $fx_ii_box -type] [fx_ii_opt $fx_ii_box -default] \
+        [string first $fx_ii_f $fx_ii_msg] \
+        [string match {*ASE-L*} $fx_ii_msg] \
+        [string match -nocase {*apply corrections*} $fx_ii_msg] \
+        [string match {*another program, or XSCHEM itself, may have rewritten*} $fx_ii_msg]] \
+  [list 2 0 1 yesno no 0 0 0 1]
 
 # =============================================================================
 # FX1723C -- APPLY CORRECTIONS ASKS BEFORE IT WRITES A FILE (issue 1723 item 6)

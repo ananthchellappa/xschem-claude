@@ -15022,7 +15022,7 @@ proc textwindow_ask_overwrite {w filename} {
   set a [tk_messageBox -parent $w -icon warning -type yesno -default no \
     -title {File changed on disk} \
     -message "$filename changed on disk after this window read it (another\
- program, or ASE-L's Apply Corrections, may have rewritten it).\n\nSave anyway,\
+ program, or XSCHEM itself, may have rewritten it).\n\nSave anyway,\
  replacing what is in the file now with this window's text?"]
   return [expr {$a eq {yes}}]
 }
