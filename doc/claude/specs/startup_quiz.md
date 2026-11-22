@@ -166,9 +166,13 @@ Consequences, all intended:
   `shipped`, rewrite the explanation, and write the proof the other way round;
 - a proof that cannot be evaluated is a failure, not a pass.
 
-What a proof does not cover: the wrong options of a multiple-choice question.
+What a proof need not cover: the wrong options of a multiple-choice question.
 Those were checked by hand against the source when the bank was written (a wrong
-option must not be a second way of doing the thing), and nothing re-checks them.
+option must not be a second way of doing the thing). A proof may also hold a
+wrong option to the source with a negative clause, which band `A` evaluates with
+the rest of the proof. Rows A23 to A28 also run `ase-open`'s proof over sabotaged
+copies of `src/actions.csv`, from which the File menu is built, and of
+`src/xschem.tcl`, where the Simulation menu is written.
 
 ### 7.2 Rules the suite holds the bank to
 

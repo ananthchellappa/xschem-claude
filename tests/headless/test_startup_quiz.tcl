@@ -700,6 +700,74 @@ check "A22 their condition names one command, which only src/cadence_style_rc de
   {1 src/cadence_style_rc 1 1 1}
 if {!$cad_before} { catch {namespace delete ::cadence} }
 
+# A proof can hold while the claim it guards is false: A15 stays green and the
+# person is told something untrue. These rows run a question's proof over a
+# SABOTAGED copy of a file's text, the edit that makes its claim false, and want
+# a no; P_text's cache holds the copy for the length of the one call. Each row
+# also says the copy really differs from the file, and a control runs the same
+# proof over the real text. `edits` is {file {old new ...} ...}, for string map.
+proc proves_sabotaged {id edits} {
+  set keep $::P_cache
+  set differs 1
+  foreach {rel map} $edits {
+    set real [P_text $rel]
+    set sab [string map $map $real]
+    if {$sab eq $real} { set differs 0 }
+    dict set ::P_cache $rel $sab
+  }
+  set r [proves [dict get [startup_quiz::get $id] proof]]
+  set ::P_cache $keep
+  return [list $differs $r]
+}
+# A File-menu row in src/actions.csv: build_menu_from_table builds that menu from
+# the csv alone, so a wrong option naming the File menu is absent only if no row
+# of the csv puts it there. The new row goes in before the menu's first row.
+set Q_file_first "\nfile.clear_schematic,"
+set Q_file_ase   "\nfile.new_ase,command,file,New ASE-L session,,ase::launch_for_current,,,Open ASE-L,,1$Q_file_first"
+proc Q_file {row} { list src/actions.csv [list $::Q_file_first "\n$row$::Q_file_first"] }
+# The Simulation menu is written in src/xschem.tcl; a new entry goes in before
+# its 'Set netlist Dir' entry.
+set Q_sim_first {  $topwin.menubar.simulation add command -label "Set netlist Dir"}
+proc Q_sim {entry} { list src/xschem.tcl [list $::Q_sim_first "$entry\n$::Q_sim_first"] }
+if {[lsearch -exact $::startup_quiz::order ase-open] >= 0} {
+  check "A23 ase-open's proof holds over the real text (the control of A24 to A28)" \
+    [proves_sabotaged ase-open {}] {1 1}
+  check "A24 ... and says no once src/actions.csv puts a 'New ASE-L session' row on the File menu" \
+    [proves_sabotaged ase-open [list src/actions.csv [list $Q_file_first $Q_file_ase]]] {1 0}
+  # The csv clauses read two columns, the label and the command, a field quoted
+  # or not, and want ASE-L as a word in any case. A25 drives each column alone
+  # (the word after a comma inside a quoted label; the command behind a quoted
+  # accelerator holding a comma) and a label in lower case. A26 drives two rows
+  # that put no ASE-L entry on the menu: ase-l inside other words of the label,
+  # and ASE-L in the help column only.
+  check "A25 ... and so it does for ASE-L after a comma in a quoted label, for a row whose command alone runs ase::launch, and for a label in lower case" \
+    [list [proves_sabotaged ase-open [Q_file {file.new_ase,command,file,"For this schematic, a new ASE-L session",,ase_open_new,,,Open a session,,}]] \
+          [proves_sabotaged ase-open [Q_file {file.sim_env,command,file,Simulation environment,"Ctrl+Alt+A, F9",ase::launch_for_current,,,Open the simulation environment,,}]] \
+          [proves_sabotaged ase-open [Q_file {file.new_ase,command,file,New ase-l session,,ase_open_new,,,Open a session,,}]]] \
+    {{1 0} {1 0} {1 0}}
+  check "A26 ... but holds over a File row whose label says phase-locked and base-level, and over one naming ASE-L in its help only" \
+    [list [proves_sabotaged ase-open [Q_file {file.export_pll,command,file,Export a phase-locked loop netlist,,xschem netlist,,,Write the base-level netlist,,}]] \
+          [proves_sabotaged ase-open [Q_file {file.export_ase,command,file,Export netlist,,xschem netlist,,,Write a netlist that ASE-L can read,,}]]] \
+    {{1 1} {1 1}}
+  # The Simulation clause joins continued lines and ignores case, so it sees an
+  # entry whatever its option order, its line breaks or its label's case. A27
+  # drives each of those after the Tools entry copied as it is, and A28 an entry
+  # whose label holds ase-l inside a word. Its limit: an entry added through a
+  # variable that holds the menu's path is not seen.
+  check "A27 ... and says no once the Simulation menu has an ASE-L entry: the Tools entry copied, a typed label, a continued line, -command before -label, a label in lower case" \
+    [list [proves_sabotaged ase-open [Q_sim {  $topwin.menubar.simulation add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"}]] \
+          [proves_sabotaged ase-open [Q_sim {  $topwin.menubar.simulation add command -label "Launch ASE-L" -command {xschem simulate}}]] \
+          [proves_sabotaged ase-open [Q_sim "  \$topwin.menubar.simulation add command \\\n      -label \[annot_lbl_launch_ase\] -command \"ase::launch_for_current\""]] \
+          [proves_sabotaged ase-open [Q_sim {  $topwin.menubar.simulation add command -command "ase::launch_for_current" -label [annot_lbl_launch_ase]}]] \
+          [proves_sabotaged ase-open [Q_sim {  $topwin.menubar.simulation add command -label "Launch ase-l" -command {xschem simulate}}]]] \
+    {{1 0} {1 0} {1 0} {1 0} {1 0}}
+  check "A28 ... but holds over a Simulation entry whose label says phase-locked" \
+    [proves_sabotaged ase-open [Q_sim {  $topwin.menubar.simulation add command -label "Export a phase-locked loop netlist" -command {xschem netlist}}]] \
+    {1 1}
+} else {
+  check "A23 ase-open is in the bank (A24 to A28 run its proof)" absent {in the bank}
+}
+
 # =====================================================================
 # F* -- the wiring
 # =====================================================================

@@ -597,6 +597,12 @@ startup_quiz::add lib-git {
 }
 
 # -------------------------------------------------------------------------- ASE-L
+# ase-open's proof also holds its two menu wrong options to the source: no File
+# row of src/actions.csv (build_menu_from_table builds that menu from it) names
+# ASE-L as a word in its label or ase::launch in its command, and no Simulation
+# entry of src/xschem.tcl names ASE-L as a word, annot_lbl_launch_ase or
+# ase::launch, read with continued lines joined. Case is ignored in both.
+# test_startup_quiz rows A23 to A28.
 startup_quiz::add ase-open {
   type mc  kind howto  topic {ASE-L}
   q   {How do you open ASE-L, the simulation environment, for the schematic in front of you?}
@@ -609,7 +615,9 @@ startup_quiz::add ase-open {
        already open for it. The Simulate button is the older, one-shot simulate.}
   proof {[P_has src/xschem.tcl {menubar.tools add command -label [annot_lbl_launch_ase] -command "ase::launch_for_current"}]
          && [annot_lbl_launch_ase] eq {Launch ASE-L} && ![P_has src/xschem.tcl {New ASE-L session}]
-         && ![P_has src/xschem.tcl {menubar.simulation add command -label [annot_lbl_launch_ase]}]}
+         && ![regexp -nocase -line {^[^,]*,[^,]*,file(\.[^,]*)?,("[^"]*|[^,"]*)\mASE-L\M} [P_text src/actions.csv]]
+         && ![regexp -nocase -line {^[^,]*,[^,]*,file(\.[^,]*)?,("[^"]*"|[^,"]*),("[^"]*"|[^,"]*),("[^"]*|[^,"]*)\mase::launch} [P_text src/actions.csv]]
+         && ![regexp -nocase {menubar\.simulation add[^\n]*(\mASE-L\M|annot_lbl_launch_ase|ase::launch)} [regsub -all {\\\n\s*} [P_text src/xschem.tcl] { }]]}
 }
 startup_quiz::add ase-xyce {
   type tf  kind upcoming  topic {ASE-L}
