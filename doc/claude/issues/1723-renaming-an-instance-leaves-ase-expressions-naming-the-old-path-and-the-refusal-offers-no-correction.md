@@ -1,6 +1,6 @@
 # 1723 — renaming an instance leaves ASE-L's saved expressions naming the old path, and the refusal offers no correction
 
-**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-22 fix=taken open=3 by=port-1723`
+**STAMP:** `v1 claim=partial tree=f09888cda stamped=2026-11-22 fix=taken open=2 by=port-1723`
 
 Asked by the user on 2026-11-19: build a way out for a user who has no Claude Code to edit the state
 files for them. Items 1 to 3 below are the agreed scope. Item 4 is recorded, not scheduled. Items 5
@@ -744,6 +744,8 @@ a ruling is recorded where it was built.
 5. **What this port publishes.** Ruled; nothing in this series changes for it.
 6. **The startup quiz's settings.** Not this issue's subject; nothing in this series changes for it.
 
+### What was built
+
 **Built for ruling 1 part 3 and ruling 3 (crew B, 2026-11-22).** `ase::ui::incdlg_open`, after
 `textwindow $p ro`, disables the window's text widget and titles it `ase::ui::lbl_incdlg_ro_title`
 (the path, then "(read only)"). The stock `textwindow` is unchanged. Row `FX1723Ie3` moved: it now
@@ -764,19 +766,157 @@ goes with it, which no ruling asked for, so that the two trees' `ase::ui::incdlg
 same; each change takes its rows. A file the user cannot read, which the review of this build found,
 is issue 1732 (parked).
 
-Still open: **item 4** (unscheduled); **one `:0` run of `test_ase_window`**, owed again; and the
-builds of **ruling 1 parts 1, 2 and 4 and ruling 2** (crew A), recorded where they land. On
-2026-11-22, in the private clone, the user cleared the looks of the repair banner, the Include Files
-window and the confirmation, and that clone's `:0` run of `test_ase_window` (391 checks there). All
-of that came before rows `FX1723Ie3` (moved), `FX1723Ie4` and `FX1723Ii` landed, so the `:0` run is
-owed again for those three. In this tree no `:0` run of the `FX1723` bands has been made.
+**Built for ruling 1 parts 1, 2 and 4 and ruling 2 (crew A: the Run check, 2026-11-22).**
+
+**Include names ngspice would stop on (parts 1 and 2: "Refuse only when ngspice will stop").** Some
+`.nodeset` or `.ic` names in an include file point to a node the circuit does not have. Three shapes
+are covered:
+- a node that an existing instance lacks (`v(xdut.nosuch)={vsup}`);
+- a missing top-level node (`.ic v(nosuchtop)={vsup}`);
+- under case mode distinguish, a name the netlist spells in another case (`v(XDUT.a1)={0.4}`).
+
+ngspice drops such a name with a warning when its value is one it skips there. When the value is not
+one it skips, the Run is now refused before ngspice starts. The refusal names the file, the line and
+the name; for a case mismatch it also gives the netlist's spelling. It offers no correction and
+rewrites nothing. It says to change the name by hand in Setup > Include Files…, and to make a
+read-only file writable first. Its last line warns that switching the check off
+(`set ase_preflight 0`) does not help, because ngspice then stops the run on that name itself.
+
+**Which values ngspice skips** was measured on 2026-11-22 on both ngspice builds, and they agree. On
+a missing node, ngspice skips the value up to the next blank or comma without reading it as a number.
+So these run on, and stay a caution:
+- every ordinary number: `1.5`, `-0.1`, `1.5m`, `1.5V`, `.5`;
+- also `0x10`, `1e+`, `1k5`, `1..5`, `1.5*2`, `1.5)`;
+- `1.5,` when the next name follows.
+
+The run stops, and ASE-L refuses it, on:
+- a `{...}` or a quote anywhere in the value;
+- a parameter name (`vsup`), `nan` or a lone sign;
+- after a comma, anything that is not the next name (`1,5`, `,1`).
+
+A name inside a `.if` block stays a caution.
+
+**Outputs first, `.nodeset` breaks ties (part 4).** When the outputs alone point to one instance,
+they get that correction again, and the Apply Corrections button comes back. A `.nodeset`/`.ic` name
+that this instance cannot resolve still refuses the Run. It is named, with no correction. The closing
+line says that every *output* row resolves under the new name, and it names the include names left
+without a fix. Each file's own line says how many names Apply Corrections rewrites there, and how
+many are `.nodeset`/`.ic` names left for you to change.
+
+This holds across spellings too. Under case mode fold, `X1` and `x1` are the same instance. So an
+include file that writes `X1.b1` beside the output `v(x1.a1)` is no longer offered a different
+instance in the same press. It keeps its refusal with no correction, like any other name the outputs'
+instance cannot resolve.
+
+When the outputs fit several instances, the include names still help pick one, as before. Every
+correction offered before is still offered. Once the outputs are corrected, the next Run may offer the
+include name a different instance (`x1.b1` -> `xother.b1`). The confirmation shows that before
+anything is written.
+
+**A saved operating point that names a renamed instance (ruling 2: "Warn before the run").** When
+Restore operating point is ticked, ASE-L reads the saved file before the run. If names in it stop at
+an instance the netlist does not have, ONE caution says:
+- the file, how many nodes, and under which instance.
+- the likely new name (`'x1' looks renamed 'xdut'`), when exactly one instance fits every name under
+  it. A nested name keeps its path (`'xdut.x8' looks renamed 'xdut.x7'`). Nodes inside a PDK device's
+  own subcircuit (`x1.xr1.rb`) are counted but do not prevent this.
+- what ngspice does. Seed: it drops those starting guesses and runs on. Force: a transient no longer
+  starts those nodes at their saved values (an operating point analysis ignores them either way).
+- the fix. Either do one run with 'Save operating point' ticked (Simulation > Convergence…), or edit
+  the file by hand, replacing `x1.` with `xdut.`.
+
+Some cases change the wording:
+- If no OP analysis is enabled, the fix says to enable one, since a save needs it.
+- If Save is already ticked, the caution says a run whose operating point converges rewrites the file.
+- Under Seed, only the file's `.ic` lines reach ngspice, so only they are counted.
+
+The caution never stops the run, and it is not part of Apply Corrections. It is said even with
+`set ase_preflight 0`, which switches off refusals only. It is not said when the Run will be refused
+for the restore's own reason, for example Save ticked with no OP analysis enabled; that refusal speaks
+instead. An instance that only an include file adds (a stimulus file's `x5 ...`) is not called
+missing.
+
+#### Technical (crew A's build)
+
+Commits on top of assembler `dd4a88de3`: `4d2526d8e` (parts 1-2), `74382c2d3` (part 4), `29c0d8d82`
+(ruling 2), `aa227d7c3` (review round 1), `2c54e7254` (review round 2).
+
+- **Parts 1-2.**
+  - `ase::preflight_scan` gives each include row `stops` (`!cond && ![ase::include_value_plain
+    value]`). `ase::include_value_plain` answers what ngspice does on a missing node (review round
+    2): a value starting as a number does, holding no brace or quote, and after a `,` nothing or the
+    next name (`v(`, `all`).
+  - `ase::preflight_gate` refuses rows without `miss` that `stop` (`istop`), under a head kept apart
+    from the stale-instance head. Each name's line is `ase::preflight_include_said`, followed by a
+    closing hand-fix line and the escape line.
+  - Rows: PF1723s4b, t2 and u moved. New: u4 to u10, ah5 and ah7 (end to end).
+- **Part 4.**
+  - `ase::preflight_rename_solve` falls back to the output deciders' intersection
+    (`ase::preflight_rename_common`) when the joint intersection is empty and the outputs' is one
+    instance.
+  - Under fold, a pre-pass (`ofold`) gives a spelling group holding include rows and no output row
+    the instance that the outputs of every fold-equal spelling point to (review round 2).
+  - Rows: PF1723s3 moved. New: s3b, s3c, s3d and s3e.
+- **Ruling 2.**
+  - `ase::opstate_stale_caution` resolves the file against `ase::include_rundir_peek`, read only. It
+    stays silent when `ase::opstate_refusals` refuse.
+  - `ase::opstate_stale_said` (pure) scans the file as the only include text, counting rows with
+    `miss`. Under Seed it reads only the `.ic` lines. Top-level names that an include file defines,
+    or that a nested include may add, stand down. It decides the new name per prefix with
+    `ase::preflight_rename_try … 1` and `ase::preflight_rename_common`. The remedy names an OP
+    analysis when none is enabled.
+  - Rows: PF1723os to os14, and ah6 (end to end on /usr/bin/ngspice 45.2).
+- **Test runs.** test_ase_preflight went from 353 to 381 checks, 0 failed, on both arms. Every new
+  row that a fix moves was red on the code before that fix. The rows that pin already-correct
+  behaviour (os11, os12, s3d, u10) were each reddened by the wrong variant the review built. Twelve
+  sabotages of round 2, each run alone, redden only their own rows.
+
+#### Known limits of crew A's build
+
+- **A card malformed whatever its nodes is not checked.** In `=1.5 2` or `=1, 5`, ngspice reads the
+  `2` or the `5` as a name and stops, on an existing node too. ASE-L judges the value only, so on a
+  missing node this is a caution saying ngspice drops the name.
+- **For a value naming no defined parameter, the refused line names the wrong error.** For `nan`,
+  `x1` or `1{x}`, ngspice stops earlier, in numparam ('Undefined parameter', 'Cannot compute
+  substitute'), and on an existing node too. The refused line still says '.nodeset syntax error',
+  and both refusal heads (names at a missing instance, and names ngspice would stop on) still say
+  the run stops "with a syntax error".
+- **The missing-instance head keeps the first cut's "plain number".** It says ngspice drops such a
+  name "when its value is a plain number" and stops the run "when it is anything else". What counts
+  as plain is now `ase::include_value_plain`'s answer, which since review round 2 includes `0x10`,
+  `1k5` and `1.5*2`, because ngspice drops those too (measured 2026-11-22 on `/usr/bin/ngspice`
+  45.2, for `x1.q` where the circuit has no `x1`: rc 0 and the 'non-existent node' warning). Read
+  as plain words, "anything else" takes in values ngspice runs on. That head refuses whatever the
+  value (item 7), so only its explanation is affected.
+- **Under fold, the tie-break does not cross spellings.** When the outputs of one spelling fit
+  several instances, an include row of another spelling still decides its own spelling alone, as
+  before this build.
+- **An unreadable saved file under Force is not checked before the run**; ngspice exits 1 on its
+  `.include`. This is older than this build. Seed has its own refusal (`opstatefile`). It is not
+  filed as an issue yet; issue 1732 is the unreadable *include* file in the window.
+- **A campaign says the saved-operating-point caution once per shard** when the saved file's path is
+  absolute, as the include cautions already do. Each shard is its own run through the gate.
+- **The case-only refusal (part 2) has counted-arm rows only** (PF1723s4b). Stock ngspice 45.2 offers
+  only case mode fold, so there is no end-to-end row for it.
+
+### Still open
+
+Still open: **item 4** (unscheduled), and **one `:0` run of `test_ase_window`**, owed again. The
+builds of ruling 1 parts 1, 2 and 4 and ruling 2 (crew A) are recorded above under "What was
+built". On 2026-11-22, in the private clone, the user cleared the looks of the repair banner, the
+Include Files window and the confirmation, and that clone's `:0` run of `test_ase_window` (391
+checks there). All of that came before rows `FX1723Ie3` (moved), `FX1723Ie4` and `FX1723Ii` landed,
+so the `:0` run is owed again for those three. In this tree no `:0` run of the `FX1723` bands has
+been made.
 
 ## Ported from the private clone (2026-11-21)
 
 The user asked on 2026-11-21 that this tree be able to take ASE-L's rename corrections and Apply
 Corrections from `~/private/xschem-private`. Its six 1723 commits were replayed here with
 `git am -3`, keeping their subjects, plus this note. A seventh, fix round 4, came later and follows
-this note, its subject kept too. An eighth, for the user's rulings of 2026-11-22, came after that.
+this note, its subject kept too. An eighth, for the user's rulings of 2026-11-22, came after that,
+then five more with the rest of those rulings' builds, their subjects kept, and a last commit that
+records them here.
 The number is kept: this branch's `NUMBERING.md` left 1721 to 1723 to that clone, and its 1723 line
 says the number came with the port.
 
@@ -795,7 +935,8 @@ says the number came with the port.
   feature this tree does not have, next to the 1723 lines. The port keeps only the 1723 lines there:
   the repair banner and an open confirmation end when a run starts. Every other added or removed
   line is the private commits' own.
-- **"The rulings of 2026-11-22" is the private clone's record; this branch builds two of them.** The
+- **"The rulings of 2026-11-22" is the private clone's record; this branch builds the three that
+  change the product** (ruling 1 in its four parts, and rulings 2 and 3). The
   eighth commit was made for the port from five private ones: `df8231d15` (the read-only lock),
   `e3a6dd95f` (the neutral question), and `196a9bfd5`, `f5e921abd` and `977efb48e` (the record and
   its review fixes). It carries the product changes of ruling 1 part 3 and ruling 3, with rows
@@ -803,8 +944,18 @@ says the number came with the port.
   from the stamp (it keeps `tree=f09888cda`, as above) and three passages written for this tree: the
   section's opening paragraph, the entries for rulings 5 and 6 (which change nothing here), and the
   closing paragraph, which says the clears it names were made in the private clone. The builds of
-  ruling 1 parts 1, 2 and 4 and ruling 2 (crew A there) are not in this branch, and neither is the
-  private quiz spec's ruling 6 note: this tree's `doc/claude/specs/startup_quiz.md` is unchanged.
+  ruling 1 parts 1, 2 and 4 and ruling 2 (crew A there) follow it (next bullet); the private quiz
+  spec's ruling 6 note is not in this branch: this tree's `doc/claude/specs/startup_quiz.md` is
+  unchanged.
   `dd4a88de3` is a private commit too; issue 1732, named in the known limits, is the private clone's
   number; and the handoff folder the record names, `doc/claude/issue_1723/public_handoff/`, is the
   private one this series was cut from.
+- **The next five commits are crew A's build there, replayed with their subjects kept**:
+  `4d2526d8e` (ruling 1 parts 1 and 2), `74382c2d3` (part 4), `29c0d8d82` (ruling 2), `aa227d7c3`
+  and `2c54e7254` (its two review rounds), in that order. Every added or removed line of `src/` and
+  `tests/` is theirs; one commit message drops a suite this tree does not have from its list of
+  suites run. The last commit adds crew A's part of "What was built" (the private `d0b83c475`), word
+  for word, the stamp's `open=2`, as there, and this bullet; the "Still open" paragraph keeps the
+  wording written for this tree. The record's "Commits on top of assembler `dd4a88de3`" names the
+  private branch and its commits. The record's count was measured here too: `test_ase_preflight`
+  381 checks, 0 failed, on both arms, as there.
