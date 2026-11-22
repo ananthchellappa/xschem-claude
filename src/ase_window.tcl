@@ -17283,8 +17283,11 @@ proc ase::ui::repair_offer {err state scan {incs {}} {plan {}}} {
 # ({} when there is none). It names every file and its change, that files are
 # written at once and not at Save State, where each backup goes, which other
 # states of the library read a file too, and which files are not editable and
-# why.
-proc ase::ui::repair_confirm_lines {plan apply} {
+# why. LOST is ase::preflight_strand's `both` answer: under a file that is not
+# editable, the corrections OK costs it are named (fix round 4, finding 1),
+# since once the session is corrected the pre-flight no longer offers them,
+# and Cancel is then the user's only way to keep them offered.
+proc ase::ui::repair_confirm_lines {plan apply {lost {}}} {
   set out [list "[ase::ui::lbl_repair_apply] writes these include files now,\
  not at Session > Save State, and backs each one up first:"]
   foreach f $plan {
@@ -17300,6 +17303,18 @@ proc ase::ui::repair_confirm_lines {plan apply} {
       if {$sw ne {}} { lappend out "    Shared: $sw." }
     } else {
       lappend out "  $name: not editable, because [dict get $f why]; left as it is."
+      set here [lmap x $lost {
+        if {[dict get $x path] ne [dict get $f path]} { continue }
+        format "line %s '%s' -> '%s'" [dict get $x line] [dict get $x ident] [dict get $x fixed]
+      }]
+      if {[llength $here]} {
+        set one [expr {[llength $here] == 1}]
+        lappend out "    With this session corrected, the pre-flight no longer offers\
+ [expr {$one ? {this correction} : "these [llength $here] corrections"}] here, so after OK\
+ [ase::include_hand_first $f]change [expr {$one ? {it} : {them}}] by hand\
+ ([ase::preflight_include_door]): [join $here {, }]. Cancel keeps\
+ [expr {$one ? {it} : {them}}] offered."
+      }
     }
   }
   if {$apply ne {} && [dict get $apply n]} {
@@ -17312,6 +17327,20 @@ proc ase::ui::repair_confirm_lines {plan apply} {
   }
   lappend out "Cancel changes nothing."
   return $out
+}
+
+# THE CONFIRMATION'S LINES FOR SESSION KEY, from the SCAN and PLAN the press
+# took: ase::ui::repair_confirm_lines with the session's apply and the names OK
+# would cost a file ASE-L may not edit (ase::preflight_strand's `both`, fix
+# round 4, finding 1). Pure but for reading the session's state, so the
+# counted arm holds what the dialog shows (row PF1723aj8); the dialog is this,
+# joined.
+proc ase::ui::repair_confirm_text {key scan plan} {
+  set a {}
+  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
+  set lost {}
+  catch {set lost [dict get [ase::preflight_strand [ase::session_state $key] $scan both $plan] lost]}
+  return [ase::ui::repair_confirm_lines $plan $a $lost]
 }
 
 # The act after a refused Run: compose the offer for session KEY and show it,
@@ -17406,11 +17435,9 @@ proc ase::ui::repair_confirm {key scan plan} {
   variable wins
   variable fixconf
   if {![dict exists $wins $key]} { return {} }
-  set a {}
-  catch {set a [ase::preflight_apply [ase::session_state $key] $scan]}
   set w [ase::ui::dialog_frame [dict get $wins $key].fixconf [ase::ui::lbl_repair_apply]]
   label $w.msg -font AseLabelFont -anchor w -justify left -wraplength 720 \
-    -text [join [ase::ui::repair_confirm_lines $plan $a] "\n"]
+    -text [join [ase::ui::repair_confirm_text $key $scan $plan] "\n"]
   grid $w.msg -row 0 -column 0 -columnspan 2 -sticky we -padx 8 -pady {8 4}
   label $w.status -font AseLabelFont -anchor w -justify left -wraplength 720 -text {}
   grid $w.status -row 1 -column 0 -columnspan 2 -sticky we -padx 8 -pady 2

@@ -609,8 +609,10 @@ The fixes:
   by hand (Setup > Include Files…).
 - **`ase::preflight_fix_session` can still cost the include half its correction.** The ruling keeps what it
   writes unchanged, so it applies and then says so: a note names every include name it stranded, with the
-  correction to make by hand. `ase::preflight_fix_all` is the console command that cannot strand either
-  half. `ase::preflight_fix_includes` refuses rather than strand.
+  correction to make by hand. ~~`ase::preflight_fix_all` is the console command that cannot strand either
+  half.~~ *(Withdrawn by fix round 4, finding 1: true only for a file ASE-L may edit. `fix_all` and the
+  press's OK skip a file it may not edit, so a name there that only the other rows decided is lost too;
+  both now say so.)* `ase::preflight_fix_includes` refuses rather than strand.
 - **The strand check compares corrections, not states.** It asks whether every correction this scan offers
   the other half is still offered after a re-scan, read from the texts this scan read. A file edited
   between the two commands is not seen until the next scan.
@@ -624,6 +626,59 @@ The fixes:
   quoted stretch. The model does not follow ngspice's tokenizer any further. A syntax error before `all`
   ends ngspice's reading too, and the run dies anyway.
 
+## Fix round 4 (2026-11-21): the fourth review's confirmed findings
+
+A review of fix round 3 (`3db2f8fd1`) confirmed two findings. Both are fixed below. The three rows of
+finding 1 were written first and watched red on `392e7636a`'s code: 3 FAILED of 353 on the counted arm,
+the 350 older rows green. Finding 2 is a comment, which no row can show.
+
+1. **The strand note sent the user to `fix_all` for a file ASE-L may not edit, and "cannot strand" was
+   false** (finding 1). The bench: output `v(x1.a1)` (unique on its own), an include holding
+   `.nodeset v(x1.OUTP)=1` (alone it fits xdut and xother) that is read-only or in a model or PDK folder.
+   The window's press finds no editable plan record and runs `ase::preflight_fix_session`, whose note
+   said "change them by hand (Setup > Include Files…). Next time `ase::preflight_fix_all <key>` applies
+   both halves from one scan". Both halves of that were wrong: `fix_all` skips the file just as the press
+   does, so it ends in the same state, and the door opens a read-only file without Save. The press's OK on
+   a mixed plan (one editable file, one not) lost the other file's name with no word that it was lost.
+   - `ase::include_lost_said` (new, pure) says the note. It names `ase::preflight_fix_all` only for a name
+     in a file ASE-L may edit. A name in any other file gets its own line saying why ASE-L may not edit
+     it, with `ase::include_hand_first`'s "make it writable, then" before the door when the file is
+     read-only. On an all-editable bench the note is word for word what it was (`PF1723aj4`).
+   - `ase::preflight_strand` has a third half, `both`: the plan's editable files rewritten AND the
+     session corrected, then the names lost in the files not written. The session half alone reads the
+     original texts and can see nothing lost where `both` does: on the mixed bench the editable file's
+     own `x1.a1` still decides the rename until it is rewritten.
+   - `ase::preflight_commit_both` (the press's OK and `fix_all`) computes `both` before it writes
+     anything. After a commit it says each lost name with its correction and that the pre-flight will not
+     offer it again, and it returns them as `lost`. `fix_all`'s blocked-file line is unchanged.
+   - The confirmation (`ase::ui::repair_confirm_lines`, optional third argument) names, under a file that
+     is not editable, the corrections OK costs it, and says that Cancel keeps them offered. Its text comes
+     from `ase::ui::repair_confirm_text` (new), which the dialog joins, so the counted arm holds what the
+     dialog shows.
+   - `ase::preflight_fix_all`'s header and the fix round 3 limit above are corrected in place.
+   - Rows `PF1723aj6` (fix_session, read-only file), `PF1723aj7` (fix_all, the same bench) and
+     `PF1723aj8` (the mixed plan: `both` against the session half alone, the confirmation, the commit).
+     All three skip, naming themselves, for a user who can write a 0444 file. Sabotage sweep, each on the
+     counted arm: `commit_both` asking `session` instead of `both` reddens `aj8`; dropping the "make it
+     writable, then" step reddens `aj6`, `aj7` and `aj8`; the dialog's text without `lost` reddens `aj8`.
+2. **The header of `ase::preflight_rename_solve` said that folded spellings are always said once**
+   (finding 2). That stopped being true in fix round 3 (finding 9). It now says that spellings that fold
+   together are said once only when their records agree: one target for `ase::preflight_include_hits`, one
+   fit, target and candidate set for `ase::preflight_rename_said`. Spellings that disagree are said one by
+   one, as `PF1723t8` holds.
+
+## Known limits of fix round 4 (accepted)
+
+- **A name in a file ASE-L may not edit is still lost when only the other rows decided it.** The ruling
+  keeps the session half as it was, and ASE-L does not write a file it may not edit. So the press, `fix_all`
+  and `fix_session` all apply, then name each such name with its correction. The next Run is refused on it
+  with no correction offered; the note is the only record. To have it rewritten, make the file writable
+  before the press (or Cancel the confirmation, make it writable, and press again). That works for a
+  read-only file, not for one in a model or PDK folder.
+- **The window's session-only arm asks nothing first.** When every include correction sits in a file ASE-L
+  may not edit, the press runs `ase::preflight_fix_session` with no confirmation, as before this round. Its
+  note comes after the session is corrected.
+
 Still open: **item 4** (unscheduled); **the pixels** of the Include Files window and the confirmation
 (suites green, owed a look and a `:0` run of `test_ase_window`); and the saved-operating-point question
 above.
@@ -632,13 +687,16 @@ above.
 
 The user asked on 2026-11-21 that this tree be able to take ASE-L's rename corrections and Apply
 Corrections from `~/private/xschem-private`. Its six 1723 commits were replayed here with
-`git am -3`, keeping their subjects, plus this note. The number is kept: this branch's
-`NUMBERING.md` left 1721 to 1723 to that clone, and its 1723 line says the number came with the port.
+`git am -3`, keeping their subjects, plus this note. A seventh, fix round 4, came later and follows
+this note, its subject kept too. The number is kept: this branch's `NUMBERING.md` left 1721 to 1723
+to that clone, and its 1723 line says the number came with the port.
 
 - **Commit ids in this file and in `doc/claude/issue_1723/receipts/` name the private clone's
   history**, which this one does not hold: `777efaf24`, `e73fb41ae`, `ed635d969`, `2f1b8bca7`,
-  `96c8ec091` and `3db2f8fd1` are the private commits of the same subjects here, in that order, and
-  `a464b7f6b` was the private base of items 5 to 7. The receipts are dated records of that tree.
+  `96c8ec091`, `3db2f8fd1` and `36fa4fee4` are the private commits of the same subjects here, in that
+  order, and `a464b7f6b` was the private base of items 5 to 7. `392e7636a`, on whose code fix round
+  4's rows were watched red, is a private commit that changed no code: its code is `3db2f8fd1`'s. The
+  receipts are dated records of that tree.
 - **The stamp's `tree=` names the commit this branch stood at when the port was made.** `git am`
   gives every port commit a new id, so no port commit's id survives into the branch that takes the
   patches; that base does, as an ancestor. The claims were re-checked on top of it:

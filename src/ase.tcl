@@ -17144,8 +17144,11 @@ proc ase::preflight_rename_try {map kind name cs miss} {
 # as before": `v(x1.a1)` (only xdut has a1) and `v(X1.b1)` (only xother has b1)
 # were two unique renames at a464b7f6b, and the fold made them one `partial`
 # with nothing offered. Row PF1723s10. An include row joins the group of its
-# own spelling; ase::preflight_include_hits and the sentences that name a
-# rename speak once for spellings that fold together.
+# own spelling. Spellings that fold together are said once only when their
+# records agree: ase::preflight_include_hits merges them when they share one
+# target, ase::preflight_rename_said when they share fit, target and
+# candidates; spellings that disagree are said one by one (fix round 3,
+# finding 9; row PF1723t8 holds the two lines).
 proc ase::preflight_rename_solve {map cs orows mrows {irows {}}} {
   set grp [dict create]
   set tries [dict create]
@@ -18439,6 +18442,39 @@ proc ase::preflight_include_fixes {scan} {
   return $out
 }
 
+# The files a file half writes, as {<path> <edits> ...}: PLAN's editable files
+# with edits, or, for PLAN `-`, every file SCAN corrects. Pure.
+proc ase::preflight_strand_edits {scan plan} {
+  set edits [dict create]
+  if {$plan eq {-}} {
+    foreach f [ase::preflight_include_edits $scan] {
+      dict set edits [dict get $f path] [dict get $f edits]
+    }
+  } else {
+    foreach f $plan {
+      if {[dict get $f editable] && [llength [dict get $f edits]]} {
+        dict set edits [dict get $f path] [dict get $f edits]
+      }
+    }
+  }
+  return $edits
+}
+
+# ITEXTS (ase::include_texts' list) as they read once EDITS
+# (ase::preflight_strand_edits) are written. Pure.
+proc ase::preflight_strand_texts {itexts edits} {
+  set new {}
+  foreach it $itexts {
+    set p [dict get $it path]
+    if {[dict exists $edits $p] &&
+        ![catch {ase::include_rewrite_text [dict get $it text] [dict get $edits $p]} t]} {
+      dict set it text $t
+    }
+    lappend new $it
+  }
+  return $new
+}
+
 # WOULD ONE HALF, APPLIED ALONE, COST THE OTHER HALF A CORRECTION? Pure
 # (fix round 3, findings 3 and 8). SCAN is ase::preflight_session_scan's: it
 # carries the include texts read (`itexts`) and the netlist text (`ntext`), so
@@ -18451,6 +18487,14 @@ proc ase::preflight_include_fixes {scan} {
 #   session  the session's rows are corrected; -> the include corrections a
 #            re-scan then no longer offers, as ase::preflight_include_fixes
 #            records.
+#   both     what the press's OK and ase::preflight_fix_all do: PLAN's files
+#            are rewritten (as for `files`) AND the session's rows corrected;
+#            -> the include corrections in the files that are NOT written
+#            which a re-scan then no longer offers (fix round 4, finding 1).
+#            A file ASE-L may not edit is written by neither half, so a name
+#            there that only the other rows decided is lost for good; and the
+#            re-scan must read the written files as written, since `session`
+#            (the original texts) can see nothing lost where `both` does.
 # -> {lost {...}}. Empty when the half can run alone and the other half,
 # re-scanned afterwards, still finds every correction this scan offers.
 proc ase::preflight_strand {state scan half {plan -}} {
@@ -18458,30 +18502,11 @@ proc ase::preflight_strand {state scan half {plan -}} {
   set ntext [dict get $scan ntext]
   set lost {}
   if {$half eq {files}} {
-    set edits [dict create]
-    if {$plan eq {-}} {
-      foreach f [ase::preflight_include_edits $scan] {
-        dict set edits [dict get $f path] [dict get $f edits]
-      }
-    } else {
-      foreach f $plan {
-        if {[dict get $f editable] && [llength [dict get $f edits]]} {
-          dict set edits [dict get $f path] [dict get $f edits]
-        }
-      }
-    }
+    set edits [ase::preflight_strand_edits $scan $plan]
     if {![dict size $edits]} { return [dict create lost {}] }
     set before [ase::preflight_repairs $scan]
     if {![llength $before]} { return [dict create lost {}] }
-    set new {}
-    foreach it $itexts {
-      set p [dict get $it path]
-      if {[dict exists $edits $p] &&
-          ![catch {ase::include_rewrite_text [dict get $it text] [dict get $edits $p]} t]} {
-        dict set it text $t
-      }
-      lappend new $it
-    }
+    set new [ase::preflight_strand_texts $itexts $edits]
     set after {}
     foreach r [ase::preflight_repairs [ase::preflight_scan $state $ntext $new]] {
       lappend after [list [dict get $r expr] [dict get $r fixed]]
@@ -18498,16 +18523,86 @@ proc ase::preflight_strand {state scan half {plan -}} {
   if {![llength $before]} { return [dict create lost {}] }
   set a [ase::preflight_apply $state $scan]
   if {![dict get $a n]} { return [dict create lost {}] }
+  set wrote [dict create]
+  set texts $itexts
+  if {$half eq {both}} {
+    set wrote [ase::preflight_strand_edits $scan $plan]
+    set texts [ase::preflight_strand_texts $itexts $wrote]
+  }
   set after {}
-  foreach x [ase::preflight_include_fixes [ase::preflight_scan [dict get $a state] $ntext $itexts]] {
+  foreach x [ase::preflight_include_fixes [ase::preflight_scan [dict get $a state] $ntext $texts]] {
     lappend after [list [dict get $x path] [dict get $x start] [dict get $x fixed]]
   }
   foreach x $before {
+    ## a file the half writes keeps its corrections: they are written
+    if {[dict exists $wrote [dict get $x path]]} { continue }
     if {[lsearch -exact $after [list [dict get $x path] [dict get $x start] [dict get $x fixed]]] < 0} {
       lappend lost $x
     }
   }
   return [dict create lost $lost]
+}
+
+# WHAT A SESSION HALF COST THE INCLUDE FILES, SAID (fix round 4, finding 1).
+# Pure. LOST is ase::preflight_strand's records (`session` or `both`); PLAN is
+# ase::preflight_include_plan's, which says per file whether ASE-L may edit it.
+# ALONE is 1 for ase::preflight_fix_session (the session half ran by itself),
+# 0 for ase::preflight_commit_both (both halves ran, so every lost name sits
+# in a file ASE-L may not edit). -> the lines, the head first, then one per
+# name.
+# ⚠ `ase::preflight_fix_all` IS NAMED ONLY FOR A FILE ASE-L MAY EDIT. It skips
+# every other file, as the press does, so for a name there it would have kept
+# nothing; and the door opens a read-only file without Save, so that name's
+# line says ase::include_hand_first's step before the door.
+proc ase::include_lost_said {key lost plan alone} {
+  set byp [dict create]
+  foreach f $plan { dict set byp [dict get $f path] $f }
+  set door [ase::preflight_include_door]
+  set rn [lsort -unique [lmap x $lost {format "'%s' -> '%s'" [dict get $x stale] [dict get $x to]}]]
+  set rows {}
+  set ned 0
+  set nfiles [dict create]
+  foreach x $lost {
+    set l "ase:   include file '[dict get $x path]' line [dict get $x line]:\
+ '[dict get $x ident]' -> '[dict get $x fixed]'"
+    ## a file PLAN does not hold is said as before this round: no claim
+    ## about it is made
+    if {![dict exists $byp [dict get $x path]] ||
+        [dict get $byp [dict get $x path] editable]} {
+      incr ned
+    } else {
+      set f [dict get $byp [dict get $x path]]
+      dict set nfiles [dict get $x path] 1
+      append l "; ASE-L may not edit it, because [dict get $f why]:\
+ [ase::include_hand_first $f]change it by hand ($door)."
+    }
+    lappend rows $l
+  }
+  set n [llength $lost]
+  set nf [dict size $nfiles]
+  set files [expr {$nf == 1 ? {the include file they are in} : {the include files they are in}}]
+  set lines [expr {$n == 1 ? {the line below says} : {each line below says}}]
+  set dec "with this session's output rows corrected they no longer decide\
+ [join $rn {, }] on their own"
+  set h "ase: pre-flight — note: the include files' .nodeset/.ic names below"
+  if {!$alone} {
+    append h " were not rewritten, because ASE-L may not edit $files, and $dec,\
+ so the pre-flight will not offer them again; change them by hand as $lines."
+  } elseif {$ned == $n} {
+    append h " lose their correction now, because $dec; change them by hand\
+ ($door). Next time `ase::preflight_fix_all $key` applies both halves from one\
+ scan."
+  } elseif {!$ned} {
+    append h " lose their correction now, because $dec.\
+ `ase::preflight_fix_all $key` would not have kept them either: ASE-L may not\
+ edit $files, so change them by hand as $lines."
+  } else {
+    append h " lose their correction now, because $dec; change them by hand as\
+ each line below says. Next time `ase::preflight_fix_all $key` applies both\
+ halves from one scan and keeps the ones in files ASE-L may edit; it cannot\
+ keep the others, whose lines say why."
+  }
+  return [list $h {*}$rows]
 }
 
 # BOTH HALVES FROM ONE SCAN: the files of PLAN first (backed up, then
@@ -18516,8 +18611,18 @@ proc ase::preflight_strand {state scan half {plan -}} {
 # this. NOTHING HALF-DONE (the ruling): a session half that raises after the
 # files were written puts the files back and drops their backups
 # (ase::include_unapply). -> {ok 1 files <names rewritten> rows <session rows
-# rewritten> r <ase::include_apply_plan's answer>} | {ok 0 why <sentence>}.
+# rewritten> r <ase::include_apply_plan's answer> lost <the strand records
+# below>} | {ok 0 why <sentence>}.
+#
+# ⚠ A FILE ASE-L MAY NOT EDIT IS SKIPPED BY BOTH HALVES (fix round 4, finding
+# 1), so a `.nodeset`/`.ic` name there that only the other rows decided loses
+# its correction for good once they are corrected: the next scan offers none,
+# and the Run is refused with no correction. That is computed before anything
+# is written (ase::preflight_strand's `both`), and after a commit each such
+# name is said with its correction, to be made by hand (ase::include_lost_said).
 proc ase::preflight_commit_both {key scan plan} {
+  set lost {}
+  catch {set lost [dict get [ase::preflight_strand [ase::session_state $key] $scan both $plan] lost]}
   set r [ase::include_apply_plan $plan]
   if {![dict get $r ok]} { return [dict create ok 0 why [dict get $r why]] }
   set a {}
@@ -18533,7 +18638,10 @@ proc ase::preflight_commit_both {key scan plan} {
     }
   }
   foreach l [ase::include_apply_said $r] { catch {::ase::echo $l} }
-  return [dict create ok 1 files [dict get $r n] rows $rows r $r]
+  if {$rows && [llength $lost]} {
+    foreach l [ase::include_lost_said $key $lost $plan 0] { catch {::ase::echo $l note} }
+  }
+  return [dict create ok 1 files [dict get $r n] rows $rows r $r lost $lost]
 }
 
 # BOTH HALVES' CONSOLE COMMAND (fix round 3, findings 3 and 8): what
@@ -18542,8 +18650,13 @@ proc ase::preflight_commit_both {key scan plan} {
 # rewritten, then the session's rows are corrected and the session goes
 # unsaved; Session > Save State is still the user's. Run alone, each half
 # re-scans, and can cost the other a correction the two decide together
-# (ase::preflight_strand); this cannot. -> include names plus session rows
-# rewritten.
+# (ase::preflight_strand); this keeps every correction in the session and in
+# the files ASE-L may edit. It cannot keep one in a file ASE-L may not edit
+# (read-only, or in a model or PDK folder: fix round 4, finding 1): that file
+# is skipped, so a name there that only the other rows decided is lost once
+# they are corrected. ase::include_blocked_said names each such file's changes
+# first, and ase::preflight_commit_both each name it loses. -> include names
+# plus session rows rewritten.
 proc ase::preflight_fix_all {key} {
   set state [ase::session_state $key]
   set scan [ase::preflight_session_scan $key]
@@ -18847,24 +18960,24 @@ proc ase::preflight_fixed_expr {rows} {
 # decide it, so a name only the two together made unique loses its correction,
 # and ase::preflight_fix_includes then has none to offer. When that happens
 # (ase::preflight_strand), a note names every such name with the correction it
-# just lost, to be made by hand, and `ase::preflight_fix_all <key>`, which does
-# both halves from one scan.
+# just lost, to be made by hand (ase::include_lost_said). It names
+# `ase::preflight_fix_all <key>`, which does both halves from one scan, only
+# for a name in a file ASE-L may edit (fix round 4, finding 1): fix_all skips
+# every other file, and the window's press reaches this command only when
+# every include correction sits in a file ASE-L may not edit.
 proc ase::preflight_fix_session {key} {
   set scan [ase::preflight_session_scan $key]
+  set state [ase::session_state $key]
   set lost {}
-  catch {set lost [dict get [ase::preflight_strand [ase::session_state $key] $scan session] lost]}
+  catch {set lost [dict get [ase::preflight_strand $state $scan session] lost]}
+  set plan {}
+  if {[llength $lost]} {
+    catch {set plan [ase::preflight_include_plan $state $scan [dict get $scan itexts] \
+                       [dict get $scan rundir]]}
+  }
   set n [ase::preflight_session_commit $key $scan]
   if {$n && [llength $lost]} {
-    set rn [lsort -unique [lmap x $lost {format "'%s' -> '%s'" [dict get $x stale] [dict get $x to]}]]
-    ::ase::echo "ase: pre-flight — note: the include files' .nodeset/.ic names below\
- lose their correction now, because with this session's output rows corrected\
- they no longer decide [join $rn {, }] on their own; change them by hand\
- ([ase::preflight_include_door]). Next time `ase::preflight_fix_all $key` applies\
- both halves from one scan." note
-    foreach x $lost {
-      ::ase::echo "ase:   include file '[dict get $x path]' line [dict get $x line]:\
- '[dict get $x ident]' -> '[dict get $x fixed]'" note
-    }
+    foreach l [ase::include_lost_said $key $lost $plan 1] { ::ase::echo $l note }
   }
   return $n
 }

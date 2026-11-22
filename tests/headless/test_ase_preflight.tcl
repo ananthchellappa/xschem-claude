@@ -4483,6 +4483,106 @@ eqcheck PF1723t6-a-refusal-with-both-halves-names-fix-all-first \
   [list $rct6 [said_count "ase: '[pcall ase::ui::lbl_repair_apply]' also rewrites the 1 .nodeset/.ic name above in 1 include file, after asking: each file is backed up beside itself first and written at once, not at Save State. `ase::preflight_fix_all <key>` does both halves from the console from one scan, as the button does; `ase::preflight_fix_session <key>` and `ase::preflight_fix_includes <key>` are each half alone. [pcall ase::ui::menu_path_include_files] shows the files."]] \
   {1 1}
 pcall ase::session_close sbB
+## FIX ROUND 4, FINDING 1: A DECIDING INCLUDE ROW IN A FILE ASE-L MAY NOT EDIT.
+## Bench A with its include read-only. The window's press finds no editable
+## plan record and takes the session-only arm (ase::preflight_fix_session), and
+## ase::preflight_fix_all skips the file as the press does: neither keeps that
+## row's correction. The note sent the user to fix_all ("Next time ... applies
+## both halves"), and named the door with no "make it writable, then", though
+## the door opens a read-only file without Save.
+set RO4 [file join $tmp ro4_probe.spice]
+putfile $RO4 "* probe\n"
+file attributes $RO4 -permissions 0444
+set ro4_measurable [expr {![file writable $RO4]}]
+file attributes $RO4 -permissions 0644
+if {!$ro4_measurable} {
+  puts "skip: PF1723aj6 PF1723aj7 PF1723aj8 (this user can write a 0444 file, so no include is read-only)"
+} else {
+  set DOOR4 [pcall ase::ui::menu_path_include_files]
+  file delete -force [file join $tmp run_1723_sbA]
+  set incA [strand_bench sbA {{expr v(x1.a1) save 1}} $SATXT]
+  file attributes $incA -permissions 0444
+  set scRO [pcall ase::preflight_session_scan sbA]
+  set plRO [pcall ase::preflight_include_plan [ase::session_state sbA] $scRO [dg $scRO itexts] [dg $scRO rundir]]
+  said_clear
+  set nsRO [pcall ase::preflight_fix_session sbA]
+  eqcheck PF1723aj6-the-session-half-on-a-read-only-include-names-no-fix-all-and-says-make-it-writable \
+    [list [lmap f $plRO {list [dgn $f editable] [dgn $f writable] [dgn $f n]}] \
+          $nsRO [lmap o [dg [ase::session_state sbA] outputs] {dgn $o expr}] [expr {[readfile $incA] eq $SATXT}] \
+          [said_count "ase: pre-flight — note: the include files' .nodeset/.ic names below lose their correction now, because with this session's output rows corrected they no longer decide 'x1' -> 'xdut' on their own. `ase::preflight_fix_all sbA` would not have kept them either: ASE-L may not edit the include file they are in, so change them by hand as the line below says."] \
+          [said_count "ase:   include file '$incA' line 1: 'x1.OUTP' -> 'xdut.OUTP'; ASE-L may not edit it, because it is read-only: make it writable, then change it by hand ($DOOR4)."] \
+          [said_count {*Next time*}]] \
+    {{{0 0 1}} 1 v(xdut.a1) 1 1 1 0}
+  pcall ase::session_close sbA
+  ## ...and fix_all on the same fresh bench costs the include the same correction:
+  ## it may not write the file. It says what to change there (the blocked line,
+  ## unchanged) and now also that the pre-flight will not offer it again.
+  file delete -force [file join $tmp run_1723_sbA]
+  set incA [strand_bench sbA {{expr v(x1.a1) save 1}} $SATXT]
+  file attributes $incA -permissions 0444
+  said_clear
+  set naRO [pcall ase::preflight_fix_all sbA]
+  set rsRO [pcall ase::preflight_session_scan sbA]
+  eqcheck PF1723aj7-fix-all-on-a-read-only-include-says-the-correction-the-pre-flight-will-not-offer-again \
+    [list $naRO [expr {[readfile $incA] eq $SATXT}] [file exists $incA.bak] \
+          [lmap o [dg [ase::session_state sbA] outputs] {dgn $o expr}] \
+          [llength [pcall ase::preflight_include_edits $rsRO]] \
+          [said_count "ase: include file '$incA' is not edited: it is read-only. Make it writable, then change 1 × x1. → xdut. there by hand ($DOOR4)."] \
+          [said_count "ase: pre-flight — note: the include files' .nodeset/.ic names below were not rewritten, because ASE-L may not edit the include file they are in, and with this session's output rows corrected they no longer decide 'x1' -> 'xdut' on their own, so the pre-flight will not offer them again; change them by hand as the line below says."] \
+          [said_count "ase:   include file '$incA' line 1: 'x1.OUTP' -> 'xdut.OUTP'; ASE-L may not edit it, because it is read-only: make it writable, then change it by hand ($DOOR4)."] \
+          [said_count {*fix_all*}]] \
+    {1 1 0 v(xdut.a1) 0 1 1 1 0}
+  pcall ase::session_close sbA
+  ## ...and the window's OK on a MIXED plan: ns_e.spice (editable, `x1.a1`) and
+  ## ns_r.spice (read-only, `x1.OUTP`). Before the press the three rows decide
+  ## xdut together, so the session half alone strands nothing; but OK writes
+  ## ns_e.spice AND corrects the session, after which ns_r.spice's `x1.OUTP` fits
+  ## xdut and xother: lost, silently. The strand check's `both` half sees it, the
+  ## confirmation says so before OK (ase::ui::repair_confirm_text, what the
+  ## dialog shows), and ase::preflight_commit_both after it.
+  proc strand_bench2 {name outs incs} {
+    set d [file join $::tmp run_1723_$name]
+    file mkdir $d
+    putfile [file join $d rn_top.spice] $::NLR
+    set paths {}
+    set ents {}
+    foreach {fn txt} $incs {
+      set p [file normalize [file join $d $fn]]
+      putfile $p $txt
+      lappend paths $p
+      lappend ents [list file $p]
+    }
+    putfile [file join $d rn.state] \
+      "design {lib dlib cell rn_top view schematic} rundir [list $d] models {} outputs [list $outs]\
+   includes [list $ents]"
+    pcall ase::session_open $name [file join $d rn.state]
+    return $paths
+  }
+  set SETXT ".nodeset v(x1.a1)=1\n"
+  lassign [strand_bench2 sbM {{expr v(x1.a1) save 1}} [list ns_e.spice $SETXT ns_r.spice $SATXT]] incME incMR
+  file attributes $incMR -permissions 0444
+  set stM [ase::session_state sbM]
+  set scM [pcall ase::preflight_session_scan sbM]
+  set plM [pcall ase::preflight_include_plan $stM $scM [dg $scM itexts] [dg $scM rundir]]
+  set lostM [dgn [pcall ase::preflight_strand $stM $scM both $plM] lost]
+  set confM [pcall ase::ui::repair_confirm_text sbM $scM $plM]
+  said_clear
+  set cM [pcall ase::preflight_commit_both sbM $scM $plM]
+  eqcheck PF1723aj8-the-press-on-a-mixed-plan-says-before-and-after-ok-what-the-read-only-file-loses \
+    [list [lmap f $plM {list [file tail [dgn $f path]] [dgn $f editable] [dgn $f n]}] \
+          [llength [dgn [pcall ase::preflight_strand $stM $scM session] lost]] \
+          [lmap x $lostM {list [file tail [dgn $x path]] [dgn $x ident] [dgn $x fixed]}] \
+          [lsearch -exact $confM "  ns_r.spice: not editable, because it is read-only; left as it is."] \
+          [lsearch -exact $confM "    With this session corrected, the pre-flight no longer offers this correction here, so after OK make it writable, then change it by hand ($DOOR4): line 1 'x1.OUTP' -> 'xdut.OUTP'. Cancel keeps it offered."] \
+          [dgn $cM ok] [dgn $cM files] [dgn $cM rows] [readfile $incME] [expr {[readfile $incMR] eq $SATXT}] \
+          [lmap o [dg [ase::session_state sbM] outputs] {dgn $o expr}] \
+          [said_count "ase: pre-flight — note: the include files' .nodeset/.ic names below were not rewritten, because ASE-L may not edit the include file they are in, and with this session's output rows corrected they no longer decide 'x1' -> 'xdut' on their own, so the pre-flight will not offer them again; change them by hand as the line below says."] \
+          [said_count "ase:   include file '$incMR' line 1: 'x1.OUTP' -> 'xdut.OUTP'; ASE-L may not edit it, because it is read-only: make it writable, then change it by hand ($DOOR4)."]] \
+    [list {{ns_e.spice 1 1} {ns_r.spice 0 1}} 0 {{ns_r.spice x1.OUTP xdut.OUTP}} 2 3 \
+          1 1 1 ".nodeset v(xdut.a1)=1\n" 1 v(xdut.a1) 1 1]
+  pcall ase::session_close sbM
+  foreach p [list $incA $incMR] { catch {file attributes $p -permissions 0644} }
+}
 ## FINDING 10: A SHARED INCLUDE FILE. The user's own tree has one nodeset file
 ## in the includes of seven states across three benches; rewriting it for one
 ## bench changes what every other bench reads, and the confirmation said
