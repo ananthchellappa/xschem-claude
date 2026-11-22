@@ -5,10 +5,13 @@
 # library_manager, :17166 copy_form, :17168 create_instance, :17170
 # save_as_form, :17521 op_annot, :17528 op_param_lists, :17557 cmdmode, :17559
 # ase, :17561 ase_window, :17563 wave_viewer, :17571 results, :17574 calculator,
-# :17587 rdw, :17589 property_form, :17593 alt2_toggle_view) plus ONE guarded by
-# issue 0658 (:17632 ciw.tcl). A Tcl error inside any of the eighteen propagates
-# OUT of xschem.tcl, so the REST of xschem.tcl -- the statusbar widgets,
-# build_widgets, ciw_create, the colour and layer setup -- never runs. Then
+# :17587 rdw, :17589 property_form, :17593 alt2_toggle_view) plus ciw.tcl, under
+# issue 0658's catch. Since the tip-of-the-day quiz, startup_quiz.tcl is caught
+# too, under a catch of its own (doc/claude/specs/startup_quiz.md). Of the caught
+# sources, this suite breaks ciw.tcl, and test_startup_quiz's band M breaks
+# startup_quiz.tcl. A Tcl error inside any of the eighteen propagates OUT of
+# xschem.tcl, so the REST of xschem.tcl -- the statusbar widgets, build_widgets,
+# ciw_create, the colour and layer setup -- never runs. Then
 # source_tcl_file() (src/xinit.c:1519) merely PRINTS the error and returns
 # TCL_ERROR, Tcl_AppInit (src/xinit.c:3628) DISCARDS that return, and control
 # walks on into `tclgetdoublevar("cairo_font_line_spacing")` (:3639) and nine
@@ -45,7 +48,7 @@
 #   * the NORMAL path is byte-unchanged: a clean tree starts exactly as before,
 #     with no announcement and no new stderr line. A fix that announced on a
 #     healthy startup would be worse than the bug;
-#   * issue 0658's per-file ciw.tcl catch (src/xschem.tcl:17632) keeps its
+#   * issue 0658's per-file ciw.tcl catch in src/xschem.tcl keeps its
 #     shipped behaviour: still alive, still ONE `NOTICE CHANNEL DEGRADED` line,
 #     and NO second announcement from the C backstop.
 #
@@ -215,9 +218,9 @@ set sg_have_display [expr {[info exists ::env(DISPLAY)] && $::env(DISPLAY) ne {}
 note "SG0 GUI legs" [expr {$sg_have_display ? "ENABLED (DISPLAY=$::env(DISPLAY))" \
                                             : "SKIPPED (no DISPLAY on the parent)"}]
 check "SG0 harness sanity: op_annot.tcl, action_registry.tcl and\
- alt2_toggle_view.tcl are BARE sources in src/xschem.tcl and ciw.tcl is the\
- one CAUGHT source (issue 0658) -- every farm below breaks a file that is\
- really on the startup path" \
+ alt2_toggle_view.tcl are BARE sources in src/xschem.tcl and ciw.tcl is a\
+ CAUGHT source (issue 0658), not a bare one -- every farm below breaks a file\
+ that is really on the startup path" \
   [list [expr {[string first "\nsource \$XSCHEM_SHAREDIR/op_annot.tcl" $sg_xtcl] >= 0 ? 1 : 0}] \
         [expr {[string first "\nsource \$XSCHEM_SHAREDIR/action_registry.tcl" $sg_xtcl] >= 0 ? 1 : 0}] \
         [expr {[string first "\nsource \$XSCHEM_SHAREDIR/alt2_toggle_view.tcl" $sg_xtcl] >= 0 ? 1 : 0}] \
@@ -418,7 +421,7 @@ check "SG22 1377 the farm children resolve a PRIVATE config dir inside this\
 
 # --- SG14: the 0658 control -- no interaction, no double announcement -------
 # GREEN AT HEAD and it must stay green. With ciw.tcl broken, xschem.tcl SUCCEEDS
-# (0658's catch at :17632 swallows it), so source_tcl_file returns TCL_OK and
+# (0658's catch swallows it), so source_tcl_file returns TCL_OK and
 # the C backstop never fires: one announcement, ONE durable line, 0658's shipped
 # output byte-unchanged. The `#! ` total is the anti-0665 half -- one notice
 # must not become two durable lines.
