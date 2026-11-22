@@ -4,13 +4,17 @@
 IMPLEMENTED, 2026-08-08. Engine `select_same_net_by_name()` in `src/select.c`,
 subcommand `xschem select_same_net`, actions `select.same_net_by_label` /
 `select.same_net_by_label_add`, default chord installed by `src/cadence_style_rc`.
-Test: `tests/headless/test_select_same_net_by_label.tcl`.
+Test: `tests/headless/test_select_same_net_by_label.tcl` (registered on the display
+arm of the regression since 2026-11-21).
 
 ## Motivation
 
 The double-click grow (`select_grow_connected`,
 [dblclick_connected_select.md](dblclick_connected_select.md)) walks **copper**: it
-adds wire segments that geometrically touch, and stops where the wire stops. That
+adds wire segments that geometrically touch, and stops where the wire stops. (Since
+the ruling of 2026-11-21 it also takes the net-name labels sitting on the wires it
+selects — `lab_pin`, `lab_wire` and the other `label` symbols without a `global` —
+but still nothing it does not touch, and no port, probe or power symbol.) That
 is the right model for "select this piece of routing", but it cannot express the
 thing a designer usually means by *the net*: in a real schematic the same node is
 routed as several disconnected islands tied together by **wire-labels**, and in
@@ -22,7 +26,7 @@ This feature is the other answer, on its own chord, so both are available:
 
 | | walks | reaches |
 |---|---|---|
-| `select_grow_connected` (LMB double-click) | copper | segments that touch |
+| `select_grow_connected` (LMB double-click) | copper | segments that touch, and the net-name labels on them |
 | `select_same_net` (Ctrl+Alt+Shift+LMB) | the netlist | every segment with the same net name, touching or not |
 
 ## Behaviour
@@ -33,8 +37,9 @@ Selects, in one shot:
 - every **wire segment** whose node name equals the clicked object's — including
   segments that touch nothing and are joined only through a shared wire-label;
 - every **net-label / port / probe** instance that names that node
-  (`IS_LABEL_SH_OR_PIN`: `label`, `ipin`, `opin`, `iopin`, `probe`-family,
-  `show_label`, `bus_tap` — the same family net highlighting selects).
+  (`IS_LABEL_SH_OR_PIN`: `label`, `ipin`, `opin`, `iopin`, `scope`,
+  `show_label`, `bus_tap` — the same family net highlighting selects; corrected
+  2026-11-21, this list named a `probe`-family the macro does not hold).
 
 Devices are never selected — only wires and the symbols that *name* the net.
 

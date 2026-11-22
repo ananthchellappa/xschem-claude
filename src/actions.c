@@ -2676,8 +2676,21 @@ int add_pin_stubs(const char *prefix, const char *suffix, int inst_prefix)
      * "text_size_0=0.2" with text_size_0 destroyed. Measured via
      * `xschem add_pin_stubs -prefix { }`. Issue 0183. */
     if(str_is_blank(netname)) { my_free(_ALLOC_ID_, &netname); continue; }
-    /* stub wire: pin (start) -> stub end */
-    storeobject(-1, g.x1, g.y1, g.x2, g.y2, WIRE, 0, 0, NULL);
+    /* stub wire, from the pin to the stub end. It is STORED with its two end points in
+     * order: touch() and dist() (clip.c) read a wire as ordered. For a stub stored
+     * pin-first that runs toward smaller coordinates (out of a pin on the upper or the
+     * left side of a symbol), and until the sheet was saved and loaded again, touch()
+     * answered no at every point and dist() measured only to the nearer end point.
+     * So nothing touched that stub and a point on its middle picked nothing: a
+     * double click there selected nothing, its pin still read as unconnected, and its
+     * label was no part of its net for the double-click grow (rows L12c to L12h of
+     * tests/headless/test_dblclick_connected_grow.tcl).
+     * The label below still goes to g.x2,g.y2, the stub's far end. */
+    {
+      double wx1 = g.x1, wy1 = g.y1, wx2 = g.x2, wy2 = g.y2;
+      ORDER(wx1, wy1, wx2, wy2);
+      storeobject(-1, wx1, wy1, wx2, wy2, WIRE, 0, 0, NULL);
+    }
     /* lab_pin at the stub end, oriented so the text reads outward; unique name via uniquify */
     lab_orient(g.dx, g.dy, &lrot, &lflip);
     my_mstrcat(_ALLOC_ID_, &prop, "name=l0 lab=", netname ? netname : "", " text_size_0=", szbuf, NULL);

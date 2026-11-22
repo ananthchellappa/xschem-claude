@@ -29,6 +29,14 @@ set tcases [list "create_save" "open_close" "netlisting"]
 # on the display arm, self-skipping here behind an uppercase `SKIP:` line.
 # test_ase_saved_results_1705 is in BOTH lists for the same reason (issue 1705):
 # its pure-layer rows count here, its form rows run only on the display arm.
+# test_dblclick_connected_grow is in BOTH lists (the double-click grow and the
+# net-name labels it takes, ruling of 2026-11-21). The command forms pick and
+# select with no window, so the engine rows count here: the rings, the labels on
+# them, the scope by symbol, Delete and undo, a move and a copy of the grown
+# selection. The rows that send events to the canvas and the rows about the action
+# log run on the display arm, which passes --logdir; here the suite names both
+# bands in two lines that begin with the lower-case word summarize_all counts
+# into `skips=`.
 set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "hilight_xwin_sync_headless" "buried_hilight" \
                  "headless/test_ase_preflight" \
@@ -41,6 +49,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_wire_split" \
                  "headless/test_label_strand_oracle" \
                  "headless/test_label_ride" \
+                 "headless/test_dblclick_connected_grow" \
                  "headless/test_check_and_save" \
                  "headless/test_toggle_case" \
                  "headless/test_signal_short_nohier_0230" \
@@ -1062,6 +1071,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_replay_door_1619" \
                  "headless/test_select_log_1620" \
                  "headless/test_add_wire_label" \
+                 "headless/test_dblclick_connected_grow" \
+                 "headless/test_select_same_net_by_label" \
                  "headless/test_calc_skeleton" \
                  "headless/test_calc_widgets" \
                  "headless/test_calc_buffer" \
@@ -1105,6 +1116,17 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_ase_plot" \
                   "headless/test_rdw_keys_1245" \
                   "headless/test_ase_terminal_pick_1724"]
+## `headless/test_dblclick_connected_grow` IS ALSO IN `hcases` (see the note above
+## that list): this entry is its display arm, where the double click is driven as
+## the streams of canvas events a pointer makes, under the switches the Cadence-style
+## rc sets, and once as generated Tk pointer events; where the grown selection is
+## dragged; and where, because this arm passes --logdir, the one log line per gesture
+## and per command is counted and replayed.
+## `headless/test_select_same_net_by_label` IS IN THIS LIST ALONE: the name-wise
+## select on Ctrl+Alt+Shift+LMB. Its contrast row drives the double-click grow, so it
+## is registered with the change that moved that row. It is not in `hcases` because
+## the whole suite sits behind its display gate: with no canvas it prints an
+## upper-case SKIP line and checks nothing. It arms the watchdog below that gate.
 ## `headless/test_cmdmode_0201` IS ALSO IN `hcases` (see the note there): this entry
 ## is its display arm, where `clone_canvas_bindings` copies between two real canvases
 ## while a stub mode holds slots of the source -- a slot the mode took from nothing

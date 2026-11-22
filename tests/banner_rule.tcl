@@ -70,11 +70,12 @@
 #                                       test_context_menu_descend_refusal_0249:110,
 #                                       test_descend_refusal_channel_0251:437)
 #   OVERALL: ok  (all checks passed)    2 sites, DOUBLE space
-#                                       (test_dblclick_connected_grow:334,
-#                                       test_select_same_net_by_label:259)
-# Only two of those seven non-bare emitters are in run_regression's hcases list
-# today, which is why there were exactly two false reds and not seven; the other
-# five were latent, and adding any of them to hcases would have produced an
+#                                       (the epilogues of test_dblclick_connected_grow
+#                                       and test_select_same_net_by_label; both are
+#                                       registered since 2026-11-21 and still print it)
+# At that sweep only two of those seven non-bare emitters were in run_regression's
+# hcases list, which is why there were exactly two false reds and not seven; the
+# other five were latent, and adding any of them to hcases would have produced an
 # instant new one.
 # ---------------------------------------------------------------------------
 

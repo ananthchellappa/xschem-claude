@@ -393,7 +393,9 @@ scriptable `xschem add_pin_stubs [-prefix <s>] [-suffix <s>] [-inst-prefix]`.
   int inst_prefix)` in `src/actions.c` (decl `src/xschem.h`), exposed as **`xschem add_pin_stubs
   [-prefix <s>] [-suffix <s>] [-inst-prefix]`** (`scheduler.c` `xschem_cmds_a`). Runs
   `collect_pin_stub_targets` → `compute_pin_stub_sizing` (one S + L), then ONE `push_undo()` and,
-  per target, `storeobject(…WIRE…)` for the stub (`compute_pin_stub_geom` start→end) + a
+  per target, `storeobject(…WIRE…)` for the stub (`compute_pin_stub_geom` start→end;
+  corrected 2026-11-22: stored with those two end points IN ORDER, not pin-first —
+  nothing touched a stub stored end-first and a point on its middle picked nothing) + a
   `place_symbol(lab_pin.sym, end, lrot, lflip, "name=l0 lab=<net> text_size_0=<S>", …,
   to_push_undo=0)` at the far end (`place_symbol` auto-uniquifies the l0/l1/… names). The net
   name = `[instname_ if inst_prefix][prefix]<pinname>[suffix]` (default = pin name). Label

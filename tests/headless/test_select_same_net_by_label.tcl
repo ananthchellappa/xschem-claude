@@ -5,11 +5,14 @@
 # same NET NAME as the seed -- including segments that touch nothing but share a
 # wire-label, and are therefore one node in the netlist -- plus the net-labels /
 # ports that name it. The geometric counterpart is `select_grow_connected`, which
-# walks copper only; T2 below pins the difference.
+# walks copper and (since 2026-11-21) takes the net-name labels on the wires it
+# selects; T2 below pins the difference: it never reaches a segment it does not touch.
 #
-# Uses select_object()/draw_selection() -> needs a real X window, like
-# test_dblclick_connected_grow.tcl. Run from the repo ROOT:
-#   DISPLAY=:0 ./src/xschem --pipe -q --script tests/headless/test_select_same_net_by_label.tcl
+# The whole suite sits behind the display gate below: with no viewable canvas it
+# prints its SKIP line and checks nothing. So it runs, and is registered, on the
+# display arm alone:
+#   tests/headless/run_suites.sh test_select_same_net_by_label
+#   tests/headless/run_suites.sh --logdir test_select_same_net_by_label   (+ T9, the log)
 #
 # RED-first: on a build without select_same_net the command throws (caught -> FAIL)
 # so every check reds.
@@ -22,16 +25,21 @@ if {[catch {winfo viewable $WIN} vv] || !$vv} {
   puts "OVERALL: ok"
   exit 0
 }
+# the stall bound, below the display gate: a wait that never ends finishes this
+# suite by name instead of holding its driver
+source [file join [file dirname [info script]] scratch.tcl]
 update idletasks
 catch { focus -force $WIN }
 update idletasks
 
+# `check` takes a BOOLEAN and an optional detail. A failing row ends in the word the
+# regression's verdict counts, so the verdict names the row.
 set ::fails 0
+set ::npass 0
 proc check {name ok {info {}}} {
-  set tag [expr {$ok ? {ok:  } : {FAIL:}}]
   if {$info ne {}} { set name "$name  ($info)" }
-  puts "$tag $name"; flush stdout
-  if {!$ok} {incr ::fails}
+  if {$ok} { puts "ok:   $name" ; incr ::npass } else { puts "FAIL: $name : FAIL" ; incr ::fails }
+  flush stdout
 }
 proc nsel_type {t} { set c 0; foreach e [xschem selection] { if {[lindex $e 0] eq $t} {incr c} }; return $c }
 proc samenet {args} { eval xschem select_same_net $args }
@@ -75,13 +83,16 @@ check "T1 leaves the NET2 group alone"     [expr {[llength [xschem selection]] =
 
 # ---------------------------------------------------------------------------
 # T2 -- the contrast that justifies the feature: the GEOMETRIC grow on the same
-# seed reaches only segment A, because nothing touches it.
+# seed reaches only segment A, because nothing touches it. It takes the label that
+# sits on A (ruling of 2026-11-21; until then this row read "selects no label") and
+# leaves the twin segment B and B's label, which carry the same name, alone.
 # ---------------------------------------------------------------------------
 set mid [build_labelled]
 lassign [dict get $mid a] ax ay
 xschem select_grow_connected $ax $ay
 check "T2 geometric grow stays on 1 segment" [expr {[nsel_type wire] == 1}] "sel=[xschem selection]"
-check "T2 geometric grow selects no label"   [expr {[nsel_type instance] == 0}] "sel=[xschem selection]"
+check "T2 geometric grow takes the label on that segment and not the twin's" \
+  [expr {[lsort [xschem selected_set]] eq {la}}] "instances=[lsort [xschem selected_set]]"
 
 # ---------------------------------------------------------------------------
 # T3 -- seeding from the LABEL instead of the wire gives the same net.
@@ -210,7 +221,7 @@ xschem bind button 1 ctrl+alt+shift canvas select.same_net_by_label
 # ---------------------------------------------------------------------------
 set LOG [xschem get actionlog_filename]
 if {$LOG eq {}} {
-  check "T9 action-log open (skipped: run with --logdir to exercise)" 1 "no log file"
+  puts "skip: log rows T9a T9b T9c T9d -- no action log on this arm; the arm that passes --logdir runs them"
 } else {
   proc logcount {pat} {
     if {[catch {open [xschem get actionlog_filename] r} fd]} { return -1 }
@@ -257,8 +268,9 @@ catch {destroy .ciw}; update
 puts ""
 if {$::fails == 0} {
   puts "OVERALL: ok  (all checks passed)"
-  puts "RESULT: ALL PASS"
+  puts "RESULT: ALL PASS ($::npass checks)"
 } else {
   puts "OVERALL: FAIL  ($::fails failed)"
-  puts "RESULT: $::fails FAILED"
+  puts "RESULT: $::fails FAILED ($::npass passed)"
 }
+exit [expr {$::fails == 0 ? 0 : 1}]

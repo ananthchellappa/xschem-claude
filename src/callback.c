@@ -6155,7 +6155,8 @@ static int act_add_pin_stubs(const ActionEvent *e)
  * every wire segment carrying the same net name, INCLUDING segments that touch
  * nothing but share a wire-label (one node in the netlist), plus the labels /
  * ports that name it. The double-click grow (select_grow_connected) is the
- * geometric counterpart and stops where the copper stops.
+ * geometric counterpart: it stops where the copper stops and takes only the
+ * net-name labels sitting on that copper.
  * doc/claude/specs/select_same_net_by_label.md.
  *
  * Ships UNBOUND: src/cadence_style_rc maps it to Ctrl+Alt+Shift+Button1. Remap or
@@ -10091,16 +10092,19 @@ static void handle_double_click(int event, int state, KeySym key, int button,
        /* Cadence double-click incremental connected-select
         * (doc/claude/specs/dblclick_connected_select.md): under cadence_compat a
         * LMB double-click grows the selection outward along wire connectivity, one
-        * ring per double-click (Edit Properties is reached via 'q' instead).
+        * ring per double-click, and takes the net-name labels sitting on the wires
+        * it selects (Edit Properties is reached via 'q' instead).
         *
-        * With the cadence profile (fluid_editing + en_pin_select) the 2nd press of
-        * the double-click ALWAYS arms a TRANSIENT press-gesture before -3 fires: a
-        * fluid move-grab (STARTMOVE) on a wire/instance body, or a pin wire-arm
-        * (STARTWIRE + pin_pending) on an instance pin. So ui_state at -3 is almost
-        * never a bare 0/SELECTION. Detect those transient arms and abort_operation()
-        * them first -- that also pops the move's undo, restoring the pre-press
-        * selection (which, on a 2nd/3rd double-click, IS the previously-grown set,
-        * so escalation survives). Then grow, and latch place_click_committed so the
+        * The double (-3) can find a TRANSIENT press-gesture armed. Tk itself hands a
+        * double click over as press, release, the double, release, with no second
+        * press (row G16a of tests/headless/test_dblclick_connected_grow.tcl); a stream
+        * that does carry a second press ahead of the double (rows G14b and G14c drive
+        * one) has that press arm, under the cadence profile (fluid_editing +
+        * en_pin_select), a fluid move-grab (STARTMOVE) on a wire/instance body or a pin
+        * wire-arm (STARTWIRE + pin_pending) on an instance pin. Detect those transient arms
+        * and abort_operation() them first. What the abort leaves selected does not
+        * matter to the escalation: select_grow_connected_step() recomputes the
+        * selection from the seed. Then grow, and latch place_click_committed so the
         * matching release2 does NOT collapse the grown multi-selection down to the
         * object under the cursor (same latch issue 0113 uses). A genuine multi-point
         * draw (STARTLINE/STARTPOLYGON, or a real STARTWIRE draw without pin_pending)

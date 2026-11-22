@@ -653,7 +653,7 @@ set R_BARE   "$RPRE\nok:   something  (ok)\nOVERALL: ok"
 set R_C30    "$RPRE\nok:   something  (ok)\nOVERALL: ok (30 checks)"
 # test_ihp_sg13g2_libmgr.tcl:195 once its golden catches up with the tree (0690)
 set R_C67    "$RPRE\nok:   something  (ok)\nOVERALL: ok (67 checks)"
-# test_dblclick_connected_grow.tcl:334, test_select_same_net_by_label.tcl:259
+# the epilogues of test_dblclick_connected_grow.tcl and test_select_same_net_by_label.tcl
 set R_DBL    "$RPRE\nok:   something  (ok)\nOVERALL: ok  (all checks passed)"
 # the counted failure spelling the two counted suites print when they fail
 set R_FAILED "$RPRE\nFAIL: x -> {1} (exp {0}) : FAIL\nOVERALL: 1 FAILED (65 passed)"

@@ -62,6 +62,16 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   clamped). Widen the declaration instead.
 - **A key and the row asserting its exact key set land in one commit**; either one alone
   is a gate red.
+- **A row that chooses its subject from what the product made can choose around the
+  defect.** A leg that took "the first stub whose end points are in order" passed while
+  the other stub of every pair was stored end-first and no point on its middle picked it.
+  Walk everything the command made and assert the shape of each (rows `L12c`–`L12h` of
+  `test_dblclick_connected_grow`).
+- **A universal sentence over a fixture of one kind proves the kind, not the rule.** Every
+  label of a net carried one name, so "takes only the labels of the first name" passed
+  every row; no label sat near a selected wire and off it, so "near counts as on" passed
+  too. Give a fixture the member the rule must refuse and the member it must not care
+  about (rows `LP1`–`LP4`, `LM1`).
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -131,6 +141,12 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   spy to the notice channel.
 - **`update idletasks` runs no timers**, so the suite watchdog cannot fire inside a loop
   of it.
+- **A synthetic double click with a second press (`4, 5, 4, -3, 5`) on a free device PIN
+  poisons every later row** under `persistent_command`: the abort drops the armed
+  wire-draw but the wire command stays remembered, and the next press anywhere starts a
+  wire. Tk hands a real double click over as `4, 5, -3, 5`, which leaves nothing behind
+  (row `G16c` of `test_dblclick_connected_grow`); keep a second-press stream off pins
+  (row `G14c`).
 - **Calculator sash geometry**: the window's minimum grows with its font, so the sashes
   are re-derived on every font step; enforce the last pane with a backward cap; take the
   inter-pane gap and the sash-coordinate lead from the live widget (`calc::sash_metrics`),

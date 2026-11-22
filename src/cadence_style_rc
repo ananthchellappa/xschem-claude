@@ -40,7 +40,10 @@ set infix_interface 0
 set cadence_compat 1
 # With cadence_compat, a LMB double-click grows the selection outward along wire
 # connectivity, one ring of connected segments per double-click, the 3rd reaching
-# the whole net (doc/claude/specs/dblclick_connected_select.md). This replaces
+# the whole net (doc/claude/specs/dblclick_connected_select.md). Each double-click
+# also selects the wire labels (lab_pin, lab_wire) sitting on the wires it selects,
+# so a Delete after the 3rd removes the net with its labels; power symbols marked
+# `global` (vdd, gnd), ports, probes and devices are left. This replaces
 # double-click-to-Edit-Properties (reach properties via 'q'). The engine is also
 # scriptable/rebindable as `xschem select_grow_connected [x y]`.
 # Fluid editing: first-click grab of any object tip/edge (rect corner+edge, line/wire
@@ -113,7 +116,8 @@ xschem bind key 53 ctrl canvas edit.toggle_case
 # segments that touch nothing but share the same wire-label and are therefore one
 # node in the SPICE netlist. The wire-labels (and ports/probes) that name the net
 # are selected too. This is the netlist twin of the double-click grow above, which
-# walks copper only and stops where the wire stops.
+# walks copper, stops where the wire stops, and takes only the wire labels that sit
+# on that copper.
 # Matching is on the whole net name: bus notation is NOT expanded, so A[3:0] and
 # A[1] are treated as different nets. Each use writes a replayable
 # `xschem select_same_net <x> <y>` line plus a "net NAME -- N wires, M labels"

@@ -161,16 +161,104 @@ void select_connected_nets(int stop_at_junction)
   draw_selection(xctx->gc[SELLAYER], 0);
 }
 
-/* Add exactly ONE ring of directly-touching WIRES to the current selection.
- * doc/claude/specs/dblclick_connected_select.md (O2 = wires-only). Mirrors the
- * one-ring core of select_connected_nets(2) but omits the instance/label
- * selection loops, so growth never pulls in devices -- only wire segments. The
- * seed object (of any type) is left as-is. sel_array is snapshotted before the
- * walk, so wires added in THIS call are not themselves expanded here: exactly one
- * ring per call. Newly-selected wires are drawn nowhere (select_wire fast bit2);
- * the caller strokes the whole selection once. Grows from the WHOLE current
- * selection (every selected wire/instance), so multi-object selections grow all
- * their nets together. Returns the number of wires newly selected. */
+/* The double-click grow and its labels (doc/claude/specs/dblclick_connected_select.md).
+ *
+ * The RINGS are wires: each ring adds the wire segments that touch the selection.
+ * The LABELS are leaves: after the rings of a step, every net-name label whose pin
+ * touches a wire the step selected is selected too (ruling of 2026-11-21, which
+ * replaced decision O2 "rings are wires only" for these labels), and a label taken
+ * that way never carries the grow onto another wire. Three helpers say what that
+ * means; the ring routine and the label pass below share them. */
+
+/* Is (x, y) on a wire that is selected whole and has a length? A zero-length wire is
+ * left out on purpose: touch() answers yes for every point of such a wire's row, so
+ * it would "carry" every label on that row. Reads the wire spatial table, which the
+ * caller must have brought up to date (hash_wires()). */
+static int dblgrow_on_selected_wire(double x, double y)
+{
+  int sqx, sqy, k;
+  Wireentry *wptr;
+
+  get_square(x, y, &sqx, &sqy);
+  for(wptr = xctx->wire_spatial_table[sqx][sqy]; wptr; wptr = wptr->next) {
+    k = wptr->n;
+    if(xctx->wire[k].sel != SELECTED) continue;
+    if(xctx->wire[k].x1 == xctx->wire[k].x2 && xctx->wire[k].y1 == xctx->wire[k].y2) continue;
+    if(touch(xctx->wire[k].x1, xctx->wire[k].y1, xctx->wire[k].x2, xctx->wire[k].y2, x, y)) return 1;
+  }
+  return 0;
+}
+
+/* The scope of the ruling: a NET-NAME label. The symbol's type is exactly `label`
+ * (lab_pin, lab_wire, lab_generic, bus_connect, ...) and its `global` attribute is
+ * neither `ground` nor a true boolean, so the power symbols of the vdd / gnd kind
+ * are out. `global` is read from the instance first and then from the symbol, the
+ * same two steps the netlister takes. Ports (ipin, opin, iopin), probes, lab_show,
+ * bus taps and devices are not of type `label` and are out. */
+static int dblgrow_is_netname_label(int i)
+{
+  const char *g;
+
+  if(!inst_is_netlabel(i)) return 0;   /* also: index in range, symbol bound */
+  g = get_tok_value(xctx->inst[i].prop_ptr, "global", 0);
+  if(!xctx->tok_size) g = get_tok_value(xctx->sym[xctx->inst[i].ptr].prop_ptr, "global", 0);
+  if(!strcmp(g, "ground") || !strboolcmp(g, "true")) return 0;
+  return 1;
+}
+
+/* Is instance i a net-name label whose pin sits on a selected wire? The symbol's type
+ * is asked first (most instances are no label and leave here), then the pin count,
+ * because get_inst_pin_coord() answers the origin for a pin that does not exist, then
+ * where the pin is, and the `global` attribute last. */
+static int dblgrow_label_on_selected_wire(int i)
+{
+  double x0, y0;
+
+  if(!inst_is_netlabel(i)) return 0;
+  if((xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER] < 1) return 0;
+  get_inst_pin_coord(i, 0, &x0, &y0);
+  if(!dblgrow_on_selected_wire(x0, y0)) return 0;
+  return dblgrow_is_netname_label(i);
+}
+
+/* The label pass of one grow step: select, quietly, every net-name label that is not
+ * selected yet and whose pin touches a selected wire. A locked label is taken as a
+ * locked wire is by the ring routine (both override the lock). Selects no wire and
+ * is not a ring: it runs once, after the rings, and what it adds is counted in the
+ * selection count the step stores. Returns the number of labels it selected. */
+static int dblgrow_select_labels(void)
+{
+  int i, added = 0;
+
+  hash_wires();
+  for(i = 0; i < xctx->instances; ++i) {
+    if(xctx->inst[i].sel == SELECTED) continue;
+    if(!dblgrow_label_on_selected_wire(i)) continue;
+    select_element(i, SELECTED, 3, 1); /* fast: quiet + nodraw; override_lock, as the wires */
+    added++;
+  }
+  if(added) xctx->need_reb_sel_arr = 1;
+  return added;
+}
+
+/* Add exactly ONE ring of directly-touching WIRES to the current selection. Mirrors
+ * the one-ring idea of the older one-shot (select_connected_nets) but selects no
+ * instance, so a ring never pulls in a device. The seed object (of any type) is
+ * left as-is. sel_array is snapshotted before the walk, so wires added in THIS call
+ * are not themselves expanded here: exactly one ring per call. Newly-selected wires
+ * are drawn nowhere (select_wire fast bit2); the caller strokes the whole selection
+ * once. Grows from the WHOLE current selection (every selected wire/instance), so
+ * multi-object selections grow all their nets together.
+ *
+ * A selected instance expands onto the wires at its pins, with one exception: a
+ * net-name label whose pin already sits on a selected wire is a LEAF and expands
+ * onto nothing. That is what keeps a label the grow took from carrying the next
+ * bare step across a crossing of two wires that share no end point. A label with no
+ * selected wire under it (a label the user double-clicked, or selected by hand) is
+ * a seed like any other and does expand. Which labels are leaves is decided for the
+ * whole snapshot BEFORE the first wire of this ring is selected, so the answer does
+ * not depend on the order of the selection array.
+ * Returns the number of wires newly selected. */
 static int grow_one_ring_wires(void)
 {
   int i, n, added = 0;
@@ -178,10 +266,17 @@ static int grow_one_ring_wires(void)
   int sqx, sqy, p, rects;
   Wireentry *wptr, *wireptr;
   Iterator_ctx ctx;
+  unsigned char *leaf = NULL; /* per snapshot entry: 1 = a label that is a leaf in this ring */
 
   hash_wires();
   hash_instances();
   rebuild_selected_array();
+  for(n = 0; n < xctx->lastsel; ++n) {
+    if(xctx->sel_array[n].type != ELEMENT) continue;
+    if(!dblgrow_label_on_selected_wire(xctx->sel_array[n].n)) continue;
+    if(!leaf) leaf = my_calloc(_ALLOC_ID_, xctx->lastsel, sizeof(unsigned char));
+    leaf[n] = 1;
+  }
   for(n = 0; n < xctx->lastsel; ++n) {
     i = xctx->sel_array[n].n;
     switch(xctx->sel_array[n].type) {
@@ -209,6 +304,8 @@ static int grow_one_ring_wires(void)
         }
         break;
       case ELEMENT:
+        if(leaf && leaf[n]) break;          /* a label on a selected wire: a leaf */
+        if(xctx->inst[i].ptr < 0) break;    /* unbound symbol: no pins to ask about */
         rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
         for(p = 0; p < rects; p++) {
           get_inst_pin_coord(i, p, &x0, &y0);
@@ -227,13 +324,15 @@ static int grow_one_ring_wires(void)
         break;
     }
   }
+  if(leaf) my_free(_ALLOC_ID_, &leaf);
   xctx->need_reb_sel_arr = 1;
   rebuild_selected_array();
   return added;
 }
 
 /* Apply level N to the current selection: level 1 -> ring1, 2 -> ring2, ...,
- * >=3 -> whole-net geometric flood (wires only, O4 cap). */
+ * >=3 -> whole-net geometric flood (O4 cap). Rings only: the labels on the wires
+ * are taken by the caller, once, after the rings (dblgrow_select_labels). */
 static void dblgrow_apply_level(int level)
 {
   int i;
@@ -252,12 +351,19 @@ static void dblgrow_apply_level(int level)
  *   repeated calls with the same seed, resetting to 1 when the seed changes. The
  *   selection is then RECOMPUTED FROM SCRATCH -- unselect_all, re-select the seed,
  *   grow `level` rings -- so it is immune to whatever transient selection the
- *   surrounding fluid gesture (STARTMOVE grab / pin wire-arm) left behind. Rings
- *   are wires-only; the seed object of any type stays selected.
+ *   surrounding fluid gesture (STARTMOVE grab / pin wire-arm) left behind. The
+ *   seed object of any type stays selected.
  *
  * - !pick_seed (`xschem select_grow_connected` with no coords): incremental grow
  *   of the CURRENT selection by one ring, resetting the level when the selection
  *   was changed externally since the last step (sel_sig). Used for scripting.
+ *
+ * Both modes then share one tail: the label pass (every net-name label whose pin
+ * touches a selected wire is selected with it), the selection count the bare form
+ * compares on its next call, the log line and the draw. THE LABEL PASS COMES BEFORE
+ * THE COUNT IS STORED: the labels are part of what the step selected, and a count
+ * taken without them would make every following bare call look like an external
+ * change and restart at level 1.
  *
  * Returns the new level (1, 2 or 3). */
 int select_grow_connected_step(double mx, double my, int pick_seed)
@@ -300,6 +406,7 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
     dblgrow_apply_level(xctx->dblgrow_level >= 3 ? 3 : 1); /* incremental: one more ring */
   }
 
+  dblgrow_select_labels(); /* the labels on the selected wires; before the count below */
   xctx->need_reb_sel_arr = 1;
   rebuild_selected_array();
   xctx->dblgrow_sel_sig = xctx->lastsel;
@@ -312,6 +419,8 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
    * per action. The empty-click early return above never reaches here, so a no-op click
    * logs nothing (no phantom). log_action() honors actionlog_suppress (replay/programmatic)
    * and flushes any pending select_at first, preserving order.
+   * The line carries no level and no object list: replayed, it selects what the engine
+   * of the day selects (the labels included since 2026-11-21).
    * INVARIANT: entry paths (scheduler branch, key handler, gesture) must NOT also log. */
   if(pick_seed) log_action("xschem select_grow_connected %.10g %.10g",
                            snap_to_grid(mx), snap_to_grid(my));
@@ -324,7 +433,8 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
  * Logical (net-name) connected select -- doc/claude/specs/select_same_net_by_label.md
  *
  * The geometric twin of this feature is select_grow_connected_step() above (the
- * Cadence double-click grow): it walks COPPER, so it stops where the wire stops.
+ * Cadence double-click grow): it walks COPPER, so it stops where the wire stops,
+ * and takes the net-name labels sitting on that copper and nothing else.
  * This one walks the NETLIST: it selects every wire segment whose node name
  * equals the seed's, so segments that touch nothing at all but carry the same
  * wire-label -- and are therefore the same node in the SPICE netlist -- come

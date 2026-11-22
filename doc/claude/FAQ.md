@@ -14,6 +14,67 @@ Newest entries on top.
 
 ---
 
+## Q96. I double-click a wire three times and press Delete. Are the wire labels deleted with the net now? What is left behind?
+
+- **Asked:** 2026-11-21
+- **Project state:** branch `fluid-editing`, the overnight batch of 2026-11-21, item 04
+  (`doc/claude/specs/dblclick_connected_select.md`, "Ruling of 2026-11-21").
+
+**Yes: under the Cadence-style profile the double-click grow now takes the wire
+labels with the wires.** Each double click on the same object selects one more
+ring of touching wire segments (the third one the whole touching net) and, with
+them, every net-name label whose pin touches one of the selected wires. Delete
+after the third double click removes the net and its labels. `xschem
+select_grow_connected x y` and the form without coordinates do the same.
+
+- **What counts as a wire label.** A symbol of type `label` that is not a global:
+  `lab_pin` and `lab_wire` (what the `l` key, `xschem net_label` and the Space-key
+  pin stubs place), and also `lab_generic` and `bus_connect`. A locked label is
+  taken like a locked wire. The test is the `global` attribute and nothing else, so
+  the power symbols of the gschem import library (`vdd-1`, `gnd-1` and their kin
+  under `xschem_library/gschem_import`), which are `label` symbols that carry no
+  `global`, are taken and deleted like a wire label.
+- **What is still left, on purpose:**
+  - **power symbols** (`vdd`, `gnd`, anything whose `global` says `true` or
+    `ground`), **ports** (`ipin`, `opin`, `iopin`), **probes**, `lab_show`, bus
+    taps and **devices**. The older one-shot (Shift-RMB, Ctrl-RMB, `xschem
+    connected_nets`) takes ports and probes as well; the double click does not.
+  - **a label of the same name on another island.** The grow follows copper, not
+    names. For the whole named net use Ctrl+Alt+Shift+LMB (`xschem
+    select_same_net`).
+  - **a label that sits directly on a device pin with no wire under it**, when you
+    double-click the device: the rule is about wires.
+  - **a wire that only crosses** a selected wire without sharing an end point,
+    even when a label sits on the crossing: the label is taken, the crossing wire
+    is not.
+- **A label on the joint between two wires** belongs to both, so it is selected
+  as soon as either is. A Delete after one or two double clicks can therefore
+  remove the label of a wire that stays.
+- **What else differs from before, besides the labels being selected:**
+  - `q` (Edit Properties) after a double click on a WIRE that took a label now
+    opens the label's form, not the wire's: Edit Properties prefers an instance in
+    a mixed selection. Click the wire once and press `q` for the wire's form.
+  - ALT-R / ALT-F right after the grow turn each selected label about its own pin,
+    so the labels stay put while the wires turn (they used to ride the wires).
+    A move, a drag and a copy keep the labels on their wires.
+  - an action log recorded earlier replays with the labels selected too.
+  - a pin stub the Space key drew upward or to the left can be clicked and
+    double-clicked like any wire. Until 2026-11-22 it was stored end-first: a click
+    on its middle picked nothing, a double click there selected nothing, and three double
+    clicks on its device followed by Delete left that stub and its label behind,
+    until the sheet was saved and opened again. (`add_pin_stubs()` now stores the
+    stub in order.)
+    A file that holds such a stub is put in order when it is opened, and since
+    2026-11-22 also when it is merged or pasted (`merge_wire()`): before, a script
+    that merged it and dropped the pending placement with `xschem unselect_all`
+    was left with the stub as the file wrote it.
+- **The stock profile is unchanged:** without `cadence_compat` a double click
+  still opens Edit Properties.
+
+Rows: `tests/headless/test_dblclick_connected_grow.tcl`, bands L (the command, both
+arms of the regression) and G (the gesture, display arm). The command takes the
+labels under either profile; only the double click is tied to `cadence_compat`.
+
 ## Q95. In ASE-L's Select On Design I can only pick nets. How do I save the current into a pin of a transistor, a resistor or a block?
 
 - **Asked:** 2026-11-18

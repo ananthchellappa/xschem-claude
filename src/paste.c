@@ -139,6 +139,17 @@ static void merge_text(FILE *fd)
      text_register(i);
 }
 
+/* A wire of a merged file is STORED with its two end points in order, whichever way
+ * round the file writes them, as load_wire() (save.c) stores the same line of a file
+ * that is opened: touch() and dist() (clip.c) read a wire as ordered. Paste comes
+ * through here too: merge_file() reads the clipboard file with this routine.
+ * Until 2026-11-22 the four numbers were stored as read. The move that places a
+ * merge orders the wires it moved when it ends (place_moved_wire(), move.c), so a
+ * wire written end-first stayed that way only when the pending placement was dropped
+ * without that end, as `xschem unselect_all` drops it. touch() then answered no at
+ * every point of it, and a point on the middle of a horizontal or a vertical one
+ * picked nothing. Rows LF17 (what the file is, and what the loader makes of it),
+ * L12i and L12j (this door) of tests/headless/test_dblclick_connected_grow.tcl. */
 static void merge_wire(FILE *fd)
 {
     int i;
@@ -151,6 +162,7 @@ static void merge_wire(FILE *fd)
       return;
     }
     load_ascii_string( &ptr, fd);
+    ORDER(x1, y1, x2, y2);
     storeobject(-1, x1,y1,x2,y2,WIRE,0,SELECTED,ptr);
     my_free(_ALLOC_ID_, &ptr);
     select_wire(i, SELECTED, 1, 1);

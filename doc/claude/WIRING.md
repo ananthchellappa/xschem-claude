@@ -62,6 +62,21 @@ retrospective), `doc/claude/specs/nice_drag_rerouting.md` (the P1–P8 contract)
   (`order_wire_points` move.c:1097, `order_wire_coords` move.c:1806). An **unordered wire
   silently breaks `touch()`** → pin lands on a fresh `#net` with no visible error
   (move.c:1799-1805). Always order after rewriting endpoints.
+  `wire_store()` does not order either, so each door that makes a wire has to: the
+  `xschem wire` branch (scheduler.c) and `load_wire()` (save.c) order before they
+  store. `add_pin_stubs()` (actions.c) did not order at all until 2026-11-22: it
+  stored each stub pin-first, so for a stub running toward smaller coordinates
+  `touch()` answered no at every point and `dist()` measured only to the nearer end
+  point. Nothing touched that stub and a point on its middle picked nothing, until a
+  save and load put it in order (rows L12c–L12h of
+  `tests/headless/test_dblclick_connected_grow.tcl`). `merge_wire()` (paste.c:
+  `xschem merge`, and paste, which reads the clipboard file through it) did not
+  either: it stored the four numbers as its file wrote them. The move that places a
+  merge orders the wires it moved when it ends (measured 2026-11-22: `xschem merge`,
+  then `xschem move_objects`), so a wire written end-first stayed in that state only
+  when the pending placement was dropped without that end, as `xschem unselect_all`
+  drops it (rows L12i and L12j there; row LF17 holds the loader and the
+  `xschem wire` branch to the same numbers). Both order before they store now.
 - `sel`: 0 | `SELECTED`(whole) | `SELECTED1`(endpoint-1 moves) | `SELECTED2`(endpoint-2
   moves). Grabbed-at-both-ends folds to `SELECTED` (select.c:1040-1045). `SELECTED4` =
   transient doom mark in `break_wires_at_pins`. Partial-select **is** the stretch handle

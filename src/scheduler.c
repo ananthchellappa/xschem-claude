@@ -13070,12 +13070,16 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   call, keyed on a seed:
      *     1st call on a seed -> ring1 (seed + directly-touching wire segments)
      *     2nd  -> ring2 (one more ring of touching segments)
-     *     3rd  -> whole net (geometric flood, wires only)
+     *     3rd  -> whole net (geometric flood)
      *     4th+ -> no-op (already whole)
-     *   Rings are WIRES ONLY; the seed object (of any type) stays selected. With
-     *   [x y] the object under that schematic coord becomes/refreshes the seed and
-     *   is added (additively) to the selection; without coords the step runs on the
-     *   current selection & seed. Returns the new level (1, 2 or 3). */
+     *   A ring adds wire segments. Every step then also selects the net-name labels
+     *   whose pin touches a wire it selected (symbols of type `label` whose `global`
+     *   attribute is neither `ground` nor a true boolean: lab_pin, lab_wire, ...; not
+     *   vdd/gnd, ports, probes or devices).
+     *   The seed object (of any type) stays selected. With [x y] the object under
+     *   that schematic coord becomes/refreshes the seed and the selection is
+     *   REPLACED by the seed and its rings; without coords the step grows the
+     *   current selection by one ring. Returns the new level (1, 2 or 3). */
     else if(!strcmp(argv[1], "select_grow_connected"))
     {
       int level;

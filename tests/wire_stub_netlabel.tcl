@@ -398,7 +398,9 @@ check "B7 end-to-end -> 4 stubs" [xschem add_pin_stubs] 4
 set okw 1 ; set oki 1
 for {set k 0} {$k < 4} {incr k} {
   lassign [lindex $expgeom $k] ex1 ey1 ex2 ey2 edx edy
-  if {![coords_eq [xschem wire_coord $k] [list $ex1 $ey1 $ex2 $ey2]]} { set okw 0 }
+  # the stub is stored with its two end points in order, so the pin is either end
+  set wc [xschem wire_coord $k]
+  if {![coords_eq $wc [list $ex1 $ey1 $ex2 $ey2]] && ![coords_eq $wc [list $ex2 $ey2 $ex1 $ey1]]} { set okw 0 }
   set ic [xschem instance_coord [expr {$k+1}]]
   if {![coords_eq [list [lindex $ic 2] [lindex $ic 3]] [list $ex2 $ey2]]} { set oki 0 }
 }
