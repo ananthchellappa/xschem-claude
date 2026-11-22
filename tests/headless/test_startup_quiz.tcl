@@ -19,6 +19,10 @@
 #   F*  the wiring: the two actions.csv rows, the Help-menu entries, the caught
 #       `source`, the install list, and where Tcl_AppInit calls the launch hook.
 #   L*  real launches, each a CHILD process: which command lines get asked.
+#   M*  a CHILD whose share dir has no engine: it says so once, in a line
+#       that is not a notice channel announcement, so it spends neither
+#       notice-channel latch and a later channel fault is still announced; and
+#       its table, palette and menus are the control's less the engine's entries.
 #   D*  the dialog itself, driven through its widgets (display arm only).
 #
 # THE PROOFS (band A). Every bank entry carries a `proof`: an expression over the
@@ -803,6 +807,203 @@ if {$have_tk} {
     [llength [glob -nocomplain -directory $work -join home_* .xschem startup_quiz_done]] 0
 } else {
   puts "SKIPPED: L2-L14 real launches on a display (no Tk on this arm)"
+  flush stdout
+}
+
+# =====================================================================
+# M* -- a session whose share dir has no engine
+# =====================================================================
+# An installed copy built from a src/Makefile that ./configure did not write
+# again after src/Makefile.in gained the two files has neither (issues 0423 and
+# 0424). The `source` of the engine is caught, and the session must then be one
+# without the quiz: it says so once, in a line of its own that is NOT a notice
+# channel announcement (a missing tip file is not a fault of that channel, and
+# must not spend its one-shot latches, issue 0664), so a real channel fault later
+# in the same session is still announced; and the command palette, which lists
+# every command row of src/actions.csv, offers no row naming an engine proc.
+# Each launch is a CHILD on a share farm (tests/headless/sharefarm.tcl) with -q,
+# so it leaves before the launch hook; a farm with the file is the control.
+source [file join $here sharefarm.tcl]
+set farm_gone  [share_farm $root [file join $work farm_gone]]
+file delete [file join $farm_gone startup_quiz.tcl]
+set farm_whole [share_farm $root [file join $work farm_whole]]
+set mprobe {
+  set r [dict create]
+  dict set r procs [llength [info commands ::startup_quiz::*]]
+  dict set r latches [list [set ::xschem::notify_fault] [set ::xschem::notify_degraded]]
+  set n 0
+  set ids {}
+  set eng {}
+  foreach row $::action_table {
+    lappend ids [dict get $row id]
+    if {[string match {startup_quiz::*} [dict get $row command]]} { incr n ; lappend eng [dict get $row id] }
+  }
+  dict set r rows $n
+  dict set r ids $ids
+  dict set r engine_ids $eng
+  set pal {}
+  set palids {}
+  if {[llength [info commands winfo]] && [llength [info commands command_palette]]} {
+    command_palette .
+    foreach query {{} tip} {
+      set ::palette_query $query
+      unset -nocomplain ::palette_last_query
+      palette_refilter
+      set n 0
+      foreach row $::palette_rows {
+        if {[string match {startup_quiz::*} [dict get $row command]]} { incr n }
+        if {$query eq {}} { lappend palids [dict get $row id] }
+      }
+      lappend pal $n
+    }
+    destroy .cmd_palette
+  }
+  dict set r palette $pal
+  dict set r palids $palids
+  ## the menus a person sees: how many entries File has, and Help's {label command}
+  set fileend {}
+  set help {}
+  if {[llength [info commands winfo]]} {
+    if {[winfo exists .menubar.file]} { set fileend [.menubar.file index end] }
+    if {[winfo exists .menubar.help] && [.menubar.help index end] ne {none}} {
+      for {set i 0} {$i <= [.menubar.help index end]} {incr i} {
+        if {[.menubar.help type $i] in {separator tearoff}} continue
+        set c {}
+        catch {set c [.menubar.help entrycget $i -command]}
+        lappend help [list [.menubar.help entrycget $i -label] $c]
+      }
+    }
+  }
+  dict set r fileend $fileend
+  dict set r help $help
+  dict set r later [xschem::notify_degraded_once {M-probe: a later channel fault}]
+  puts "MWITNESS $r"
+  flush stdout
+}
+proc mlaunch {tag farm flags} {
+  global work bin mprobe
+  set d [file join $work m_$tag]
+  file mkdir $d
+  set sf [file join $d probe.tcl]
+  spit $sf $mprobe
+  set rc [catch {exec env XSCHEM_SHAREDIR=$farm GUI_GATE=0 timeout 90 $bin {*}$flags \
+                   --logdir $d --script $sf < /dev/null 2>@1} out]
+  set st [share_farm_status $rc $::errorCode]
+  set w {}
+  regexp -line {^MWITNESS (.*)$} $out -> w
+  set log [split [slurp [file join $d Xschem.log]] "\n"]
+  return [dict create status $st out [split $out "\n"] log $log w $w]
+}
+proc mw {r key} {
+  if {[catch {dict get [dict get $r w] $key} v]} { return "NO-WITNESS([string range [join [dict get $r out] { | }] end-300 end])" }
+  return $v
+}
+# the lines that name the failed source, and those of them that say NOTICE CHANNEL
+proc mnamed {lines} { share_farm_count $lines {startup_quiz.tcl failed to source} }
+proc mchannel {lines} {
+  set n 0
+  foreach l $lines {
+    if {[string first {startup_quiz.tcl} $l] >= 0 && [string first {NOTICE CHANNEL} $l] >= 0} { incr n }
+  }
+  return $n
+}
+check "M1 the fixture: one farm lacks the engine, the control has it" \
+  [list [file exists [file join $farm_gone startup_quiz.tcl]] [file exists [file join $farm_whole startup_quiz.tcl]]] {0 1}
+set mg [mlaunch gone $farm_gone {--nogui --pipe -q}]
+set mc [mlaunch whole $farm_whole {--nogui --pipe -q}]
+check "M2 without the engine the session exits 0 with no startup_quiz:: proc; the control exits 0 with them" \
+  [list [dict get $mg status] [mw $mg procs] [dict get $mc status] \
+        [expr {[string is integer -strict [mw $mc procs]] && [mw $mc procs] > 0}]] {0 0 0 1}
+check "M3 ... it says so once on its output and once in its action log; the control says nothing" \
+  [list [mnamed [dict get $mg out]] [mnamed [dict get $mg log]] [mnamed [dict get $mc out]] [mnamed [dict get $mc log]]] {1 1 0 0}
+check "M4 ... in a line that is not a notice channel announcement" \
+  [list [mchannel [dict get $mg out]] [mchannel [dict get $mg log]]] {0 0}
+check "M5 ... so neither of that channel's one-shot latches is spent (fault, degraded)" \
+  [list [mw $mg latches] [mw $mc latches]] {{0 0} {0 0}}
+check "M6 ... and a real channel fault later in that session is still announced, as in the control" \
+  [list [mw $mg later] [share_farm_count [dict get $mg out] {NOTICE CHANNEL FAULT: M-probe}] [mw $mc later]] {1 1 1}
+check "M7 ... the action table keeps no row that names an engine proc; the control keeps both" \
+  [list [mw $mg rows] [mw $mc rows]] {0 2}
+
+# M7 counts only the rows that must go. A filter that also drops rows that must
+# stay (an emptied table, a filter on the Help menu) passes it, so M9 compares the
+# whole table with the control's: the same ids in the same order, less exactly
+# the ones the CONTROL says name an engine proc. M11 does the same for what a
+# person sees with a display. M10 and M12 build those two wrong repairs and want
+# a no from each comparison.
+proc m_less {items drop} {
+  set out {}
+  foreach x $items { if {[lsearch -exact $drop $x] < 0} { lappend out $x } }
+  return $out
+}
+proc m_table_ok {g c} {
+  if {[catch {
+    set drop [mw $c engine_ids]
+    set want [m_less [mw $c ids] $drop]
+    expr {[llength $drop] > 0 && [llength $want] > 0 && [mw $g ids] eq $want}
+  } r]} { return "RAISED($r)" }
+  return $r
+}
+## {palette File Help}: the palette for an empty query is the control's less the
+## engine rows; File has as many entries as the control's; Help's labels are the
+## control's less those whose command is an engine proc (and the control has
+## some). Labels, because some Help commands name the share dir, i.e. the farm.
+proc m_menus_ok {g c} {
+  if {[catch {
+    set pwant [m_less [mw $c palids] [mw $c engine_ids]]
+    set hwant {}
+    foreach e [mw $c help] { if {![string match {startup_quiz::*} [lindex $e 1]]} { lappend hwant [lindex $e 0] } }
+    set hgot {}
+    foreach e [mw $g help] { lappend hgot [lindex $e 0] }
+    list [expr {[llength $pwant] > 0 && [mw $g palids] eq $pwant}] \
+         [expr {[string is integer -strict [mw $c fileend]] && [mw $g fileend] eq [mw $c fileend]}] \
+         [expr {[llength $hwant] > 0 && [llength $hwant] < [llength [mw $c help]] && $hgot eq $hwant}]
+  } r]} { return "RAISED($r)" }
+  return $r
+}
+check "M9 ... and keeps every other row: its table is the control's, less exactly the control's engine rows, in order" \
+  [m_table_ok $mg $mc] 1
+set mc_n $mc
+## the two wrong repairs, each on a farm without the engine whose xschem.tcl is
+## the real one with that one edit
+set xs_real [slurp [file join $root src xschem.tcl]]
+set M_wrong [list \
+  emptied  [list "  set action_table \$startup_quiz_keep\n" "  set action_table {}\n"] \
+  helpmenu [list {if {[string match {startup_quiz::*} [dict get $row command]]} continue} \
+                 {if {[dict get $row menu] eq {help}} continue}]]
+proc m_wrong_farm {tag map} {
+  global root work xs_real
+  set xs [string map $map $xs_real]
+  set f [share_farm $root [file join $work farm_$tag] [list xschem.tcl $xs]]
+  file delete [file join $f startup_quiz.tcl]
+  return [list [expr {$xs ne $xs_real}] $f]
+}
+set got {}
+foreach {tag map} $M_wrong {
+  lassign [m_wrong_farm $tag $map] differs f
+  set w [mlaunch wrong_$tag $f {--nogui --pipe -q}]
+  lappend got $tag [list $differs [dict get $w status] [m_table_ok $w $mc_n]]
+}
+check "M10 ... and M9 says no to each wrong repair (the edit applies, the session still exits 0, the comparison fails)" \
+  $got {emptied {1 0 0} helpmenu {1 0 0}}
+if {$have_tk} {
+  set mg [mlaunch gone_x $farm_gone {--pipe -q}]
+  set mc [mlaunch whole_x $farm_whole {--pipe -q}]
+  set mc_x $mc
+  check "M8 with a display, the live palette lists no engine row for an empty query or for 'tip'; the control lists both" \
+    [list [mw $mg palette] [mw $mc palette]] {{0 0} {2 2}}
+  check "M11 ... and the rest is the control's: the palette less the engine rows, as many File entries, Help less the quiz entries" \
+    [m_menus_ok $mg $mc] {1 1 1}
+  set got {}
+  foreach {tag map} $M_wrong {
+    lassign [m_wrong_farm $tag $map] differs f
+    set w [mlaunch wrong_x_$tag $f {--pipe -q}]
+    lappend got $tag [list $differs [dict get $w status] [expr {[m_menus_ok $w $mc] eq {1 1 1}}]]
+  }
+  check "M12 ... and M11 says no to each wrong repair with a display too" \
+    $got {emptied {1 0 0} helpmenu {1 0 0}}
+} else {
+  puts "SKIPPED: M8, M11, M12 the live command palette and menus (no Tk on this arm)"
   flush stdout
 }
 

@@ -194,7 +194,15 @@ colleague, and give it a proof that would fail if the feature were removed.
 | `~/.xschem/startup_quiz_done` | ids already answered; delete it to start the round again |
 
 The `source` in `xschem.tcl` is caught, like `ciw.tcl`'s: nothing depends on this
-file, so a session without it is a session without the quiz, announced once.
+file, so a session without it is a session without the quiz, announced once. The
+announcement is a line of its own on stderr and in the action log (`the tip of the
+day is not available in this session: ...`), not `xschem::notify_degraded_once`:
+a missing tip file is not a fault of the notice channel, and that proc's one-shot
+FAULT latch must stay unspent for the session's first real channel fault (issue
+0664). The two `src/actions.csv` rows leave the action table in the same branch,
+so the command palette offers neither, and every other row stays. Band M of the
+suite starts sessions on a share dir without the file, and compares each
+session's table, palette and menus with a control's.
 
 ## 9. Not built
 

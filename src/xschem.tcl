@@ -18478,8 +18478,28 @@ if {[catch {source $XSCHEM_SHAREDIR/ciw.tcl} ciw_source_err]} {
 # without the quiz, announced once, and not an aborted startup. Every later use
 # of a startup_quiz:: proc in this file is behind an `info commands` test.
 # Both files are also listed in src/Makefile.in's /local/install_shares.
+#
+# The announcement is NOT xschem::notify_degraded_once, although ciw.tcl's is: a
+# missing tip file is not a fault of the notice channel, and that proc's FAULT
+# latch is one-shot (issue 0664), so spending it here would leave the session's
+# first real channel fault (a ciw_create failure, a raise in notify_safe) with
+# nothing said at all. The same two sinks, stderr and the durable log, without a
+# latch: this line runs once per session. Then the two src/actions.csv rows that
+# name engine procs leave the action table, or the command palette (which lists
+# every command row) would offer two entries that do nothing when picked.
+# tests/headless/test_startup_quiz.tcl band M starts a session without the file.
 if {[catch {source $XSCHEM_SHAREDIR/startup_quiz.tcl} startup_quiz_source_err]} {
-  xschem::notify_degraded_once "src/startup_quiz.tcl failed to source: $startup_quiz_source_err"
+  set startup_quiz_l "the tip of the day is not available in this session:\
+ src/startup_quiz.tcl failed to source: $startup_quiz_source_err"
+  catch {puts stderr "xschem: $startup_quiz_l" ; flush stderr}
+  catch {xschem::notify_log $startup_quiz_l error}
+  set startup_quiz_keep {}
+  foreach row $action_table {
+    if {[string match {startup_quiz::*} [dict get $row command]]} continue
+    lappend startup_quiz_keep $row
+  }
+  set action_table $startup_quiz_keep
+  unset startup_quiz_l startup_quiz_keep
 }
 
 # issue 0123: Help>Debug FLUID_TRACE control. Start picks a PID-named file in the system temp dir

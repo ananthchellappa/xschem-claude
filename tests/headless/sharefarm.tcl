@@ -14,9 +14,13 @@
 ## plumbing.
 ##
 ## WHAT A BROKEN FARM ENTRY DOES NOW (issue 0663, measured 2026-08-24). A farm
-## whose ciw.tcl is a one-line `error` starts NORMALLY and exits 0: that one
-## source is CAUGHT (src/xschem.tcl:14854, issue 0658) and the failure is
-## announced on the notify channel. Any OTHER helper is still a BARE `source`,
+## whose ciw.tcl is a one-line `error` starts NORMALLY and exits 0: that
+## source is CAUGHT (in src/xschem.tcl, issue 0658) and the failure is
+## announced on the notify channel. startup_quiz.tcl, sourced right after it, is
+## caught too, under a catch of its own (the tip-of-the-day quiz,
+## doc/claude/specs/startup_quiz.md), and announced in a line of its own that
+## spends no notify latch (test_startup_quiz band M). Any OTHER helper is still
+## a BARE `source`,
 ## so a raise there propagates out of xschem.tcl -- but Tcl_AppInit no longer
 ## walks on into `tclgetdoublevar(cairo_font_line_spacing)` against unset
 ## variables and SIGSEGVs (the old exit-139 signature 0423/0424 measured).
