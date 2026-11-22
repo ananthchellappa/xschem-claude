@@ -134,6 +134,16 @@ Taken during preparation, in the clone, at `7c77f3594` (the commit the batch sta
 A gate of an item compares its own trailer with this one after deriving, from the
 registration lists, what the item must add.
 
+**Moved on 2026-11-22 02:33, when item 04 landed (`44f2d591f`).** A tree that has item 04
+has three registered cases more (`test_dblclick_connected_grow` in `hcases` and `dcases`,
+`test_select_same_net_by_label` in `dcases`) and two `skip:` lines more (both printed by
+`test_dblclick_connected_grow` on the arm without a canvas and without an action log).
+Item 04's own gate on such a tree: `cases=228 blocks=227 counted_failures=0 skips=15`
+(`/home/analog/ob22/tests/results.1547194.log`, 690 lines). An item whose base is
+`44f2d591f` or later derives its delta from that; an item whose base is older (item 03b:
+`c78d0f1d3`) still derives from the figure above. As always, derive from the registration
+lists of your own base; these lines only say what to expect.
+
 Known reds that are not an item's (each crew also takes its own baseline of the suites it
 touches before it changes anything):
 
@@ -289,7 +299,7 @@ Times are local, 2026-11-21 unless a date is given.
 - 2026-11-22 00:48 lane A: clone `/home/analog/ob21` put on the main tree's head `c78d0f1d3` (no run live in it, build current). Item 03b launched: task `wjtdkmg09`, run `wf_cd32e78a-3bf`, base `c78d0f1d3`, args `{item:3, nn:"03b", slug:"viewer-keys-with-focus-elsewhere", kind:"code", base:"c78d0f1d3", clone:"/home/analog/ob21"}`, transcripts `/home/analog/.claude-taiga/projects/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/subagents/workflows/wf_cd32e78a-3bf`. Lane B: item 04 still running (task `wbub3n3hd`, run `wf_52746670-d3c`).
 - 2026-11-22 02:32 lane B: item 04's pipeline returned: verdict E, two repair rounds, gate green on the first full run in the clone (`T1-RUN-END pid=1547194 cases=228 blocks=227 counted_failures=0 skips=15`, verdict `/home/analog/ob22/tests/results.1547194.log`; three registrations and two `skip:` lines more than the baseline, all the item's), commit `2583c3e1b` in the clone (parent `747cc6f3f`, 18 files). One problem left, severity "should": row B7 of the unregistered `tests/wire_stub_netlabel.tcl` was edited and no run reaches it.
 - 2026-11-22 02:33 item 04 landed in the main tree by cherry-pick as `44f2d591f` (`src/cadence_style_rc` merged by itself with item 03's lines; the C files, the suite and `tests/run_regression.tcl` are identical to the gated ones). Main tree rebuilt (`make -C src`, rc 0); `run_suites.sh --nogui test_dblclick_connected_grow` there: 112 checks pass. Beyond the label pass the commit carries two repairs the crews made outside the work order's text, in wiring code: `add_pin_stubs()` (`src/actions.c`) and `merge_wire()` (`src/paste.c`) order a wire's end points before storing it; `doc/claude/WIRING.md` section 1.1 records it.
-- 2026-11-22 02:36 receipt copied to `receipts/04_dblclick-grow-takes-labels.md` with a driver's note. Filed from the main tree: look `dblclick_grow_labels_real_design`; rules `dblgrow_q_opens_label_form`, `dblgrow_alt_r_f_strands_labels`, `dblgrow_label_on_bare_pin`, `dblgrow_gschem_power_symbols`; suite debts `test_dblclick_connected_grow` and `test_wave_viewer` (each owes its one run on `:0`; the batch ran on a private display only). Marked `[E]`.
+- 2026-11-22 02:35 receipt copied to `receipts/04_dblclick-grow-takes-labels.md` with a driver's note. Filed from the main tree: look `dblclick_grow_labels_real_design`; rules `dblgrow_q_opens_label_form`, `dblgrow_alt_r_f_strands_labels`, `dblgrow_label_on_bare_pin`, `dblgrow_gschem_power_symbols`; suite debts `test_dblclick_connected_grow` and `test_wave_viewer` (each owes its one run on `:0`; the batch ran on a private display only). Marked `[E]`.
 - **The figure later items are gated against has moved**: a tree with item 04 has `cases=228 blocks=227` and `skips=15` (the baseline's 13 plus the grow suite's two on the arm without a canvas). Items 03b (base `c78d0f1d3`, without item 04) still expects 225/224/13 in its own clone.
 - To do when every item has landed, before item 05: (1) one full regression on the main tree's head in a clone, because items 03, 03b, 04 and 02 were each gated on their own base and meet only in the main tree; (2) mint issue numbers, from the main tree and with both checks, for the defects the receipts list as open and unfiled: `xschem paste` crashes (signal 11) on a clipboard file whose `G` record is empty (item 04's receipt, section 5); others as the remaining receipts name them.
 - For the final report, from item 04's receipt: `test_selflog_output` (unregistered) fails six key rows with the action log, with and without the item; `test_shape_draw_gate` and `test_placement_preview_doors` time out on the display arm (headless-only suites); `tests/wire_stub_netlabel.tcl` (unregistered) fails five rows and dies before its row B7; `xschem move_objects` right after `xschem merge` prints a "re-armed" note; a missing abort of the armed move at the double click is caught by no row (the end state measured identical).

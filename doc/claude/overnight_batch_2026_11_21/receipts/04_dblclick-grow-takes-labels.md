@@ -1,6 +1,6 @@
 # Receipt: item 04, the double-click grow takes the wire labels
 
-> **Driver's note, 2026-11-22 02:36.** This receipt was written in the clone before the
+> **Driver's note, 2026-11-22 02:35.** This receipt was written in the clone before the
 > item landed. Since then:
 >
 > - The commit is in the main tree `/home/analog/dev/xschem-claude` as `44f2d591f`
