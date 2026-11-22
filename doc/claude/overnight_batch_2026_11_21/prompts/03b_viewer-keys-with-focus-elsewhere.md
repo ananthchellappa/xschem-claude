@@ -124,6 +124,32 @@ schematic's canvas as its window; say which rows do which.
 9. A key release in the state of row 1.
 10. Restated, not deleted: KM14 and G1f.
 
+## Two riders left by item 03 (added by the lead 2026-11-22, when item 03 landed)
+
+Item 03 is in this clone's base as its own commit; its receipt is
+`doc/claude/overnight_batch_2026_11_21/receipts/03_viewer-ctrl-shift-m.md` (section 5,
+"Left open"). Two small things it left are in the code this item works in. The user asks
+that siblings of one cause be cured in the same pass. Both are small: if either cannot be
+finished and shown red-first inside the first build, leave it out, say so, and return it
+as a debt. Neither may hold up rows 1 to 10.
+
+11. **The chord with exactly one cursor showing** (a row only; the product is right).
+    A break that makes Ctrl-Shift-M dead while cursor A alone or cursor B alone shows
+    passes every suite: the rows press it with no cursor and with both. Add the leg to
+    SWK19 of `tests/headless/test_wave_subwindows.tcl` (the cursor state answered as A
+    only, as B only, as both) and show it red under that break on both arms.
+12. **A middle-button drag near a strip's edge at a high Tk scaling.**
+    `wviewer::btn2_filter` asks `wviewer::strip_at_pixel_inset` with its fixed default of
+    8 pixels, while the engine's border inside a graph grows with the Tk scaling
+    (`wviewer::graph_border_px`, which item 03 added for the keys and row SWK25 holds
+    against `src/callback.c`). Measured in item 03's first run at scaling 2.0: a
+    middle-button press 9 pixels inside a strip is not taken by the graph and pans the
+    viewer's schematic canvas, the gesture issue 0149 removed from this window. The
+    inset the button filter uses must be no smaller than the engine's border at the
+    display's scaling; where 8 pixels suffice today nothing may change (take the answers
+    before you change anything). A row at scaling 2.0 through the recorder SWK25 uses,
+    red today.
+
 ## Texts to update
 
 The guide (`doc/waveform_viewer_guide.html`): the note in its section on keys that says a
@@ -154,10 +180,12 @@ says why it is there and for which contexts. A new entry on top of `doc/claude/F
 
 ## Out of scope
 
-Mouse buttons and the wheel (they are delivered to the window under the pointer). The
-Signal Browser's own keys. The mirror state of decision 3.
+Routing of mouse buttons and the wheel (they are delivered to the window under the
+pointer; rider 12 changes only the inset of the middle-button filter). The Signal
+Browser's own keys. The mirror state of decision 3.
 
 ## Done means
 
 Rows 1 to 10 green on the arm each belongs to, each new row shown red on the unchanged
-product, the two limits gone from the guide and the spec, and the debts returned.
+product, the two limits gone from the guide and the spec, and the debts returned. Riders
+11 and 12 done, or returned as debts with the reason.
