@@ -2593,10 +2593,20 @@ static int xschem_cmds_a(Tcl_Interp *interp, int argc, const char *argv[], int *
       tcleval("array unset ngspice::ngspice_data");
 
 
+      /* ISSUE 1657 -- RAW_READ_NAMED_TYPE ON THE TWO CALLS THAT ASK FOR "op".
+       * The delete above removes only a CURRENT one-point table. The file's
+       * "op" table may be loaded and not current, and when a read that named
+       * no type took it from the noise totals (Raw.totals_as_op) the registry
+       * would switch to it and the totals would be published where the node
+       * voltages belong. This request's own question is the operating point,
+       * so it says so, and the registry reads such a table again in place.
+       * Nothing else moves: a table that is not so marked is switched to as
+       * before (issue 0685's stale answer for a file with no totals is that
+       * issue's, and is left as it is). */
       if(sim_type[0]) {
-        res = extra_rawfile(1, f, sim_type, -1.0, -1.0);
+        res = extra_rawfile(1 | RAW_READ_NAMED_TYPE, f, sim_type, -1.0, -1.0);
       } else {
-        res = extra_rawfile(1, f, "op", -1.0, -1.0);
+        res = extra_rawfile(1 | RAW_READ_NAMED_TYPE, f, "op", -1.0, -1.0);
         if(res != 1) {
           /* Xyce uses a 1-point DC transfer characteristic for operating point (OP) data */
           res = extra_rawfile(1, f, "dc", -1.0, -1.0);
@@ -11251,8 +11261,8 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
     /* raw what ...
      *     what = add | annot | case | casemode | clear | datasets | index | info | loaded | list |
      *            new | points | rawfile | del | read | set | rename |
-     *            sim_type | switch | switch_back | table_read | vcd_read | value | values |
-     *            pos_at | vars |
+     *            sim_type | switch | switch_back | table_read | totals_as_op | vcd_read |
+     *            value | values | pos_at | vars |
      *
      *   xschem raw vcd_read filename
      *     read a Verilog VCD file as another database in the registry, with sim_type
@@ -11261,11 +11271,17 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *     vector plus one vector per bit (`count` and `count[3]`..`count[0]`).
      *     See src/vcd_read.c and doc/claude/specs/mixed_signal_signal_browser.md.
      *
-     *   xschem raw read filename [type [sweep1 sweep2]] [-case mode]
+     *   xschem raw read filename [type [sweep1 sweep2]] [-case mode] [-asis]
      *     if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
      *     sweep1 <= sweep_var < sweep2
      *     type is the analysis type to load (tran, dc, ac, op, ...). If not given load first found in
      *     raw file.
+     *     A file that is already loaded under that type is made current and not read
+     *     again -- except that a read naming `op` reads the file again when the loaded
+     *     table holds the noise totals a read naming no type took as `op` (see `xschem
+     *     raw totals_as_op`), and is then given the operating point. -asis keeps the
+     *     loaded table as it stands in that case too; with -case as well, that table
+     *     is read again the way it was first read.
      *     -case mode sets the case sensitivity of name lookup in the database just read;
      *     mode is fold | preserve | distinguish | 0 | 1, and it is an OPTION, so it may
      *     appear anywhere after `read`. See doc/claude/specs/raw_case_mode.md
@@ -11299,6 +11315,11 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *
      *   xschem raw info
      *     print information about loaded raw files and show the currently active one.
+     *
+     *   xschem raw totals_as_op [n]
+     *     1 if the current raw data (or the n-th, as `xschem raw info` numbers them) holds
+     *     the noise totals of a results file under the type `op` because a read that
+     *     named no type took them, else 0.
      *
      *   xschem raw new name type sweepvar start end step
      *     create a new raw file with sweep variable 'sweepvar' with number=(end - start) / step datapoints
@@ -11483,12 +11504,23 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * database of the same run knows where the run ended (ase::attach_dbs),
          * so it says so here. It only ever EXTENDS, and every reader but
          * vcd_read() ignores it. Reset on every path out, so it cannot reach a
-         * later read that did not ask for it. */
+         * later read that did not ask for it.
+         *
+         * `-asis` (issue 1657) is an option too: "if this file is loaded under
+         * this type, make that table current as it stands". Without it a read
+         * that names `op` and meets a table that an untyped read took from the
+         * noise totals reads the file again and is given the operating point
+         * (the read arm of extra_rawfile(), src/save.c). A caller that only
+         * puts the user's table back after borrowing the registry must not turn
+         * that into a re-read: calc::aq_restore (src/calculator.tcl) says
+         * `-asis`. A file that is not loaded is read as always. */
         const char *pos[8];
-        int npos = 0, k, cs = -1, n_before;
+        int npos = 0, k, cs = -1, n_before, asis = 0, rdflags;
         double vend = -1.0;
         for(k = 3; k < argc; ++k) {
-          if(!strcmp(argv[k], "-end")) {
+          if(!strcmp(argv[k], "-asis")) {
+            asis = 1;
+          } else if(!strcmp(argv[k], "-end")) {
             if(k + 1 >= argc) {
               Tcl_SetResult(interp, "xschem raw read: -end needs a time in seconds", TCL_STATIC);
               return TCL_ERROR;
@@ -11518,21 +11550,39 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         }
         n_before = xctx->extra_raw_n;
         vcd_read_set_end(vend);
-        ret = extra_rawfile(1 | RAW_READ_REBIND, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
+        /* issue 1657: a type word is the request naming the type, unless the
+         * caller said `-asis` (RAW_READ_NAMED_TYPE, src/xschem.h) */
+        rdflags = 1 | RAW_READ_REBIND;
+        if(npos > 1 && pos[1][0] && !asis) rdflags |= RAW_READ_NAMED_TYPE;
+        ret = extra_rawfile(rdflags, pos[0], npos > 1 ? pos[1] : NULL, sweep1, sweep2);
         /* extra_rawfile(what == 1) makes the database it just read the CURRENT
          * one, so xctx->raw is the Raw this option is about. On a failed read it
          * is the restored previous one and must not be stamped. */
         if(ret && cs >= 0 && xctx->raw) {
-          /* IF THE FILE WAS ALREADY LOADED extra_rawfile() only SWITCHED to it --
-           * the registry did not grow -- so nothing was read and stamping the
-           * flag here would be precisely the flag-flip-without-a-re-read that
-           * `xschem raw case` is forbidden to do. Measured: with an in-memory
-           * `raw rename` outstanding, `raw read <same file> -case distinguish`
-           * left the rename in place and moved the flag 0 -> 1. Route it through
-           * the same re-read, so `-case` means one thing by either verb.
-           * doc/claude/specs/raw_case_mode.md section 3. */
-          if(xctx->extra_raw_n == n_before) {
-            ret = raw_case_reread(interp, npos > 1 ? pos[1] : NULL);
+          /* IF THE FILE WAS ALREADY LOADED AND extra_rawfile() ONLY SWITCHED TO
+           * IT, nothing was read and stamping the flag here would be precisely
+           * the flag-flip-without-a-re-read that `xschem raw case` is forbidden
+           * to do. Measured: with an in-memory `raw rename` outstanding, `raw
+           * read <same file> -case distinguish` left the rename in place and
+           * moved the flag 0 -> 1. Route it through the same re-read, so
+           * `-case` means one thing by either verb.
+           * doc/claude/specs/raw_case_mode.md section 3.
+           *
+           * "ONLY SWITCHED" IS TWO TESTS SINCE ISSUE 1657. The registry did not
+           * grow, AND the call did not read a loaded table again in place
+           * (extra_rawfile_reread()): a read naming `op` that met the noise
+           * totals has parsed the file into the same slot, so the count stands
+           * still although the table is fresh from the file. Sending that one
+           * through raw_case_reread() as well read the file a second time and,
+           * through its clear arm, moved the table to the end of the registry
+           * (row M-case-option of tests/headless/test_raw_ascii_point_bounds.tcl).
+           *
+           * WITH `-asis` THE RE-READ ASKS AS THE TABLE WAS ASKED, not with the
+           * type word of this command: `-asis` says "the loaded table as it
+           * stands", and for a table that holds the noise totals the type word
+           * `op` would bring the operating point instead. */
+          if(xctx->extra_raw_n == n_before && !extra_rawfile_reread()) {
+            ret = raw_case_reread(interp, (npos > 1 && !asis) ? pos[1] : NULL);
             if(!ret) { vcd_read_set_end(-1.0); return TCL_ERROR; }
           }
           if(xctx->raw) xctx->raw->case_sensitive = cs;
@@ -11581,15 +11631,21 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * that is not loaded yet, because the type is the reader dispatch key
          * (issue 0290).
          *
-         * RETURNS 2 (switched: already loaded, nothing parsed), 1 (read: a slot
-         * was added) or 0 (refused). A Tcl caller testing the result as a
+         * RETURNS 2 (switched: already loaded, nothing parsed), 1 (read: a file
+         * was parsed) or 0 (refused). A Tcl caller testing the result as a
          * boolean gets "selected" for both 1 and 2, which is what nearly every
          * caller wants; the two are distinguishable for the one caller --
          * results::select (R302) -- that has to say which happened.
          *
+         * A read adds a slot, with ONE EXCEPTION (issue 1657, the user's ruling
+         * of 2026-11-21): a select that NAMES `op` and meets a loaded table
+         * that a read naming no type took from the noise totals reads the file
+         * again into that table's slot, frees the table it replaces, and
+         * answers 1. raw_select() in src/save.c; R301 of the selection spec.
+         *
          * NOT `raw_read`, which is one underscore away and CLEARS THE WHOLE
-         * REGISTRY before reading (L2, issue 0508). Nothing in this arm frees a
-         * database. */
+         * REGISTRY before reading (L2, issue 0508). Apart from that one
+         * exception nothing in this arm frees a database. */
         if(argc < 4) {
           Tcl_SetResult(interp, "xschem raw select: no file given", TCL_STATIC);
           return TCL_ERROR;
@@ -11643,6 +11699,29 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "loaded")) {
         Tcl_SetResult(interp, my_itoa(sch_waves_loaded()), TCL_VOLATILE);
+      } else if(argc > 2 && !strcmp(argv[2], "totals_as_op")) {
+        /* xschem raw totals_as_op [<slot>]
+         *   read-only: 1 if the table holds the noise totals of a results file
+         *   under the type `op` because a read that named no type took them
+         *   (Raw.totals_as_op, issue 1657), else 0 -- also 0 with nothing
+         *   loaded and for a slot that does not exist. With no argument it
+         *   asks the CURRENT table; with one, the registry slot of that index
+         *   as `xschem raw info` numbers them. A request that names `op` reads
+         *   such a table again; a reader that never reads (the annotate chord
+         *   of utils/annot_mode.tcl, calc::aq_run) asks here first.
+         *   Outside the `raw && raw->values` gate below, like `loaded`. */
+        int marked = 0;
+        if(argc > 3) {
+          int n = atoi(argv[3]);
+          if(isonlydigit(argv[3]) && n >= 0 && n < xctx->extra_raw_n && xctx->extra_raw_arr[n]) {
+            marked = xctx->extra_raw_arr[n]->totals_as_op;
+          } else if(isonlydigit(argv[3]) && n == 0 && xctx->extra_raw_n == 0 && xctx->raw) {
+            marked = xctx->raw->totals_as_op; /* a base table the registry has not adopted yet */
+          }
+        } else if(xctx->raw) {
+          marked = xctx->raw->totals_as_op;
+        }
+        Tcl_SetResult(interp, marked ? "1" : "0", TCL_STATIC);
       } else if(argc > 2 && !strcmp(argv[2], "is_digital")) {
         /* xschem raw is_digital [<sim_type>]
          *   read-only: 1 if the database is logic levels rather than analog
@@ -12131,6 +12210,26 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
          * (issue 0290); it now calls the one dispatch in save.c, which also stamps
          * sim_type for readers that do not stamp it themselves. */
         res = read_rawfile_by_type(f, &xctx->raw, argc > 3 ? argv[3] : NULL, 0, sweep1, sweep2);
+        /* ISSUE 1657 -- REMEMBER THE TYPE THIS DOOR WAS ASKED FOR. It bypasses
+         * extra_rawfile(), whose read arms record it, so Raw.req_sim_type stayed
+         * NULL here and `xschem raw case <mode>`, which reads the file again
+         * with that field (raw_case_reread()), read it again with NO type.
+         * MEASURED before this line: `raw_read <f> op` of a file whose first
+         * plot is the noise totals showed the operating point, and after `raw
+         * case preserve` showed the totals. Row M-case of
+         * tests/headless/test_raw_ascii_point_bounds.tcl.
+         *
+         * IT RECORDS THE TYPE FOR EVERY FILE, so this is the one answer of
+         * issue 1657's second pass that moved for a file WITHOUT noise totals:
+         * a case-mode change after `raw_read <f> <type>` reads the file as it
+         * was asked instead of taking its first plot. MEASURED both ways: a
+         * file holding an operating point and then a transient, asked `tran`,
+         * came back from `raw case preserve` as the operating point and now
+         * stays the transient; a VCD asked `vcd` was refused by that re-read,
+         * which left nothing loaded, and now stays loaded. Rows M-case-plain. */
+        if(res && xctx->raw && argc > 3 && argv[3][0]) {
+          my_strdup(_ALLOC_ID_, &xctx->raw->req_sim_type, argv[3]);
+        }
         if(sch_waves_loaded() >= 0) {
           draw();
         }

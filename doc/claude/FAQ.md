@@ -14,6 +14,76 @@ Newest entries on top.
 
 ---
 
+## Q99. I loaded a results file from the Waves menu and then asked for the operating point. Why did I get noise totals before, and what happens now?
+
+- **Asked:** 2026-11-21
+- **Project state:** branch `fluid-editing`, the overnight batch of 2026-11-21, item 02
+  (issue 1657, "The two items that were open", item 2).
+
+**A read that names no analysis takes the file's first plot, and in an ASE-L run with a
+`noise` row and device operating-point numbers that first plot is the noise totals, which
+read back as type `op`.** The table that read stores is typed `op` and holds
+`v(onoise_total)` and `v(inoise_total)`. The registry does not read a file it already
+holds under the type asked for, so a later request for the operating point was shown that
+table: no node voltage annotated, and `vdc(out)` not evaluable.
+
+**Now the table is marked when it is stored, and a request that names `op` reads the file
+again.** `xschem raw read <file> op`, `xschem raw select <file> op`, `xschem annotate_op`,
+the annotate chords of the Cadence profile and the Calculator's `vdc()` each get the
+operating point, in the same registry slot. A file with no noise totals is never marked,
+and for it nothing changed.
+
+- **What still shows the totals**, because it asks for no read: `xschem raw switch`,
+  `xschem raw switch_back`, a `xschem raw select` or `results::select` with no type, and a
+  graph that loads its own file. Name the analysis, or annotate, and the operating point
+  is read.
+- **A noise-only run** (no operating point in the file) still annotates its totals.
+- **To see whether a table is such a one:** `xschem raw totals_as_op` answers 1.
+- **A script that only wants the loaded table back as it stands** says
+  `xschem raw read <file> op -asis`.
+- Rows: band M of `tests/headless/test_raw_ascii_point_bounds.tcl`.
+
+---
+
+## Q98. The Options sheet's deck preview lists `OP BLOCK` last on one bench and first on another. Which is right?
+
+- **Asked:** 2026-11-21
+- **Project state:** branch `fluid-editing`, the overnight batch of 2026-11-21, item 02
+  (issue 1657, "The two items that were open", item 1;
+  `doc/claude/specs/ase_l.md`, "The Options sheet's deck preview").
+
+**Both: the preview now lists the per-analysis groups in the order the deck will run
+them.** When device operating-point numbers are saved and another analysis is enabled,
+the ngspice deck runs the operating point behind the other analyses (the device requests
+must stand right before the last analysis, or every later analysis records them again),
+and the preview shows `OP BLOCK -- runs last in this deck` under the other
+groups. An `sp` row still runs after it; the heading then reads `OP BLOCK -- runs after
+tran in this deck` and the `SP BLOCK` group stands below it. With the Save All tick off,
+with the operating point as the only analysis, or with the one-line form of the device
+requests forced by a script (`ase::op_tier_force_set b`), it runs first and is listed
+first. Until 2026-11-22 the preview always listed it first.
+
+- **Before a netlist exists in this session** the order is not settled: it depends on the
+  netlist the run will write. The preview then lists the operating point first and says so
+  in one line: *the op analysis runs after tran when device operating-point numbers are
+  saved; that is settled when the netlist is written*. Press Netlist (or Netlist and Run)
+  and the open sheet repaints in the deck's order. The same line is shown when the netlist
+  on disk is not the one this session wrote last (another session's netlist, an edit by
+  hand, the schematic window's own Netlist command; the sheet reads the file again when it
+  gets the keyboard focus) and when it was written while the operating point was switched
+  off: the next netlist is what settles it.
+- **Why it matters:** an option that cannot be put back after its analysis stays in force
+  for whatever runs after it. Its note now names those analyses, or says none runs after.
+- **Each group is headed by its analysis** (`TRAN BLOCK`, `NOISE BLOCK`), two spaces in.
+  Under the four slot headings a line that stands four spaces in is a line of the deck,
+  or `(nothing)` for an empty slot; the lines under `not delivered` stand four spaces in
+  too and are notes about an option, not deck lines.
+- Rows: `tests/headless/test_ase_optsheet_1441.tcl` PV12 to PV18, UI25 to UI30;
+  `tests/headless/test_ase_core.tcl` RO12 to RO18;
+  `tests/headless/test_ase_effective_1442.tcl` DK10c to DK10f.
+
+---
+
 ## Q97. I press a key with the pointer over the waveform viewer and get "View is Read Only", or nothing. Which window does a key go to?
 
 - **Asked:** 2026-11-21 (the user's report was Ctrl-Shift-M in the viewer)

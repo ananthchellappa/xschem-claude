@@ -191,6 +191,17 @@ namespace eval ase {
   # session_update/save/load/revert. Default {} (headless: nothing runs);
   # ase::ui (ase_window.tcl) points it at its title-refresh handler.
   variable session_notify {}
+  # THE THIRD NOTIFY SEAM (issue 1657): command prefix invoked with NO
+  # arguments when something that is not a session's state changes the order a
+  # deck will run its analyses in -- the held device requests (a netlist was
+  # written: ase::op_cards_put, ase::op_cards_clear) or the forced shape
+  # (ase::op_tier_force_set). Default {} (headless: nothing runs); ase::ui
+  # points it at ase::ui::optsheet_preview_all, so an Options sheet that is
+  # open shows the new order. A change of a session's own state (the tick that
+  # saves device operating-point numbers, an analysis switched on or off)
+  # reaches the same sheet through session_notify. Fired by
+  # ase::order_notify_fire.
+  variable order_notify {}
   # THE SECOND NOTIFY SEAM, AND IT IS ABOUT THE REGISTRY, NOT A SESSION (issue
   # 1370, found by that item's adversary). Command prefix invoked with NO
   # arguments after every gesture that changes which program a run would start
@@ -8296,31 +8307,60 @@ proc ase::opt_scoped_names {sim type} {
   return $out
 }
 
-# The enabled analysis types of a state, de-duplicated, in the order a deck
-# that runs its operating point FIRST writes them -- for a reader that wants
-# the TYPES rather than the rows. ⚠ CAUGHT AND FALLING BACK
-# TO THE PLAIN ROW ORDER: `ase::analysis_emit_order` raises by name on an
-# unrankable row (issue 1401), and a PREVIEW pane must not be the thing that
-# refuses -- `ase::preflight_gate` and `render_deck` already do, where a refusal
-# is an answer rather than a blank window.
+# WHERE A DECK PUTS THE OPERATING POINT AMONG THE ANALYSES IT RUNS: `first`,
+# `last` or `unknown` (issue 1657, the user's ruling of 2026-11-21).
 #
-# ⚠ DECLARED LIMIT (issue 1657, open there): A DECK THAT RUNS ITS OPERATING
-# POINT LAST WRITES THE `op` GROUP AFTER THE OTHERS, AND THIS PROC STILL LISTS
-# IT FIRST.  The deck moves the operating point when the per-device
-# operating-point requests go inside `.control` (issue 0964), and whether they
-# do is decided from the netlist the run writes: are device requests held for
-# that exact text.  The preview is handed a reduced copy of the netlist file,
-# or nothing before one exists, and may not netlist, so it cannot ask.
-# MEASURED 2026-11-20: with one per-analysis option on `op` and one on `tran`,
-# the Options preview lists the `op` lines above the `tran` lines while the
-# deck of the same bench, device requests held, writes them below.  The lines
-# are the same lines; only their order differs.
-proc ase::preview_analysis_types {state} {
+# The registry's ranks put the operating point first. A backend's deck may
+# move it: which order a deck runs its rows in is the ADAPTER's
+# (doc/claude/specs/ase_l_adapter_authors.md, the section on plot
+# reconciliation), so core does not decide it. It asks the optional
+# `op_run_order {state netlist_text}` hook, whose answer is one of the three
+# words:
+#   first    the operating point runs where the registry ranks it;
+#   last     the deck moves it behind the other analyses (the rank
+#            ase::analysis_emit_rank gives it under `op_last`);
+#   unknown  which of the two is settled only when the netlist of the run is
+#            written, and `netlist_text` is not that netlist (or is empty, or
+#            the backend knows the next netlist will not be captured as this
+#            one was).
+# A backend with no such hook, a hook that raises and an answer that is none of
+# the three words are all `first`: the order every reader had before the hook
+# existed. `netlist_text` is the netlist as the run will read it, byte for
+# byte -- not a reduced copy.
+#
+# ⚠ THE HOOK MUST BE A PURE READ. This is asked from the Options preview, which
+# repaints on every key typed in its Find box.
+proc ase::op_run_order {sim state {netlist_text {}}} {
+  set h {}
+  if {[catch {set h [ase::backend_hook $sim op_run_order]}]} { return first }
+  if {$h eq {}} { return first }
+  set r {}
+  if {[catch {$h $state $netlist_text} r]} { return first }
+  if {[lsearch -exact {first last unknown} $r] < 0} { return first }
+  return $r
+}
+
+# The enabled analysis types of a state, de-duplicated, in the order the deck
+# writes them -- for a reader that wants the TYPES rather than the rows.
+# `order` is ase::op_run_order's word: `last` ranks the operating point as a
+# deck that moved it does, anything else as the registry does.
+# ⚠ CAUGHT AND FALLING BACK TO THE PLAIN ROW ORDER: `ase::analysis_emit_order`
+# raises by name on an unrankable row (issue 1401), and a PREVIEW pane must not
+# be the thing that refuses -- `ase::preflight_gate` and `render_deck` already
+# do, where a refusal is an answer rather than a blank window.
+#
+# Until issue 1657's second pass this proc always listed the operating point
+# first, whatever the deck would do, and said so here as a declared limit. Its
+# one caller, ase::opt_preview, now asks ase::op_run_order and hands the answer
+# in. Row RO1 of tests/headless/test_ase_core.tcl derives who walks the rows
+# and which of them still take the operating-point-first order.
+proc ase::preview_analysis_types {state {order first}} {
   set out {}
   set sim [ase::state_get $state simulator [ase::default_simulator]]
-  set order {}
-  if {![catch {ase::analysis_emit_order $state 0 $sim} order] && [llength $order]} {
-    foreach e $order {
+  set oplast [expr {$order eq {last} ? 1 : 0}]
+  set walk {}
+  if {![catch {ase::analysis_emit_order $state $oplast $sim} walk] && [llength $walk]} {
+    foreach e $walk {
       set t [lindex $e 2]
       if {[lsearch -exact $out $t] < 0} { lappend out $t }
     }
@@ -8332,6 +8372,98 @@ proc ase::preview_analysis_types {state} {
     if {$t ne {} && [lsearch -exact $out $t] < 0} { lappend out $t }
   }
   return $out
+}
+
+# `a`, `a and b`, `a, b and c`: a list of words as a sentence carries it.
+proc ase::words_and {words} {
+  set n [llength $words]
+  if {$n < 2} { return [lindex $words 0] }
+  return "[join [lrange $words 0 end-1] {, }] and [lindex $words end]"
+}
+
+# THE IN-BLOCK SLOT OF THE OPTIONS PREVIEW: every line the deck writes around
+# its analyses for an option, as `{option line analysis}`, the groups in the
+# order of ase::preview_analysis_types and the lines of one group in the order
+# the deck writes them around that analysis -- the scoped options' set lines,
+# the lines that turn off what the analysis cannot run under and put the
+# user's value back (per enabled row of the type, ase::analysis_suppress_lines'
+# `pairs`), then the scoped options' restore lines, last set first. It is
+# render_deck's own order: scope `pre`, suppress `pre`, the analysis, suppress
+# `post`, scope `post`.
+#
+# One group per analysis TYPE. Two enabled rows of one type are written one
+# after the other by every deck, because a type has one rank; the group lists
+# the type's scoped lines once and each row's own added lines in row order.
+proc ase::opt_preview_groups {sim state order} {
+  set out {}
+  foreach atype [ase::preview_analysis_types $state $order] {
+    set pre {} ; set post {} ; set mid {}
+    foreach rec [ase::opt_scope_plan $sim $state $atype] {
+      lassign $rec name value status setl rl
+      if {$setl ne {}} { lappend pre [list $name $setl $atype] }
+      if {$rl ne {}}   { set post [linsert $post 0 [list $name $rl $atype]] }
+    }
+    foreach arow [ase::state_get $state analyses] {
+      if {[ase::state_get $arow enabled 0] ne {1}} { continue }
+      if {[ase::state_get $arow type] ne $atype} { continue }
+      set su {}
+      if {[catch {ase::analysis_suppress_lines $sim $state $atype $arow} su]} { continue }
+      set back {}
+      foreach p [dict get $su pairs] {
+        lassign $p nm off on
+        lappend mid [list $nm $off $atype]
+        if {$on ne {}} { set back [linsert $back 0 [list $nm $on $atype]] }
+      }
+      foreach e $back { lappend mid $e }
+    }
+    foreach e [concat $pre $mid $post] { lappend out $e }
+  }
+  return $out
+}
+
+# THE SENTENCE FOR AN OPTION THAT IS SET AND NOT PUT BACK. `order` is
+# ase::op_run_order's word and `after` the analysis types the deck runs after
+# `atype`. While the order is not known the sentence is the one the user
+# reviewed (⚖ R9 A1, doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md); once it
+# is known it names what runs after, or says nothing does.
+#
+# ⚠ "LEFT IN FORCE" ACROSS A dc ROW THAT SWEEPS A DESIGN VARIABLE. That row
+# loads the circuit again at every point. MEASURED 2026-11-22 on two builds of
+# the shipped backend's simulator: the reload puts a setting written inside the
+# block as a circuit option back to the deck's value, and keeps one written as
+# an interpreter variable. The sentence still holds for every option the
+# shipped catalogue can leave in force, and row SP7b of
+# tests/headless/test_ase_effective_1442.tcl is what says so: each is either
+# written as a variable or scoped to an analysis that runs after dc.
+proc ase::opt_leak_note {sim name atype order after} {
+  set why [ase::opt_leak_why $sim $name]
+  if {$order eq {unknown}} {
+    return [format {set for the %s analysis and left in force for every analysis after it -- %s} \
+              $atype $why]
+  }
+  if {![llength $after]} {
+    return [format {set for the %s analysis and left in force after it; no analysis runs after it in this deck -- %s} \
+              $atype $why]
+  }
+  return [format {set for the %s analysis and left in force for the analyses that run after it in this deck (%s) -- %s} \
+            $atype [join $after {, }] $why]
+}
+
+# WHAT THE PANE SAYS BESIDE A GROUP'S HEADING, or {}. Only the operating
+# point's group is ever marked, and only when the deck moved it: `before` and
+# `after` are the types the deck runs before and after it.
+proc ase::opt_group_mark {order atype before after} {
+  if {$order ne {last} || $atype ne {op}} { return {} }
+  if {![llength $after]} { return {runs last in this deck} }
+  if {![llength $before]} { return {} }
+  return "runs after [ase::words_and $before] in this deck"
+}
+
+# THE SENTENCE FOR AN ORDER THAT IS NOT SETTLED YET. `moved` is the types the
+# operating point would run after if the deck moves it.
+proc ase::opt_order_note {moved} {
+  return "the op analysis runs after [ase::words_and $moved] when device\
+ operating-point numbers are saved; that is settled when the netlist is written"
 }
 
 # Why an option cannot be put back, in words. ⚠ ONE BODY WITH
@@ -8465,8 +8597,13 @@ proc ase::analysis_suppresses {sim state type row name} {
 # the default -- this is the one place in §7e where the restore runs the other
 # way round, because here it is ASE-L that changed the setting and the user who
 # owns it.
+# `pairs` is the same lines once more, as `{name off back}` per suppressed
+# option in the order of `pre` (`back` is {} when nothing is put back): a
+# reader that has to say WHICH option a line belongs to, the Options preview,
+# takes them from here, because `pre`, `post` and `names` are three lists with
+# nothing that pairs them.
 proc ase::analysis_suppress_lines {sim state type row} {
-  set pre {} ; set post {} ; set names {}
+  set pre {} ; set post {} ; set names {} ; set pairs {}
   foreach name [ase::analysis_suppress $sim $state $type $row] {
     if {![ase::analysis_suppresses $sim $state $type $row $name]} { continue }
     set want {}
@@ -8485,8 +8622,9 @@ proc ase::analysis_suppress_lines {sim state type row} {
     lappend pre $off
     if {$back ne {}} { set post [linsert $post 0 $back] }
     lappend names $name
+    lappend pairs [list $name $off $back]
   }
-  return [dict create pre $pre post $post names $names]
+  return [dict create pre $pre post $post names $names pairs $pairs]
 }
 
 # ═══ §7f -- REQUESTED VERSUS EFFECTIVE, AND WHY IT IS MANDATORY ══════════════
@@ -8869,7 +9007,10 @@ proc ase::effective_report {sim state diff} {
 #   prefile  in the run-directory start-up file
 #
 # plus `notes`: `{name status why}` for everything that will NOT arrive, or
-# that arrives somewhere the user did not expect.
+# that arrives somewhere the user did not expect. Two statuses are not about
+# an option and carry no option name: `order` (name {}) is the one sentence
+# that says the order of the in-block groups is not settled yet, and `group`
+# (name = an analysis type) is what the pane says beside that group's heading.
 #
 # ⚠ AND THE CONVERSE GUARD IS THE HALF PEOPLE FORGET. A line in the preview is
 # not a promise that the setting takes effect: `units` is read after the circuit
@@ -8880,10 +9021,24 @@ proc ase::effective_report {sim state diff} {
 #
 # ⚠ `control` IS FILLED BY §7e AS OF ISSUE 1442, and issue 1441's own row PV7
 # asserted it was empty precisely so that this day would move a NAMED ROW
-# rather than pass silently. What goes in it: the per-analysis option lines,
-# each shown with the analysis it is written around, and the restore line that
-# is what makes the word "scope" true. A row that is set and NOT put back is
-# shown too, with a note -- see `ase::opt_scope_plan`'s `leaks` answer.
+# rather than pass silently. What goes in it: the per-analysis option lines as
+# `{option line analysis}`, each carrying the analysis it is written around,
+# with the restore line that is what makes the word "scope" true. A row that
+# is set and NOT put back is shown too, with a note -- see
+# `ase::opt_scope_plan`'s `leaks` answer.
+#
+# ⚠ THE GROUPS STAND IN THE ORDER THE DECK WILL RUN THEM (issue 1657, the
+# user's ruling of 2026-11-21: "deck order + labels"). `order_text` is the
+# netlist as the run will read it, UNREDUCED, and it is used for ONE question:
+# ase::op_run_order, whether the deck will move its operating point behind the
+# other analyses. `netlist_text` stays the reduced copy the seed rule reads;
+# the two are separate arguments because the seed rule scans its text on every
+# repaint and must not be handed a whole netlist, and the order question
+# compares its text with the one device requests are held for and cannot be
+# handed a reduced one. With no `order_text`, or one the held requests were not
+# captured from, the order is not known: the groups keep the registry's order
+# and one `order` note says so -- when it can matter, which is when two groups
+# have lines or an option is left in force.
 # ⚠ `plan` IS OPTIONAL AND IT IS NOT TEST SCAFFOLDING. `ase::predeck_report`
 # already takes the plan the run computed, for the same reason: the pane and the
 # run must be shown to agree about ONE plan rather than about two calls that
@@ -8891,13 +9046,18 @@ proc ase::effective_report {sim state diff} {
 # refusal reachable -- `ase::predeck_plan` never returns lines AND a refusal at
 # once, so a preview built only from its own call can never exercise the guard
 # that drops them, and a row over it would be one whose fixtures cannot disagree.
-proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
+proc ase::opt_preview {sim state {plan {}} {netlist_text {}} {order_text {}}} {
+  ## `notes` is keyed so that an option keeps ONE note from the readers that
+  ## answer for the whole run (`n <option>`), while a note about an option
+  ## inside one analysis is that analysis's own (`s <option> <analysis>`): an
+  ## option stored against two analyses is left in force, or refused, by each.
+  ## Every value is the `{name status why}` triple the answer carries.
   set deck {} ; set ctl {} ; set cmd {} ; set pre {} ; set notes [dict create]
   foreach rec [ase::opt_deck_plan $sim $state] {
     lassign $rec name value status door line
     if {$line ne {}} { lappend deck [list $name $line] }
     if {$status eq {off}} {
-      dict set notes $name [list off \
+      dict set notes [list n $name] [list $name off \
         "switched off -- absence is the setting, so no line is written"]
     }
   }
@@ -8908,21 +9068,35 @@ proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
   if {$rsl ne {}} {
     set rsn [ase::campaign_seed_option $sim]
     lappend deck [list $rsn $rsl]
-    dict set notes $rsn [list default \
+    dict set notes [list n $rsn] [list $rsn default \
       "added by ASE-L so this run repeats exactly; set $rsn yourself to choose another"]
   }
-  ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis, in the order a
-  ## deck that runs its operating point first writes them (the limit is stated
-  ## above ase::preview_analysis_types), each line tagged with the analysis it
-  ## belongs to -- a bare `option itl4=200` in a flat list would be unreadable
-  ## the moment two rows of the same type carry different values.
+  ## §7e: THE IN-BLOCK SLOT. One group per enabled analysis type, in the order
+  ## the deck will run them, each entry carrying its analysis
+  ## (ase::opt_preview_groups) -- a bare `option itl4=200` in a flat list would
+  ## be unreadable the moment two analyses carry different values.
   ## ⚠ AND THE SUPPRESSION LINES ARE HERE TOO, BECAUSE THE DECK CONTAINS THEM.
   ## *"Nothing the deck contains may be unshowable in the window"* is the half
   ## of the non-negotiable that is easy to fail: §7g rule 1 writes two lines
   ## ASE-L chose, not the user, and a pane that omitted them would show a deck
-  ## running under KLU while the deck turns KLU off. It walks ROWS rather than
-  ## types because the rule is a property of the row -- an AC-mode `sens` and a
-  ## DC-mode one are the same type and only one of them is suppressed.
+  ## running under KLU while the deck turns KLU off. They stand in their own
+  ## analysis's group, where the deck writes them, each listed once.
+  set order first
+  catch {set order [ase::op_run_order $sim $state $order_text]}
+  set tfirst [ase::preview_analysis_types $state first]
+  set tlast  [ase::preview_analysis_types $state last]
+  ## Both orders are the same list: nothing is unsettled, whatever the backend
+  ## could not tell.
+  if {$order eq {unknown} && $tfirst eq $tlast} { set order first }
+  set types [expr {$order eq {last} ? $tlast : $tfirst}]
+  set ctl [ase::opt_preview_groups $sim $state $order]
+  set lined {}
+  foreach e $ctl {
+    if {[lsearch -exact $lined [lindex $e 2]] < 0} { lappend lined [lindex $e 2] }
+  }
+  ## The note for a line ASE-L added walks ROWS rather than types because the
+  ## rule is a property of the row -- an AC-mode `sens` and a DC-mode one are
+  ## the same type and only one of them is suppressed.
   foreach arow [ase::state_get $state analyses] {
     if {[ase::state_get $arow enabled 0] ne {1}} { continue }
     set atype [ase::state_get $arow type]
@@ -8930,34 +9104,51 @@ proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
     set su {}
     if {[catch {ase::analysis_suppress_lines $sim $state $atype $arow} su]} { continue }
     foreach nm [dict get $su names] {
-      foreach l [concat [dict get $su pre] [dict get $su post]] {
-        lappend ctl [list $nm $l]
-      }
-      dict set notes $nm [list suppressed \
+      dict set notes [list n $nm] [list $nm suppressed \
         "turned off for the $atype analysis, which crashes $sim under it, and\
  put back immediately after"]
     }
   }
-  foreach atype [ase::preview_analysis_types $state] {
+  set nleaks 0 ; set ti -1
+  foreach atype $types {
+    incr ti
+    set before [lrange $types 0 [expr {$ti - 1}]]
+    set after  [lrange $types [expr {$ti + 1}] end]
     foreach rec [ase::opt_scope_plan $sim $state $atype] {
       lassign $rec name value status setl rl
-      if {$setl ne {}} { lappend ctl [list $name $setl] }
-      if {$rl ne {}}   { lappend ctl [list $name $rl] }
       switch -exact -- $status {
         leaks {
           ## ⚖ R9 A1: the negated clause is gone rather than merely lowercased.
           ## The sentence already carried its own positive form in its trailing
           ## clause, so that clause is now the whole of it and the reason
           ## follows. Copy review: doc/claude/ase_analyses_batch/R9_COPY_REVIEW.md
-          dict set notes $name [list leaks \
-            "set for the $atype analysis and left in force for every analysis\
- after it -- [ase::opt_leak_why $sim $name]"]
+          ## The sentence is minted by ase::opt_leak_note, which names what
+          ## runs after the analysis once the order is known.
+          incr nleaks
+          dict set notes [list s $name $atype] [list $name leaks \
+            [ase::opt_leak_note $sim $name $atype $order $after]]
         }
         refused {
-          dict set notes $name [list refused \
+          dict set notes [list s $name $atype] [list $name refused \
             "nothing can be written for it inside the $atype analysis block"]
         }
       }
+    }
+    if {[lsearch -exact $lined $atype] >= 0} {
+      set mark [ase::opt_group_mark $order $atype $before $after]
+      if {$mark ne {}} { dict set notes [list g $atype] [list $atype group $mark] }
+    }
+  }
+  ## THE ORDER IS NOT SETTLED, AND IT CAN MATTER: one sentence, once. The types
+  ## it names are the ones that stand before the operating point when the deck
+  ## moves it and after it when it does not.
+  if {$order eq {unknown} && ([llength $lined] > 1 || $nleaks)} {
+    set moved {}
+    foreach t [lrange $tlast 0 [expr {[lsearch -exact $tlast op] - 1}]] {
+      if {[lsearch -exact $tfirst $t] > [lsearch -exact $tfirst op]} { lappend moved $t }
+    }
+    if {[llength $moved]} {
+      dict set notes [list o] [list {} order [ase::opt_order_note $moved]]
     }
   }
   if {$plan eq {}} { catch {set plan [ase::predeck_plan $sim $state]} }
@@ -8967,7 +9158,13 @@ proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
       foreach l [dict get $plan file] { lappend pre [list {} $l] }
     }
     foreach pair [dict get $plan refused] {
-      dict set notes [lindex $pair 0] [list refused [lindex $pair 1]]
+      ## The pre-deck plan's refusal is the option's one note: what an analysis
+      ## said about the same option goes.
+      set pn [lindex $pair 0]
+      dict for {k v} $notes {
+        if {[lindex $k 0] eq {s} && [lindex $v 0] eq $pn} { dict unset notes $k }
+      }
+      dict set notes [list n $pn] [list $pn refused [lindex $pair 1]]
     }
   }
   ## The catalogue's own answer to "which stored options will not reach the
@@ -8979,15 +9176,18 @@ proc ase::opt_preview {sim state {plan {}} {netlist_text {}}} {
   ## the delivery report says "this option is set by X" -- and printing both
   ## makes the pane look like two problems where there is one.
   catch {
+    set noted {}
+    dict for {k v} $notes { lappend noted [lindex $v 0] }
     foreach t [ase::state_option_delivery $sim $state] {
       lassign $t nm why reason
       if {$why eq {options}} { continue }
-      if {[dict exists $notes $nm]} { continue }
-      dict set notes $nm [list $why $reason]
+      if {[lsearch -exact $noted $nm] >= 0} { continue }
+      dict set notes [list n $nm] [list $nm $why $reason]
+      lappend noted $nm
     }
   }
   set nl {}
-  dict for {nm pair} $notes { lappend nl [linsert $pair 0 $nm] }
+  dict for {k v} $notes { lappend nl $v }
   return [dict create deck $deck control $ctl cmdline $cmd prefile $pre \
                       notes $nl]
 }
@@ -17478,6 +17678,7 @@ proc ase::deck_file {state} {
 #                           above.
 #
 # {netlist <exact artifact text> block <the save block>}; empty = nothing held.
+# A record made by a refusal may also carry `why <word>` (ase::op_cards_why).
 namespace eval ase { variable op_cards [dict create] }
 
 # Empty the slot. Called first on EVERY capture so a previous cell's block can
@@ -17485,12 +17686,19 @@ namespace eval ase { variable op_cards [dict create] }
 proc ase::op_cards_clear {} {
   variable op_cards
   set op_cards [dict create]
+  ase::order_notify_fire
+  return $op_cards
 }
 
-# The priming seam (also what the tests drive directly).
-proc ase::op_cards_put {netlist_text block} {
+# The priming seam (also what the tests drive directly). `why`, when given, is
+# kept beside the block: the word a refusal recorded for holding it empty
+# (ase::op_cards_note_refusal). A record with no word is as it always was.
+proc ase::op_cards_put {netlist_text block {why {}}} {
   variable op_cards
   set op_cards [dict create netlist $netlist_text block $block]
+  if {$why ne {}} { dict set op_cards why $why }
+  ase::order_notify_fire
+  return $op_cards
 }
 
 # 1 iff the slot holds a record built from EXACTLY this netlist text. This is
@@ -17509,6 +17717,23 @@ proc ase::op_cards_for {netlist_text} {
   variable op_cards
   if {![ase::op_cards_hit $netlist_text]} { return {} }
   return [dict get $op_cards block]
+}
+
+# WHY the block held for exactly this netlist text is empty, when the capture
+# said: `no_op` -- no operating point was enabled when the netlist was
+# written, so nothing was asked of the design. {} on a miss, for a block with
+# requests, and for an empty block whose capture gave no word (the design has
+# nothing to ask for, the sheet had unsaved edits, the walk raised).
+#
+# The one reader is a backend's answer to "where will the deck run the
+# operating point" (ase::op_run_order): an empty block recorded for that reason
+# stops being the last word the moment the user switches the operating point
+# on, because the next netlist will capture requests.
+proc ase::op_cards_why {netlist_text} {
+  variable op_cards
+  if {![ase::op_cards_hit $netlist_text]} { return {} }
+  if {![dict exists $op_cards why]} { return {} }
+  return [dict get $op_cards why]
 }
 
 # --- 0635: a refusal must leave a RECORD -------------------------------------
@@ -17531,11 +17756,14 @@ proc ase::op_cards_for {netlist_text} {
 #
 # Never raises: the artifact may be unreadable, and a refusal path is the last
 # place that should turn into an error.
-proc ase::op_cards_note_refusal {netlistpath} {
+#
+# `why` is the word ase::op_cards_why hands back, for the one refusal a later
+# change of the bench undoes (no operating point enabled).
+proc ase::op_cards_note_refusal {netlistpath {why {}}} {
   if {[catch {open $netlistpath r} f]} { return 0 }
   if {[catch {read $f} text]} { catch {close $f} ; return 0 }
   catch {close $f}
-  ase::op_cards_put $text {}
+  ase::op_cards_put $text {} $why
   return 1
 }
 
@@ -17777,6 +18005,7 @@ proc ase::op_tier_force_set {t} {
     return -code error "ase: op_tier_force_set: expected a, b, c, d or {}, got '$t'"
   }
   set op_tier_force $t
+  ase::order_notify_fire
   return $t
 }
 
@@ -18900,7 +19129,7 @@ proc ase::op_cards_capture {state netlistpath} {
   ## tell the user to re-netlist an artifact this session just wrote (issue
   ## 0635's contradiction, C13's subject).
   if {![ase::op_analysis_enabled $state]} {
-    ase::op_cards_note_refusal $netlistpath
+    ase::op_cards_note_refusal $netlistpath no_op
     return {}
   }
   if {!$have} {
@@ -24004,6 +24233,15 @@ proc ase::session_notify_fire {key} {
   if {$session_notify ne {}} {
     catch {uplevel #0 [concat $session_notify [list $key]]}
   }
+  return {}
+}
+
+# Fire the order seam (see `order_notify` at the top of this file). Guarded for
+# the same reason: the writers that call it are on the netlist and render
+# paths, and a broken GUI hook must not cost a netlist.
+proc ase::order_notify_fire {} {
+  variable order_notify
+  if {$order_notify ne {}} { catch {uplevel #0 $order_notify} }
   return {}
 }
 
@@ -32434,13 +32672,18 @@ $_leg
   # issue 1657's list. (a) A results file whose blocks are ascii with CRLF
   # line ends and whose totals stand first: the reader cannot step over such
   # a block (issue 0300), so it never gets to the operating point. The deck
-  # this backend renders writes binary blocks. (b) A file ALREADY LOADED
-  # under `op` is not read again, and a read that named no type stores a
-  # totals-first file under `op`. After such a read `xschem raw read <file>
-  # op` shows those totals, and so does `xschem annotate_op <file>` unless
-  # that database is the current one (it removes the current one-point
-  # database before it reads); `ase::attach_dbs <file> op` and the Calculator's
-  # read were measured to be given the operating point all the same.
+  # this backend renders writes binary blocks. (b) A table of the file that
+  # is ALREADY LOADED under `op` because a read that named no type stored the
+  # totals there, shown to a reader that asks for NO read: `xschem raw
+  # switch`, `xschem raw switch_back`, a select or a graph that names no
+  # type. Until 2026-11-22 this was every later request for `op` too: the
+  # registry switches to a table it holds and does not read. The table is now
+  # marked when it is stored (`xschem raw totals_as_op`), and a request whose
+  # own words name `op` -- `xschem raw read <file> op`, `xschem raw select
+  # <file> op`, `xschem annotate_op` -- reads the file again, in the same
+  # slot, and is given the operating point (the user's ruling of 2026-11-21;
+  # the read arm of extra_rawfile() in src/save.c). `ase::attach_dbs <file>
+  # op` and the Calculator's read were given it all along.
   #
   # ⚠ NO `seed_enabled`: four seeded rows, 104 byte-identical `.state` files.
   #
@@ -36689,6 +36932,63 @@ $_leg
   # (`srand(getpid()); TausSeed();`, `wallace.c:76-86`) at `:1371`, AFTER it.
   proc campaign_seed_option {} { return seed }
 
+  # WHERE THIS DECK RUNS THE OPERATING POINT (hook op_run_order;
+  # ase::op_run_order asks it for the Options preview): `last`, `first` or
+  # `unknown`. render_deck moves the operating point behind the other analyses
+  # when the per-device operating-point requests go inside `.control` (issue
+  # 0964: the save list is sticky forward only). This answers the same question
+  # WITHOUT rendering and without side effects:
+  #   first    the switch that saves device numbers is off; or no operating
+  #            point is enabled; or it is the only enabled analysis; or device
+  #            requests are held for exactly this netlist text and the held
+  #            block is empty (but see `unknown`); or the forced shape is the
+  #            one-line write form, which names the devices on the operating
+  #            point's own write line and moves nothing (unless it has more
+  #            devices than one line takes, where ase::op_save_tier falls back
+  #            to the per-device form);
+  #   last     device requests are held for exactly this netlist text, with
+  #            another analysis enabled, in every other shape;
+  #   unknown  the switch is on, the operating point and another analysis are
+  #            enabled, and `netlist_text` is empty or is not the text the
+  #            requests are held for -- or it is, and the block is empty
+  #            because no operating point was enabled when that netlist was
+  #            written (ase::op_cards_why). A Netlist and Run will capture
+  #            requests and move the operating point; a Run on the netlist as
+  #            it stands will not. Which one comes is not this proc's to guess.
+  #
+  # ⚠ IT READS ase::op_tier_forced AND NEVER ase::op_tier_now OR
+  # ase::op_save_tier: on a cold capability cache those start the user's
+  # simulator, and the preview asks this on every keystroke. It does not need
+  # them: the one shape that keeps the operating point first is reached only
+  # through the override (ase::op_save_tier's own header), and every shape the
+  # measurement can pick puts its requests inside `.control`.
+  #
+  # ⚠ IT RELIES ON A HELD BLOCK THAT IS NOT EMPTY CARRYING A DEVICE REQUEST,
+  # which is op_annot's contract for the block it builds and what render_deck's
+  # own shape switch relies on.
+  #
+  # Fenced AGAINST render_deck, cell by cell, by row RO13 of
+  # tests/headless/test_ase_core.tcl: the comparand there is the order of the
+  # record lines of the deck this adapter renders. Row RO17 holds the pure
+  # read, and row RO18 the empty block of a netlist written with the operating
+  # point off.
+  proc op_run_order {state netlist_text} {
+    if {![::ase::op_gate_on [::ase::state_get $state save_op_params {}]]} { return first }
+    if {![::ase::op_analysis_enabled $state]} { return first }
+    if {[::ase::n_enabled_analyses $state] < 2} { return first }
+    if {$netlist_text eq {} || ![::ase::op_cards_hit $netlist_text]} { return unknown }
+    set blk [::ase::op_cards_for $netlist_text]
+    if {$blk eq {}} {
+      if {[::ase::op_cards_why $netlist_text] eq {no_op}} { return unknown }
+      return first
+    }
+    if {[::ase::op_tier_forced] eq {b} &&
+        [llength [::ase::op_cards_devices $blk]] <= [::ase::op_write_max_names]} {
+      return first
+    }
+    return last
+  }
+
   # DOES A LINE OF THE BENCH'S OWN TEXT SET THE SEED OR RE-DRAW UNDER IT? (hook
   # user_seed_line; ase::run_seed_user asks it, and a 1 keeps the run's default
   # seed out of the deck.) `kind` is `control`, a line inside `.control` -- a
@@ -37912,6 +38212,7 @@ $_leg
     campaign_control_lines  ::ase::backend::ngspice::campaign_control_lines \
     campaign_seed_option    ::ase::backend::ngspice::campaign_seed_option \
     user_seed_line          ::ase::backend::ngspice::user_seed_line \
+    op_run_order            ::ase::backend::ngspice::op_run_order \
     campaign_seed_range     ::ase::backend::ngspice::campaign_seed_range \
     campaign_seed_notes     ::ase::backend::ngspice::campaign_seed_notes \
     campaign_axis_refusals  ::ase::backend::ngspice::campaign_axis_refusals \

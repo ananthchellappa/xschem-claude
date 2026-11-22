@@ -672,6 +672,10 @@ eqcheck L16-recovers [load1 $tmp/good.raw] 1
 # theirs; row M0 holds that, so a cell expecting one can never be satisfied by
 # the other. Every number is a binary fraction, so the ascii and the binary
 # form store the same doubles.
+# IN3 is the noise totals with as many variables as an operating point: the
+# one shape in which a read that names no type APPENDS the totals to the
+# operating point as a second dataset (rows M-equal). No file of m_files holds
+# it; the rows that need it write their own.
 # PNO is a plot whose whole name is the word `op` (row M0b: its numbers are
 # neither an operating point's nor the totals'). INB, OPB, NSB and TRB carry
 # `badpts`: their `No. Points:` line holds a word where the number belongs, the
@@ -688,6 +692,7 @@ proc m_plots {} {
          {{Option: casemode=preserve}}}
     INS {{Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625}}}
     INQ {{Integrated Noise - V^2 or A^2} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}}}
+    IN3 {{Integrated Noise} {v(onoise_total) v(inoise_total) v(xnoise_total)} {{0.015625 0.03125 0.0625}}}
     OPS {{Operating Point} {v(in) v(out) i(v1)} {{1 0.75}}}
     NSD {{Noise Spectral Density Curves} {frequency v(onoise_spectrum) v(inoise_spectrum)}
          {{1000 0.5 0.0625} {10000 0.25 0.03125} {100000 0.125 0.0078125}}}
@@ -1068,6 +1073,459 @@ foreach {key first} {in_nsd_op v(in) tr_in_nsd_op v(in) in_nsd v(onoise_total)} 
   eqcheck M-annotate-$key [lindex [split [string trim [pcall xschem raw list]] "\n"] 0] $first
 }
 catch {xschem raw clear}
+
+# ---------------------------------------------------------------------------
+# M, THE SEQUENCES -- issue 1657, a file that is ALREADY LOADED.
+#
+#      Every cell above starts from an empty registry, so none of them meets a
+#      table that is already there. A read that names no type stores a
+#      totals-first file as `op`, holding the noise totals, and the registry
+#      switches to a table it already holds instead of reading. The user's
+#      ruling of 2026-11-21: a request that NAMES `op` and meets such a table
+#      reads the file again and is given the operating point -- in the same
+#      slot, and only for a request whose own words named the type. A draw, a
+#      select that names no type and a read that says `-asis` take the table
+#      as it stands. The table knows how it was taken: `xschem raw
+#      totals_as_op` answers 1 for it.
+#
+#      The expected answers are the band's own cells: after the sequence the
+#      table must read as that file's `op` cell reads. The files are derived
+#      from m_files, never listed here.
+# ---------------------------------------------------------------------------
+# The plot a file item stands for, or {} for a bare header line.
+proc m_plotname {item} {
+  if {![dict exists [m_plots] $item]} { return {} }
+  return [lindex [dict get [m_plots] $item] 0]
+}
+# The files whose first plot is the noise totals: with `withop` 1 those that
+# also hold an operating point, with 0 those that hold neither one nor a plot
+# named after the type.
+proc m_totals_first {withop} {
+  set out {}
+  foreach {key items forms} [m_files] {
+    set names {}
+    foreach it $items {
+      set n [m_plotname $it]
+      if {$n ne {}} { lappend names $n }
+    }
+    if {![string match {Integrated Noise*} [lindex $names 0]]} { continue }
+    set hasop 0 ; set other 0
+    foreach n $names {
+      if {$n eq {Operating Point}} { set hasop 1 }
+      if {$n eq {op}} { set other 1 }
+    }
+    if {$withop && $hasop} { lappend out $key }
+    if {!$withop && !$hasop && !$other} { lappend out $key }
+  }
+  return $out
+}
+# 1 when a file holds a plot whose header line cannot be read: the refusal
+# that clears every loaded table from inside the reader.
+proc m_badheader {key} {
+  foreach {k items forms} [m_files] {
+    if {$k ne $key} { continue }
+    foreach it $items {
+      if {[dict exists [m_plots] $it] && [lindex [dict get [m_plots] $it] 4] eq {badpts}} { return 1 }
+    }
+  }
+  return 0
+}
+proc m_cell {key asked} {
+  foreach {k a kind want} [m_want] { if {$k eq $key && $a eq $asked} { return $want } }
+  return NOCELL
+}
+# One read that names no type, on an empty registry, through one of the two
+# read doors.
+proc m_untyped {door f} {
+  catch {xschem raw clear}
+  if {$door eq {raw_read}} { return [pcall xschem raw_read $f] }
+  return [pcall xschem raw read $f]
+}
+# The current table, as m_ans prints a read's answer.
+proc m_now {} {
+  set names [split [string trim [pcall xschem raw list]] "\n"]
+  set vals {}
+  foreach n $names { lappend vals [string trim [pcall xschem raw values $n -1]] }
+  set a "[pcall xschem raw sim_type] ds=[pcall xschem raw datasets] pts=[pcall xschem raw points]"
+  append a " cm=[pcall xschem raw casemode -header] names=<$names> values=<[join $vals { | }]>"
+  return $a
+}
+proc m_info {} { return [string trim [pcall xschem raw info]] }
+proc m_slots {} {
+  set n 0
+  foreach ln [split [m_info] "\n"] {
+    set ln [string trim $ln]
+    if {$ln ne {} && ![string match {* current} $ln]} { incr n }
+  }
+  return $n
+}
+proc m_first {} { return [lindex [split [string trim [pcall xschem raw list]] "\n"] 0] }
+set m_noise_names {}
+foreach {k d} [m_plots] {
+  if {[string match {Integrated Noise*} [lindex $d 0]]} {
+    foreach v [lindex $d 1] { if {[lsearch -exact $m_noise_names $v] < 0} { lappend m_noise_names $v } }
+  }
+}
+
+# M-loaded -- for every totals-first file that holds an operating point, in
+# both block forms and through both read doors: the read that names no type,
+# then `xschem raw read <f> op`. Each file carries its PREMISE leg (the untyped
+# read answered 1 and the first name it lists is a noise total), so a file
+# whose untyped read is refused cannot pass empty.
+#   answered  -- the table is the band's `op` cell for that file, in one slot.
+#                A multi-point operating point is stored as `dc`, as that cell
+#                says, so the slot's key changes there.
+#   kept      -- the read asking `op` is refused by a malformed BLOCK: the
+#                table that was loaded is still loaded and current.
+#   cleared   -- it is refused by a malformed HEADER LINE, which clears every
+#                table from inside the reader, for every file.
+set m_seq_n 0 ; set m_seq_nopremise 0
+foreach form {ascii bin} {
+  set mf [m_build [file join $tmp m_$form] $form]
+  foreach key [m_totals_first 1] {
+    if {![dict exists $mf $key]} { continue }
+    set f [dict get $mf $key]
+    set wantop [m_cell $key op]
+    set want_premise [expr {[string match refused* [m_cell $key -]] ? 0 : 1}]
+    foreach door {read raw_read} {
+      set r [m_untyped $door $f]
+      set premise [expr {$r eq {1} && [lsearch -exact $m_noise_names [m_first]] >= 0}]
+      eqcheck M-loaded-$form-$key-$door-premise-the-untyped-read-stored-the-totals $premise $want_premise
+      if {!$premise} { incr m_seq_nopremise ; continue }
+      incr m_seq_n
+      set totals [m_now]
+      set r2 [pcall xschem raw read $f op]
+      if {![string match refused* $wantop]} {
+        eqcheck M-loaded-$form-$key-$door-answered-asked-op-gives-the-operating-point-in-the-same-slot \
+          "$r2 [m_now] slots=[m_slots]" "1 $wantop slots=1"
+      } elseif {[m_badheader $key]} {
+        eqcheck M-loaded-$form-$key-$door-cleared-a-malformed-header-refuses-and-clears \
+          [list $r2 [pcall xschem raw loaded] [m_info]] {0 -1 {}}
+      } else {
+        eqcheck M-loaded-$form-$key-$door-kept-a-refused-read-leaves-the-table-that-was-loaded \
+          "$r2 [m_now] slots=[m_slots]" "0 $totals slots=1"
+      }
+    }
+  }
+}
+check M-loaded-ran-on-files-with-the-premise [expr {$m_seq_n > 0}] \
+  "($m_seq_n sequences with the premise, $m_seq_nopremise without)"
+catch {xschem raw clear}
+
+# M-mark -- the table says how it was taken, and saying so costs `xschem raw
+# info` nothing: a marked table and an unmarked one of the same file print the
+# same registry text.
+set mf [m_build [file join $tmp m_ascii] ascii]
+set m_f [dict get $mf in_nsd_op]
+foreach door {read raw_read} {
+  m_untyped $door $m_f
+  set i_marked [m_info]
+  set k_marked [pcall xschem raw totals_as_op]
+  catch {xschem raw clear}
+  pcall xschem raw read $m_f op
+  eqcheck M-mark-$door-an-untyped-read-of-the-totals-is-marked-and-a-typed-read-is-not \
+    [list $k_marked [pcall xschem raw totals_as_op] [expr {$i_marked eq [m_info]}]] {1 0 1}
+}
+catch {xschem raw clear}
+pcall xschem raw read [dict get $mf op]
+eqcheck M-mark-an-untyped-read-of-an-operating-point-is-not-marked \
+  [list [m_first] [pcall xschem raw totals_as_op]] {v(in) 0}
+catch {xschem raw clear}
+eqcheck M-mark-with-nothing-loaded-answers-0 [pcall xschem raw totals_as_op] 0
+# ...and the mark is asked of ANY slot by its index, not only the current one.
+m_untyped read $m_f
+pcall xschem raw read [dict get $mf tr_in_nsd_op] tran
+eqcheck M-mark-is-read-by-slot-index-with-another-table-current \
+  [list [pcall xschem raw sim_type] [pcall xschem raw totals_as_op] \
+        [pcall xschem raw totals_as_op 0] [pcall xschem raw totals_as_op 1] \
+        [pcall xschem raw totals_as_op 7]] {tran 0 1 0 0}
+catch {xschem raw clear}
+
+# M-totals-only -- a file with the totals and no operating point is marked
+# too. The first request that names `op` reads once more, is given the totals
+# again, and the table is no longer marked; its answer does not change.
+set m_only_n 0
+foreach form {ascii bin} {
+  set mf [m_build [file join $tmp m_$form] $form]
+  foreach key [m_totals_first 0] {
+    if {![dict exists $mf $key]} { continue }
+    if {[string match refused* [m_cell $key -]]} { continue }
+    incr m_only_n
+    m_untyped read [dict get $mf $key]
+    set r2 [pcall xschem raw read [dict get $mf $key] op]
+    eqcheck M-totals-only-$form-$key-asked-op-after-the-untyped-read-still-answers-the-totals \
+      "$r2 [m_now] slots=[m_slots]" "1 [m_cell $key op] slots=1"
+    eqcheck M-totals-only-$form-$key-and-the-table-is-no-longer-marked [pcall xschem raw totals_as_op] 0
+  }
+}
+check M-totals-only-ran [expr {$m_only_n > 0}] "($m_only_n files)"
+catch {xschem raw clear}
+
+# M-plain -- NOTHING CHANGES WITHOUT TOTALS. A file with no `Integrated Noise`
+# plot can never be marked: the same two reads give the table the first read
+# gave, the registry text is the one slot it was, and nothing was read twice
+# (the second read keeps a value the test wrote into the loaded table).
+set mf [m_build [file join $tmp m_ascii] ascii]
+set m_optr [file join $tmp m_ascii m_op_tr.raw]
+m_wr $m_optr "[m_plot ascii OP][m_plot ascii TR]"
+foreach {tag f} [list op [dict get $mf op] op_tr $m_optr] {
+  foreach door {read raw_read} {
+    set r [m_untyped $door $f]
+    set i1 [m_info]
+    pcall xschem raw set v(out) 0 42
+    set r2 [pcall xschem raw read $f op]
+    eqcheck M-plain-$tag-$door-a-file-without-totals-is-switched-to-and-not-read-again \
+      [list $r $r2 [expr {[m_info] eq $i1}] [m_slots] [string trim [pcall xschem raw values v(out) -1]]] \
+      {1 1 1 1 42}
+    eqcheck M-plain-$tag-$door-and-it-is-not-marked [pcall xschem raw totals_as_op] 0
+  }
+}
+catch {xschem raw clear}
+
+# M-asis -- a read that says `-asis` takes a loaded table as it stands, the
+# marked one included: what a caller that only puts a table back asks for.
+m_untyped read $m_f
+eqcheck M-asis-a-typed-read-that-says-asis-keeps-the-marked-table \
+  [list [pcall xschem raw read $m_f op -asis] [m_first] [m_slots]] {1 v(onoise_total) 1}
+eqcheck M-asis-and-the-table-is-still-marked [pcall xschem raw totals_as_op] 1
+catch {xschem raw clear}
+
+# M-annotate-loaded -- the annotation's door, with the totals loaded and NOT
+# current (a transient of another file was read after them), and its twin with
+# the totals current.
+m_untyped read $m_f
+pcall xschem raw read [dict get $mf tr_in_nsd_op] tran
+catch {xschem annotate_op $m_f}
+eqcheck M-annotate-loaded-totals-loaded-and-not-current-publishes-the-operating-point \
+  [list [m_first] [m_slots]] {v(in) 2}
+m_untyped read $m_f
+catch {xschem annotate_op $m_f}
+eqcheck M-annotate-loaded-totals-current-publishes-the-operating-point [m_first] v(in)
+catch {xschem raw clear}
+
+# M-select -- `xschem raw select <f> op` on a marked table has parsed a file,
+# so it answers what a read answers (1), in the same slot; a select that names
+# NO type reads nothing, answers 2 and leaves the table as it stands.
+m_untyped read $m_f
+set m_sel [pcall xschem raw select $m_f op]
+eqcheck M-select-naming-op-on-a-marked-table-answers-as-a-read-and-gives-the-operating-point \
+  [list $m_sel [m_first] [m_slots]] {1 v(in) 1}
+# ...and the next select of the same file and type, which now meets an ordinary
+# table, is a switch again.
+eqcheck M-select-again-on-the-table-the-reread-left-is-a-switch \
+  [list [pcall xschem raw select $m_f op] [m_first] [m_slots]] {2 v(in) 1}
+m_untyped read $m_f
+set m_sel [pcall xschem raw select $m_f]
+eqcheck M-select-naming-no-type-on-a-marked-table-reads-nothing \
+  [list $m_sel [m_first] [m_slots]] {2 v(onoise_total) 1}
+eqcheck M-select-naming-no-type-leaves-the-mark [pcall xschem raw totals_as_op] 1
+catch {xschem raw clear}
+
+# M-cursors -- the re-read moves the registry's two cursors exactly as a switch
+# does: the re-read table is current, and `xschem raw switch_back` returns to
+# the table that was current before the request.
+m_untyped read $m_f
+pcall xschem raw read [dict get $mf tr_in_nsd_op] tran
+set m_cu1 [list [pcall xschem raw read $m_f op] [m_first]]
+set m_cu2 [pcall xschem raw switch_back]
+eqcheck M-cursors-after-the-reread-switch_back-returns-to-the-table-that-was-current \
+  [list $m_cu1 $m_cu2 [pcall xschem raw sim_type] [m_first] [m_slots]] {{1 v(in)} 1 tran time 2}
+catch {xschem raw clear}
+
+# M-reread-keeps -- the read asking `op` fails while a transient of the SAME
+# path is attached: the transient is still attached and readable, and the
+# marked table is still loaded. The file holds the totals, the spectrum, the
+# operating point and a transient; before the request it is rewritten with its
+# operating point one value short (a malformed block: refused, nothing wiped).
+set m_tr4 [file join $tmp m_ascii m_in_nsd_op_tr.raw]
+m_wr $m_tr4 "[m_plot ascii IN][m_plot ascii NSD][m_plot ascii OP][m_plot ascii TR]"
+m_untyped read $m_tr4
+set m_k1 [pcall xschem raw read $m_tr4 tran]
+m_wr $m_tr4 "[m_plot ascii IN][m_plot ascii NSD][m_plot ascii OPS][m_plot ascii TR]"
+set m_k2 [pcall xschem raw read $m_tr4 op]
+eqcheck M-reread-keeps-a-failed-reread-leaves-the-transient-of-the-same-path-current-and-readable \
+  [list $m_k1 $m_k2 [pcall xschem raw sim_type] [string trim [pcall xschem raw values v(out) -1]] \
+        [m_slots] [pcall xschem raw totals_as_op 0]] {1 0 tran {2.25 2.5} 2 1}
+catch {xschem raw clear}
+
+# M-case -- THE DOOR THAT FORGOT WHAT IT WAS ASKED. `xschem raw_read <f> op`
+# loads the operating point of a totals-first file; a case-mode change reads
+# the file again, and must read it as it was asked, not with no type.
+catch {xschem raw clear}
+set m_c1 [pcall xschem raw_read $m_f op]
+set m_c2 [m_first]
+set m_c3 [pcall xschem raw case preserve]
+eqcheck M-case-a-case-mode-change-after-raw_read-asked-op-still-shows-the-operating-point \
+  [list $m_c1 $m_c2 $m_c3 [m_first] [pcall xschem raw totals_as_op]] {1 v(in) 1 v(in) 0}
+catch {xschem raw clear}
+set m_c1 [pcall xschem raw read $m_f op]
+set m_c3 [pcall xschem raw case preserve]
+eqcheck M-case-control-the-same-through-the-other-read-door \
+  [list $m_c1 $m_c3 [m_first]] {1 1 v(in)}
+catch {xschem raw clear}
+
+# M-case-reread -- THE TABLE THE RE-READ BUILDS REMEMBERS IT WAS ASKED `op`.
+# After the untyped read and a request that names `op` through each of the
+# three doors that re-read, a case-mode change reads the file once more: it
+# must read it as `op` again, not with no type (which would bring the totals
+# back, marked). For `annotate_op` the marked table is loaded and NOT current
+# (a transient of another file is read after it): with the totals current
+# that door removes the table and reads the file afresh, which is another arm.
+foreach m_door {read select annotate_op} {
+  m_untyped read $m_f
+  if {$m_door eq {annotate_op}} { pcall xschem raw read [dict get $mf tr_in_nsd_op] tran }
+  switch -exact -- $m_door {
+    read        { pcall xschem raw read $m_f op }
+    select      { pcall xschem raw select $m_f op }
+    annotate_op { catch {xschem annotate_op $m_f} }
+  }
+  set m_c2 [m_first]
+  set m_c3 [pcall xschem raw case preserve]
+  eqcheck M-case-reread-$m_door-a-case-mode-change-after-the-reread-still-shows-the-operating-point \
+    [list $m_c2 $m_c3 [m_first] [pcall xschem raw totals_as_op]] {v(in) 1 v(in) 0}
+}
+catch {xschem raw clear}
+
+# M-case-plain -- WHAT THE DOOR FIX MOVED FOR A FILE WITHOUT TOTALS, held as it
+# is now. `xschem raw_read <f> <type>` records the type for every file, so a
+# case-mode change after it reads the file as it was asked: an operating point
+# followed by a transient, asked `tran`, stays the transient (it used to come
+# back as the file's first plot), and a VCD asked `vcd` stays loaded (the
+# re-read used to be refused and to leave nothing loaded).
+set m_vcd [file join $tmp m_ascii m_w.vcd]
+m_wr $m_vcd "\$timescale 1ns \$end\n\$scope module top \$end\n\$var wire 1 ! a \$end\n\$upscope \$end\n\$enddefinitions \$end\n#0\n0!\n#5\n1!\n#10\n0!\n"
+catch {xschem raw clear}
+set m_c1 [pcall xschem raw_read $m_optr tran]
+set m_c3 [pcall xschem raw case preserve]
+eqcheck M-case-plain-a-file-without-totals-asked-tran-through-raw_read-stays-the-transient \
+  [list $m_c1 $m_c3 [pcall xschem raw sim_type] [m_first]] {1 1 tran time}
+catch {xschem raw clear}
+set m_c1 [pcall xschem raw_read $m_vcd vcd]
+set m_c3 [pcall xschem raw case preserve]
+eqcheck M-case-plain-a-vcd-asked-vcd-through-raw_read-stays-loaded \
+  [list $m_c1 $m_c3 [pcall xschem raw sim_type] [pcall xschem raw loaded]] {1 1 vcd 0}
+catch {xschem raw clear}
+
+# M-case-option -- `xschem raw read <f> op -case <mode>` ON A MARKED TABLE. The
+# request reads the file again in place; the `-case` option must not read it a
+# second time through the clear arm, which would move the table to the end of
+# the registry. And with `-asis` the table stays the one it was: the case-mode
+# change reads it again the way that table was read, with no type.
+m_untyped read $m_f
+pcall xschem raw read [dict get $mf tr_in_nsd_op] tran
+set m_c1 [pcall xschem raw read $m_f op -case preserve]
+eqcheck M-case-option-a-read-naming-op-with-a-case-mode-rereads-the-marked-table-once-in-its-slot \
+  [list $m_c1 [m_first] [pcall xschem raw totals_as_op] [m_info]] \
+  [list 1 v(in) 0 "0 current\n0 $m_f op\n1 [dict get $mf tr_in_nsd_op] tran"]
+m_untyped read $m_f
+set m_c1 [pcall xschem raw read $m_f op -asis -case preserve]
+eqcheck M-case-option-with-asis-the-marked-table-stays-the-totals \
+  [list $m_c1 [m_first] [pcall xschem raw totals_as_op] [m_slots]] {1 v(onoise_total) 1 1}
+catch {xschem raw clear}
+
+# M-flag -- THE RE-READ DOES NOT COLOUR THE NEXT SELECT. A select says whether
+# it read or switched. After a re-read in place, a select that goes through the
+# registry's other arm (a table, a VCD) must still be told apart: one that
+# names a type the file is not loaded as is refused with nothing moved, and one
+# of a VCD that is loaded is a switch. Each with its control, where no re-read
+# came before.
+catch {xschem raw clear}
+pcall xschem raw read $m_f op
+eqcheck M-flag-control-a-select-naming-table-of-a-file-loaded-as-op-is-refused \
+  [list [pcall xschem raw select $m_f table] [pcall xschem raw sim_type] [m_first] [m_slots]] {0 op v(in) 1}
+m_untyped read $m_f
+set m_fl [pcall xschem raw read $m_f op]
+eqcheck M-flag-after-a-reread-a-select-naming-table-of-a-file-loaded-as-op-is-refused \
+  [list $m_fl [pcall xschem raw select $m_f table] [pcall xschem raw sim_type] [m_first] [m_slots]] \
+  {1 0 op v(in) 1}
+catch {xschem raw clear}
+pcall xschem raw read $m_f op
+set m_fl [pcall xschem raw read $m_vcd vcd]
+eqcheck M-flag-control-a-select-of-a-loaded-vcd-is-a-switch \
+  [list $m_fl [pcall xschem raw select $m_vcd vcd] [pcall xschem raw sim_type] [m_slots]] {1 2 vcd 2}
+m_untyped read $m_f
+pcall xschem raw read $m_f op
+set m_fl [pcall xschem raw read $m_vcd vcd]
+eqcheck M-flag-after-a-reread-a-select-of-a-loaded-vcd-is-a-switch \
+  [list $m_fl [pcall xschem raw select $m_vcd vcd] [pcall xschem raw sim_type] [m_slots]] {1 2 vcd 2}
+catch {xschem raw clear}
+
+# M-equal -- THE TOTALS APPENDED TO AN OPERATING POINT OF THE SAME VARIABLE
+# COUNT. A read that names no type takes both plots as two datasets of one
+# `op` table, in file order, and the table is marked; a request that names
+# `op` then reads again and is given the operating point alone. Both orders,
+# both block forms.
+set m_eq_n 0
+foreach form {ascii bin} {
+  foreach {m_tag m_items m_firstname} {op_in3 {OP IN3} v(in) in3_op {IN3 OP} v(onoise_total)} {
+    set m_ef [file join $tmp m_$form m_$m_tag.raw]
+    set m_body {}
+    foreach m_it $m_items { append m_body [m_plot $form $m_it] }
+    m_wr $m_ef $m_body
+    set m_e1 [list [m_untyped read $m_ef] [pcall xschem raw sim_type] [pcall xschem raw datasets] \
+                   [m_first] [pcall xschem raw totals_as_op]]
+    set m_e2 [pcall xschem raw read $m_ef op]
+    eqcheck M-equal-$form-$m_tag-totals-and-operating-point-of-one-variable-count-are-marked-and-asked-op-gives-the-operating-point \
+      [list $m_e1 $m_e2 [m_now] [pcall xschem raw totals_as_op] [m_slots]] \
+      [list [list 1 op 2 $m_firstname 1] 1 [m_cell op op] 0 1]
+    incr m_eq_n
+  }
+}
+check M-equal-ran [expr {$m_eq_n > 0}] "($m_eq_n files)"
+catch {xschem raw clear}
+set mf [m_build [file join $tmp m_ascii] ascii]
+
+# M-descend and M-newwin load a schematic. LAST in the file: M-newwin leaves a
+# second context.
+set m_fix [file normalize [file join [file dirname [info script]] fixtures hi_descend hidlib]]
+lappend pathlist $m_fix
+catch {xschem raw clear}
+if {[catch {xschem load [file join $m_fix top schematic top.sch]} m_err]} {
+  check M-newwin-fixture-loads 0 "(load raised: $m_err)"
+} else {
+  # M-descend -- THE RE-READ KEEPS THE BINDING OF THE TABLE IT REPLACES. The
+  # marked table was read at the top of the design. A request that names `op`
+  # from inside an instance must leave the operating point bound where the
+  # totals were, as a switch to any other loaded table does: one level down
+  # the table is still the top's, and back at the top the design still has its
+  # results. For `annotate_op` the marked table is loaded and not current (a
+  # transient was read after it), which is the shape in which that door
+  # re-reads.
+  foreach m_door {read select annotate_op} {
+    catch {xschem raw clear}
+    pcall xschem raw read $m_f
+    if {$m_door eq {annotate_op}} { pcall xschem raw read [dict get $mf tr_in_nsd_op] tran }
+    set m_d0 [list [pcall xschem get raw_level] [pcall xschem raw loaded]]
+    xschem unselect_all
+    xschem select instance x1
+    xschem descend
+    set m_d1 [xschem get currsch]
+    switch -exact -- $m_door {
+      read        { pcall xschem raw read $m_f op }
+      select      { pcall xschem raw select $m_f op }
+      annotate_op { catch {xschem annotate_op $m_f} }
+    }
+    set m_d2 [list [m_first] [pcall xschem get raw_level] [pcall xschem raw loaded]]
+    xschem go_back
+    eqcheck M-descend-$m_door-asked-op-inside-an-instance-leaves-the-table-bound-to-the-top \
+      [list $m_d0 $m_d1 $m_d2 [xschem get currsch] [pcall xschem raw loaded] [pcall xschem get raw_level]] \
+      {{0 0} 1 {v(in) 0 0} 0 0 0}
+  }
+  catch {xschem raw clear}
+
+  # M-newwin -- a window opened on the marked table shows the operating point:
+  # the new window asks for the file by its stored type, `op`, in a registry
+  # of its own.
+  xschem unselect_all
+  set m_n1 [pcall xschem raw_read $m_f]
+  set m_n2 [m_first]
+  set m_w0 [xschem get current_win_path]
+  set m_n3 [pcall open_sub_schematic x1]
+  eqcheck M-newwin-a-window-opened-on-the-marked-table-shows-the-operating-point \
+    [list $m_n1 $m_n2 $m_n3 [expr {[xschem get current_win_path] ne $m_w0}] [m_first]] \
+    {1 v(onoise_total) 1 1 v(in)}
+  eqcheck M-newwin-and-the-table-of-the-new-window-is-not-marked [pcall xschem raw totals_as_op] 0
+}
 
 catch {xschem raw clear}
 catch {test_scratch_drop $tmp}

@@ -4731,7 +4731,11 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   was right; nothing wrong was handed on by the pairing itself. The same pass found and repaired
   the one reader that did hand on a wrong value, the engine's read of type `op` on a results
   file that holds noise totals ahead of the operating point (`read_dataset()`, `src/save.c`).
-  Two items stay open in the issue file.
+  Two items stayed open in the issue file that day. **Both ruled by the user on 2026-11-21 and
+  built on 2026-11-22**: the Options preview lists its per-analysis groups in the deck's order,
+  each headed by its analysis, and a request that names `op` reads a results file again when a
+  read that named no type had stored its noise totals as `op`. The issue file lists the limits
+  that stay and one cure the user can still choose.
 
 - **1658** — the Calculator's `settlingTime` tolerance is now a **percent of the step** (the user's
   ruling, 2026-10-07) while ASE-L's `ts` measure template still computes an **absolute** band — so

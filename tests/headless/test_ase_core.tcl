@@ -12392,10 +12392,13 @@ check "MT10 a backend that declares no meas_templates hook offers none, and\
 #   ase::ckpt_rows               lists the rows that get a checkpoint block.
 #                                Not crossed: an operating point is never one
 #                                of them.  Row RO10.
-#   ase::preview_analysis_types  orders the per-analysis lines of the Options
-#                                preview.  It lists the operating point's lines
-#                                first whatever the deck will do; that is open
-#                                in the issue file and has no row here.
+#   ase::preview_analysis_types  orders the per-analysis groups of the Options
+#                                preview.  It listed the operating point's
+#                                group first whatever the deck would do.  It
+#                                now takes the order its caller asked the
+#                                backend for (ase::op_run_order: the deck's own
+#                                answer, or "not known" before a netlist of
+#                                this session exists).  Rows RO12 to RO18.
 #
 # ⚠ THE DECKS BELOW ARE RENDERED, NOT TYPED.  Each fixture takes its record
 # order from the `echo "PLOT ..."` lines of a deck ase::backend::ngspice's own
@@ -12491,8 +12494,9 @@ proc ro_sum {v} {
 
 ## --- RO1: WHO WALKS THE ROWS -------------------------------------------------
 ## Every proc under ::ase whose code (comment lines dropped) calls
-## ase::analysis_emit_order.  The deck is the one that passes its own
-## `op_last`; the other four take the operating-point-first order.
+## ase::analysis_emit_order.  The deck passes its own `op_last`; the Options
+## preview passes the answer it was handed; the other three take the
+## operating-point-first order.
 proc ro_procs {ns} {
   set out [info procs ${ns}::*]
   foreach c [namespace children $ns] { set out [concat $out [ro_procs $c]] }
@@ -12507,13 +12511,13 @@ foreach rop [lsort [ro_procs ::ase]] {
   if {[regexp {analysis_emit_order \$state 0\M} $rob]} { lappend RO1FIRST $rop }
 }
 check "RO1 the procs that walk the enabled rows through ase::analysis_emit_order\
- are the deck and four others, and the four take the operating-point-first\
- order -- a fifth has to answer what an operating point run last does to it" \
+ are the deck and four others; three of them take the operating-point-first\
+ order and the Options preview does not -- a new one has to answer what an\
+ operating point run last does to it" \
   [list $RO1 $RO1FIRST] \
   [list {::ase::backend::ngspice::render_deck ::ase::ckpt_rows\
  ::ase::meas_counter_index ::ase::preview_analysis_types ::ase::reconcile_plots} \
-        {::ase::ckpt_rows ::ase::meas_counter_index ::ase::preview_analysis_types\
- ::ase::reconcile_plots}]
+        {::ase::ckpt_rows ::ase::meas_counter_index ::ase::reconcile_plots}]
 
 ## --- RO2: THE FIXTURE IS THE CROSSED ORDER, AND IT COMES FROM A DECK ---------
 set RO_ST2  [ro_state [list $RO_OP {type dc enabled 0} $RO_ACOFF $RO_TRAN]]
@@ -12747,6 +12751,243 @@ check "RO10 no analysis type that can be checkpointed is the operating point,\
   [list [expr {[llength $RO10SV] > 0}] [lsearch -exact $RO10SV op] \
         [lindex [ro_recs $RO10D] end] $RO10ROWS $RO10ARM] \
   [list 1 -1 {op 0} {{tran 1} {tran 3}} {{tran 1} {tran 3}}]
+
+## --- RO12 to RO18: THE OPTIONS PREVIEW ASKS WHAT THE DECK WILL DO -------------
+## The preview used to list the operating point's group first whatever the
+## deck would do.  It now asks ase::op_run_order, which asks the backend (the
+## `op_run_order` hook), and is handed the unreduced netlist text for the
+## question.  Every comparand below is a deck render_deck wrote: its own record
+## lines say whether the operating point ran after another analysis.
+proc ro_ans {args} {
+  if {[catch {uplevel #0 $args} r]} { return "RAISED:$r" }
+  return $r
+}
+## The lines of a preview's in-block slot, in order; RAISED when the preview is.
+proc ro_pvlines {pv} {
+  if {[string match RAISED:* $pv]} { return $pv }
+  set out {}
+  foreach e [dict get $pv control] { lappend out [lindex $e 1] }
+  return $out
+}
+## Those of a deck's lines that are among `lines`, in the deck's order.
+proc ro_decklines {deck lines} {
+  set out {}
+  foreach l [split $deck "\n"] { if {[lsearch -exact $lines $l] >= 0} { lappend out $l } }
+  return $out
+}
+## 1 when a deck's records put the operating point after another analysis.
+proc ro_oplast {deck} {
+  set recs [ro_recs $deck]
+  set first [lindex [lindex $recs 0] 0]
+  set hasop 0
+  foreach r $recs { if {[lindex $r 0] eq {op}} { set hasop 1 } }
+  return [expr {$hasop && $first ne {} && $first ne {op}}]
+}
+set RO_OPTS {{name itl1 value 300 analysis op} {name itl4 value 200 analysis tran}}
+set RO_BLOCK ".save all\n.save @m.x1\[id\]\n"
+
+## --- RO12: THE ORDER OF THE LINES IS THE DECK'S ------------------------------
+set RO12ST $RO_ST2
+dict set RO12ST options $RO_OPTS
+set RO12D [ro_deck $RO12ST]
+set RO12PV [ro_ans ase::opt_preview ngspice $RO12ST {} {} $::netlist_text]
+set RO12L [ro_pvlines $RO12PV]
+set RO12STG $RO_ST2G
+dict set RO12STG options $RO_OPTS
+set RO12DG [ro_deck $RO12STG]
+set RO12LG [ro_pvlines [ro_ans ase::opt_preview ngspice $RO12STG {} {} $::netlist_text]]
+check "RO12 with one option scoped to op and one to tran and device requests held\
+ for the netlist, the preview's in-block lines stand in the order the deck\
+ writes them, the operating point's last; with the requests switched off both\
+ have them first" \
+  [list $RO12L [expr {$RO12L eq [ro_decklines $RO12D $RO12L]}] [ro_oplast $RO12D] \
+        $RO12LG [expr {$RO12LG eq [ro_decklines $RO12DG $RO12LG]}] [ro_oplast $RO12DG]] \
+  [list {{option itl4=200} {option itl4=10} {option itl1=300} {option itl1=100}} 1 1 \
+        {{option itl1=300} {option itl1=100} {option itl4=200} {option itl4=10}} 1 0]
+
+## --- RO13: THE BACKEND'S ANSWER, AGAINST THE DECKS IT WRITES -----------------
+## Every cell renders its own deck.  `last` must be exactly "this deck's records
+## put the operating point after another analysis"; `unknown` must be exactly
+## the cells where the netlist is not the one device requests are held for
+## while the switch is on, the operating point is enabled and another analysis
+## is too -- and there the deck rendered NOW has the operating point first,
+## which is what a Run on that netlist would do.
+set RO13BAD {} ; set RO13N [dict create first 0 last 0 unknown 0] ; set RO13CELLS 0
+set RO13UNK {} ; set RO13B {} ; set RO13C {}
+foreach rogate {{} 0} {
+  foreach roopon {1 0} {
+    foreach romany {1 0} {
+      set rorows [list [list type op enabled $roopon] {type dc enabled 0}]
+      if {$romany} {
+        lappend rorows $RO_AC $RO_TRAN
+      } elseif {!$roopon} {
+        lappend rorows $RO_ACOFF $RO_TRAN
+      }
+      set rost [ro_state $rorows $rogate]
+      foreach roslot {cards empty other none} {
+        foreach rotier {a b c d {}} {
+          switch -exact -- $roslot {
+            cards { ase::op_cards_put $::netlist_text $RO_BLOCK }
+            empty { ase::op_cards_put $::netlist_text {} }
+            other { ase::op_cards_put "$::netlist_text* another netlist\n" $RO_BLOCK }
+            none  { ase::op_cards_clear }
+          }
+          ase::op_tier_force_set $rotier
+          set roans [ro_ans ase::op_run_order ngspice $rost $::netlist_text]
+          set rorc [catch {$RO_RENDER $rost $::netlist_text} rodeck]
+          ase::op_tier_force_set {}
+          incr RO13CELLS
+          set rocell [list gate=$rogate op=$roopon many=$romany slot=$roslot tier=$rotier]
+          if {$rorc} { lappend RO13BAD [list $rocell RENDER-RAISED] ; continue }
+          set rolast [ro_oplast $rodeck]
+          if {[dict exists $RO13N $roans]} { dict incr RO13N $roans }
+          if {($roans eq {last}) != $rolast} { lappend RO13BAD [list $rocell $roans deck-last=$rolast] }
+          set rowantunk [expr {$rogate eq {} && $roopon && $romany && $roslot in {other none}}]
+          if {($roans eq {unknown}) != $rowantunk} { lappend RO13UNK [list $rocell $roans] }
+          if {$rogate eq {} && $roopon && $romany && $roslot eq {cards}} {
+            if {$rotier eq {b}} { set RO13B $roans }
+            if {$rotier eq {c}} { set RO13C $roans }
+          }
+        }
+      }
+    }
+  }
+}
+check "RO13 over the switch, the operating point enabled or not, one or several\
+ analyses, the held block (this netlist with requests, this netlist and empty,\
+ another netlist, none) and every forced shape and none: the backend answers\
+ `last` exactly where the deck it renders records the operating point after\
+ another analysis, `unknown` exactly where the netlist is not the held one, all\
+ three answers occur, and the one shape that keeps the operating point first\
+ differs from its neighbour" \
+  [list $RO13BAD $RO13UNK [expr {$RO13CELLS > 0}] \
+        [expr {[dict get $RO13N first] > 0}] [expr {[dict get $RO13N last] > 0}] \
+        [expr {[dict get $RO13N unknown] > 0}] $RO13B $RO13C] \
+  [list {} {} 1 1 1 1 first last]
+
+## --- RO14: A BACKEND THAT DECLARES NO SUCH HOOK ------------------------------
+## The rule is the adapter's.  With no hook core answers `first`, which is the
+## order the preview always had.
+set RO14SAVE $::ase::backends
+dict set ::ase::backends zzro [dict create render_deck x run_cmd x log_file x \
+                                           result_probe x raw_file x]
+ase::op_cards_put $::netlist_text $RO_BLOCK
+set RO14 [list [ro_ans ase::op_run_order zzro $RO12ST $::netlist_text] \
+               [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]]
+set ::ase::backends $RO14SAVE
+check "RO14 a backend with no op_run_order hook is answered `first` on the bench\
+ and netlist for which the ngspice adapter answers `last`" $RO14 {first last}
+
+## --- RO15: THE HELD BLOCK IS ONE PER PROCESS ---------------------------------
+## Netlisting another session's design refills the slot.  This session's
+## netlist is then not the held one: the answer is `unknown`, the groups keep
+## the operating-point-first order, and the preview says the order is not
+## settled -- once.
+ase::op_cards_put $::netlist_text $RO_BLOCK
+set RO15A [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]
+ase::op_cards_put "* another session's design\nr9 a 0 1k\n.end\n" ".save all\n.save @r9\[i\]\n"
+set RO15B [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]
+set RO15PV [ro_ans ase::opt_preview ngspice $RO12ST {} {} $::netlist_text]
+set RO15N 0
+if {![string match RAISED:* $RO15PV]} {
+  foreach ron [dict get $RO15PV notes] { if {[lindex $ron 1] eq {order}} { incr RO15N } }
+}
+check "RO15 after another design's netlist refilled the one held block, this\
+ session's order is `unknown`: the preview keeps the operating point's group\
+ first and says once that the order is not settled" \
+  [list $RO15A $RO15B [ro_pvlines $RO15PV] $RO15N] \
+  [list last unknown {{option itl1=300} {option itl1=100} {option itl4=200} {option itl4=10}} 1]
+
+## --- RO16: THE SIGNATURES THE WINDOW AND THE SUITES CALL BY POSITION ---------
+## The order text is a FIFTH argument: the third is a plan and the fourth the
+## reduced text of the seed rule, and both are passed by position.
+proc ro_sig {p} {
+  if {![llength [info commands $p]]} { return MISSING }
+  set out {}
+  foreach a [info args $p] {
+    if {[info default $p $a rodflt]} { lappend out [list $a $rodflt] } else { lappend out $a }
+  }
+  return $out
+}
+check "RO16 ase::opt_preview takes the order text fifth, after the plan and the\
+ seed rule's text; ase::preview_analysis_types takes the order and defaults to\
+ the operating point first; ase::op_run_order takes a simulator, a state and a\
+ netlist text" \
+  [list [ro_sig ::ase::opt_preview] [ro_sig ::ase::preview_analysis_types] \
+        [ro_sig ::ase::op_run_order]] \
+  [list {sim state {plan {}} {netlist_text {}} {order_text {}}} \
+        {state {order first}} {sim state {netlist_text {}}}]
+
+## --- RO17: THE ORDER QUESTION IS A PURE READ ---------------------------------
+## The Options preview asks it on every key typed in its Find box.  The two
+## procs that pick the shape of the device requests measure the user's
+## simulator when nothing is known about it yet, and measuring starts it.  The
+## hook and the preview must reach neither of them nor the measurement, and
+## must leave the store of what was measured, and the counter of the folders
+## measured in, as they found them.  Driven with nothing measured (the store is
+## emptied for the row and put back) and device requests held for the netlist:
+## the bench on which the hook goes through every one of its tests.  The
+## premise leg shows the watch does see a call: with a shape forced, which
+## measures nothing, asking for the shape directly is counted.
+set RO17N 0
+proc ro_count {args} { incr ::RO17N }
+set RO17WATCH {::ase::op_save_tier ::ase::op_tier_now ::ase::sim_capabilities}
+set RO17CAPS $::ase::sim_caps
+set RO17SEQ $::ase::cap_seq
+set ::ase::sim_caps [dict create]
+ase::op_cards_put $::netlist_text $RO_BLOCK
+foreach rop $RO17WATCH { trace add execution $rop enter ro_count }
+set RO17A [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]
+set RO17PV [ro_ans ase::opt_preview ngspice $RO12ST {} {} $::netlist_text]
+set RO17GOT [list $RO17A [expr {![string match RAISED:* $RO17PV]}] $RO17N \
+                  [dict size $::ase::sim_caps] [expr {$::ase::cap_seq == $RO17SEQ}]]
+ase::op_tier_force_set a
+catch {ase::op_tier_now $RO12ST}
+ase::op_tier_force_set {}
+set RO17SEEN [expr {$RO17N > 0}]
+foreach rop $RO17WATCH { trace remove execution $rop enter ro_count }
+set ::ase::sim_caps $RO17CAPS
+check "RO17 with nothing measured about the simulator and device requests held,\
+ the backend's order answer and the whole preview reach neither proc that picks\
+ the shape of the device requests nor the capability measurement, and leave the\
+ store of measurements and the counter of measurement folders as they were; the\
+ watch does count a direct ask" \
+  [list $RO17GOT $RO17SEEN] [list {last 1 0 0 1} 1]
+
+## --- RO18: A NETLIST WRITTEN WHILE THE OPERATING POINT WAS SWITCHED OFF ------
+## The capture at netlist time holds an EMPTY block for that text (no operating
+## point, no device requests).  When the user then switches the operating point
+## on, a Netlist and Run captures requests and the deck runs it last, while a
+## Run on the netlist as it stands runs it first: the order is not settled, and
+## the hook must say so instead of answering `first` as it does for a block
+## that is empty because the design has nothing to ask for.  The capture is the
+## product's own (ase::op_cards_capture on a file holding the netlist text).
+set RO18F [file join $scratch ro18.spice]
+set rofd [open $RO18F w] ; puts -nonewline $rofd $::netlist_text ; close $rofd
+set RO18OFF [ro_state [list {type op enabled 0} {type dc enabled 0} $RO_ACOFF $RO_TRAN]]
+dict set RO18OFF options $RO_OPTS
+ase::op_cards_clear
+catch {ase::op_cards_capture $RO18OFF $RO18F}
+set RO18HELD [list [ase::op_cards_hit $::netlist_text] [ase::op_cards_for $::netlist_text]]
+set RO18A [ro_ans ase::op_run_order ngspice $RO18OFF $::netlist_text]
+set RO18B [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]
+set RO18PV [ro_ans ase::opt_preview ngspice $RO12ST {} {} $::netlist_text]
+set RO18N 0
+if {![string match RAISED:* $RO18PV]} {
+  foreach ron [dict get $RO18PV notes] { if {[lindex $ron 1] eq {order}} { incr RO18N } }
+}
+set RO18DECK [ro_oplast [ro_ans $RO_RENDER $RO12ST $::netlist_text]]
+ase::op_cards_put $::netlist_text {}
+set RO18C [ro_ans ase::op_run_order ngspice $RO12ST $::netlist_text]
+catch {file delete $RO18F}
+check "RO18 a netlist written while the operating point was off holds an empty\
+ block for its text; with the operating point then switched on the backend\
+ answers `unknown` and the preview says once that the order is not settled,\
+ while the deck of that netlist as it stands has the operating point first; an\
+ empty block held for any other reason is still answered `first`" \
+  [list $RO18HELD $RO18A $RO18B $RO18N $RO18DECK $RO18C] \
+  [list {1 {}} first unknown 1 0 first]
+ase::op_cards_put $::netlist_text $RO_BLOCK
 
 ## The decks above were rendered with device requests held for the netlist, in
 ## the one slot every section shares.  It goes back as it was found.

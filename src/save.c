@@ -877,6 +877,10 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
   int integ_is_op = 1;  /* an Integrated Noise plot answers "op" in this pass */
   int integ_held = 0;   /* this pass met one and held it back */
   int taken = 0;        /* this pass took a plot */
+  /* the caller named NO type. Remembered here, on entry, because `type` is
+   * overwritten below by the first plot the file holds. */
+  int untyped = (type == NULL || !type[0]);
+  int totals_now = 0;   /* the plot in hand is the noise totals, taken as "op" by an untyped read */
   int hdr_case_mode_on_entry;
   #ifdef __unix__
     long startpos;
@@ -934,12 +938,14 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         }
         raw->datasets++;
         exit_status = 1;
+        if(totals_now && !strcmp(sim_type, "op")) raw->totals_as_op = 1; /* issue 1657 */
       } else {
         dbg(dbglev, "read_dataset(): skip ascii block, nvars=%d npoints=%d\n", nvars, npoints);
         /* skip ascii block */
         skip_raw_ascii_points(npoints, fd);
       }
       sim_type = NULL; /* ready for next header */
+      totals_now = 0;
       done_points = 0;
       ac = 0;
     }
@@ -960,11 +966,13 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         }
         raw->datasets++;
         exit_status = 1;
+        if(totals_now && !strcmp(sim_type, "op")) raw->totals_as_op = 1; /* issue 1657 */
       } else {
         dbg(dbglev, "read_dataset(): skip binary block, nvars=%d npoints=%d\n", nvars, npoints);
         xfseek(fd, nvars * npoints * sizeof(double), SEEK_CUR); /* skip binary block */
       }
       sim_type = NULL; /* ready for next header */
+      totals_now = 0;
       done_points = 0;
       ac = 0;
     }
@@ -1036,13 +1044,22 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
      * totals, and answers with that plot now (the `named` cells of band M
      * hold it).
      *
-     * AND THIS FUNCTION IS NOT CALLED AT ALL for a file that is already
-     * loaded under the type asked for: extra_rawfile() switches to that
-     * database and reads nothing. A read that names no type stores a
-     * totals-first file under "op" (the first item below), so a later
-     * `xschem raw read <file> op` is shown those totals, and so is `xschem
-     * annotate_op <file>` unless that database is the current one, which it
-     * removes before it reads. Older than this rule and untouched by it.
+     * A FILE THAT IS ALREADY LOADED. extra_rawfile() switches to a table it
+     * holds under the type asked for and does not call this function. A read
+     * that names no type stores a totals-first file under "op" (the first
+     * item below), so such a table used to answer every later request for the
+     * operating point with the totals. This function now MARKS that table
+     * (`Raw.totals_as_op`, set where the plot's block is read, so it is on
+     * the table only when the totals were really taken, as the first dataset
+     * or appended to an operating point of the same variable count), and a
+     * request whose own words named "op" reads the file again when it meets
+     * the mark: the read arm of extra_rawfile(). The user's ruling of
+     * 2026-11-21. A table this function builds for a caller that named a
+     * type is never marked, and a file with no `Integrated Noise` plot can
+     * never be: for those files nothing moved. What is NOT reached, because
+     * no read is asked for: `xschem raw switch`, `xschem raw switch_back`, a
+     * select or a graph that names no type. They show a marked table as it
+     * stands (issue 1657's list).
      *
      * DELIBERATELY UNCHANGED:
      *  - a read that names no type (`type` NULL on entry) takes the first plot
@@ -1087,7 +1104,10 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
         sim_type = "noise";
       }
       if(!strcmp(type, "op")) {
-        if(integ_is_op) sim_type = "op";
+        if(integ_is_op) {
+          sim_type = "op";
+          if(untyped) totals_now = 1; /* marks the table once the block is read */
+        }
         else integ_held = 1;
       }
       dbg(dbglev, "read_dataset(): op sim_type=%s\n", sim_type ? sim_type : "<NULL>");
@@ -1384,6 +1404,7 @@ static int read_dataset(FILE *fd, Raw **rawptr, const char *type, int no_warning
     nvars = 0;
     seen_plotname = 0;
     sim_type = NULL;
+    totals_now = 0;
     raw->hdr_case_mode = hdr_case_mode_on_entry;
     goto read_dataset_pass;
   }
@@ -2367,6 +2388,21 @@ static void raw_restamp_design(void)
   raw_case_mode_schematic(xctx->raw);
 }
 
+/* 1 when the LAST extra_rawfile(what == 1) call read a loaded table again in
+ * place (issue 1657), else 0. It is cleared on entry of EVERY what == 1 call,
+ * whichever arm the call then takes, and set by the spice read arm alone: a
+ * call that goes through the table/vcd arm must not answer for an earlier
+ * one (rows M-flag of tests/headless/test_raw_ascii_point_bounds.tcl). Read
+ * right after the call by a caller that has to tell a re-read from a switch:
+ * raw_select() here, and the `raw read` arm of src/scheduler.c through
+ * extra_rawfile_reread(). */
+static int raw_reread_in_place = 0;
+
+int extra_rawfile_reread(void)
+{
+  return raw_reread_in_place;
+}
+
 /* what == 0: do nothing and return 0
  * what == 1: read another raw file and switch to it (make it the current one)
  *            if type == table use table_read() to read an ascii table
@@ -2382,6 +2418,10 @@ static void raw_restamp_design(void)
  * if bit 6 (64), RAW_READ_REBIND, is set a what == 1 dedupe hit RE-BINDS the
  *   database to the current schematic (R110/R110c). Set by the `read` verbs in
  *   src/scheduler.c and by nothing in src/draw.c -- see src/xschem.h.
+ * if bit 7 (128), RAW_READ_NAMED_TYPE, is set the request's own words named
+ *   the type (issue 1657). Set by `raw read` and `raw select` when they carry
+ *   a type word and by the annotate_op arm, never by src/draw.c -- see
+ *   src/xschem.h.
  *
  * RETURN VALUE -- and for what == 1 it is deliberately NOT "the file was
  * parsed" (R112, doc/claude/specs/results_selection.md section 3.1, issue 0509).
@@ -2392,10 +2432,36 @@ static void raw_restamp_design(void)
  * current -- and RE-STAMPED with the schematic that is current now IF the
  * caller set RAW_READ_REBIND (src/xschem.h) to say it is a user `read` gesture;
  * see raw_restamp_design() below. A caller that must know WHICH of the two
- * happened compares xctx->extra_raw_n across the call; `xschem raw read`'s
- * -case option already does exactly that (src/scheduler.c:10385-10402).
+ * happened compares xctx->extra_raw_n across the call, as the -case option of
+ * the `raw read` arm of src/scheduler.c does -- and, since issue 1657, also
+ * asks extra_rawfile_reread(): the one hit that is read again (next
+ * paragraph) parses the file and leaves the count where it was.
  * 0 means nothing changed: file not found, no such analysis in it, or no such
  * slot -- and on a failed read the previously current raw is restored.
+ *
+ * THE ONE HIT THAT IS READ AGAIN (issue 1657, the user's ruling of
+ * 2026-11-21). A request that NAMED "op" (RAW_READ_NAMED_TYPE) and meets a
+ * table that an untyped read took from the noise totals (Raw.totals_as_op)
+ * reads the file again asking "op" and puts the result in the SAME slot: the
+ * read comes first, the table that was loaded is replaced only when it
+ * succeeded, the slot count does not move, and the two cursors move exactly as
+ * a switch moves them. It never goes through the clear arm. THE BINDING IS THE
+ * REPLACED TABLE'S when that table was bound on the current hierarchy stack
+ * (R110a, raw_restamp_design() above): the reader stamps what it builds with
+ * the sheet the request came from, and a request made inside an instance
+ * would otherwise move the top-level design's results one level down, where
+ * names resolve against the wrong root and from where the top goes blind on
+ * the way back up (rows M-descend). A caller that must know the re-read
+ * happened asks extra_rawfile_reread() right after the call (raw_select()
+ * reads the flag itself). When that read FAILS the answer is 0 and nothing
+ * moved: the table that was loaded is still loaded, the current one is still
+ * current, both cursors are where they were -- unless the reader met a header
+ * line it cannot read, which clears every table from inside the reader for
+ * every file, this one included (read_dataset(); not this arm's to change).
+ * Only THIS arm does it. The arm above, for the formats that are not spice
+ * results, has no such table to meet (the mark is set by read_dataset() and by
+ * nothing else) and is left as it was: keep the two in step in everything
+ * else, and do not copy this into it.
  *
  * `file` is resolved ONCE at the top of the function by resolve_rawfile_path()
  * (util.c): a leading `~/` in C, then Tcl VARIABLE expansion by a C BYTE
@@ -2415,8 +2481,12 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
   /* R110's opt-in re-bind. See RAW_READ_REBIND in src/xschem.h for why a `read`
    * from the scheduler re-binds and a `read` from a graph walker must not. */
   int user_read = what & RAW_READ_REBIND;
+  /* issue 1657: the request's own words named the type. See RAW_READ_NAMED_TYPE
+   * in src/xschem.h for who sets it and who must not. */
+  int named_type = what & RAW_READ_NAMED_TYPE;
 
-  what &= 0xf; /* remove the option bits (32 no_warning, 64 RAW_READ_REBIND) */
+  what &= 0xf; /* remove the option bits (32 no_warning, 64 RAW_READ_REBIND, 128 RAW_READ_NAMED_TYPE) */
+  if(what == 1) raw_reread_in_place = 0; /* for BOTH read arms below: see the flag */
   if(type && !type[0]) type = NULL; /* empty string as type will be considered NULL */
 
   dbg(1, "extra_rawfile(): what=%d, no_warning=%d, file=%s, type=%s\n",
@@ -2570,6 +2640,58 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
           update_waves_menu_cue(); /* the failed read's free_rawfile() greyed it; see above */
         }
       }
+    } else if(named_type && type && !strcmp(type, "op") && xctx->extra_raw_arr[i]->totals_as_op) {
+      /* ISSUE 1657: THE HIT IS THE NOISE TOTALS AND THE REQUEST NAMED "op".
+       * Read the file again, in place. The rule and what a failure leaves are
+       * in this function's header ("THE ONE HIT THAT IS READ AGAIN"). The read
+       * is the one the arm above makes for a file that is not loaded: the
+       * current table is parked, the reader builds into xctx->raw, and a read
+       * that fails disposes of what it built. */
+      int read_ret = 0;
+      int old_lev;
+      Raw *old = xctx->extra_raw_arr[i];
+      Raw *save = xctx->raw;
+      dbg(1, "extra_rawfile() %d read: found the noise totals taken as op: read again\n", i);
+      /* where on the current stack the table about to be replaced is bound,
+       * or -1. sch_waves_loaded() is a predicate of xctx->raw, so the pointer
+       * is lent for the call, as raw_select() lends it to raw_restamp_design(). */
+      xctx->raw = old;
+      old_lev = sch_waves_loaded();
+      xctx->raw = NULL;
+      read_ret = read_rawfile_by_type(f, &xctx->raw, type, no_warning, sweep1, sweep2);
+      if(read_ret && xctx->raw) {
+        my_strdup(_ALLOC_ID_, &xctx->raw->req_sim_type, type);
+        /* THE BINDING STAYS WHERE IT WAS (R110a; this function's header). The
+         * reader stamped the new table with the sheet the request came from.
+         * When the replaced one was bound to an ancestor of that sheet the
+         * stamp is put back, with the level sch_waves_loaded() found it at.
+         * The schematic's verdict on the file's case mode was primed by the
+         * reader against the sheet of the request, which is not this
+         * table's: it goes back to "unknown" and is computed when the table's
+         * own sheet is the current one again (raw_case_mode_schematic()). */
+        if(old_lev >= 0 && old_lev != xctx->currsch && old->schname) {
+          my_strdup2(_ALLOC_ID_, &xctx->raw->schname, old->schname);
+          xctx->raw->level = old_lev;
+          xctx->raw->sch_case_mode = RAW_CASE_UNKNOWN;
+        }
+        /* a read that succeeded cleared nothing, so slot i still holds `old`,
+         * which may be the table that was current (`save`): it goes now */
+        xctx->extra_raw_arr[i] = xctx->raw;
+        free_rawfile(&old, 0, 1);
+        xctx->extra_prev_idx = xctx->extra_idx;
+        xctx->extra_idx = i;
+        update_waves_menu_cue(); /* free_rawfile() greyed it under a live table */
+        raw_reread_in_place = 1;
+      } else {
+        ret = 0;
+        if(!no_warning) {
+          dbg(0, "extra_rawfile() read: %s could not be read again as \"op\"\n", f);
+        }
+        if(xctx->extra_raw_n) { /* the registry survived: what was current stays current */
+          xctx->raw = save;
+          update_waves_menu_cue();
+        }
+      }
     } else { /* file found: switch to it */
       dbg(1, "extra_rawfile() %d read: found: switch to it\n", i);
       xctx->extra_prev_idx = xctx->extra_idx;
@@ -2578,7 +2700,9 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
       /* R110: a USER read RE-BINDS. Spice arm -- THE ARM IS WRITTEN TWICE, and
        * that is half of why issue 0509 survived: patching one copy leaves the
        * defect alive for the other half of the file formats. Keep both in step,
-       * bit test included. */
+       * bit test included -- EXCEPT the re-read of a table that holds the noise
+       * totals (the arm above this one, issue 1657), which belongs to this
+       * arm alone: the mark it tests is set only by the spice reader. */
       if(user_read) raw_restamp_design();
     }
   /* **************** switch ************* */
@@ -2771,7 +2895,10 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
  *
  * THE THREE-VALUED RETURN (R301, and the distinction R112 says `read` should
  * have had): 2 = selected by SWITCH (it was already loaded, nothing parsed),
- * 1 = selected by READ (a slot was added), 0 = refused, nothing changed.
+ * 1 = selected by READ (a file was parsed: a slot was added, or -- the one
+ * exception, issue 1657 -- a select that NAMED "op" met a table holding the
+ * noise totals and the file was read again into that table's slot),
+ * 0 = refused, nothing changed.
  * WHICH of the two happened is computed the way extra_rawfile()'s own header
  * prescribes -- compare xctx->extra_raw_n across the call -- with the one
  * correction that comparison needs: the FIRST read into a context that has a
@@ -2807,10 +2934,14 @@ int extra_rawfile(int what, const char *file, const char *type, double sweep1, d
  * a NAMED analysis of the run, and is still required to READ a file that is not
  * loaded yet if it is a table or a VCD (the reader dispatch, issue 0290).
  *
- * WHAT IT DOES NOT DO. It does not free anything: a Raw the caller may still
- * hold a SPICE_DATA * into is never freed by a selection, but a cached
- * SPICE_DATA * still belongs to ONE Raw and a selection reassigns xctx->raw,
- * so a pointer cached across a select silently reads the OTHER database (L5).
+ * WHAT IT DOES NOT DO. It does not free anything, with one exception: a Raw
+ * the caller may still hold a SPICE_DATA * into is not freed by a selection --
+ * except the table holding the noise totals that a select NAMING "op" has
+ * read again (issue 1657; R301 of the selection spec states the exception):
+ * that table is replaced in its slot and freed, and the select answers 1. A
+ * cached SPICE_DATA * still belongs to ONE Raw and a selection reassigns
+ * xctx->raw, so a pointer cached across a select silently reads the OTHER
+ * database (L5), or after that one re-read a freed one.
  * Nothing here caches one. It does not redraw, does not `update`, and does not
  * touch the annotation array (L7): every side effect a human can see belongs
  * to results::select (R302).
@@ -2901,7 +3032,10 @@ int raw_select(const char *file, const char *type)
   idx_before = xctx->extra_idx;
   prev_before = xctx->extra_prev_idx;
   raw_before = xctx->raw;
-  ret = extra_rawfile(1 | RAW_READ_REBIND, f, type, -1.0, -1.0);
+  /* issue 1657: RAW_READ_NAMED_TYPE only for a type the CALLER named. The type
+   * filled in just above from the current table is the engine's own word, and
+   * a select that named none must show a loaded table as it stands. */
+  ret = extra_rawfile(1 | RAW_READ_REBIND | (want_type ? RAW_READ_NAMED_TYPE : 0), f, type, -1.0, -1.0);
   dbg(1, "raw_select(): file=%s type=%s rc=%d n %d -> %d adopt=%d\n",
       f, type ? type : "<NULL>", ret, n_before, xctx->extra_raw_n, adopt);
   if(!ret) {
@@ -2911,7 +3045,11 @@ int raw_select(const char *file, const char *type)
     raw_select_undo(raw_before, idx_before, prev_before);
     return 0;
   }
-  is_read = (xctx->extra_raw_n - n_before - adopt) > 0;
+  /* ...or the one loaded table that is read again in place (issue 1657): a
+   * select that named "op" and met the noise totals has parsed a file and
+   * freed a table, so it answers what a read answers. The one exception to
+   * "a select never frees and answers 2"; R301 of the selection spec has it. */
+  is_read = (xctx->extra_raw_n - n_before - adopt) > 0 || raw_reread_in_place;
 
   /* FIXER ROUND -- AN EXPLICIT NON-SPICE TYPE STILL NAMES ONE ANALYSIS (R301b).
    * The non-spice what == 1 arm dedupes on the filename ALONE (it has to: a

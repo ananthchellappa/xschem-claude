@@ -780,6 +780,236 @@ check {PV11 and the same plan without the refusal writes both of them} \
      set out {} ; foreach e [dict get $pv prefile] { lappend out [lindex $e 1] }
      return $out }}] {{set zz=1} {set yy=2}}
 
+## ============================================================================
+## PV12 to PV18 -- THE IN-BLOCK SLOT IN THE DECK'S ORDER, IN LABELLED GROUPS
+## (issue 1657, the user's ruling of 2026-11-21)
+##
+## Each entry of `control` carries the analysis it is written around, the groups
+## stand in the order the deck will run them, and the pane's text -- built by
+## the pure proc ase::ui::optsheet_preview_text, so these rows count on the arm
+## without a display -- heads each group with its analysis.  A row that holds
+## device requests for a netlist saves the one held block and puts it back.
+## ============================================================================
+set PV_NL "* rc\nv1 in 0 dc 1 ac 1\nr1 in mid 1k\nc1 mid 0 1n\n.end\n"
+set PV_BLOCK ".save all\n.save @r1\[i\]\n"
+set PV_OP    {type op enabled 1}
+set PV_TRAN  {type tran enabled 1 step 1u stop 100u}
+set PV_NOISE {type noise enabled 1 out v(mid) insrc v1 sweep dec points 4 start 1k stop 100k}
+set PV_SP    {type sp enabled 1 sweep lin points 3 start 100meg stop 1g}
+proc pv_state {opts rows {gate {}}} {
+  set st [ase::state_default]
+  dict set st options $opts
+  dict set st analyses $rows
+  dict set st save_op_params $gate
+  dict set st rundir /tmp/zz_optsheet_1441_never_run
+  return $st
+}
+## The preview of a bench with the unreduced netlist text handed over fifth;
+## `held` 1 holds device requests for that text while the preview is taken.
+proc pv_order {st {text {}} {held 0}} {
+  set slot $::ase::op_cards
+  if {$held} { ase::op_cards_put $text $::PV_BLOCK } else { ase::op_cards_clear }
+  set rc [catch {ase::opt_preview ngspice $st {} {} $text} pv]
+  set ::ase::op_cards $slot
+  if {$rc} { return "RAISED:$pv" }
+  return $pv
+}
+proc pv_notes {pv status} {
+  if {[string match RAISED:* $pv]} { return $pv }
+  set out {}
+  foreach n [dict get $pv notes] { if {[lindex $n 1] eq $status} { lappend out $n } }
+  return $out
+}
+## The pane's in-block slot as {heading lines...} groups: the text between the
+## slot's heading and the next slot heading, cut at every line that is neither
+## a deck line (four spaces in) nor empty.
+proc pv_groups {text} {
+  set on 0 ; set groups {} ; set cur {}
+  foreach l [split $text "\n"] {
+    if {$l eq {inside the analysis block}} { set on 1 ; continue }
+    if {!$on} { continue }
+    if {$l eq {on the command line}} { break }
+    if {[regexp {^    \S} $l]} {
+      lappend cur [string range $l 4 end]
+    } else {
+      if {[llength $cur]} { lappend groups $cur }
+      set cur [list $l]
+    }
+  }
+  if {[llength $cur]} { lappend groups $cur }
+  return $groups
+}
+proc pv_text {pv} {
+  if {[string match RAISED:* $pv]} { return $pv }
+  if {[catch {ase::ui::optsheet_preview_text $pv} t]} { return "RAISED:$t" }
+  return $t
+}
+set PV_OPTS3 {{name itl1 value 300 analysis op} {name itl4 value 200 analysis tran}
+              {name sqrnoise value 1 analysis noise}}
+set PV_ST3 [pv_state $PV_OPTS3 [list $PV_OP $PV_TRAN $PV_NOISE]]
+
+check {PV12 every in-block entry carries the analysis its option is stored against, and the entries of one analysis stand together} \
+  [s_ans apply {{} {
+     set pv [pv_order $::PV_ST3 $::PV_NL 1]
+     if {[string match RAISED:* $pv]} { return $pv }
+     set want [dict create]
+     foreach o $::PV_OPTS3 { dict set want [dict get $o name] [dict get $o analysis] }
+     set bad {} ; set seq {}
+     foreach e [dict get $pv control] {
+       if {[llength $e] != 3} { lappend bad [list shape $e] ; continue }
+       lassign $e nm line ty
+       if {![dict exists $want $nm] || [dict get $want $nm] ne $ty} { lappend bad [list type $e] }
+       if {[lindex $seq end] ne $ty} { lappend seq $ty }
+     }
+     return [list $bad $seq [llength [dict get $pv control]]] }}] \
+  {{} {tran noise op} 5}
+
+## THE SENTENCE FOR AN ORDER THAT IS NOT SETTLED: once, and only where it can
+## matter.  Legs, in order: two analyses with lines and no netlist text; the
+## same with a text the block is not held for; the block held (the order is
+## known); one enabled analysis; two analyses and no in-block line at all; one
+## group with lines and nothing left in force; one group whose option is left
+## in force.
+check {PV13 the preview says once that the order is not settled, exactly where it is not and a second group or an option left in force makes it matter} \
+  [s_ans apply {{} {
+     set two [pv_state [lrange $::PV_OPTS3 0 1] [list $::PV_OP $::PV_TRAN]]
+     set out {}
+     lappend out [llength [pv_notes [pv_order $two] order]]
+     lappend out [llength [pv_notes [pv_order $two "$::PV_NL* edited\n"] order]]
+     lappend out [llength [pv_notes [pv_order $two $::PV_NL 1] order]]
+     lappend out [llength [pv_notes [pv_order \
+        [pv_state [lrange $::PV_OPTS3 0 0] [list $::PV_OP]]] order]]
+     lappend out [llength [pv_notes [pv_order \
+        [pv_state {{name reltol value 1e-4}} [list $::PV_OP $::PV_TRAN]]] order]]
+     lappend out [llength [pv_notes [pv_order \
+        [pv_state [lrange $::PV_OPTS3 1 1] [list $::PV_OP $::PV_TRAN]]] order]]
+     lappend out [llength [pv_notes [pv_order \
+        [pv_state {{name xtrtol value 1 analysis tran}} [list $::PV_OP $::PV_TRAN]]] order]]
+     set why [lindex [lindex [pv_notes [pv_order $two] order] 0] 2]
+     lappend out [expr {[string first {after tran} $why] >= 0}]
+     return $out }}] {1 1 0 0 0 0 1 1}
+
+## THE NOTE ABOUT AN OPTION THAT IS NOT PUT BACK names what runs after it once
+## the order is known: on op + noise with device requests held the deck runs
+## noise and then op; with the switch off it runs op first and nothing follows
+## noise.  With no netlist yet the order is not known and the note keeps the
+## words it always had.
+check {PV14 the note about an option left in force names the analyses that run after it when the order is known, says none does when none does, and keeps its old words when it is not} \
+  [s_ans apply {{} {
+     set opts {{name sqrnoise value 1 analysis noise}}
+     set out {}
+     foreach {gate text held} [list {} $::PV_NL 1  0 $::PV_NL 0  {} {} 0] {
+       set pv [pv_order [pv_state $opts [list $::PV_OP $::PV_NOISE] $gate] $text $held]
+       set why [lindex [lindex [pv_notes $pv leaks] 0] 2]
+       lappend out [list [expr {[string first {(op)} $why] >= 0}] \
+                         [expr {[string first {no analysis runs after it} $why] >= 0}] \
+                         [expr {[string first {every analysis after it} $why] >= 0}]]
+     }
+     return $out }}] {{1 0 0} {0 1 0} {0 0 1}}
+
+## THE PANE'S TEXT.  One group heading per analysis, each followed by its own
+## lines and no other's; the operating point's heading says it runs last when
+## the deck moved it; and no heading stands four spaces in, which is the shape
+## of a deck line.
+check {PV15 the pane heads each group of the in-block slot with its analysis, in the deck's order, and marks the operating point's group when it runs last} \
+  [s_ans apply {{} {
+     set pv [pv_order $::PV_ST3 $::PV_NL 1]
+     set g [pv_groups [pv_text $pv]]
+     set heads {} ; set bad {}
+     foreach grp $g {
+       set h [lindex $grp 0]
+       lappend heads $h
+       if {[regexp {^    \S} $h]} { lappend bad [list deck-shaped $h] }
+       if {![regexp {^  ([A-Z]+) BLOCK} $h -> ty]} { lappend bad [list not-a-group $h] ; continue }
+       set own {}
+       foreach e [dict get $pv control] {
+         if {[string toupper [lindex $e 2]] eq $ty} { lappend own [lindex $e 1] }
+       }
+       if {[lrange $grp 1 end] ne $own} { lappend bad [list lines $h] }
+     }
+     return [list $bad [llength $g] [lindex $heads 0] [lindex $heads 1] \
+                  [expr {[string first {runs last} [lindex $heads 2]] >= 0}] \
+                  [regexp {^  OP BLOCK} [lindex $heads 2]]] }}] \
+  {{} 3 {  TRAN BLOCK} {  NOISE BLOCK} 1 1}
+
+check {PV16 with the order not settled the pane keeps the operating point's group first, unmarked, under one line that says so and is not shaped as a deck line or a group} \
+  [s_ans apply {{} {
+     set pv [pv_order $::PV_ST3]
+     set g [pv_groups [pv_text $pv]]
+     set first [lindex [lindex $g 0] 0]
+     set heads {}
+     foreach grp [lrange $g 1 end] { lappend heads [lindex $grp 0] }
+     return [list [llength $g] [regexp {^      \(.*\)$} $first] [llength [lindex $g 0]] $heads] }}] \
+  {4 1 1 {{  OP BLOCK} {  TRAN BLOCK} {  NOISE BLOCK}}}
+
+## WHAT STANDS UNDER "not delivered" IS ABOUT AN OPTION, ALWAYS.  The mark
+## beside a group's heading and the sentence about an order that is not settled
+## are notes of the same answer, and neither may be listed as something that
+## will not arrive.  PV15's bench (the operating point's group marked) and
+## PV16's (the sentence shown): every line after that heading opens with the
+## name of an option the bench stores or ASE-L adds, and each bench has such a
+## line, so the walk is not empty.
+proc pv_undelivered {text} {
+  set on 0 ; set out {}
+  foreach l [split $text "\n"] {
+    if {$l eq {not delivered}} { set on 1 ; continue }
+    if {$on && $l ne {}} { lappend out $l }
+  }
+  return $out
+}
+check {PV15b under "not delivered" the pane names only options: neither the mark of a group nor the sentence about the order stands there} \
+  [s_ans apply {{} {
+     set out {}
+     foreach {text held} [list $::PV_NL 1 {} 0] {
+       set pv [pv_order $::PV_ST3 $text $held]
+       if {[string match RAISED:* $pv]} { return $pv }
+       set names {}
+       foreach o $::PV_OPTS3 { lappend names [dict get $o name] }
+       foreach n [dict get $pv notes] {
+         if {[lindex $n 1] ni {group order} && [lindex $n 0] ne {}} { lappend names [lindex $n 0] }
+       }
+       set lines [pv_undelivered [pv_text $pv]]
+       set bad {}
+       foreach l $lines {
+         if {![regexp {^    (\S+) — } $l -> nm] || [lsearch -exact $names $nm] < 0} { lappend bad $l }
+       }
+       set special 0
+       foreach n [dict get $pv notes] { if {[lindex $n 1] in {group order}} { incr special } }
+       lappend out [list $bad [expr {[llength $lines] > 0}] [expr {$special > 0}]]
+     }
+     return $out }}] {{{} 1 1} {{} 1 1}}
+
+## AN ANALYSIS THE DECK RUNS AFTER A MOVED OPERATING POINT.  The s-parameter
+## analysis is ranked behind it, so the operating point's group is then not the
+## last one and its heading must not say so; an option the transient leaves in
+## force is in force for both.
+check {PV17 where an analysis still runs after the moved operating point its heading names what it runs after, not that it is last, and an option left in force names both} \
+  [s_ans apply {{} {
+     set opts {{name itl1 value 300 analysis op} {name xtrtol value 1 analysis tran}
+               {name noopac value 1 analysis sp}}
+     set pv [pv_order [pv_state $opts [list $::PV_OP $::PV_TRAN $::PV_SP]] $::PV_NL 1]
+     set heads {}
+     foreach grp [pv_groups [pv_text $pv]] { lappend heads [lindex $grp 0] }
+     set why [lindex [lindex [pv_notes $pv leaks] 0] 2]
+     return [list [llength $heads] [regexp {^  TRAN BLOCK$} [lindex $heads 0]] \
+                  [expr {[string first {runs last} [lindex $heads 1]] >= 0}] \
+                  [expr {[string first {after tran} [lindex $heads 1]] >= 0}] \
+                  [regexp {^  SP BLOCK$} [lindex $heads 2]] \
+                  [expr {[string first {(op, sp)} $why] >= 0}]] }}] \
+  {3 1 0 1 1 1}
+
+## AN OPTION STORED AGAINST TWO ANALYSES AND LEFT IN FORCE BY BOTH has a note
+## from each. The notes used to be kept by option name alone, so the second
+## analysis's note replaced the first.
+check {PV18 an option left in force by two analyses keeps one note for each of them} \
+  [s_ans apply {{} {
+     set opts {{name sqrnoise value 1 analysis noise} {name sqrnoise value 1 analysis sp}}
+     set pv [pv_order [pv_state $opts [list $::PV_NOISE $::PV_SP]] $::PV_NL 0]
+     set whys {}
+     foreach n [pv_notes $pv leaks] { lappend whys [string range [lindex $n 2] 0 26] }
+     return [lsort $whys] }}] \
+  {{set for the noise analysis } {set for the sp analysis and}}
+
 } pverr]} { check {PV0 section PV ran to the end} "RAISED:$pverr" {} }
 
 # ============================================================================
@@ -796,7 +1026,9 @@ check {HK1 not one of the new core procs contains an ngspice literal} \
      foreach p {ase::opt_group ase::opt_scope ase::opt_in_scope ase::opt_results
                 ase::opt_results_why ase::opt_help ase::opt_match ase::opt_browse
                 ase::opt_group_index ase::opt_stored_verdict ase::opt_fallback_line
-                ase::opt_deck_plan ase::opt_preview} {
+                ase::opt_deck_plan ase::opt_preview ase::op_run_order
+                ase::opt_preview_groups ase::opt_order_note ase::opt_leak_note
+                ase::opt_group_mark ase::words_and ase::op_cards_why} {
        if {![llength [info commands ::$p]]} { lappend bad "$p MISSING" ; continue }
        set b [string tolower [s_nocomment [info body ::$p]]]
        foreach lit {reltol gminsteps keepopinfo casemode sqrnoise wnflag
@@ -1089,6 +1321,120 @@ check {UI23 and it opens the sheet already scoped to that analysis} \
   [ase::ui::optsheet_scope $ukey] {analysis tran}
 check_true {UI24 which is the same sheet, not a second one} \
   [expr {[winfo exists $top.simopt] && ![winfo exists $top.chana.simopt]}]
+
+## ⚠ THE GROUPS ON THE PANE ITSELF, AND A PANE THAT DOES NOT GO STALE (issue
+## 1657).  The sheet is a window of its own and stays open while the bench
+## changes behind it.  Four things change the order the deck will run in: a new
+## netlist, the tick that saves device operating-point numbers, enabling or
+## disabling an analysis, and a forced shape of the device requests.  Each is
+## made here with the sheet open, and the pane is read after it with nothing
+## else touching the sheet.
+catch {$top.chana.x.btns.cancel invoke}
+catch {$top.chana.btns.cancel invoke}
+update
+proc ui_pane {} {
+  global top
+  update
+  return [$top.simopt.prev.t get 1.0 end]
+}
+## The group headings of the pane's in-block slot, in order.
+proc ui_heads {} {
+  set out {}
+  foreach grp [pv_groups [ui_pane]] { lappend out [lindex $grp 0] }
+  return $out
+}
+set ui_slot $::ase::op_cards
+set st [ase::session_state $ukey]
+dict set st options {{name itl1 value 300 analysis op} {name itl4 value 200 analysis tran}}
+dict set st analyses [list $PV_OP $PV_TRAN]
+dict set st save_op_params {}
+ase::session_update $ukey $st
+ase::ui::sim_options_dialog $ukey
+update
+set uinl2 [file join [ase::rundir [ase::session_state $ukey]] nfet_ui.spice]
+set ui_had2 [file exists $uinl2] ; set ui_old2 {}
+if {$ui_had2} { set f [open $uinl2 r] ; set ui_old2 [read $f] ; close $f }
+catch {file delete $uinl2}
+ase::op_cards_clear
+ase::ui::optsheet_fill $ukey
+check {UI25 on the sheet the in-block slot is headed by analysis, and before a netlist exists it says the order is not settled} \
+  [list [expr {[string trimright [ui_pane]] eq
+               [string trimright [pv_text [ase::opt_preview ngspice [ase::session_state $ukey]]]]}] \
+        [lrange [ui_heads] 1 end] [regexp {^      \(.*\)$} [lindex [ui_heads] 0]]] \
+  {1 {{  OP BLOCK} {  TRAN BLOCK}} 1}
+
+## THE SENTENCE IS SHOWN WHOLE.  The pane does not wrap its deck lines and has
+## no horizontal scrollbar, and the sentence is longer than the pane is wide:
+## its last character must be on the pane all the same, with the line scrolled
+## to the top and nothing scrolled sideways.
+set ui_t $top.simopt.prev.t
+set ui_note [$ui_t search -regexp {^      \(} 1.0 end]
+if {$ui_note ne {}} { $ui_t yview $ui_note ; update }
+check {UI25b the sentence about an order that is not settled is displayed whole on the pane, its last character included} \
+  [list [expr {$ui_note ne {}}] \
+        [expr {$ui_note ne {} && [llength [$ui_t bbox "$ui_note lineend - 1 chars"]] == 4}] \
+        [lindex [$ui_t xview] 0]] {1 1 0.0}
+$ui_t yview 1.0
+
+## (1) A NEW NETLIST: the file is written and device requests are held for its
+## text, as a netlist of this session does it.
+file mkdir [file dirname $uinl2]
+set ui_nl "* nfet_ui\nv1 in 0 dc 1\nr1 in mid 1k\nc1 mid 0 1n\n.end\n"
+set f [open $uinl2 w] ; puts -nonewline $f $ui_nl ; close $f
+ase::op_cards_put $ui_nl $PV_BLOCK
+set ui_h1 [ui_heads]
+check {UI26 a new netlist repaints the open sheet: the operating point's group moves last and says so} \
+  [list [llength $ui_h1] [lindex $ui_h1 0] [regexp {^  OP BLOCK} [lindex $ui_h1 1]] \
+        [expr {[string first {runs last} [lindex $ui_h1 1]] >= 0}]] {2 {  TRAN BLOCK} 1 1}
+
+## (2) THE TICK that saves device operating-point numbers, off and on again.
+set st [ase::session_state $ukey]
+dict set st save_op_params 0
+ase::session_update $ukey $st
+set ui_h2 [ui_heads]
+dict set st save_op_params {}
+ase::session_update $ukey $st
+check {UI27 taking the tick off repaints the open sheet with the operating point first, and putting it back moves it last again} \
+  [list $ui_h2 [lindex [ui_heads] 0]] {{{  OP BLOCK} {  TRAN BLOCK}} {  TRAN BLOCK}}
+
+## (3) DISABLING AN ANALYSIS: with the transient off only the operating point
+## runs, and the pane lists one group.
+set st [ase::session_state $ukey]
+dict set st analyses [list $PV_OP {type tran enabled 0 step 1u stop 100u}]
+ase::session_update $ukey $st
+set ui_h3 [ui_heads]
+dict set st analyses [list $PV_OP $PV_TRAN]
+ase::session_update $ukey $st
+check {UI28 disabling an analysis repaints the open sheet without its group, and enabling it brings the group back} \
+  [list $ui_h3 [llength [ui_heads]]] {{{  OP BLOCK}} 2}
+
+## (4) A FORCED SHAPE: the one shape that keeps the operating point first.
+ase::op_tier_force_set b
+set ui_h4 [ui_heads]
+ase::op_tier_force_set {}
+check {UI29 forcing the shape that keeps the operating point first repaints the open sheet in that order, and handing the choice back moves it last again} \
+  [list $ui_h4 [lindex [ui_heads] 0]] {{{  OP BLOCK} {  TRAN BLOCK}} {  TRAN BLOCK}}
+
+## (5) A NETLIST THAT CHANGES ON DISK WITHOUT ASE-L WRITING IT: the schematic
+## window's own Netlist command writes the same file when the bench names no
+## run directory, and so does a hand edit.  None of the writers above fires.
+## The sheet repaints when it gets the keyboard focus, which is where the user
+## looks at it again: the device requests are held for the old text, so the
+## pane now says the order is not settled.  The premise leg reads the pane
+## before the focus arrives: still the old answer, so the row cannot pass on a
+## repaint that came from somewhere else.
+set f [open $uinl2 a] ; puts $f "* edited outside ASE-L" ; close $f
+set ui_h5 [ui_heads]
+event generate $top.simopt <FocusIn> -detail NotifyVirtual -when now
+set ui_h6 [ui_heads]
+check {UI30 a netlist changed on disk by something else repaints the open sheet when it gets the focus: the order is then not settled, and the pane says so} \
+  [list [lindex $ui_h5 0] [regexp {^      \(.*\)$} [lindex $ui_h6 0]] [lrange $ui_h6 1 end]] \
+  {{  TRAN BLOCK} 1 {{  OP BLOCK} {  TRAN BLOCK}}}
+
+set ::ase::op_cards $ui_slot
+if {$ui_had2} {
+  set f [open $uinl2 w] ; puts -nonewline $f $ui_old2 ; close $f
+} else { catch {file delete $uinl2} }
 
 catch {destroy $top.simopt}
 catch {$top.chana.x.btns.cancel invoke}

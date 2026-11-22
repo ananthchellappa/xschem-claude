@@ -3500,12 +3500,29 @@ proc calc::aq_nslots {} {
 
 # Put the user's slot back.  `$bound` is whether it answered `raw loaded` >= 0
 # before anything moved.
+#
+# ⚠ `-asis`, AND IT IS NOT DECORATION (issue 1657).  The user's slot can be one
+# that holds the noise totals of a results file under the type `op` (a read
+# that named no type took them; `xschem raw totals_as_op`).  A read that NAMES
+# `op` and meets such a table reads the file again and replaces it with the
+# operating point -- which is right for a request and wrong for a restore: this
+# proc only puts back what the user had.  `-asis` says so, and the table comes
+# back as it stands.  For every other table the option changes nothing.
 proc calc::aq_restore {name type bound} {
     if {$bound} {
-        catch {xschem raw read $name $type}
+        catch {xschem raw read $name $type -asis}
         return
     }
     calc::wave_dest_restore $name $type
+}
+
+# 1 when the CURRENT table holds the noise totals of a results file under the
+# type `op` (issue 1657; the engine's mark, `xschem raw totals_as_op`).  Such a
+# table is typed `op` and is not an operating point.
+proc calc::aq_totals {} {
+    set m 0
+    catch {set m [xschem raw totals_as_op]}
+    return [expr {$m eq {1} ? 1 : 0}]
 }
 
 # A qualified token in `$s` whose analysis is not the CURRENT database's: a
@@ -3585,7 +3602,8 @@ namespace eval calc { variable aq_active {} }
 # and put the user's slot back whatever happens.  Answers
 # `{ok 1 rc <catch code> value <result>}` or `{ok 0 msg <sentence>}`.  An empty
 # `$an`, or one that is already current and present in the file, runs `$cmd`
-# where it stands.
+# where it stands -- except a current table that is typed `op` and holds the
+# noise totals (`calc::aq_totals`), which is read again first.
 #
 # ⚠ THE SLOT THE READ ADDED IS FOUND BY THE REGISTRY DIFF, NEVER RE-MATCHED BY
 # TYPE.  `xschem raw read <f> op` of a multi-point operating point stores the
@@ -3618,6 +3636,27 @@ proc calc::aq_run {an cmd} {
     if {$an ne {} && [lindex $cur 1] eq $an
         && [calc::aq_present [lindex $cur 0] $an] == 0} {
         return [dict create ok 0 msg [calc::aq_msg absent $an]]
+    }
+    if {$an eq {op} && [lindex $cur 1] eq {op} && [calc::aq_totals]} {
+        # THE CURRENT TABLE IS TYPED `op` AND HOLDS THE NOISE TOTALS (issue
+        # 1657): it must not be evaluated where it stands.  The file is asked
+        # for as `op`, which reads it again INTO THE SAME SLOT, so the user's
+        # current slot is then the operating point and `$cmd` runs on it; no
+        # slot was added and none is cleared or restored.  A read that is
+        # refused leaves the table as it was and is this press's refusal.  The
+        # re-read can store a multi-point operating point as `dc`, so the
+        # bracket is marked with the analysis asked, as the read arm below
+        # does.
+        set rd 0
+        catch {set rd [xschem raw read [lindex $cur 0] op]}
+        if {$rd ne {1}} {
+            return [dict create ok 0 msg [calc::aq_msg noread $an]]
+        }
+        variable aq_active
+        set aq_active $an
+        set rc [catch {uplevel #0 $cmd} v]
+        set aq_active {}
+        return [dict create ok 1 rc $rc value $v]
     }
     if {$an eq {} || [lindex $cur 1] eq $an} {
         set rc [catch {uplevel #0 $cmd} v]

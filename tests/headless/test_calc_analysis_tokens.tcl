@@ -819,6 +819,134 @@ group AT12 {
     }
 }
 
+# =============================================================================
+# AT15 -- A TABLE THAT HOLDS THE NOISE TOTALS UNDER THE TYPE `op` (issue 1657)
+#
+# A read that names no type stores a totals-first results file as `op`, holding
+# the two noise totals; the table says so (`xschem raw totals_as_op`).  `vdc()`
+# asks for the operating point: it must not be answered from that table as it
+# stands, on either arm of `calc::aq_run` -- with the table current (the arm
+# that runs where it stands) and with another analysis current (the arm that
+# reads).  And a press from ANOTHER analysis must put the user's table back as
+# it was: the restore is not a request for an operating point.
+# =============================================================================
+# One plot as a simulator writes it, with a `Values:` block.
+proc at_plot {name vars rows} {
+    set h "Title: at15 fixture\nDate: Sat Nov 21 00:00:00 2026\nPlotname: $name\n"
+    append h "Flags: real\nNo. Variables: [llength $vars]\nNo. Points: [llength $rows]\nVariables:\n"
+    set i 0
+    foreach v $vars { append h "\t$i\t$v\tvoltage\n" ; incr i }
+    append h "Values:\n"
+    set n 0
+    foreach r $rows {
+        set lead $n
+        foreach x $r { append h "$lead\t$x\n" ; set lead {} }
+        append h "\n"
+        incr n
+    }
+    return $h
+}
+proc at_first {} { return [lindex [split [string trim [pcall xschem raw list]] "\n"] 0] }
+group AT15 {
+    set nf [file join $::scratch totals_first.raw]
+    set o [open $nf w]
+    fconfigure $o -translation binary
+    puts -nonewline $o [at_plot {Integrated Noise} {v(onoise_total) v(inoise_total)} {{0.015625 0.03125}}]
+    puts -nonewline $o [at_plot {Noise Spectral Density Curves} \
+        {frequency v(onoise_spectrum) v(inoise_spectrum)} {{1000 0.5 0.0625} {10000 0.25 0.03125}}]
+    puts -nonewline $o [at_plot {Operating Point} {v(in) v(out) i(v1)} {{1 0.75 -0.25}}]
+    puts -nonewline $o [at_plot {Transient Analysis} {time v(in) v(out) i(v1)} \
+        {{0 3 2.25 -0.75} {0.5 3.5 2.5 -0.875}}]
+    close $o
+    catch {xschem raw clear}
+    check "AT15 fixture: the file holds noise, an operating point and a transient, and a read that names no type stores its noise totals as op" \
+        [list [pcall calc::raw_analyses $nf] [pcall xschem raw read $nf] \
+              [lindex [calc::wave_dest_cur] 1] [at_first]] \
+        {{noise op tran} 1 op v(onoise_total)}
+    check "AT15 fixture: that table is marked as the totals taken for an operating point" \
+        [pcall xschem raw totals_as_op] 1
+
+    # the arm that runs where it stands: the marked table is current
+    set i0 [at_info]
+    set d [pcall calc::eval_in_ctx {vdc(out)} 0 op]
+    check "AT15 vdc(out) with the marked table current answers the operating point's value, not a refusal over the noise totals" \
+        [list [near [fld $d value] 0.75] [fld $d ok]] {near 1}
+    check "AT15 ...and the registry text is what it was: the operating point was read into the same slot" \
+        [expr {[at_info] eq $i0}] 1
+
+    # the arm that reads: the transient of the same file is current
+    catch {xschem raw clear}
+    pcall xschem raw read $nf
+    pcall xschem raw read $nf tran
+    set i0 [at_info]
+    set c0 [calc::wave_dest_cur]
+    set d [pcall calc::eval_in_ctx {vdc(out)} 0 op]
+    check "AT15 vdc(out) with the transient current and the marked table loaded answers the operating point's value" \
+        [list [near [fld $d value] 0.75] [fld $d ok]] {near 1}
+    check "AT15 ...and the user's transient is current again with the registry text unmoved" \
+        [list [expr {[at_info] eq $i0}] [calc::wave_dest_cur]] [list 1 $c0]
+
+    # a press from another analysis: the user's table is the marked one
+    catch {xschem raw clear}
+    pcall xschem raw read $nf
+    set i0 [at_info]
+    set d [pcall calc::eval_in_ctx {vt(out)} 0 tran]
+    check "AT15 fixture: vt(out) pressed from the marked table reads the transient" \
+        [near [fld $d value] 2.5] near
+    check "AT15 after that press the user's table is the one it was -- the noise totals, current, the registry text unmoved" \
+        [list [expr {[at_info] eq $i0}] [at_first]] {1 v(onoise_total)}
+    check "AT15 ...and it is still marked: putting a table back is not a request for an operating point" \
+        [pcall xschem raw totals_as_op] 1
+
+    # A DRAW DOES NOT READ AGAIN (display arm): a graph that loads its own file
+    # asks the registry for it on every draw.  With the marked table current it
+    # must be shown as it stands.  The control is the same graph naming a file
+    # that is NOT loaded, which the draw does read.
+    if {[info commands winfo] eq {} || ![winfo exists .drw]} {
+        puts "SKIP (no X): AT15 a graph is drawn only with a display"
+    } else {
+        ## One graph that loads its own file: a rectangle on the graph layer
+        ## carrying the tokens a saved graph carries.
+        proc at_graph {n y rawfile type node} {
+            xschem set rectcolor 2
+            xschem rect 0 $y 800 [expr {$y + 400}] -1 {flags=graph} 0
+            foreach {t v} [list node $node x1 0 x2 1 y1 0 y2 2 autoload true \
+                                rawfile $rawfile sim_type $type] {
+                xschem setprop rect 2 $n $t $v
+            }
+        }
+        set tr2 [file join $::scratch tran_other.raw]
+        set o [open $tr2 w]
+        fconfigure $o -translation binary
+        puts -nonewline $o [at_plot {Transient Analysis} {time v(in) v(out) i(v1)} \
+            {{0 3 2.25 -0.75} {0.5 3.5 2.5 -0.875}}]
+        close $o
+        catch {xschem raw clear}
+        xschem clear force
+        pcall xschem raw read $nf
+        set i0 [at_info]
+        at_graph 0 0 $nf op v(onoise_total)
+        at_graph 1 1000 $nf op v(onoise_total)
+        xschem zoom_full
+        xschem redraw
+        update
+        check "AT15 a graph that asks for the marked file as op is drawn from the table as it stands: nothing is read and the table is still the totals" \
+            [list [expr {[at_info] eq $i0}] [at_first]] {1 v(onoise_total)}
+        check "AT15 ...and it is still marked after the draw" [pcall xschem raw totals_as_op] 1
+        ## The second graph stands where the first is drawn from; it is now
+        ## pointed at the file that is not loaded.
+        set n0 [calc::aq_nslots]
+        xschem setprop rect 2 1 rawfile $tr2
+        xschem setprop rect 2 1 sim_type tran
+        xschem setprop rect 2 1 node v(out)
+        xschem redraw
+        update
+        check "AT15 CONTROL: the same draw does reach the registry -- a graph naming a file that is not loaded reads it" \
+            [list $n0 [calc::aq_nslots]] {1 2}
+        xschem clear force
+    }
+}
+
 catch {xschem raw clear}
 check "EVERY band above this one RAN TO ITS END (names of any abandoned band)" \
     [list [llength $::abortnames] $::abortnames] {0 {}}

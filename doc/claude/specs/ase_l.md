@@ -692,11 +692,20 @@ what such a caller is shown**, each case measured and each in issue 1657's
 list: a results file whose blocks are ascii with CRLF line ends and whose totals
 stand first, because the reader cannot step over such a block (issue 0300; this
 deck writes binary blocks, which it steps over whatever the line ends); and a
-file already loaded under `op`, which is not read again -- a read that named no
-type stores a totals-first file under `op`, and `xschem raw read <file> op`
-after it shows those totals, as does `xschem annotate_op <file>` unless that
-database is the current one. `ase::attach_dbs <file> op` and the Calculator's
-read are given the operating point all the same.
+table of the file that is already loaded under `op` because a read that named no
+type stored the totals there, when the reader asks for NO read. The registry
+switches to a table it holds instead of reading the file, and until 2026-11-22
+such a table answered `xschem raw read <file> op` and (unless it was the current
+one) `xschem annotate_op <file>` with the totals. It is now marked when it is
+stored (`xschem raw totals_as_op`), and a request whose own words name `op` --
+those two verbs, `xschem raw select <file> op`, the annotate chord of the
+Cadence profile, the Calculator's `vdc()` -- reads the file again, in the same
+slot, and is given the operating point (the user's ruling of 2026-11-21; issue
+1657). What still shows the marked table as it stands, because nothing is
+read: `xschem raw switch`, `xschem raw switch_back`, a select that names no
+type, `results::select` with no type, and a graph that loads its own file.
+`ase::attach_dbs <file> op` and the Calculator's read through
+`calc::eval_texts` were given the operating point all along.
 
 ⚠ **`opinfo` plots are predicted and DECLINED.** `src/save.c`'s `read_dataset()`
 matches `strstr(lowerline,"operating point")` **above** its AC arm, so `AC
@@ -3205,8 +3214,11 @@ the schematic's name, not the simulator's.
   `.options savecurrents`).
 - **Simulation** — Netlist > Recreate; Netlist > Display; Netlist and Run;
   Run (uses EXISTING netlist — supports hand-edited decks); Stop; Log
-  (reopen log window); Options… (simulator-specific options dialog,
-  minimal for now).
+  (reopen log window); Options… (the options sheet: a finder over the
+  simulator's option catalogue, the bench's own rows, and a live deck preview
+  -- see "The Options sheet's deck preview" below. This line read "minimal for
+  now" until 2026-11-22, long after the sheet of issues 1441 and 1442
+  shipped).
 - **Results** — Direct Plot (**LIVE since item 13**: command mode, click
   signals on schematic, queue, ESC → plot); Annotate > Operating Point info
   and Annotate > DC Node Voltages (**LIVE since issue 0682**, and this menu is
@@ -3275,6 +3287,84 @@ Directory… is its door. The decisions are pure engine procs in `src/ase.tcl`
   so a fresh directory shows no results; waves already plotted stay attached.
   Run (existing netlist) in a fresh directory fails with its own message;
   Netlist and Run works.
+
+### The Options sheet's deck preview (issues 1441, 1442, 1657)
+
+Simulation > Options… opens the options sheet: a window of its own, not modal. Below its
+rows it carries a **deck preview**, which is the point of the sheet: every line the next
+deck will carry for an option, in the place the deck will carry it.
+
+**Four slots**, named in ASE-L's own words (`ase::opt_door_phrase` returns the same four):
+
+| slot | pane heading | what stands in it |
+|---|---|---|
+| `deck` | `above the analysis block` | the bench's global option cards, then the run's default seed when nothing else sets one |
+| `control` | `inside the analysis block` | the lines written around an analysis: an option stored against that analysis and the line that puts it back, and the lines ASE-L adds itself around an analysis that cannot run under an option |
+| `cmdline` | `on the command line` | options that go to the simulator's command line |
+| `prefile` | `in the run-directory start-up file` | options that go to the start-up file |
+
+and a **notes** block, headed `not delivered`: one line per option that will not arrive, or
+arrives somewhere the user did not expect. The answer is `ase::opt_preview`'s; the pane's
+text is built from it by the pure proc `ase::ui::optsheet_preview_text`.
+
+**The line shapes.** A slot heading stands at the margin. Under a slot heading a deck line
+stands four spaces in, and every line shown that way is in the deck, byte for byte -- with
+one exception, the placeholder `(nothing)` an empty slot says in its place. The lines under
+`not delivered` stand four spaces in as well and are not deck lines: an option's name, a
+dash, and why it does not arrive as set. (Until 2026-11-22 this paragraph said nothing but
+a deck line stands four spaces in, which those two kinds of line made untrue.)
+
+**The in-block slot is in the deck's order, in labelled groups** (the user's ruling of
+2026-11-21, issue 1657).
+
+- One group per enabled analysis type. A group is headed `<TYPE> BLOCK`, two spaces in --
+  the words the sheet's Written column uses for an option stored against an analysis.
+- The groups stand in the order the deck will run its analyses, and the lines of a group in
+  the order the deck writes them around that analysis: the scoped options' set lines, the
+  lines ASE-L adds, then the restore lines, last set first (rows DK10e and DK10f of
+  `test_ase_effective_1442.tcl` compare both with the deck).
+- **The order question is the backend's.** The registry ranks the operating point first. The
+  ngspice deck runs it behind the other analyses when the per-device operating-point
+  requests go inside its command block (issue 0964), and whether they do is decided from the
+  netlist of the run. Core asks `ase::op_run_order`, which asks the adapter's optional
+  `op_run_order` hook: `first`, `last` or `unknown`. The window hands that question the
+  netlist file as the run will read it (`ase::ui::optsheet_netlist_full`), separately from
+  the reduced copy the seed rule reads.
+- When the deck moves the operating point, its heading says so: `OP BLOCK -- runs last in
+  this deck`, or `runs after <analyses> in this deck` where an analysis ranked behind it
+  (`sp`) still follows.
+- **When the order is not settled** -- the switch that saves device operating-point numbers
+  is on, the operating point and another analysis are enabled, and there is no netlist of
+  this session yet (or the one on disk is not the one device requests are held for, or it
+  is and was written while no operating point was enabled, so that nothing was asked of the
+  design, or the run would read another file than the window) -- the groups keep the
+  registry's order and the slot says so once, six spaces in and in parentheses: *the op
+  analysis runs after tran when device operating-point numbers are saved; that is settled
+  when the netlist is written*. It is said only when it can matter: two groups have lines,
+  or an option is left in force. On the pane this sentence wraps at a word when it is
+  longer than the pane is wide (the pane has no horizontal scrollbar); a deck line and a
+  heading never wrap.
+- **An option that is set and not put back** has a note. Once the order is known the note
+  names the analyses that run after the one it is set for, or says none does; while the
+  order is not settled it says "every analysis after it".
+
+**The open sheet follows the bench.** A new netlist, the tick that saves device
+operating-point numbers, an analysis switched on or off and a forced shape of the device
+requests each repaint the preview of an open sheet (`ase::ui::session_changed` for a state
+write, the `order_notify` seam of `src/ase.tcl` for the rest). Those are ASE-L's own
+writers. A netlist changed on disk by something else (the schematic window's own Netlist
+command, which writes the same file when the bench names no run directory; an edit by
+hand) fires none of them, so the preview is also repainted each time the sheet gets the
+keyboard focus (`ase::ui::optsheet_focus`). A repaint replaces the pane's text only when
+it moved.
+
+**The order question is a pure read.** The hook and the preview reach neither proc that
+picks the shape of the device requests nor the capability measurement, which would start
+the user's simulator when nothing is measured yet (row RO17 of `test_ase_core.tcl`).
+
+Rows: `tests/headless/test_ase_optsheet_1441.tcl` (sections PV and UI),
+`test_ase_effective_1442.tcl` (DK10 to DK10f, SP7b), `test_ase_core.tcl` (RO12 to RO18),
+`test_ase_run_seed.tcl` (RS9 to RS12).
 
 ### Log window (not a pane)
 Kicking off a run opens a NEW toplevel showing the live log (existing

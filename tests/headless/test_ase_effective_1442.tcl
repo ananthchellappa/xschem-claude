@@ -289,6 +289,37 @@ check {SP6 the restores come off in reverse order of the sets} \
      return [list [dict get $l pre] [dict get $l post]] }}] \
   {{{option itl4=200} {option trtol=3}} {{option trtol=7} {option itl4=10}}}
 
+## ⚠ "LEFT IN FORCE FOR EVERY ANALYSIS AFTER IT", ACROSS A dc ROW THAT SWEEPS
+## A DESIGN VARIABLE (issue 1657). Such a row loads the circuit again at every
+## point. MEASURED 2026-11-22 on ngspice-45.2 and on a copy of the ver_53
+## build: after that reload an `option name=value` written inside the block is
+## back at the deck's value (itl1 300 -> 100, gmin 1e-10 -> 1e-12) and a `set`
+## variable is still set. So the sentence holds across such a row as long as
+## every option that can be left in force is either written as a variable, or
+## is scoped to an analysis the deck runs after dc. This row derives both from
+## the catalogue and the registry, so an option or an analysis added later that
+## breaks it arrives red.
+check {SP7b every option that can be left in force is one a reload keeps, or belongs to an analysis that runs after dc} \
+  [s_ans apply {{} {
+     set reg [ase::analysis_types ngspice]
+     set dcrank [dict get $reg dc emitorder]
+     set n 0 ; set bad {} ; set kinds [dict create variable 0 afterdc 0]
+     foreach ty [dict keys $reg] {
+       foreach nm [ase::opt_scoped_names ngspice $ty] {
+         if {[ase::opt_restorable ngspice $nm] eq {yes}} { continue }
+         set l {}
+         if {[catch {ase::opt_line ngspice $nm 1 control} l] || $l eq {}} { continue }
+         incr n
+         if {[string match {set *} $l]} { dict incr kinds variable ; continue }
+         if {[dict exists $reg $ty emitorder] && [dict get $reg $ty emitorder] > $dcrank} {
+           dict incr kinds afterdc ; continue
+         }
+         lappend bad [list $ty $nm $l]
+       }
+     }
+     return [list $bad [expr {$n > 0}] [expr {[dict get $kinds variable] > 0}] \
+                  [expr {[dict get $kinds afterdc] > 0}]] }}] {{} 1 1 1}
+
 check {SP7 the verdict the surface shows is the one the emitter acts on} \
   [list [s_ans ase::opt_analysis_verdict ngspice itl4 tran] \
         [s_ans ase::opt_analysis_verdict ngspice sqrnoise noise] \
@@ -452,6 +483,77 @@ check {DK10b and the preview says WHY klu is not the user's setting for that run
        if {[lindex $n 0] eq {klu}} { return [lindex $n 1] }
      }
      return none }}] suppressed
+
+## ⚠ THE LINES ASE-L ADDS STAND UNDER THEIR OWN ANALYSIS, EACH ONCE, IN THE
+## DECK'S ORDER (issue 1657). The preview used to list them ahead of every
+## group, in the state's row order, and paired every suppressed name of a row
+## with every line of that row. DK10's bench: the deck writes the transient's
+## scoped option around the transient and the two klu lines around the sens.
+check {DK10c the in-block slot is the deck's own option lines in the deck's own order, and a line ASE-L added carries its row's analysis} \
+  [s_ans apply {{} {
+     set st [s_state {{name klu value 1} {name itl4 value 200 analysis tran}} \
+               {{type tran enabled 1 step 1u stop 100u}
+                {type sens enabled 1 out v(mid) mode ac sweep dec points 1 start 1k stop 10k}}]
+     set got {} ; set types {}
+     foreach e [dict get [ase::opt_preview ngspice $st] control] {
+       lappend got [lindex $e 1]
+       lappend types [list [lindex $e 0] [lindex $e 2]]
+     }
+     return [list [expr {$got eq [s_greplines [s_deck $st] {^option }]}] $got $types] }}] \
+  {1 {{option itl4=200} {option itl4=10} {option klu=0} {option klu}} {{itl4 tran} {itl4 tran} {klu sens} {klu sens}}}
+
+## ⚠ THE ORDER INSIDE ONE GROUP IS THE DECK'S TOO. DK10c's bench has one
+## option per analysis, where "each set line beside its restore" and the deck's
+## order are the same list. These two benches are where they part: two options
+## scoped to ONE analysis (the deck writes both set lines, the analysis, then
+## the restores, last set first), and a scoped option on the row whose two
+## lines ASE-L adds itself (the deck writes the added pair inside the scoped
+## option's set and restore). Each is compared with the option lines of the
+## deck render_deck wrote for the same state.
+check {DK10e two options scoped to one analysis stand in the preview in the deck's order: both set lines, then the restores, last set first} \
+  [s_ans apply {{} {
+     set st [s_state {{name itl4 value 200 analysis tran} {name trtol value 3 analysis tran}} \
+               {{type tran enabled 1 step 1u stop 100u}}]
+     set got {}
+     foreach e [dict get [ase::opt_preview ngspice $st] control] { lappend got [lindex $e 1] }
+     return [list [expr {$got eq [s_greplines [s_deck $st] {^option }]}] $got] }}] \
+  {1 {{option itl4=200} {option trtol=3} {option trtol=7} {option itl4=10}}}
+
+check {DK10f a scoped option on the row whose lines ASE-L adds stands around them in the preview, as in the deck} \
+  [s_ans apply {{} {
+     set st [s_state {{name klu value 1} {name itl1 value 300 analysis sens}} \
+               {{type sens enabled 1 out v(mid) mode ac sweep dec points 1 start 1k stop 10k}}]
+     set got {}
+     foreach e [dict get [ase::opt_preview ngspice $st] control] { lappend got [lindex $e 1] }
+     return [list [expr {$got eq [s_greplines [s_deck $st] {^option }]}] $got] }}] \
+  {1 {{option itl1=300} {option klu=0} {option klu} {option itl1=100}}}
+
+## ...and with TWO suppressed names on one row each line is listed once, under
+## the name it turns off or puts back. The shipped adapter names one option, so
+## the fixture is a synthetic adapter that names two.
+check {DK10d a row with two suppressed options lists each of its lines once, under its own option} \
+  [s_ans apply {{} {
+     set save $::ase::backends
+     dict set ::ase::backends zzsup3 [dict create render_deck x run_cmd x \
+       log_file x result_probe x raw_file x sim_options ::ase_t_supcat3 \
+       option_spell ::ase_t_supspell3 option_restore_spell ::ase_t_suprev3 \
+       analysis_suppress ::ase_t_supname3]
+     proc ::ase_t_supcat3 {} { return {klu {cptype optflag phase any default 0}
+                                       fast {cptype optflag phase any default 0}} }
+     proc ::ase_t_supspell3 {} { return {control {optflag {option @name}}} }
+     proc ::ase_t_suprev3 {} { return {control {optflag {option @name=@value}}} }
+     proc ::ase_t_supname3 {state type row} { return {klu fast} }
+     set st [ase::state_default]
+     dict set st simulator zzsup3
+     dict set st options {{name klu value 1} {name fast value 1}}
+     dict set st analyses {{type sens enabled 1 mode ac}}
+     set rc [catch {ase::opt_preview zzsup3 $st} pv]
+     set ::ase::backends $save
+     if {$rc} { return "RAISED:$pv" }
+     set out {}
+     foreach e [dict get $pv control] { lappend out [list [lindex $e 0] [lindex $e 1]] }
+     return $out }}] \
+  {{klu {option klu=0}} {fast {option fast=0}} {fast {option fast}} {klu {option klu}}}
 
 } dkerr]} { check {DK0 section DK ran to the end} "RAISED:$dkerr" {} }
 
@@ -1145,7 +1247,10 @@ check {HK1 no core proc this issue added spells an ngspice word} \
                 ase::effective_read ase::effective_lookup ase::effective_same
                 ase::effective_diff ase::effective_coverage ase::effective_report
                 ase::effective_armed ase::opt_door_reported ase::opt_leak_why
-                ase::preview_analysis_types ase::analysis_point_estimate} {
+                ase::preview_analysis_types ase::analysis_point_estimate
+                ase::op_run_order ase::opt_preview_groups ase::opt_order_note
+                ase::opt_leak_note ase::opt_group_mark ase::words_and
+                ase::op_cards_why} {
        if {![llength [info commands ::$p]]} { lappend bad "$p MISSING" ; continue }
        set b [s_nocomment [info body ::$p]]
        ## ⚠ THE TOKENS ARE TEMPLATES AND LITERALS, NOT THE ENGLISH WORD. A bare

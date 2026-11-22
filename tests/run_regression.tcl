@@ -76,6 +76,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_annot_stale_0684" \
                  "headless/test_annot_blank_cause_0909" \
                  "headless/test_annot_hier_0911" \
+                 "headless/test_annot_op_behind_tran_1242" \
                  "headless/test_spice_get_node_0861" \
                  "headless/test_recent_conf_compat_0924" \
                  "headless/test_ase_simreg_0931" \
@@ -459,6 +460,13 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
 ## not what the arm counts suggest, is in the paragraph beside its `dcases` entry: an
 ## `hcases` entry MAPS A REAL xschem GUI on whatever `$DISPLAY` the gate inherited, and
 ## the counted arm is the one loop that does not route through `devdisplay.sh`.
+## ⚠ `test_annot_op_behind_tran_1242` IS `hcases` ALONE (issue 1657). It was in neither
+## list and printed only `RESULT: ALL PASS`; it carries the rows for the annotate chord of
+## the Cadence profile (`cadence::_annot_op_db_ok`), which gained rows R14 to R17 when a
+## table holding the noise totals under `op` stopped being published as an operating
+## point, so it was given the completion sentinel and registered in the same change. It
+## needs no display and has no Tk row: the two arms were measured to run the same rows and
+## publish the same check count, so a `dcases` entry would measure the same thing twice.
 ## ⚠ `test_raw_ascii_point_bounds` IS `hcases` ALONE (issue 1652, issue 0213's fence).
 ## It needed the same sentinel. The shape was MEASURED, not reasoned: the two arms run
 ## the IDENTICAL row set, `diff`ed line for line off real captured output, so a `dcases`

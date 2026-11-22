@@ -32,6 +32,13 @@
 #            to it: a netlist that resets or carries a seed card drops the
 #            default, a plain one keeps it
 #   RS10     that reader creates no directory and moves no global (R602e)
+#   RS11     the window hands the question "will the deck run its operating
+#            point last" the netlist as the run reads it, byte for byte, and
+#            writes nothing (issue 1657)
+#   RS10b    that reader creates no directory and moves no global either
+#   RS12     where the run would read another file than the window, the
+#            question is handed no text and the preview says the order is not
+#            settled
 # Run: tests/headless/run_suites.sh --nogui test_ase_run_seed
 
 set fail 0 ; set npass 0
@@ -290,6 +297,112 @@ if {[catch {
 } e10]} { lappend r10 RAISED:$e10 }
 check {RS10 previewing a bench with a missing or no run directory creates nothing and moves no global} \
   $r10 {missing_made=0 nd_moved=0 sims_made=0}
+
+# RS11 -- THE TEXT FOR THE ORDER QUESTION (issue 1657). The seed rule reads a
+# reduced copy of the netlist; whether the deck will run its operating point
+# last is asked with the netlist as the run reads it, because device requests
+# are held for exactly that text. ase::ui::optsheet_netlist_full hands it over:
+# byte-equal to the file the run will read (ase::run_existing's path), written
+# by nobody, and the reduced copy the seed rule gets is what it was.
+set r11 {}
+if {[catch {
+  set f11 [file join $rd9 rs9.spice]
+  set nl11 "* order\nr1 a 0 1k\nv1 a 0 1\n.control\nsetseed 9\nreset\n.endc\n.end\n"
+  set fd [open $f11 w] ; puts -nonewline $fd $nl11 ; close $fd
+  set before [lsort [glob -nocomplain -directory $rd9 *]]
+  set full [ase::ui::optsheet_netlist_full rs9]
+  set red [ase::ui::optsheet_netlist_text rs9]
+  set runpath [file join [ase::rundir [ase::session_state rs9]] rs9.spice]
+  set fd [open $runpath r] ; set runtext [read $fd] ; close $fd
+  lappend r11 full_is_the_run_file=[expr {$full eq $runtext && $full eq $nl11}]
+  lappend r11 reduced_differs=[expr {$red ne $full && [string first {r1 a 0 1k} $red] < 0}]
+  lappend r11 seed=[rs_pv_key rs9]
+  lappend r11 wrote=[expr {[lsort [glob -nocomplain -directory $rd9 *]] ne $before}]
+  ## ...and that text is the one the backend's order question can answer with:
+  ## device requests held for the file's text are found with it, and not with
+  ## the reduced copy.
+  set slot11 $::ase::op_cards
+  set st11 [ase::session_state rs9]
+  dict set st11 analyses {{type op enabled 1} {type tran enabled 1 step 1u stop 100u}}
+  ase::op_cards_put $runtext ".save all\n.save @r1\[i\]\n"
+  lappend r11 order_full=[ase::op_run_order ngspice $st11 $full]
+  lappend r11 order_reduced=[ase::op_run_order ngspice $st11 $red]
+  set ::ase::op_cards $slot11
+} e11]} { lappend r11 RAISED:$e11 ; catch {set ::ase::op_cards $slot11} }
+check {RS11 the window hands the order question the netlist as the run reads it, byte for byte, and the seed rule its reduced copy; nothing is written} \
+  $r11 {full_is_the_run_file=1 reduced_differs=1 seed=0 wrote=0 order_full=last order_reduced=unknown}
+
+# RS10b -- the reader of the unreduced text is a query too (RS10's rule): a
+# missing run directory and a bench that names none create nothing and move no
+# global.
+set r10b {}
+if {[catch {
+  dict set st10 rundir $gone
+  ase::session_update rs10 $st10
+  set nd_saved $::netlist_dir
+  set ::netlist_dir {}
+  set nd0 $::netlist_dir
+  set sims0 [file exists $sims]
+  lappend r10b missing=[string length [ase::ui::optsheet_netlist_full rs10]]
+  lappend r10b missing_made=[file exists $gone]
+  dict set st10 rundir {}
+  ase::session_update rs10 $st10
+  lappend r10b none=[string length [ase::ui::optsheet_netlist_full rs10]]
+  lappend r10b nd_moved=[expr {([info exists ::netlist_dir] ? $::netlist_dir : {<unset>}) ne $nd0}]
+  lappend r10b sims_made=[expr {[file exists $sims] != $sims0}]
+  set ::netlist_dir $nd_saved
+} e10b]} { lappend r10b RAISED:$e10b }
+check {RS10b the reader of the unreduced netlist creates no directory and moves no global either} \
+  $r10b {missing=0 missing_made=0 none=0 nd_moved=0 sims_made=0}
+
+# RS12 -- WHERE THE WINDOW AND THE RUN WOULD READ DIFFERENT FILES. A bench that
+# names no run directory runs where set_netlist_dir says, and with
+# local_netlist_dir set that is the schematic's own directory, which the window
+# does not look in. The seed rule's reader keeps reading the netlist directory
+# already chosen; the order question is handed nothing there, so the answer is
+# "not known" and the preview says so instead of showing an order read from
+# another file.
+set r12 {}
+if {[catch {
+  set rd12 [file join $scratch run12] ; file mkdir $rd12
+  set st12 [rs_state rundir {} analyses {{type op enabled 1} {type tran enabled 1 step 1u stop 100u}} \
+              options {{name itl1 value 300 analysis op} {name itl4 value 200 analysis tran}}]
+  dict set st12 design cell rs12
+  set p12 [file join $scratch rs12.state]
+  ase::state_save $p12 $st12
+  ase::session_open rs12 $p12
+  ase::session_update rs12 $st12
+  set nl12 "* twelve\nr1 a 0 1k\nv1 a 0 1\n.end\n"
+  set fd [open [file join $rd12 rs12.spice] w] ; puts -nonewline $fd $nl12 ; close $fd
+  set nd_saved $::netlist_dir
+  set lnd_saved $::local_netlist_dir
+  set slot12 $::ase::op_cards
+  set ::netlist_dir $rd12
+  ase::op_cards_put $nl12 ".save all\n.save @r1\[i\]\n"
+  proc rs_order12 {} {
+    set pv [ase::opt_preview ngspice [ase::session_state rs12] {} \
+              [ase::ui::optsheet_netlist_text rs12] [ase::ui::optsheet_netlist_full rs12]]
+    set n 0
+    foreach nt [dict get $pv notes] { if {[lindex $nt 1] eq {order}} { incr n } }
+    return [list [lindex [lindex [dict get $pv control] 0] 2] $n]
+  }
+  set ::local_netlist_dir 0
+  lappend r12 same_file=[expr {[ase::ui::optsheet_netlist_full rs12] eq $nl12}]
+  lappend r12 known=[rs_order12]
+  set ::local_netlist_dir 1
+  lappend r12 other_file=[string length [ase::ui::optsheet_netlist_full rs12]]
+  lappend r12 seed_text=[expr {[ase::ui::optsheet_netlist_text rs12] ne {}}]
+  lappend r12 not_known=[rs_order12]
+  lappend r12 nd_moved=[expr {$::netlist_dir ne $rd12}]
+  set ::local_netlist_dir $lnd_saved
+  set ::netlist_dir $nd_saved
+  set ::ase::op_cards $slot12
+} e12]} {
+  lappend r12 RAISED:$e12
+  catch {set ::local_netlist_dir $lnd_saved ; set ::netlist_dir $nd_saved ; set ::ase::op_cards $slot12}
+}
+check {RS12 where the run would read another file than the window, the order question is handed no text and the preview says the order is not settled} \
+  $r12 {same_file=1 {known=tran 0} other_file=0 seed_text=1 {not_known=op 1} nd_moved=0}
 
 set floor 8
 if {$npass + $fail < $floor} {

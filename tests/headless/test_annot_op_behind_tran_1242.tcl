@@ -301,6 +301,94 @@ eqcheck R13-with-the-op-selected-the-transient-side-knows-to-re-supply \
   [list [pcall xschem raw sim_type] $r13] {op 0}
 catch {xschem raw clear}
 
+# ===========================================================================
+# ISSUE 1657 -- A TABLE THAT HOLDS THE NOISE TOTALS UNDER THE TYPE `op`
+# ===========================================================================
+# A read that names no type stores a results file whose FIRST plot is the noise
+# totals as `op`, holding the two totals, and the table says so (`xschem raw
+# totals_as_op`). Rungs 1 and 2 used to publish such a table as an operating
+# point: the selected one, or any loaded one. They now ask for a read of that
+# table's own file as `op`, which reads the file again and gives the operating
+# point in the same slot -- and for a file that holds no operating point gives
+# the totals again, which is what annotating a noise-only run has always shown.
+proc mktotals {path {withop 1}} {
+  set f [open $path wb]
+  mkplot $f {* totals first (issue 1657)} {Integrated Noise} \
+    {{v(onoise_total) voltage} {v(inoise_total) voltage}} 1 {0.015625 0.03125}
+  mkplot $f {* totals first (issue 1657)} {Noise Spectral Density Curves} \
+    {{frequency frequency} {v(onoise_spectrum) voltage}} 2 {1000.0 0.5 10000.0 0.25}
+  if {$withop} {
+    mkplot $f {* totals first (issue 1657)} {Operating Point} \
+      {{v(a) voltage} {v(b) voltage}} 1 {7.5 2.5}
+  }
+  close $f
+}
+proc firstname {} { return [lindex [split [string trim [pcall xschem raw list]] "\n"] 0] }
+set TOT [file join $tmp totals_first.raw] ; mktotals $TOT
+set TOTONLY [file join $tmp totals_only.raw] ; mktotals $TOTONLY 0
+
+# --- R14 the marked table is the SELECTED one --------------------------------
+catch {xschem raw clear}
+eqcheck R14-PRECONDITION-an-untyped-read-stores-the-totals-as-op-and-marks-them \
+  [list [pcall xschem raw read $TOT] [pcall xschem raw sim_type] [firstname] \
+        [pcall xschem raw totals_as_op]] {1 op v(onoise_total) 1}
+eqcheck R14b-Alt-6-with-the-marked-table-selected-publishes-node-voltages \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] [firstname] \
+        [expr {[annotp] >= 0}] [nslots]] {1 op v(a) 1 1}
+
+# --- R15 the marked table is LOADED, another table is selected ---------------
+catch {xschem raw clear}
+pcall xschem raw read $TOT
+pcall xschem raw read $TRAN tran
+eqcheck R15-PRECONDITION-the-totals-are-loaded-and-a-transient-is-selected \
+  [list [nslots] [pcall xschem raw sim_type] [pcall xschem raw totals_as_op 0]] {2 tran 1}
+eqcheck R15b-Alt-6-with-the-marked-table-loaded-and-not-selected-publishes-node-voltages \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] [firstname] \
+        [expr {[annotp] >= 0}] [nslots]] {1 op v(a) 1 2}
+
+# --- R16 the marked table is selected and is NOT the first slot --------------
+catch {xschem raw clear}
+pcall xschem raw read $TRAN tran
+pcall xschem raw read $TOT
+eqcheck R16-PRECONDITION-the-marked-table-is-selected-in-the-second-slot \
+  [list [nslots] [firstname] [pcall xschem raw totals_as_op 1]] {2 v(onoise_total) 1}
+eqcheck R16b-Alt-6-reads-the-marked-table's-own-file-whichever-slot-it-is-in \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] [firstname] \
+        [expr {[annotp] >= 0}] [nslots]] {1 op v(a) 1 2}
+
+# --- R17 a noise-only run still annotates its totals -------------------------
+catch {xschem raw clear}
+pcall xschem raw read $TOTONLY
+eqcheck R17-a-file-with-the-totals-and-no-operating-point-still-publishes-the-totals \
+  [list [pcall cadence::_annot_op_db_ok] [pcall xschem raw sim_type] [firstname] \
+        [expr {[annotp] >= 0}] [nslots]] {1 op v(onoise_total) 1 1}
+catch {xschem raw clear}
+
+# --- R18 the chord pressed INSIDE AN INSTANCE --------------------------------
+# The marked table was read at the top of the design. The chord's read replaces
+# it with the operating point, and the binding must stay the top's: one level
+# down the table is still at level 0, and back at the top the design still has
+# its results. As first built the re-read bound the table to the sheet the
+# chord was pressed in. LAST in the file: it loads a schematic.
+set r18fix [file normalize [file join [file dirname [info script]] fixtures hi_descend hidlib]]
+lappend pathlist $r18fix
+if {[catch {xschem load [file join $r18fix top schematic top.sch]} r18err]} {
+  eqcheck R18-fixture-loads "load raised: $r18err" loaded
+} else {
+  catch {xschem raw clear}
+  set r18a [list [pcall xschem raw read $TOT] [pcall xschem get raw_level] [pcall xschem raw loaded]]
+  xschem unselect_all
+  xschem select instance x1
+  xschem descend
+  set r18b [list [xschem get currsch] [pcall cadence::_annot_op_db_ok] [firstname] \
+                 [pcall xschem get raw_level] [pcall xschem raw loaded]]
+  xschem go_back
+  eqcheck R18-Alt-6-inside-an-instance-leaves-the-operating-point-bound-to-the-top \
+    [list $r18a $r18b [xschem get currsch] [pcall xschem raw loaded] [pcall xschem get raw_level]] \
+    {{1 0 0} {1 1 v(a) 0 0} 0 0 0}
+}
+catch {xschem raw clear}
+
 } err]} {
   puts "FATAL: $err"
   puts "  $::errorInfo"
@@ -310,6 +398,10 @@ catch {xschem raw clear}
 catch {test_scratch_drop $tmp}
 puts "----"
 puts "test_annot_op_behind_tran_1242: $npass passed, $fail failed"
-if {$fail == 0} { puts "RESULT: ALL PASS ($npass checks)" } else { puts "RESULT: $fail FAILED ($npass passed)" }
+# THE COMPLETION SENTINEL: `banner_complete` (tests/banner_rule.tcl) passes a
+# case of tests/run_regression.tcl only on a whole-line `OVERALL: ok`, and
+# `RESULT:` stays last because the driver publishes a case's last `RESULT:` line.
+if {$fail == 0} { puts "OVERALL: ok ($npass checks)"
+                  puts "RESULT: ALL PASS ($npass checks)" } else { puts "RESULT: $fail FAILED ($npass passed)" }
 flush stdout
 exit [expr {$fail == 0 ? 0 : 1}]

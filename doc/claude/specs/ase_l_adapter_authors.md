@@ -310,11 +310,15 @@ list as normative.)
 
 ---
 
-## 4. The optional hooks — forty-eight of them, grouped
+## 4. The optional hooks, grouped
 
-Measured at `df7609c7`: the ngspice adapter registers **53** hooks (the five required plus 48
-optional), and core asks for **51** distinct hook names by literal across the three resolution
-paths of §1.
+This heading and its first sentence used to count the hooks ("forty-eight", "53 hooks", "51
+distinct hook names", measured at `df7609c7`). The counts went stale as hooks were added and
+no row re-checks them, so they were dropped on 2026-11-22: the table is the list, and the
+ngspice adapter's registration (the `register_backend` call at the foot of its namespace in
+`src/ase.tcl`) is the authority. Added to the table that day: `result_answers`,
+`user_seed_line`, `dcvar_plan`, `dcvar_output_refusals` and `dc_sweep_candidates`, which were
+registered and missing from it, and `op_run_order`, new with issue 1657.
 
 Do not read this table as a to-do list. Read it as a menu in which every row is independently
 optional, and in which the rows most simulators will want are in the first two groups.
@@ -323,14 +327,28 @@ optional, and in which the rows most simulators will want are in the first two g
 |---|---|---|
 | **Analyses** (start here) | `analysis_types`, `analysis_caveat`, `analysis_suppress` | the Choose Analyses grid, per-type forms, the emitted line in the Arguments column. `analysis_types` is the single highest-value optional hook in the system — §5 is entirely about it |
 | **Capability** | `capabilities` | measured answers instead of assumptions; the Detect button; the four-state grid. §6 |
-| **Deck & syntax** | `si_suffixes`, `deck_keywords`, `out_decompose`, `dc_swkind`, `predeck_write`, `lint_control_text` | numeric suffix parsing, keyword awareness in hand-edited text, decomposition of an output expression, classification of a sweep target, a pre-deck settings file, warnings over user-supplied control text |
+| **Deck & syntax** | `si_suffixes`, `deck_keywords`, `out_decompose`, `dc_swkind`, `dcvar_plan`, `dcvar_output_refusals`, `dc_sweep_candidates`, `predeck_write`, `lint_control_text`, `op_run_order` | numeric suffix parsing, keyword awareness in hand-edited text, decomposition of an output expression, classification of a sweep target, a `dc` row that sweeps a design variable (its plan, the outputs it cannot give, the names its form offers), a pre-deck settings file, warnings over user-supplied control text, and where your deck runs the operating point (below) |
 | **Options** | `sim_options`, `option_spell`, `option_fallback`, `option_restore_spell`, `effective_emit`, `effective_lookup` | the option catalogue, one speller per surface, and the requested-versus-effective read-back of §7 |
 | **Measurements** | `meas_kinds`, `meas_analyses`, `meas_rule`, `meas_needs_degrees`, `meas_templates`, `meas_template_derive` | the Value column rows a user switches tools for |
-| **Campaigns** | `campaign_axis_kinds`, `campaign_control_lines`, `campaign_seed_option`, `campaign_seed_range`, `campaign_seed_notes`, `campaign_axis_refusals` | sweeps, corners, Monte Carlo. Core owns the odometer, the shard directory, the index and the sampler; you own what a shard's deck says |
+| **Campaigns** | `campaign_axis_kinds`, `campaign_control_lines`, `campaign_seed_option`, `campaign_seed_range`, `campaign_seed_notes`, `campaign_axis_refusals`, `user_seed_line` | sweeps, corners, Monte Carlo. Core owns the odometer, the shard directory, the index and the sampler; you own what a shard's deck says, and whether a line of the bench's own text already sets the seed |
 | **Convergence & run health** | `ncdump_parse`, `ladder_rungs`, `ladder_parse`, `optran_line`, `opstrategy_options`, `opstrategy_arg_refusals`, `opstate_lines`, `opstate_arg_refusals`, `runhealth_lines`, `runhealth_labels`, `runhealth_parse` | the non-convergence table, the strategy ladder, run-health counters. All reached through `ase::conv_hook` |
 | **Events / co-simulation** | `event_probe`, `event_inventory`, `xspice_caveat`, `cosim_shim_verdict` | mixed-signal event data and a verdict about a co-simulation shim |
 | **Run model** | `run_stop_cost`, `variant_notes` | what a Stop costs this run; the one-line per-binary sentence |
-| **Results display** | `op_param_set` | the operating-point parameter seam in `src/rdw.tcl` |
+| **Results display** | `op_param_set`, `result_answers` | the operating-point parameter seam in `src/rdw.tcl`; the values of the Outputs rows read back after a run |
+
+**`op_run_order {state netlist_text}`** (issue 1657) answers one of three words: `first` (the
+operating point runs where your registry ranks it), `last` (your deck moves it behind the
+other analyses), or `unknown` (which of the two is settled only when the netlist of the run is
+written, and `netlist_text` is not that netlist, or is empty, or is one whose capture asked
+nothing of the design because the operating point was off when it was written). The Options
+sheet's deck preview
+asks it, through `ase::op_run_order`, to list its per-analysis groups in the order your deck
+will run them. With no hook core answers `first`, which is the registry's order. ⚠ **It must be
+a pure read**: the preview repaints on every key typed in its Find box, so the hook may not
+render, may not start the simulator and may not create anything. The ngspice adapter's is
+held against the decks its own `render_deck` writes, cell by cell (row RO13 of
+`tests/headless/test_ase_core.tcl`), and its pure read by row RO17, which watches the procs
+that would measure the simulator; if you implement one, fence it the same way.
 
 ⚠ **Two registered hooks are never asked for through the dispatch by anything** —
 `op_param_enumerable` and `scripts_dir_of`. Both are called by the ngspice adapter **on itself**,
@@ -762,6 +780,12 @@ entry. The order your deck runs the **rows** in is yours **as far as this reconc
 goes**: each record carries the row that wrote it, and ngspice's own deck runs the operating
 point last when it asks for per-device operating-point numbers inside its command block
 (issue 1657 is what it cost while the rows were compared in a fixed order instead).
+
+**Core now asks you for that order in one place** (2026-11-22, the second pass of issue
+1657): the Options sheet's deck preview lists its per-analysis groups in the order the deck
+will run them, and it gets that order from your optional `op_run_order` hook (§4). The order
+is still yours: core does not carry the rule, a backend without the hook is shown in its
+registry's order, and nothing else in core reads the answer.
 
 ⚠ **It is not yours where a plot's name reads back as another analysis's type.** The engine's
 reader of a results file hands a caller that asks for a type the plots whose name reads as

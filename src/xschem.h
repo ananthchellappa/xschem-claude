@@ -1498,9 +1498,31 @@ typedef struct {
    * against the Plotname line. So sim_type is the right key to find this
    * database in the registry and the WRONG argument to read it again with -- the
    * `xschem raw case <mode>` re-read needs this one. Set by extra_rawfile()'s
-   * two read arms; NULL for databases built another way (raw_read_from_attr(),
+   * read arms and by the `xschem raw_read <file> <type>` arm of src/scheduler.c
+   * (issue 1657: that door left it NULL, so a case-mode change read a file that
+   * had been asked for as "op" again with no type, and a file whose first plot
+   * is the noise totals came back as the totals); NULL for a read that named
+   * no type and for databases built another way (raw_read_from_attr(),
    * new_rawfile()). doc/claude/specs/raw_case_mode.md section 3. */
   char *req_sim_type;
+  /* ISSUE 1657 -- THIS TABLE HOLDS THE NOISE TOTALS UNDER THE TYPE "op", AND
+   * NOBODY ASKED FOR "op". Set by read_dataset() (src/save.c), and by nothing
+   * else, when a read that NAMED NO TYPE took an `Integrated Noise` plot as
+   * "op" -- as the file's first plot, or appended to an operating point of the
+   * same variable count (rows M-equal of
+   * tests/headless/test_raw_ascii_point_bounds.tcl). 0 for every other table,
+   * so a file with no such plot can never carry it.
+   *
+   * What it is for: the registry switches to a table it already holds instead
+   * of reading the file, so such a table used to answer every later request
+   * for the operating point with the totals. A request whose own words named
+   * "op" (RAW_READ_NAMED_TYPE below) and that meets a table carrying this mark
+   * reads the file again -- see the read arm of extra_rawfile(). The table the
+   * re-read builds was asked for by type and does not carry the mark.
+   *
+   * Tcl reads it with `xschem raw totals_as_op [<slot>]`; `xschem raw info`
+   * does not print it, so that text is what it was for every table. */
+  int totals_as_op;
 } Raw;
 
 /*  for netlist.c */
@@ -2912,7 +2934,28 @@ extern int update_op();
  * autoload= are left alone", doc/claude/results_batch/DECISIONS.md). So the
  * re-bind is opt-in and only the `read` verbs opt in (src/scheduler.c). */
 #define RAW_READ_REBIND 64
+/* Bit 7 (128) is RAW_READ_NAMED_TYPE:
+ *
+ *   THE TYPE OF THIS what == 1 CALL WAS NAMED BY THE REQUEST ITSELF.
+ *
+ * Issue 1657, the user's ruling of 2026-11-21. A request that names "op" and
+ * meets a loaded table that an untyped read took from the noise totals
+ * (Raw.totals_as_op) reads the file again and is given the operating point.
+ * "Names" is the request's own words, which only the caller knows: the
+ * `xschem raw read <file> <type>` and `xschem raw select <file> <type>` verbs
+ * when they carry a type word, and `xschem annotate_op`, whose question is the
+ * operating point. It is NOT a type the engine filled in -- raw_select() with
+ * no type takes the current table's, and a graph that names no `sim_type`
+ * does the same -- and it is never set by the graph walkers of src/draw.c,
+ * which reach the same arm on every draw and must show a loaded table as it
+ * stands. `xschem raw read ... -asis` withholds it, for a caller that only
+ * puts a table back (calc::aq_restore in src/calculator.tcl). */
+#define RAW_READ_NAMED_TYPE 128
 extern int extra_rawfile(int what, const char *f, const char *type, double sweep1, double sweep2);
+/* 1 when the last extra_rawfile(what == 1) call read a loaded table again in
+ * place (issue 1657) -- a file was parsed although the slot count did not
+ * move -- else 0. Ask right after the call. */
+extern int extra_rawfile_reread(void);
 /* R301 -- `xschem raw select <file> [<type>]`. Make this result the one the
  * session works against: read it if it is not loaded, switch to it if it is,
  * re-bind it (and every other analysis of the same run, R301a) to the schematic

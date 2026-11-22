@@ -1,18 +1,21 @@
 # 1657 — Results are matched to analysis rows by POSITION, while the sidecar already records the row
 
-**STAMP:** `v1 claim=partial tree=d36cb429e stamped=2026-11-20 fix=taken open=2 by=lead`
+**STAMP:** `v1 claim=fixed tree=7c77f3594 stamped=2026-11-22 fix=taken open=0 by=ovb02`
 
-**Answered and built on 2026-11-20**, on top of `d36cb429e`, in the working tree (nothing is
-committed). The user met the two sentences again that day, on the same bench, in the run that
-also produced issue 1724's message pass. The title is the defect as it was filed; the three
+**Answered and built on 2026-11-20**, on top of `d36cb429e`, and committed as `7c77f3594`
+(this opening said "in the working tree, nothing is committed" until 2026-11-22). The user
+met the two sentences again that day, on the same bench, in the run that also produced issue
+1724's message pass. The title is the defect as it was filed; the three
 questions the filing left open are answered below by measurement, the matcher now pairs a
 record with what the record's own row declares, and the other procs that walk the rows the
 same way were each measured. A verifier of that pass then found two more readers that an
 operating point run last crosses, neither of them through the row walk: the sentence about
 a stopped run (repaired, below) and the engine's own reader of a results file, the one
 case here in which the user got a WRONG VALUE (repaired in the engine by the round that
-followed, the same day: "The engine's reader of type `op`", below). Two items are open (the
-last section). The text as it was filed on 2026-10-07 is kept at the foot.
+followed, the same day: "The engine's reader of type `op`", below). Two items were left open
+that day; the user ruled on both on 2026-11-21 and both were built on 2026-11-22 ("The two
+items that were open", near the foot, with the limits that stay and the one cure the user can
+still choose). The text as it was filed on 2026-10-07 is kept at the foot.
 
 ## The cause
 
@@ -182,7 +185,7 @@ Row RO1 derives them: the deck (which passes its own `op_last`) and four others.
 | `ase::reconcile_plots` | a sidecar record with a predicted plot | **yes** | false sentences, no wrong value: above. Fixed. |
 | `ase::meas_counter_index` | a Fourier row with the run-wide call number its result is named after (`thd<n>1`) | **no** | — |
 | `ase::ckpt_rows` | nothing; lists the rows that get a checkpoint block | **no** | — |
-| `ase::preview_analysis_types` | nothing; orders the per-analysis lines of the Options preview | **yes, in the order shown** | open item 1 |
+| `ase::preview_analysis_types` | nothing; orders the per-analysis groups of the Options preview | **it was, in the order shown**; since 2026-11-22 it takes the order its caller asks the backend for, and no longer passes the operating-point-first order (row RO1 moved) | the groups in the deck's order, each headed by its analysis: "The two items that were open", item 1 |
 
 Two readers that do not go through that walk and are crossed all the same, found by the
 verifier of this pass:
@@ -338,56 +341,225 @@ same malformed line in the same place (`op_trb`).
 - *Which plot a read asking `noise` is given* is untouched and is still file order: the
   totals where they stand first, as they do in ASE-L's files, and the spectrum where it
   does. That question is recorded above the `noise` entry of the adapter's registry.
-- *A database of the file that is already loaded under `op` is not read again.* The
-  reader is not called: `extra_rawfile()` (`src/save.c`) switches to the database that
-  is there. A read that named no type stores a totals-first file under `op`, so after
-  such a read `xschem raw read <file> op` shows those totals, and so does `xschem
-  annotate_op <file>` when that database is loaded and is not the current one (it
-  removes the current one-point database before it reads, so with the totals current it
-  reads afresh and publishes the operating point). `ase::attach_dbs <file> op`,
-  `op_annot::db_attach` and the Calculator's read (`calc::eval_texts`) were given the
-  operating point in both cases. Measured on a hand-written totals-first file. The
-  older binary showed the totals to every one of these callers; what is left is the
-  switch, which is older than the rule and untouched by it. Said above the arm and above
-  the `noise` entry of the adapter's registry.
+- *A database of the file that is already loaded under `op` was not read again.* As it
+  stood on 2026-11-20: the reader is not called, `extra_rawfile()` (`src/save.c`) switches
+  to the database that is there. A read that named no type stores a totals-first file
+  under `op`, so after such a read `xschem raw read <file> op` showed those totals, and so
+  did `xschem annotate_op <file>` when that database was loaded and not the current one.
+  `ase::attach_dbs <file> op`, `op_annot::db_attach` and the Calculator's read
+  (`calc::eval_texts`) were given the operating point in both cases. **Closed on
+  2026-11-22** for every request that names `op`: "The two items that were open", item 2,
+  which also lists the readers that ask for no read and still show such a database as it
+  stands.
 - *A window opened on a loaded database* carries it across by its stored type
   (`open_sub_schematic`, `hi_descend_newwin`). A database that a read naming no type took
-  from a totals-first file is stored as `op`, so the new window now asks for `op` and gets
-  the operating point. Read from the code; not driven.
+  from a totals-first file is stored as `op`, so the new window asks for `op`, in a
+  registry of its own, and gets the operating point. Driven since 2026-11-22: row
+  M-newwin of `tests/headless/test_raw_ascii_point_bounds.tcl` (it was green on the
+  binary as it stood, as this entry had read from the code).
 
-## Open items
+## The two items that were open (ruled 2026-11-21, built 2026-11-22)
 
-1. **The Options preview lists the operating point's per-analysis lines first, whatever the
-   deck will do** (`ase::preview_analysis_types`, read by `ase::opt_preview`). Measured: with
-   one per-analysis option on `op` and one on `tran`, the slot "inside the analysis block"
-   lists the `op` lines above the `tran` lines; the deck of the same bench, device requests
-   held, writes them below. The lines are the same lines, no sentence is false and no value
-   is wrong; the order is. It matters for an option that cannot be put back: the note says
-   it is "left in force for every analysis after it", and which analyses come after is what
-   the order shows. Not changed here, because the answer is not in what the preview is
-   given: the deck moves the operating point when device requests are held for the netlist
-   of the run, and the preview is drawn from a reduced copy of the netlist file (or none),
-   may not netlist, and so cannot ask. Two ways to close it, for a ruling: the window hands
-   the preview the unreduced netlist it already reads, so core can ask the same question the
-   deck asks (exact once a netlist of this session exists); or the pane labels each group
-   with its analysis, so the order stops carrying a meaning. The limit is stated above the
-   proc.
+Both were left to the user on 2026-11-20. The user ruled on 2026-11-21; the batch of that
+night built them (`doc/claude/overnight_batch_2026_11_21/`, item 02, whose receipt holds
+the measurements this section quotes).
 
-2. **A database of the file that is already loaded under `op` is shown as it stands, and
-   after a read that named no type it holds the noise totals.** The measurements are in the
-   list above ("A database of the file that is already loaded under `op` is not read
-   again"): on a totals-first file, after `xschem raw read <file>` with no type, `xschem raw
-   read <file> op` shows the totals, and `xschem annotate_op <file>` shows them when that
-   database is loaded and is not the current one. Older than the reader's rule and the same
-   on the older binary; the callers ASE-L's own flows use (`ase::attach_dbs <file> op`,
-   `op_annot::db_attach`, the Calculator's read) were given the operating point in both
-   cases. A read that names no type comes from `ase::attach_dbs` handed an empty type and
-   from the menu's `load_raw` with no type. Left open by the lead on 2026-11-20 because
-   each cure changes what the registry does for every file, not for this one: the
-   annotate arm could remove the file's `op` database whether or not it is the current one
-   before it reads; or the registry could read again when a request for `op` meets a
-   database that a read naming no type stored, which needs the database to remember how it
-   was taken. Which, if either, is a ruling.
+### 1. The Options preview shows the deck's order, in labelled groups
+
+**As it stood.** With one per-analysis option on `op` and one on `tran`, the slot "inside
+the analysis block" listed the `op` lines above the `tran` lines; the deck of the same
+bench, device requests held, wrote them below. Reproduced on 2026-11-22 before anything
+changed: the preview listed `option itl1=300`, `option itl1=100`, `option itl4=200`,
+`option itl4=10` and the deck wrote the two `itl4` lines around `tran` and then the two
+`itl1` lines around `op`.
+
+**Ruled:** "deck order + labels". The preview asks the question the deck asks, with the
+netlist the window already reads, lists the per-analysis groups in the order the deck will
+run them, and heads each group with its analysis. Before a netlist of this session exists
+it says plainly that the operating point's group may run last.
+
+**Built.**
+
+- *The question is the backend's.* Core asks `ase::op_run_order`, which asks an optional
+  adapter hook, `op_run_order {state netlist_text}`, for `first`, `last` or `unknown`. The
+  ngspice adapter answers from the same facts `render_deck` decides on (the switch that
+  saves device numbers, an enabled operating point, another enabled analysis, device
+  requests held for exactly this netlist text, the forced shape) without rendering and
+  without starting a simulator (row RO17 watches the procs that would measure it).
+  `unknown` is "the switch is on, the operating point and another analysis are enabled,
+  and this is not the netlist the requests are held for": no netlist yet, a netlist
+  another session's capture replaced in the one held block, or a netlist edited since.
+  It is also the answer for a netlist that IS the held one when it was written while the
+  operating point was switched off: the capture then holds an empty block for it and
+  records why (`ase::op_cards_why`), and once the user switches the operating point on,
+  the next netlist will capture requests (row RO18; found by the attack of 2026-11-22,
+  where the hook answered `first` and the sheet showed no sentence). A backend with no
+  hook is answered `first`.
+- *The window hands over the unreduced netlist* for that one question, as a fifth argument
+  of `ase::opt_preview` (`ase::ui::optsheet_netlist_full`); the seed rule keeps its reduced
+  copy. Where the run would read another file than the window does (a bench with no run
+  directory while `local_netlist_dir` is set) nothing is handed over, and the answer is
+  `unknown`.
+- *The slot.* Each entry is `{option line analysis}`. The groups stand in the deck's order
+  and the lines of a group in the order the deck writes them around that analysis (rows
+  DK10e and DK10f compare a group of two scoped options, and a scoped option around the
+  pair ASE-L adds, with the deck); the lines ASE-L adds itself (the `klu` pair around an
+  AC `sens`) stand in their own analysis's group, each once. The pane prints a group
+  heading, `<TYPE> BLOCK`, two spaces in. Under a slot heading a deck line stands four
+  spaces in, as before; so do the placeholder `(nothing)` of an empty slot and the lines
+  under `not delivered`, which are not deck lines. (This bullet said "a deck line is still
+  the only thing four spaces in" until 2026-11-22; those two made it untrue.)
+- *What it says.* When the deck moved the operating point: `OP BLOCK -- runs last in this
+  deck` (or `runs after tran in this deck` where an `sp` row still follows it). When the
+  order is not settled and it can matter (two groups with lines, or an option left in
+  force), once, under the slot's heading: *"the op analysis runs after tran when device
+  operating-point numbers are saved; that is settled when the netlist is written"*. On the
+  pane that sentence wraps at a word (row UI25b); the mark of a group and this sentence
+  are never listed under `not delivered` (row PV15b).
+- *The note about an option that is not put back* names what runs after it once the order
+  is known (*"left in force for the analyses that run after it in this deck (op)"*), says
+  *"no analysis runs after it in this deck"* when none does, and keeps the reviewed words
+  while the order is not known.
+- *The open sheet does not go stale.* A new netlist, the tick that saves device numbers,
+  an analysis switched on or off and a forced shape each repaint an open sheet's preview.
+  Those are ASE-L's own writers; a netlist changed on disk by something else (the
+  schematic window's own Netlist command, an edit by hand) repaints it when the sheet gets
+  the keyboard focus (row UI30).
+
+**Measured for the note** (2026-11-22, ngspice-45.2 and a copy of the `ver_53` build): a
+`dc` row that sweeps a design variable loads the circuit again at every point; after that
+reload an `option name=value` written inside the block is back at the deck's value (`itl1`
+300 to 100, `gmin` 1e-10 to 1e-12) and a `set` variable is still set. Every option the
+shipped catalogue can leave in force is either written as a `set` variable or scoped to an
+analysis the deck runs after `dc`, so "left in force for the analyses that run after it"
+holds across such a row. Row SP7b derives that from the catalogue and the registry.
+
+**Rows.** `tests/headless/test_ase_core.tcl` RO1 (moved), RO12 to RO18;
+`test_ase_optsheet_1441.tcl` PV12 to PV18 with PV15b and, on a display, UI25 to UI30 with
+UI25b; `test_ase_effective_1442.tcl` DK10c to DK10f, SP7b; `test_ase_run_seed.tcl` RS10b,
+RS11, RS12. RO13 holds the hook against decks `render_deck` wrote, cell by cell.
+
+**Stated limits.** The order shown is the order of a deck rendered from the netlist on
+disk. A Netlist and Run writes a new netlist first; where that changes what is captured
+(a sheet that became dirty, say) the deck follows the new capture and the open sheet is
+repainted when it lands. The held block is one per process, so netlisting another
+session's design makes this session's preview say "not settled" until its own netlist is
+written again; that is what a Run on the old netlist would then do (row RO15). An empty
+block held because the sheet had unsaved edits, or because the walk of the design raised,
+is still answered `first`: the capture does not say whether the next netlist will fare
+better. A sheet that is open and does not have the keyboard focus still shows the order
+of the netlist it last read when another program rewrites that file. The pane shows a
+few lines at a time, so on a bench with many option lines the operating point's heading
+is reached by scrolling; and the lines under `not delivered` are not wrapped and can run
+past the pane's right edge, as before this item.
+
+### 2. A request for `op` reads again when an untyped read stored the noise totals
+
+**As it stood.** Reproduced on 2026-11-22 on a hand-written file (`Integrated Noise`,
+`Noise Spectral Density Curves`, `Operating Point`), after `xschem raw read <file>` or
+`xschem raw_read <file>` with no type: `xschem raw read <file> op` answered 1 and listed
+`v(onoise_total)`; `xschem raw select <file> op` answered 2 and listed it; `xschem
+annotate_op <file>` published the totals when that database was loaded and a transient was
+current, and the operating point when the totals were current. And one the filing had only
+read: after `xschem raw_read <file> op` (the operating point, correctly), `xschem raw case
+preserve` showed the totals, because that door did not record the type it was asked.
+
+**Ruled:** "re-read when op is asked". A request that names `op` and meets a table that an
+untyped read took from the noise totals reads the file again and gets the operating point.
+Every caller is cured. A file without noise totals behaves exactly as before.
+
+**Built.**
+
+- *The mark.* `read_dataset()` sets `Raw.totals_as_op` when a read that named no type took
+  an `Integrated Noise` plot as `op`, as the first dataset or appended to an operating
+  point of the same variable count (rows M-equal: both orders, both block forms; the table
+  then holds two datasets, and the request naming `op` leaves the operating point alone
+  in it). `xschem raw totals_as_op [<slot>]` reads it; `xschem raw info` prints what it
+  printed.
+- *Who asks.* The registry reads again only for a request whose own words named `op`
+  (`RAW_READ_NAMED_TYPE`): `xschem raw read <file> op`, `xschem raw select <file> op`, and
+  `xschem annotate_op`. Not for a type the engine filled in (a select with no type, a graph
+  that names none), never from the drawing code, and not for `xschem raw read <file> op
+  -asis`, which a caller that only puts a table back says.
+- *In place.* The file is read first; on success the marked table is replaced in the same
+  slot, the slot count does not move, the cursors move as a switch moves them. It never
+  goes through the clear arm. The binding stays the replaced table's when that table was
+  bound on the current hierarchy stack: asked from inside an instance, the operating point
+  is bound to the sheet the totals were bound to, as a switch to any other loaded table
+  leaves it (rows M-descend). As first built the re-read bound the new table to the sheet
+  the request came from: MEASURED by the attack of 2026-11-22, results selected at the
+  top and the annotate chord pressed inside an instance showed the top-level net's voltage
+  on a same-named net of the child, and after ascending the top-level design had no
+  results. Repaired the same day.
+- *Telling the re-read from a switch.* The slot count does not move, so a caller that
+  must know asks `extra_rawfile_reread()` right after the call. The answer is cleared on
+  entry of every read call, in both arms of the registry: as first built it was cleared
+  only in the SPICE arm, and after any re-read a select of a loaded VCD answered 1 where
+  it answers 2, and `xschem raw select <file> table` of a file loaded as `op` succeeded
+  where it is refused (rows M-flag). The `-case` option of `xschem raw read` asks it too,
+  so a read naming `op` with a case mode reads a marked table once, in its slot; with
+  `-asis` as well the table is read again the way it was first read, so it stays the
+  totals (rows M-case-option).
+- *When the re-read fails* the answer is 0 and nothing moved: the table that was loaded is
+  still loaded, what was current is still current. One exception, older than this and not
+  changed: a header line the reader cannot read clears every table from inside the reader,
+  for every file.
+- *`raw select`* that named `op` and met a marked table answers 1, what a read answers.
+- *The readers that never read* are cured in Tcl with the mark: the Cadence profile's
+  annotate chord (`cadence::_annot_op_db_ok`) asks for a read of a marked table's own file
+  instead of publishing it; `calc::aq_run` does not evaluate a marked table where it
+  stands; `calc::aq_restore` puts the user's table back with `-asis`.
+- *The door that forgot what it was asked.* `xschem raw_read <file> <type>` now records the
+  type, so a case-mode change reads the file again as it was asked. The table a re-read
+  builds records `op` the same way (rows M-case-reread, through each of the three doors).
+  **This is the one answer that moved for a file WITHOUT noise totals**, and it moved for
+  every type: after `xschem raw_read <file> <type>` a case-mode change used to read the
+  file with no type and take its first plot. Measured both ways on 2026-11-22: a file
+  holding an operating point and then a transient, asked `tran`, came back from `xschem
+  raw case preserve` as the operating point and now stays the transient; a VCD asked `vcd`
+  was refused by that re-read, which left nothing loaded, and now stays loaded. Both are
+  cures of the same defect; rows M-case-plain hold them.
+- *A totals-only file* is marked too: the first request that names `op` reads once more,
+  gets the totals again, and the table is no longer marked. Its answer does not change.
+
+After an untyped read of a totals-first file that holds an operating point, each of these
+is given the operating point: `xschem raw read <f> op`; `xschem raw select <f> op`; `xschem
+annotate_op <f>` with the totals current and with them loaded and not current; the Cadence
+profile's annotate chord; `ase::attach_dbs <f> op`, `op_annot::db_attach` and
+`calc::eval_texts` (as before); the Calculator buffer's `vdc()` through `calc::aq_run` on
+both arms; a window opened from it.
+
+**Rows.** Band M of `tests/headless/test_raw_ascii_point_bounds.tcl` (the M-loaded,
+M-mark, M-totals-only, M-plain, M-asis, M-annotate-loaded, M-select, M-reread-keeps,
+M-case, M-case-reread, M-case-plain, M-case-option, M-flag, M-equal, M-descend and
+M-newwin rows); band AT15 of `test_calc_analysis_tokens.tcl` (both arms of
+`calc::aq_run`, the restore, and on a display a draw that does not read again); R14 to R17
+of `test_annot_op_behind_tran_1242.tcl`, which is registered with this change.
+
+**Stated limits, each as the ruling leaves it.** These ask for no read, so they move to a
+marked table and show it as it stands:
+
+- `xschem raw switch`, `xschem raw switch_back`, and a `xschem raw select` that names no
+  type. All three publish a one-point `op` table when they land on it, so they publish
+  the totals.
+- `results::select` with no type on a totals-first file that is not loaded: it reads with
+  no type, stores the totals and publishes them in the same call.
+- A graph with `autoload` set draws from a marked table as it stands (a draw never reads
+  again; band AT15's display leg holds that).
+- A totals-first file whose operating point holds several points is stored as `dc` by the
+  re-read, as it always was by a read that asks `op`; the slot's type changes with it.
+
+**The cure not taken, which the user can still choose.** A read that names no type could
+decline to store the totals as `op` at all when the file also holds an operating point. It
+would reach every reader in the list above, because the marked table would never exist.
+It was not offered when the user ruled, and it moves answers this issue lists as
+deliberately unchanged (what a read naming no type gives for a totals-first file, in band
+M's cells). Not built; returned to the user as a ruling to make.
+
+**The sibling left open: issue 0685.** `xschem annotate_op` of a file whose operating point
+is loaded and not current still shows the loaded numbers when the file has no noise totals
+(row F12 of `tests/headless/test_annot_stale_0684.tcl`, unmoved). The user chose this
+item's cure over the one that is 0685's engine fix; 0685 stays open as filed.
 
 ---
 

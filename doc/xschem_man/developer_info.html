@@ -1281,9 +1281,10 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
    <li><kbd>       raw what ...</kbd></li><pre>
      what = add | case | clear | datasets | index | info | loaded | list |
             new | points | rawfile | del | read | set | rename |
-            sim_type | switch | switch_back | table_read | value | values | pos_at | vars |
+            sim_type | switch | switch_back | table_read | totals_as_op | value | values |
+            pos_at | vars |
       
-   xschem raw read filename [type [sweep1 sweep2]] [-case mode]
+   xschem raw read filename [type [sweep1 sweep2]] [-case mode] [-asis]
      if sweep1, sweep2 interval is given in 'read' subcommand load only the interval
      sweep1 &lt;= sweep_var &lt; sweep2
      type is the analysis type to load (tran, dc, ac, op, ...). If not given load first found in
@@ -1292,6 +1293,12 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
      Variable names are always stored exactly as the file spells them; the mode only says
      whether a name lookup in this database may match a name differing only in case.
      Only 'distinguish' makes the lookup case sensitive.
+     A file that is already loaded under that type is made current and not read again,
+     except that a read naming 'op' reads the file again when the loaded data is the
+     noise totals a read naming no type took as 'op' (see 'xschem raw totals_as_op'),
+     and is then given the operating point. -asis keeps the loaded data as it stands
+     in that case too; with -case as well, that data is read again the way it was
+     first read.
       
    xschem raw case [mode]
      with no argument: 1 if name lookup in the current raw file is case sensitive, else 0.
@@ -1333,6 +1340,11 @@ C {verilog_timescale.sym} 1050 -100 0 0 {name=s1 timestep="1ns" precision="1ns" 
       
    xschem raw info
      print information about loaded raw files and show the currently active one.
+      
+   xschem raw totals_as_op [n]
+     1 if the current raw data (or the n-th, as 'xschem raw info' numbers them) holds the
+     noise totals of a results file under the type 'op' because a read that named no type
+     took them, else 0.
       
    xschem raw new name type sweepvar start end step
      create a new raw file with sweep variable 'sweepvar' with number=(end - start) / step datapoints

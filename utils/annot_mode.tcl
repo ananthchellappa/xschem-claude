@@ -1102,6 +1102,38 @@ proc cadence::_annot_op_publish {} {
   return [expr {$p >= 0 ? 1 : 0}]
 }
 
+## A TABLE THAT HOLDS THE NOISE TOTALS UNDER THE TYPE `op` (issue 1657).
+##
+## A read that names no type stores a results file whose first plot is the
+## noise totals as `op`, holding the two totals, and the engine marks the table
+## (`xschem raw totals_as_op`). The rungs below publish from a loaded table
+## without reading anything, so they showed such a table as an operating point:
+## no node voltage on the sheet, from a file that holds them.
+##
+## `cadence::_annot_op_marked` asks the mark of the selected table, or of the
+## registry slot `idx`. `cadence::_annot_op_reread` is what a rung does about
+## it: it asks for a READ of that table's own file as `op`. A request that
+## names `op` and meets the mark reads the file again, in the same slot
+## (extra_rawfile() in src/save.c), so the selected table is then the operating
+## point -- or, for a file that holds no operating point, the totals again and
+## unmarked, which is what annotating a noise-only run has always shown. It
+## answers 1 when that read gave a table that publishes. The file is the
+## table's own, whichever slot it is in: rung 3's choice of a slot is not asked.
+proc cadence::_annot_op_marked {{idx {}}} {
+  set m 0
+  if {$idx eq {}} {
+    catch {set m [xschem raw totals_as_op]}
+  } else {
+    catch {set m [xschem raw totals_as_op $idx]}
+  }
+  return [expr {$m eq {1} ? 1 : 0}]
+}
+proc cadence::_annot_op_reread {path} {
+  if {$path eq {} || ![file isfile $path]} { return 0 }
+  if {[catch {xschem raw read $path op} r] || $r ne {1}} { return 0 }
+  return [cadence::_annot_op_publish]
+}
+
 ## IS THERE AN OPERATING POINT FOR THIS PRESS TO SHOW -- and if there is one to
 ## be HAD rather than one already selected, GO AND GET IT.
 ##
@@ -1142,7 +1174,15 @@ proc cadence::_annot_op_db_ok {} {
   if {![string is integer -strict $loaded] || $loaded < 0} { return 1 }
   set st {}
   if {[catch {xschem raw sim_type} st]} { set st {} }
-  if {$st eq {op} || $st eq {dc}} {
+  if {($st eq {op} || $st eq {dc}) && [cadence::_annot_op_marked]} {
+    ## 1657: the selected table is typed `op` and holds the noise totals. It is
+    ## not published as it stands: its file is asked for as `op`. When that
+    ## read is refused the table is left as it was and the rungs below look for
+    ## an operating point elsewhere.
+    set mpath {}
+    catch {set mpath [xschem raw rawfile]}
+    if {[cadence::_annot_op_reread $mpath]} { return 1 }
+  } elseif {$st eq {op} || $st eq {dc}} {
     ## ⚠ RUNG 1 PUBLISHES TOO, AND IT IS NOT A FORMALITY. The selected database
     ## being an operating point does NOT mean its numbers are on the schematic:
     ## `cursor_b_val` is per database and starts zeroed with `annot_p` at -1, so
@@ -1174,6 +1214,12 @@ proc cadence::_annot_op_db_ok {} {
   foreach t $slots {
     set ty [lindex $t 2]
     if {$ty eq {op} || $ty eq {dc}} {
+      ## 1657: a slot that holds the noise totals under `op` is not switched to
+      ## and published as it stands. Its own file is asked for as `op`.
+      if {[cadence::_annot_op_marked [lindex $t 0]]} {
+        if {[cadence::_annot_op_reread [lindex $t 1]]} { return 1 }
+        continue
+      }
       if {![catch {xschem raw switch [lindex $t 0]}]} {
         if {[cadence::_annot_op_publish]} { return 1 }
       }

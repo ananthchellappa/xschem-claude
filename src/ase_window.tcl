@@ -646,6 +646,10 @@ proc ase::ui::open {key lib cell view} {
   # session mutations repaint the title + status bar (dirty marker, T=) from
   # now on
   set ::ase::session_notify ase::ui::session_changed
+  ## issue 1657: and what changes the order a deck runs its analyses in without
+  ## writing a session -- a new netlist, a forced shape of the device requests
+  ## -- repaints every open Options sheet. Same single-slot discipline.
+  set ::ase::order_notify ase::ui::optsheet_preview_all
   ## 1370's REPAIR: and so does a REGISTRY mutation, from wherever it is made.
   ## The dialog's own refresh (ase::ui::simdlg_fill) covers all five gestures
   ## of Setup > Simulators and NOTHING ELSE, and the registry has a second
@@ -12855,6 +12859,13 @@ proc ase::ui::sim_options_dialog {key {scope {}}} {
   scrollbar $w.prev.sb -orient vertical -command [list $w.prev.t yview]
   pack $w.prev.sb -side right -fill y
   pack $w.prev.t -side left -fill both -expand 1
+  ## A sentence about the slot wraps; a deck line never does (issue 1657). The
+  ## pane has no horizontal scrollbar, so a sentence longer than the pane was
+  ## cut at its right edge. The continuation stands further in than a deck
+  ## line, so it reads as neither a deck line nor a heading. Which lines carry
+  ## the tag: ase::ui::optsheet_preview_wrap.
+  $w.prev.t tag configure asenote -wrap word \
+    -lmargin2 [font measure AseMonoFont {        }]
 
   frame $w.btns
   button $w.btns.close -text Close -command [list destroy $w]
@@ -12883,6 +12894,15 @@ proc ase::ui::sim_options_dialog {key {scope {}}} {
   ## with the name already in it, which is the gesture that turns "I found it"
   ## into "I set it".
   bind $w.tv <Double-Button-1> [list ase::ui::optsheet_pick $key]
+  ## THE PREVIEW IS REPAINTED WHEN THE SHEET GETS THE KEYBOARD FOCUS (issue
+  ## 1657). The writers that repaint it (ase::ui::optsheet_preview's header)
+  ## are ASE-L's own. A netlist that changes on disk by another hand -- the
+  ## schematic window's own Netlist command writes the same file when the bench
+  ## names no run directory; an edit in a text editor -- fires none of them,
+  ## and the order of the groups depends on that file. Coming back to the sheet
+  ## is when the user reads it again. Only the preview's text is touched, and
+  ## only when it moved. Row UI30 of tests/headless/test_ase_optsheet_1441.tcl.
+  bind $w <FocusIn> +[list ase::ui::optsheet_focus $key]
   ase::ui::bind_dialog_esc $w [list destroy $w]
   ase::ui::optsheet_fill $key
   ase::ui::apply_theme $w
@@ -13046,11 +13066,48 @@ proc ase::ui::optsheet_key {sim name key} {
 # local_netlist_dir set, the schematic-local directory `simuldir` would choose
 # is not looked in.
 proc ase::ui::optsheet_netlist_text {key} {
-  variable optsheet_nlcache
-  if {![info exists optsheet_nlcache]} { set optsheet_nlcache [dict create] }
+  return [lindex [ase::ui::optsheet_netlist_read $key] 0]
+}
+
+# THE SAME FILE, UNREDUCED, FOR THE ONE QUESTION THAT NEEDS IT (issue 1657):
+# will the deck run its operating point behind the other analyses
+# (ase::op_run_order). Device requests are held for the EXACT text of the
+# netlist they were captured from, so the reduced copy above can never match
+# one; this is the file as the run reads it, byte for byte. It goes to
+# ase::opt_preview as its fifth argument and to nothing else: the seed rule
+# scans its text on every repaint and keeps the reduced copy.
+#
+# ⚠ {} WHERE THE RUN WOULD READ ANOTHER FILE THAN THIS WINDOW DOES. A bench
+# that names no run directory runs where set_netlist_dir says, and with
+# local_netlist_dir set that is the schematic's own directory, which the reader
+# above does not look in (its declared limit) and which cannot be resolved
+# here without moving ::netlist_dir. An order read from another file would be
+# shown as the deck's, so nothing is handed over and the preview says the
+# order is not settled. Row RS12 of tests/headless/test_ase_run_seed.tcl.
+#
+# It creates nothing and moves no global, like the reader above (row RS10b).
+proc ase::ui::optsheet_netlist_full {key} {
   set st {}
   if {[catch {set st [ase::session_state $key]}]} { return {} }
-  if {[catch {dict get $st design cell} cell]} { return {} }
+  set rd {}
+  catch {set rd [ase::state_get $st rundir]}
+  if {$rd eq {} && [info exists ::local_netlist_dir] &&
+      $::local_netlist_dir ne {} && $::local_netlist_dir ne {0}} { return {} }
+  return [lindex [ase::ui::optsheet_netlist_read $key] 1]
+}
+
+# ONE READ FOR BOTH: `{reduced full}`, or `{{} {}}`. The file is read when its
+# size or modification time moved and both texts are remembered, so a repaint
+# costs one `file size`, one `file mtime` and a dictionary lookup whichever of
+# the two is asked for. The unreduced text is kept whole: it is compared with
+# the text device requests are held for, which the session already keeps whole.
+proc ase::ui::optsheet_netlist_read {key} {
+  variable optsheet_nlcache
+  if {![info exists optsheet_nlcache]} { set optsheet_nlcache [dict create] }
+  set none [list {} {}]
+  set st {}
+  if {[catch {set st [ase::session_state $key]}]} { return $none }
+  if {[catch {dict get $st design cell} cell]} { return $none }
   set rd {}
   catch {set rd [ase::state_get $st rundir]}
   if {$rd eq {}} {
@@ -13060,19 +13117,19 @@ proc ase::ui::optsheet_netlist_text {key} {
       set rd [file join $::USER_CONF_DIR simulations]
     }
   }
-  if {$rd eq {} || ![file isdirectory $rd]} { return {} }
+  if {$rd eq {} || ![file isdirectory $rd]} { return $none }
   set f [file join $rd $cell.spice]
-  if {![file isfile $f]} { return {} }
+  if {![file isfile $f]} { return $none }
   set stamp {}
-  if {[catch {set stamp [list [file size $f] [file mtime $f]]}]} { return {} }
+  if {[catch {set stamp [list [file size $f] [file mtime $f]]}]} { return $none }
   if {[dict exists $optsheet_nlcache $f]} {
     set c [dict get $optsheet_nlcache $f]
-    if {[lindex $c 0] eq $stamp} { return [lindex $c 1] }
+    if {[lindex $c 0] eq $stamp} { return [lrange $c 1 2] }
   }
   set nl {}
   if {[catch {set fd [::open $f r] ; set nl [::read $fd] ; ::close $fd}]} {
     catch {::close $fd}
-    return {}
+    return $none
   }
   set keep {} ; set inctl 0 ; set kept 0
   foreach l [split $nl "\n"] {
@@ -13084,14 +13141,29 @@ proc ase::ui::optsheet_netlist_text {key} {
     if {[string equal -nocase $tl .endc]} { set inctl 0 }
   }
   set red [join $keep "\n"]
-  dict set optsheet_nlcache $f [list $stamp $red]
-  return $red
+  dict set optsheet_nlcache $f [list $stamp $red $nl]
+  return [list $red $nl]
 }
 
 # ⚠ THE LIVE DECK PREVIEW. Four slots and a notes block, straight out of
 # `ase::opt_preview` -- which reads the body `render_deck` runs, so a line here
 # IS a line there. An empty slot prints nothing but its own heading, because
 # "there is no line for this" is the answer the pane exists to give.
+#
+# ⚠ IT IS REPAINTED BY MORE THAN ITS OWN SHEET (issue 1657). The sheet is a
+# window of its own and stays open while the bench changes behind it, and the
+# order of the in-block groups follows the bench: a state write repaints it
+# through ase::ui::session_changed, and a new netlist or a forced shape of the
+# device requests through ase::ui::optsheet_preview_all (the `order_notify`
+# seam of src/ase.tcl). Rows UI26 to UI29 of
+# tests/headless/test_ase_optsheet_1441.tcl. Only this text widget is touched:
+# the rows of the sheet are not refilled, so a row being edited is left alone.
+# And a netlist changed on disk by something that is not ASE-L repaints it when
+# the sheet gets the keyboard focus (ase::ui::optsheet_focus, row UI30).
+#
+# THE TEXT IS REPLACED ONLY WHEN IT MOVED, so a repaint that changes nothing
+# (most of the ones a focus brings) leaves the pane's scroll position and a
+# selection the user made in it alone.
 proc ase::ui::optsheet_preview {key} {
   variable wins
   if {![dict exists $wins $key]} { return }
@@ -13100,9 +13172,83 @@ proc ase::ui::optsheet_preview {key} {
   set sim [ase::ui::chana_sim $key]
   set pv {}
   if {[catch {ase::opt_preview $sim [ase::session_state $key] {} \
-                [ase::ui::optsheet_netlist_text $key]} pv]} {
+                [ase::ui::optsheet_netlist_text $key] \
+                [ase::ui::optsheet_netlist_full $key]} pv]} {
     set pv [dict create deck {} control {} cmdline {} prefile {} \
                         notes [list [list {} error [ase::ui::simdlg_plain $pv]]]]
+  }
+  set t [ase::ui::optsheet_preview_text $pv]
+  if {[$w.prev.t get 1.0 {end - 1 chars}] eq $t} { return }
+  $w.prev.t configure -state normal
+  $w.prev.t delete 1.0 end
+  $w.prev.t insert end $t
+  $w.prev.t configure -state disabled
+  ase::ui::optsheet_preview_wrap $w.prev.t
+}
+
+# The lines of the pane that wrap: the sentences about a slot, which
+# ase::ui::optsheet_preview_text writes six spaces in and in parentheses. A
+# deck line and a heading are never tagged, so each stays on one line as the
+# deck has it. Row UI25b of tests/headless/test_ase_optsheet_1441.tcl reads
+# the last character of such a sentence off the pane.
+proc ase::ui::optsheet_preview_wrap {t} {
+  $t tag remove asenote 1.0 end
+  set i 1.0
+  while {[set i [$t search -regexp {^      \(} $i end]] ne {}} {
+    set next [$t index "$i lineend + 1 chars"]
+    $t tag add asenote $i $next
+    if {[$t compare $next <= $i]} { break }
+    set i $next
+  }
+}
+
+# Every open Options sheet, repainted: the `order_notify` seam's handler.
+proc ase::ui::optsheet_preview_all {} {
+  variable wins
+  foreach key [dict keys $wins] { catch {ase::ui::optsheet_preview $key} }
+}
+
+# The sheet got the keyboard focus: its preview is repainted (the binding in
+# ase::ui::sim_options_dialog says why). Caught: a focus event must never
+# raise.
+proc ase::ui::optsheet_focus {key} {
+  catch {ase::ui::optsheet_preview $key}
+}
+
+# THE PANE'S TEXT, from one `ase::opt_preview` answer. A pure proc, so the arm
+# without a display reads the very text the window inserts (rows PV15 to PV17
+# of tests/headless/test_ase_optsheet_1441.tcl).
+#
+# THE SHAPES, and they are what keeps the pane's rule -- every line it shows as
+# a deck line is in the deck, byte for byte:
+#   a slot heading                   at the margin
+#   a deck line                      four spaces in, under one of the four
+#                                    slot headings
+#   `(nothing)`                      four spaces in as well: what an empty slot
+#                                    says in place of a deck line
+#   a group heading (in-block slot)  two spaces in: `<TYPE> BLOCK`, the words
+#                                    the sheet's Written column has for an
+#                                    option stored against an analysis, then
+#                                    ` -- ` and what core says about that
+#                                    group (a `group` note)
+#   a sentence about the slot        six spaces in, in parentheses (an `order`
+#                                    note: the order of the groups is not
+#                                    settled yet)
+#   a line under "not delivered"     four spaces in too, and not a deck line:
+#                                    an option's name, a dash and why it does
+#                                    not arrive as set
+# So what a group heading and a sentence must not look like is a deck line of
+# their own slot; the slots end where "not delivered" begins.
+# Neither a `group` nor an `order` note is printed under "not delivered": they
+# are not about an option that fails to arrive (row PV15b).
+proc ase::ui::optsheet_preview_text {pv} {
+  set marks [dict create] ; set said {} ; set held {}
+  foreach n [dict get $pv notes] {
+    switch -exact -- [lindex $n 1] {
+      group   { dict set marks [lindex $n 0] [lindex $n 2] }
+      order   { lappend said [lindex $n 2] }
+      default { lappend held $n }
+    }
   }
   set t {}
   foreach {slot head} {deck    {above the analysis block}
@@ -13110,22 +13256,30 @@ proc ase::ui::optsheet_preview {key} {
                        cmdline {on the command line}
                        prefile {in the run-directory start-up file}} {
     append t "$head\n"
-    set any 0
+    set any 0 ; set cur {}
+    if {$slot eq {control}} {
+      foreach sn $said { append t "      ([ase::ui::simdlg_plain $sn])\n" }
+    }
     foreach e [dict get $pv $slot] {
+      if {$slot eq {control} && [llength $e] > 2 && [lindex $e 2] ne $cur} {
+        set cur [lindex $e 2]
+        set gh "  [string toupper $cur] BLOCK"
+        if {[dict exists $marks $cur]} {
+          append gh " -- [ase::ui::simdlg_plain [dict get $marks $cur]]"
+        }
+        append t "$gh\n"
+      }
       append t "    [lindex $e 1]\n" ; set any 1
     }
     if {!$any} { append t "    (nothing)\n" }
   }
-  if {[llength [dict get $pv notes]]} {
+  if {[llength $held]} {
     append t "not delivered\n"
-    foreach n [dict get $pv notes] {
+    foreach n $held {
       append t "    [lindex $n 0] — [ase::ui::simdlg_plain [lindex $n 2]]\n"
     }
   }
-  $w.prev.t configure -state normal
-  $w.prev.t delete 1.0 end
-  $w.prev.t insert end $t
-  $w.prev.t configure -state disabled
+  return $t
 }
 
 # Double-click. A stored row edits; a catalogue row the bench has not stored
@@ -15869,6 +16023,14 @@ proc ase::ui::session_changed {key} {
   ## same cellview moves the live state without moving the box (or the dirty
   ## marker, or the status bar).
   ase::ui::save_all_refresh $key
+  ## 1657: AND AN OPEN Options SHEET SHOWS THE ORDER THE BENCH NOW HAS. The tick
+  ## that saves device operating-point numbers and an analysis switched on or
+  ## off both land through `ase::session_update`, and both change the order the
+  ## deck runs its analyses in, which the sheet's preview shows. Only the
+  ## preview's text is repainted (see ase::ui::optsheet_preview): the pane
+  ## rule above is about the panes a commit fires from. A no-op when no sheet
+  ## is up; caught, so it cannot cost the title or the status their update.
+  catch {ase::ui::optsheet_preview $key}
 }
 
 # --- Session menu ------------------------------------------------------------

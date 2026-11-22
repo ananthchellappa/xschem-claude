@@ -410,6 +410,30 @@ that `raw switch` deliberately does not touch the annotation array.
 sucessfull, 0 otherwise"*) gains the distinction it currently hides: what the
 return value means when the file was already loaded.
 
+> **R112, ONE EXCEPTION (2026-11-22; the user's ruling of 2026-11-21, issue
+> 1657).** "An already-loaded file returns 1 with nothing re-parsed" has one
+> case in which the file IS parsed again. A read that names no type stores a
+> results file whose first plot is the noise totals as `op`, holding those
+> totals, and the engine marks that table (`Raw.totals_as_op`; `xschem raw
+> totals_as_op`). A request whose own words name `op` (`RAW_READ_NAMED_TYPE`:
+> `xschem raw read <file> op`, `xschem raw select <file> op`, `xschem
+> annotate_op`) and that meets a marked table reads the file again asking
+> `op`. The read comes first; on success the marked table is replaced **in the
+> same slot**, the slot count does not move and the cursors move as a switch
+> moves them; on failure the answer is 0 and nothing moved. It never goes
+> through the clear arm. **The binding is the replaced table's** when that
+> table was bound on the current hierarchy stack (R110a): a request made
+> inside an instance leaves the operating point bound to the sheet the totals
+> were bound to, as a switch would (rows M-descend). A caller that must tell
+> this re-read from a switch asks `extra_rawfile_reread()` right after the
+> call, because the slot count does not say; the `-case` option of `xschem raw
+> read` does, and so reads the file once. A request that names no type, a
+> graph that loads its own file, and `xschem raw read <file> op -asis` take
+> the table as it stands (with `-case` as well, `-asis` reads that table again
+> the way it was first read).
+> A file with no `Integrated Noise` plot can never be marked, so for it R112
+> reads as it always did.
+
 **Non-goal here:** relaxing `sch_waves_loaded()` itself (issue 0509 candidate 2).
 It has **52 call sites** across seven files (`draw.c` 21, `scheduler.c` 11,
 `token.c` 10, `save.c` 4, `hilight.c` 3, `actions.c` 2, `callback.c` 1);
@@ -537,6 +561,17 @@ resolves it again by name and gets the verdict then.
 
 Return: `2` selected-by-switch, `1` selected-by-read, `0` refused. **Three
 values, not two** — this is the distinction R112 says `read` should have had.
+
+> **R301, ONE EXCEPTION TO STEP 3 AND TO "2 MEANS NOTHING WAS PARSED"
+> (2026-11-22; the user's ruling of 2026-11-21, issue 1657).** `xschem raw
+> select <file> op` that meets a table holding the noise totals under `op`
+> (R112's exception above) has parsed the file and freed that one table, the
+> re-read's result taking its slot. It answers **1**, what a read answers. No
+> other table is freed and nothing is cleared; a select that names NO type
+> still reads nothing, frees nothing and answers 2, with the marked table
+> current as it stands (the type `raw_select()` fills in from the current
+> table is the engine's word, not the request's). Row M-select of
+> `tests/headless/test_raw_ascii_point_bounds.tcl`.
 
 > **Corrected 2026-08-19 (item 3).** This line read *"`1` selected-by-switch,
 > `2` selected-by-read"* — the two values the other way round from
@@ -2326,7 +2361,8 @@ and 3 of this batch had already staled by ~74 lines.**
 F5, issue **0509**. Until R110 lands, `results::select` must detect this case
 itself (registry size unchanged) and either re-stamp with `xschem set raw_level`
 or refuse honestly. It must **not** clear-then-read — R301(3), F7 and T-D forbid
-it.
+it. (The one table a select may replace is R301's exception of 2026-11-22: it
+reads first and replaces in place, and is not a clear-then-read.)
 
 **L4 — the shared scratch column.** `raw->values[raw->nvars]` is one buffer
 overwritten by the next evaluation; re-evaluate immediately before reading

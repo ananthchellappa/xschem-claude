@@ -489,6 +489,37 @@ row editor <b>Add Simulation Option</b> / <b>Edit Simulation Option</b>
 (fields <b>Name:</b> <b>Value:</b>). Deck semantics: value <code>0</code> —
 skipped; value <code>1</code> — <code>.options &lt;name&gt;</code>; anything
 else — <code>.options &lt;name&gt;=&lt;value&gt;</code>.</p>
+<p>Below the table the sheet carries a <b>Deck preview</b>: every line the next
+deck will carry for an option, under the place it is written — <i>above the
+analysis block</i>, <i>inside the analysis block</i>, <i>on the command
+line</i>, <i>in the run-directory start-up file</i> — and, under <i>not
+delivered</i>, each option that will not arrive as asked. Under those four
+places a line that stands four spaces in is a line of the deck, character for
+character; a place with no line says <code>(nothing)</code>. The lines under
+<i>not delivered</i> are notes about an option, not lines of the deck.</p>
+<p>An option stored against one analysis (the <b>Scope</b> box, or
+<b>Simulator Options&#8230;</b> on an analysis form) is written around that
+analysis and put back after it. Inside the analysis block the preview lists
+these lines in groups, one per analysis, each under a heading such as
+<code>TRAN BLOCK</code>, in the order the deck will run the analyses. When
+device operating-point numbers are saved and another analysis is enabled, the
+deck runs the operating point behind the other analyses, and its heading says
+so: <code>OP BLOCK -- runs last in this deck</code>. An s-parameter analysis
+still runs after it; the heading then names what the operating point runs
+after (<code>OP BLOCK -- runs after tran in this deck</code>). The one
+exception is a script that forces the one-line form of the device requests
+(<code>ase::op_tier_force_set b</code>), which keeps the operating point
+first. The order is settled by the netlist of the run. Before one has been
+written in this session it is not settled yet, and neither is it when the
+netlist on disk is not the one this session wrote last or was written while
+the operating point was switched off; the groups are then shown operating
+point first, under one line in parentheses that says what the operating point
+will run after when device operating-point numbers are saved. An option that
+cannot be put back after its analysis has a note that names the analyses that
+run after it. The preview follows the bench while the sheet is open: a new
+netlist, the Save All dialog and the Analyses pane all repaint it, and it is
+read again from the netlist on disk each time the sheet gets the keyboard
+focus.</p>
 
 <h2 id="running">5. Running</h2>
 
