@@ -85,6 +85,33 @@
 #         (Ctrl-z / Ctrl-a in the keysym case the server did NOT report),
 #         case_key's break passed on, and a REAL Caps Lock + Ctrl-g that stops
 #         at the viewer's tag (a toplevel recorder would see a leak).
+#   SWK19-SWK25, SWK27-SWK29 both arms (2026-11-21): Ctrl-Shift-M and the key
+#         filter's forward by CHORD (doc/claude/specs/waveform_viewer.md, "What
+#         the key filter forwards"). SWK19 the wrapper (for a path that is no
+#         viewer's, and with two viewers in the registry) and m's case_pairs row;
+#         SWK20 chord_state, by hand and against the masks callback() strips
+#         (read out of src/callback.c); SWK21 key_chord over every graph key, a
+#         matrix of modifier states and the four profiles, against a comparand
+#         fed from the engine (its live binding table, the arms of its key
+#         switch and the stripped masks, read out of src/callback.c); SWK22 the
+#         same decision chord by chord; SWK23 a user's table row, a
+#         graph.forward row for one of the viewer's own Control chords
+#         included; SWK24 key_filter itself with the forward, the pixel test
+#         and the escape verb recorded (the chords, a refusing pixel gate,
+#         Escape with and without a row of the user's); SWK25 the band test
+#         and the border, the border against the engine's factor at this
+#         display's Tk scaling and at a walk of others (the tk command
+#         answered by a recorder), and strip_at_pixel_inset, the same band
+#         test behind the middle-button pan; SWK27 the pixel gate, one
+#         condition moved per leg, the middle of every strip of a window of
+#         more than two strips and of two subwindows side by side, the same
+#         canvas asked again after its strips, the origin or the zoom moved, a
+#         second canvas of the registry, its gesture bits read out of the C
+#         source; SWK28 graphown against the tag's defaults; SWK29 row_mods and
+#         key_has_row.
+#   SWK26 DISPLAY: the Caps Lock states of m, real keys, with the forward to
+#         the engine, the pixel test and the wrapper recorded. SWK28 has a
+#         DISPLAY leg too: graphown against the live tag.
 #   SWK17 DISPLAY (issue 1662): REAL RMB with the real tk_popup on every strip
 #         of a multi-mode, one-trace-per-strip window, two subwindows then one:
 #         the trace menu (Move greyed, Delete live) and the strip menu (Split
@@ -260,6 +287,112 @@
 # SWA14's own control is the plan's SIBLING placement, measured: a sibling mapped
 # over the canvas lifts a .graphdialog that sat behind the viewer (raise_dialog on
 # the canvas' <Visibility>), which is why the button is a CHILD of the canvas.
+# Ctrl-Shift-M and the key filter's chord rule (2026-11-21). RED FIRST, measured
+# on the product before the change: SWK16, SWK19-SWK23, SWK25-SWK27, and SWK24
+# but for its "still forwards the graph chords" leg, a control that was green
+# there. Then each sabotage below was measured red on the named rows and put
+# back to green:
+#   no Ctrl-Shift-M default in install_default_binds -> SWK28, and SWK26 on
+#        the display arm
+#   key_chord back to the keysym decision (every graph key but Ctrl-b, Ctrl-d)
+#        -> SWK21, SWK22, SWK23, SWK24, SWK26
+#   key_chord forwards M under Control too (the binding AND the forward)
+#        -> SWK21, SWK22, SWK24, SWK26
+#   chord_state keeps Num Lock -> SWK20, SWK21, SWK22, SWK24;
+#        keeps Button-1 -> SWK20, SWK21, SWK22;
+#        keeps the bits above the modifier range -> SWK20, SWK21
+#   case_pairs without m -> SWK16, SWK19, SWK26
+#   no reroute of the Cadence profile's plain s -> SWK21, SWK22, SWK24
+#   no graph_use_ctrl_key rule -> SWK21, SWK22, SWK24
+#   a table row that is no graph row is ignored -> SWK23, SWK24
+#   key_filter hands key_chord no table -> SWK24
+#   key_filter forwards the state as typed, not key_chord's -> SWK24
+#   graphguards without Shift-M's pair -> SWK21, SWK22, SWK23, SWK24
+#   the profile variables read as off -> SWK24
+#   band_at_inset ignores the inset -> SWK25, SWK27
+#   graph_border_px answers 0 -> SWK25, and SWK27 on the display arm (without
+#        Tk the proc answers before that line; SWK25's walk of scalings answers
+#        the tk command itself)
+#   key_at_graph without its gesture test, its context test, or its
+#        fix_mouse_coord arm -> SWK27, each
+# NOT caught in this suite: key_filter gated on the mouse mirror again (the
+# pixel test is a recorder in SWK24 and SWK26) and the wrapper without its
+# foreign-canvas test (no viewer is current where SWK19 runs). Rows KM9 and KM1
+# of test_wave_viewer catch those two.
+# THE REPAIR of the same day (the refusal by name of the viewer's own Control
+# chords, Escape and the engine's table, and the fences a second pass found
+# missing). RED FIRST, measured on the product before the repair: SWK23's
+# graph.forward leg, SWK24's leg for Escape with a row, SWK28 (both legs) and
+# SWK29 (both checks). The other legs it added fence what that product already
+# did right and were green there; each was shown red by building its break,
+# and put back to green:
+#   graph_border_px is int(5 * scaling)             -> SWK25
+#   the pixel gate skipped in the Cadence profile, for plain s or for every
+#        graph key                                   -> SWK24
+#   key_at_graph looks at the first strip only      -> SWK27
+#   key_chord without its refusal by name           -> SWK23
+#   graphown without M, or without b                -> SWK23, SWK28
+#   Escape always forwarded; a row but no verb      -> SWK24
+#   key_has_row ignores the modifiers, or keeps Num Lock -> SWK24, SWK29
+#   key_has_row drops Shift for a named key too     -> SWK29
+#   the escape verb on the release as well          -> SWK24
+#   graphbusy without the pan bit                   -> SWK27
+#   the filter made to forward Ctrl-Shift-M (graphguards gains the pair,
+#        graphown loses the keysym) -> SWK21, SWK22, SWK23, SWK24, SWK28, and
+#        SWK26 on the display arm
+#   IN THE TEXT of src/callback.c, the binary not rebuilt (the rows that read
+#   the engine's numbers out of it): `excl` gains a bit -> SWK27; the border
+#        factor changed -> SWK25; Button-1 no longer stripped
+#        -> SWK20, SWK21
+# NOT caught in this suite: the Ctrl-Shift-M default installed only outside
+# the Cadence profile, the wrapper made to ask where the pointer is, and the
+# menu entry losing its accelerator under one label. Rows KM1 of
+# test_wave_viewer (the first two) and GH6 of test_wave_grid catch those.
+# THE SECOND REPAIR of the same day. SWK27 gained two legs at the border's own
+# width: a pixel exactly that far inside an edge is taken, the pixel before it
+# is not (four edges). The product was right and they were green on it; the
+# break that shows them, measured on both arms and put back:
+#   the pixel gate ten pixels wider than the border, or one pixel wider
+#        -> SWK27, each (and row KM9 of test_wave_viewer on the display arm)
+# The procs of SWK21's comparand moved to wvkey_engine.tcl unchanged but for
+# kc_expect taking the masks as arguments; row KM13 of test_wave_viewer sources
+# the same file.
+# THE THIRD REPAIR of the same day. Three legs, each for a break that every
+# viewer suite was green under. The product was right and the legs were green
+# on it; each break was then built, measured red on both arms and put back:
+#   SWK27 walks the middle of every band of a registry entry of more than two
+#        strips: the pixel gate knows the first two strips only, or every
+#        strip but the last                          -> SWK27, each
+#   SWK25 asks graph_border_px at a walk of Tk scalings, the tk command
+#        answered by a recorder: the proc answers one constant -> SWK25
+#   SWK25 asks strip_at_pixel_inset with its bands answered by a recorder: the
+#        proc hands the band test no inset, or its own whatever the caller
+#        gives                                       -> SWK25, each
+# The same pass measured again, on both arms, the lines above that the rows
+# added since had left behind: the missing Ctrl-Shift-M default, graphguards
+# without Shift-M's pair, the two border lines and the border factor changed
+# in the text of src/callback.c (those three were display-arm only until the
+# walk of scalings).
+# THE FOURTH REPAIR of the same day. Four legs, each for a break this suite
+# was green under (measured by the attack that found them). The product was
+# right and the legs were green on it; each break was then built, measured red
+# on both arms and put back:
+#   SWK27's registry entry holds the strips of a second subwindow beside the
+#        first, and the walk of every band's middle takes them: the pixel gate
+#        keeps only the bands that share the first band's left edge -> SWK27
+#   SWK27 asks the same canvas again after its bands, the canvas origin or the
+#        zoom moved: the pixel gate remembers a canvas's bands by its strip
+#        count                                       -> SWK27
+#   SWK27 asks for a second canvas of the registry in its own context: the
+#        pixel gate says yes for the first viewer canvas only -> SWK27
+#   SWK19 calls the wrapper with two viewers in the registry and the engine's
+#        cursor flags answered as on: the wrapper flips the first viewer of
+#        the registry whichever canvas it is called for, or does nothing
+#        while a cursor shows                        -> SWK19, each
+# NOT caught in this suite, measured on both arms: the pixel gate saying no on
+# every tab but the first, and two breaks of the Cadence profile alone (the
+# marker keys forwarded without the edit bracket, the cursor tail skipped for a
+# and b). Rows KM6 and KM2 of test_wave_viewer catch those, with real keys.
 #
 # NOT asserted: PIXELS. That the frame looks right is eyeball-only (a `look`
 # debt); what IS asserted is the token that draw.c paints from. Likewise the aA
@@ -1061,7 +1194,535 @@ if {[catch {
     $m15 {122 122 122 90 90 122 90 90 90 90 90 122 65361 49}
   set p16 [pcall {wviewer::case_pairs}]
   check "SWK16 case_pairs: every Ctrl-letter pair of the viewer, each with its two base sequences" \
-    [lmap {l lo up} $p16 {set l}] {d g n w e u b c q v}
+    [lmap {l lo up} $p16 {set l}] {d g n w e u b c q v m}
+
+  # ---- SWK19-SWK25, SWK27-SWK29: THE KEY FILTER DECIDES BY CHORD (2026-11-21) -
+  # Both arms. The viewer's key filter forwards a graph key to the engine only
+  # as a chord the engine itself hands to the graph: the keysym, the modifier
+  # state reduced the way the engine reduces it, the profile, and the engine's
+  # own binding table. Everything else stays in the viewer. Ctrl-Shift-M is the
+  # viewer's own chord for the plot mode (rule SW22).
+  set p19 {}
+  foreach {l lo up} $p16 { if {$l eq {m}} { lappend p19 [list $lo $up] } }
+  # (the model-only windows of the rows above sit in the registry with no canvas
+  # path, and the reverse lookup from a canvas walks the registry: it is emptied
+  # for the wrapper's call and put back)
+  set p19reg $::wviewer::windows
+  set ::wviewer::windows [dict create]
+  set p19w [pcall {wviewer::plot_mode_toggle_at .no.such.canvas}]
+  set ::wviewer::windows $p19reg
+  check "SWK19 the Ctrl-Shift-M wrapper takes the event's canvas and answers {} for a path that is no viewer's; case_pairs gives m no lower base and Ctrl-Shift-M as its upper" \
+    [list [pcall {info args ::wviewer::plot_mode_toggle_at}] $p19w $p19] \
+    [list W {} [list [list {} <Control-Shift-Key-M>]]]
+  # ...and with TWO viewers in the registry: the wrapper flips the one whose
+  # canvas the key came from, the second like the first, and it does not ask
+  # the engine whether a cursor is showing. The registry is two entries made
+  # for the leg, wviewer::set_plot_mode is a recorder (what it was called
+  # with), and `xschem get graph_flags` answers both cursors on. A third canvas,
+  # in no entry, calls nothing.
+  set p19reg2 $::wviewer::windows
+  set ::wviewer::windows [dict create \
+    swk19/a [dict create win_path .swk19a.drw top .swk19a] \
+    swk19/b [dict create win_path .swk19b.drw top .swk19b]]
+  set ::swk19_spm {}
+  set p19spm [expr {[info commands ::wviewer::set_plot_mode] ne {}}]
+  if {$p19spm} { rename ::wviewer::set_plot_mode ::wviewer::__swk19_real_spm }
+  proc ::wviewer::set_plot_mode {args} { lappend ::swk19_spm $args ; return recorded }
+  rename ::xschem ::swk19w_xschem
+  proc ::xschem {args} {
+    if {$args eq {get graph_flags}} { return 6 }
+    return [uplevel 1 [list ::swk19w_xschem {*}$args]]
+  }
+  set p19two [list [pcall {wviewer::plot_mode_toggle_at .swk19b.drw}] \
+                   [pcall {wviewer::plot_mode_toggle_at .swk19a.drw}] \
+                   [pcall {wviewer::plot_mode_toggle_at .swk19c.drw}]]
+  rename ::xschem {}
+  rename ::swk19w_xschem ::xschem
+  rename ::wviewer::set_plot_mode {}
+  if {$p19spm} { rename ::wviewer::__swk19_real_spm ::wviewer::set_plot_mode }
+  set ::wviewer::windows $p19reg2
+  check "SWK19 ...with two viewers in the registry the wrapper flips the one whose canvas the key came from, the second like the first, with the engine's cursor flags answered as both on; for a canvas in neither entry it calls nothing (the wrapper's three answers, what set_plot_mode was called with)" \
+    [list $p19two $::swk19_spm] {{recorded recorded {}} {{invert swk19/b} {invert swk19/a}}}
+  # the state as the engine reduces it: Shift, Caps Lock, Num Lock, Button-1 and
+  # every bit above the modifier range dropped
+  check "SWK20 chord_state: Shift, Caps Lock, Num Lock, Button-1 and the high bits drop out; Control, Alt, Super, Mod3 and Mod5 stay" \
+    [lmap s {0 1 2 3 4 5 6 7 8 12 16 17 20 21 64 68 256 257 260 8192 8196 32 128 x} {pcall {wviewer::chord_state $s}}] \
+    {0 0 0 0 4 4 4 4 8 12 0 0 4 4 64 68 0 0 4 0 4 32 128 -1}
+
+  # THE COMPARAND OF THE MATRIX. Its INPUTS come from the engine, not from the
+  # filter:
+  #   * the binding table as `xschem bindings dump` gives it (a graph row whose
+  #     action forwards to the graph);
+  #   * the arms of the key switch that open with the bare graph test, read out
+  #     of src/callback.c with the C comments removed (kc_guards);
+  #   * the bits callback() strips off the state before it decides a key, read
+  #     out of the same file (kc_cfacts).
+  # kc_expect combines them by the steps wviewer::key_chord takes, so SWK21
+  # holds the product to those inputs. It is no second reading of the engine's
+  # control flow: that is row KM13 of test_wave_viewer, which sends every chord
+  # the filter forwards through the real engine.
+  # ONE ENGINE ARM IS IN NEITHER: under Control with a further modifier that is
+  # neither Alt nor Super, `case 't'` asks the graph test too. kc_guards does
+  # not read it (the arm does not open with the bare test) and the filter does
+  # not forward that chord.
+  set fp [open [file join $repo src callback.c] r]; set kc_csrc [read $fp]; close $fp
+  set fp [open [file join $repo src xschem.h] r]; set kc_hsrc [read $fp]; close $fp
+  # kc_cfacts, kc_masks, kc_guards and kc_expect live in wvkey_engine.tcl, which
+  # row KM13 of test_wave_viewer.tcl sources as well.
+  source [file join $here wvkey_engine.tcl]
+  set kc_cf [kc_cfacts $kc_csrc $kc_hsrc]
+  # the masks callback() strips as numbers, by the X protocol's names (X.h)
+  set kc_m [kc_masks $kc_cf]
+  set kc_strip [dict get $kc_m strip] ; set kc_strip_ok [dict get $kc_m strip_ok]
+  set kc_range [dict get $kc_m range]
+  set kc_excl 0 ; set kc_excl_ok [expr {[llength [dict get $kc_cf excl]] > 0}]
+  foreach b [dict get $kc_cf excl] {
+    if {[string is integer -strict $b]} { set kc_excl [expr {$kc_excl | $b}] } else { set kc_excl_ok 0 }
+  }
+  check_true "SWK20 fixture: src/callback.c gave up the masks callback() strips off a key's state and the bit count it keeps, the gesture bits of its graph test (each with a #define in src/xschem.h) and the factor of the graph border" \
+    [expr {$kc_strip_ok && $kc_strip != 0 && $kc_range != 0 && $kc_excl_ok && $kc_excl != 0 &&
+           [string is double -strict [dict get $kc_cf border]] && [dict get $kc_cf border] > 0}]
+  set kc_g [kc_guards $kc_csrc]
+  set kc_rows [pcall {xschem bindings dump}]
+  set kc_grows [lsearch -all -inline -glob $kc_rows {key * graph graph.forward*}]
+  set kc_keys {}
+  catch {set kc_keys $::wviewer::graphkeys}
+  check_true "SWK21 fixture: the engine's key switch gave up its graph arms, its table its graph rows, and the viewer its graph keys" \
+    [expr {[llength $kc_g] > 0 && [lsearch -exact $kc_g {109 0 {}}] >= 0 &&
+           [llength $kc_grows] > 0 && [llength $kc_keys] > 0}]
+  # the states: twelve modifier sets and three that carry Mod3 or Mod5, each
+  # with and without Caps Lock, Num Lock, Button-1 and a bit above the range
+  set kc_states {}
+  foreach b {0 1 4 5 8 9 12 13 64 65 68 72 32 128 36} {
+    foreach lk {0 2} { foreach nl {0 16} { foreach b1 {0 256} { foreach hi {0 8192} {
+      lappend kc_states [expr {$b | $lk | $nl | $b1 | $hi}]
+    } } } }
+  }
+  # chord_state against the engine's own reduction, state by state
+  set kc_bad {}
+  foreach s $kc_states {
+    set got [pcall {wviewer::chord_state $s}]
+    set exp [expr {($s & $kc_range) & ~$kc_strip}]
+    if {$got ne $exp && [llength $kc_bad] < 6} { lappend kc_bad [list $s got $got exp $exp] }
+  }
+  check "SWK20 chord_state drops the bits callback() drops in src/callback.c, no more and no fewer, at every state of the matrix (some states walked, the first disagreements)" \
+    [list [expr {[llength $kc_states] > 0}] $kc_bad] {1 {}}
+  set kc_bad {} ; set kc_n 0 ; set kc_fw 0 ; set kc_exp_fw 0
+  foreach {cad guck} {0 0 1 0 0 1 1 1} {
+    foreach N $kc_keys {
+      foreach s $kc_states {
+        incr kc_n
+        set K [pcall {wviewer::case_keysym $N $s}]
+        set got [pcall {wviewer::key_chord $K $s $cad $guck $kc_rows}]
+        set exp [kc_expect $K $s $cad $guck $kc_rows $kc_g $kc_strip $kc_range]
+        if {$got ne {}} { incr kc_fw }
+        if {$exp ne {}} { incr kc_exp_fw }
+        if {$got ne $exp && [llength $kc_bad] < 6} { lappend kc_bad [list $N $s cad$cad guck$guck got $got exp $exp] }
+      }
+    }
+  }
+  check "SWK21 key_chord against a comparand fed from the engine (its live binding table, the graph arms read out of src/callback.c, the masks callback() strips) over every graph key, a matrix of states and the four profiles (chords walked, the first disagreements)" \
+    [list $kc_n $kc_bad] [list [expr {4 * [llength $kc_keys] * [llength $kc_states]}] {}]
+  check_true "SWK21 ...and the matrix is not all refusals: it forwards as many chords as the comparand, more than none" \
+    [expr {$kc_fw > 0 && $kc_fw == $kc_exp_fw}]
+  # the same decision on chords written out one by one: the family that reached
+  # an editor verb, the graph chords that must keep working, the lock keys, the
+  # two profiles. Each leg: keysym as the filter gets it, state, Cadence profile,
+  # graph_use_ctrl_key, the state the engine is handed ({} = not forwarded).
+  set kc_legs {
+    77 5 0 0 {}     77 4 0 0 {}      115 8 0 0 {}    115 64 0 0 {}   115 12 0 0 {}
+    116 12 0 0 {}   98 8 0 0 {}      98 64 0 0 {}    109 8 0 0 {}    109 64 0 0 {}
+    98 4 0 0 {}     100 4 0 0 {}     77 21 0 0 {}    77 13 0 0 {}    97 128 0 0 {}
+    97 0 0 0 0      97 4 0 0 4       65 1 0 0 1      65 5 0 0 5      98 0 0 0 0
+    66 1 0 0 1      66 5 0 0 5       100 0 0 0 0     115 0 0 0 0     115 4 0 0 4
+    109 0 0 0 0     109 4 0 0 4      77 1 0 0 1      116 0 0 0 0     116 4 0 0 4
+    97 16 0 0 16    97 20 0 0 20     77 17 0 0 17    97 256 0 0 256  109 6 0 0 6
+    115 0 1 0 4     115 16 1 0 20    115 4 1 0 4     115 8 1 0 {}    109 0 1 0 0
+    98 0 0 1 {}     115 0 0 1 {}     77 1 0 1 {}     66 5 0 1 5      97 4 0 1 4
+    115 0 1 1 {}    115 4 1 1 4
+  }
+  set kc_bad {} ; set kc_n 0
+  foreach {N s cad guck want} $kc_legs {
+    incr kc_n
+    set got [pcall {wviewer::key_chord $N $s $cad $guck $kc_rows}]
+    if {$got ne $want} { lappend kc_bad [list $N $s cad$cad guck$guck got $got want $want] }
+  }
+  check "SWK22 key_chord, chord by chord: Ctrl-M, the Alt, Super and Control-Alt chords, Ctrl-b and Ctrl-d are refused; every graph chord is forwarded as typed, under Num Lock, Caps Lock and Button-1 too; plain s in the Cadence profile goes out as Control-s; with graph_use_ctrl_key only the Control chords (legs, offenders)" \
+    [list $kc_n $kc_bad] [list [expr {[llength $kc_legs] / 5}] {}]
+  # a row of the user's own in the engine's table decides before the key switch
+  # and before the graph test
+  set kc_u1 [linsert $kc_rows end {key 109 0 canvas edit.toggle_orthogonal_wiring}]
+  set kc_u2 {}
+  foreach row $kc_rows { if {[lrange $row 0 3] ne {key 115 ctrl graph}} { lappend kc_u2 $row } }
+  set kc_u3 {}
+  foreach row $kc_rows {
+    if {[lrange $row 0 3] eq {key 97 0 graph}} { lappend kc_u3 {key 97 0 graph view.zoom_full} } else { lappend kc_u3 $row }
+  }
+  check "SWK23 key_chord and a user's table row: a canvas row for bare m refuses it; without the engine's Control-s graph row neither Control-s nor the Cadence profile's plain s goes out; a graph row bound to another action refuses; with no table at all only the key switch's own graph arms forward" \
+    [list [pcall {wviewer::key_chord 109 0 0 0 $kc_u1}] [pcall {wviewer::key_chord 109 4 0 0 $kc_u1}] \
+          [pcall {wviewer::key_chord 115 4 0 0 $kc_u2}] [pcall {wviewer::key_chord 115 0 1 0 $kc_u2}] \
+          [pcall {wviewer::key_chord 115 0 0 0 $kc_u2}] \
+          [pcall {wviewer::key_chord 97 0 0 0 $kc_u3}] [pcall {wviewer::key_chord 97 4 0 0 $kc_u3}] \
+          [pcall {wviewer::key_chord 109 0 0 0 {}}] [pcall {wviewer::key_chord 97 0 0 0 {}}]] \
+    [list {} 4 {} {} 0 {} 4 0 {}]
+  # a graph.forward row of the user's own for a Control chord that is a shortcut
+  # of the viewer's. The stock table holds none; a keybindings file from before
+  # the Signal Browser took Ctrl-B, or an rc line, puts one back. The filter
+  # must keep such a chord in the viewer whatever the table says, or one key
+  # press runs the shortcut and reaches the graph as well.
+  set kc_u4 [linsert $kc_rows end {key 98 ctrl graph graph.forward} \
+               {key 100 ctrl graph graph.forward} {key 77 ctrl graph graph.forward}]
+  check "SWK23 ...a graph.forward row of the user's for Control with b, d or M does not hand the viewer's own chord to the engine (Ctrl-b, Ctrl-d, Ctrl-Shift-M, Caps Lock + Ctrl-m, then the first three under Num Lock); the bare keys and Ctrl-m beside them still go out; nor does it with graph_use_ctrl_key set or in the Cadence profile, alone and together" \
+    [list [lmap {N s} {98 4 100 4 77 5 77 6 98 20 100 20 77 21} {pcall {wviewer::key_chord $N $s 0 0 $kc_u4}}] \
+          [lmap {N s} {98 0 100 0 77 1 109 4} {pcall {wviewer::key_chord $N $s 0 0 $kc_u4}}] \
+          [lmap {cad guck} {0 1 1 0 1 1} {lmap {N s} {98 4 100 4 77 5} {pcall {wviewer::key_chord $N $s $cad $guck $kc_u4}}}]] \
+    {{{} {} {} {} {} {} {}} {0 0 1 4} {{{} {} {}} {{} {} {}} {{} {} {}}}}
+  # SWK28: the keysyms key_chord refuses under Control by name (graphown) are
+  # the graph keysyms whose Control chord the WaveViewer tag binds by default.
+  # The population is read off install_default_binds as the interpreter holds
+  # it, comment lines out: a graph keysym counts when a bind statement names its
+  # Control sequence, in the keysym's own case.
+  set own_body [pcall {info body ::wviewer::install_default_binds}]
+  regsub -all -line {^\s*#.*$} $own_body {} own_body
+  set own_d {}
+  foreach N $kc_keys {
+    set c [format %c $N]
+    set seqs [list <Control-Key-$c>]
+    if {[string is upper $c]} { lappend seqs <Control-Shift-Key-$c> }
+    foreach seq $seqs {
+      if {[string first "bind WaveViewer $seq \x7b" $own_body] >= 0} { lappend own_d $N ; break }
+    }
+  }
+  set own_p NO-LIST
+  catch {set own_p $::wviewer::graphown}
+  check "SWK28 graphown holds the graph keysyms whose Control chord install_default_binds binds on the WaveViewer tag: the product's list against the one derived from the proc, which is not empty" \
+    [list [lsort $own_p] [expr {[llength $own_d] > 0}]] [list [lsort $own_d] 1]
+  # SWK29: the engine asks its binding table before its key switch
+  # (key_chord_has_binding in src/callback.c): any row for the key at the state
+  # it reduces to, whatever the row's context. For a named key (Escape) Shift
+  # and Button-1 count; for a letter they are dropped, as chord_state drops them.
+  set kh_rows {{key 65307 0 canvas edit.toggle_orthogonal_wiring}
+               {key 65307 ctrl+shift global view.zoom_full idle}
+               {key 97 ctrl graph graph.forward} {button 1 0 canvas x.y} {wheel up alt canvas x.y}}
+  check "SWK29 row_mods reads a row's modifier word back into state bits (an empty word is no modifier, as the engine's own parser has it) and answers -1 for a word it does not know" \
+    [lmap w {0 ctrl shift alt super ctrl+shift ctrl+shift+alt+super shift+alt bogus ctrl+bogus {}} {pcall {wviewer::row_mods $w}}] \
+    {0 4 1 8 64 5 77 9 -1 -1 0}
+  check "SWK29 key_has_row: Escape has a row at the bare state (under Caps Lock and Num Lock too) and at Control-Shift, none with Shift alone, Control alone or a held Button-1; a letter's row is found with Shift and Button-1 on top; a button or wheel row is no key row; an empty table has none; a state that is no number answers 0" \
+    [list [lmap {N st} {65307 0 65307 2 65307 16 65307 8210 65307 5 65307 1 65307 4 65307 256 65307 8} {pcall {wviewer::key_has_row $N $st $kh_rows}}] \
+          [lmap {N st} {97 4 97 5 97 261 97 0 1 0} {pcall {wviewer::key_has_row $N $st $kh_rows}}] \
+          [pcall {wviewer::key_has_row 65307 0 {}}] [pcall {wviewer::key_has_row 65307 x $kh_rows}]] \
+    {{1 1 1 1 1 0 0 0 0} {1 1 1 0 0} 0 0}
+  # the filter itself, on a path that is no viewer's, with the forward and the
+  # pixel test replaced by recorders: it hands the decision the profile of the
+  # moment and the engine's LIVE table
+  # (the model-only windows of the rows above sit in the registry with no canvas
+  # path; the filter's reverse lookup walks the registry, so it is emptied for
+  # these calls and put back)
+  set kf_reg $::wviewer::windows
+  set ::wviewer::windows [dict create]
+  set ::swk_kf {}
+  set ::swk_esc 0
+  rename ::xschem ::swk19_xschem
+  proc ::xschem {args} {
+    if {[lindex $args 0] eq {callback}} {
+      if {[lindex $args 2] == 2} { lappend ::swk_kf [list [lindex $args 5] [lindex $args 8]] }
+      return {}
+    }
+    if {$args eq {escape}} { incr ::swk_esc ; return {} }
+    return [uplevel 1 [list ::swk19_xschem {*}$args]]
+  }
+  # the two graph gates answer ::swk_gate: yes for the chord legs, no for the
+  # legs that ask whether a chord gets past a refusing gate
+  set ::swk_gate 1
+  set swk19_gates {}
+  foreach p {over_graph key_at_graph} {
+    if {[info commands ::wviewer::$p] ne {}} { rename ::wviewer::$p ::swk19_orig_$p ; lappend swk19_gates $p }
+    proc ::wviewer::$p {args} { return $::swk_gate }
+  }
+  proc kf_one {N s} {
+    set ::swk_kf {}
+    set r [pcall {wviewer::key_filter .no.such.canvas 2 10 10 $N [format %c $N] $s}]
+    if {[string match ERR:* $r]} { return $r }
+    return $::swk_kf
+  }
+  set kf_cad0 0 ; set kf_at0 0 ; set kf_g0 0
+  catch {set kf_cad0 $::cadence_compat}
+  catch {set kf_at0 $::autotrim_wires}
+  catch {set kf_g0 $::graph_use_ctrl_key}
+  set kf_fam {}
+  foreach {N s} {77 5 109 6 115 8 115 64 115 12 116 12 98 8 98 64 109 8 109 64} { lappend kf_fam [kf_one $N $s] }
+  set kf_ctl {}
+  foreach {N s} {97 0 97 4 65 5 98 0 100 0 115 0 115 4 109 0 109 4 77 1 116 0 97 16} { lappend kf_ctl [kf_one $N $s] }
+  set ::cadence_compat 1
+  set kf_cad [list [kf_one 115 0] [kf_one 115 8]]
+  # the pixel gate says no: nothing goes out, the Cadence profile's plain s
+  # least of all (it would go out as Control-s, and off a graph that is Save)
+  set ::swk_gate 0
+  set kf_nogate [list [kf_one 115 0] [kf_one 98 0] [kf_one 109 4] [kf_one 77 1]]
+  set ::cadence_compat $kf_cad0
+  catch {set ::autotrim_wires $kf_at0}
+  lappend kf_nogate [kf_one 115 0] [kf_one 97 0] [kf_one 65 5]
+  set ::swk_gate 1
+  set ::graph_use_ctrl_key 1
+  set kf_guck [list [kf_one 98 0] [kf_one 66 5]]
+  set ::graph_use_ctrl_key $kf_g0
+  set kf_b0 [kf_one 109 0]
+  set kf_bind [pcall {xschem bind key 109 0 canvas edit.toggle_orthogonal_wiring}]
+  set kf_b1 [kf_one 109 0]
+  pcall {xschem unbind key 109 0 canvas}
+  set kf_b2 [kf_one 109 0]
+  # Escape: forwarded as typed while the engine's table has no row for it. With
+  # a row for the chord (a user's own: none ships) the key stays in the viewer
+  # and the abort is done by the verb, `xschem escape`, on the press only.
+  proc kf_esc {T s} {
+    set ::swk_kf {} ; set ::swk_esc 0
+    set r [pcall {wviewer::key_filter .no.such.canvas $T 10 10 65307 Escape $s}]
+    if {[string match ERR:* $r]} { return $r }
+    return [list $::swk_kf $::swk_esc]
+  }
+  set kf_e0 [list [kf_esc 2 0] [kf_esc 2 1] [kf_esc 2 16]]
+  set kf_ebind [list [pcall {xschem bind key 65307 0 canvas edit.toggle_orthogonal_wiring}] \
+                     [pcall {xschem bind key 65307 shift canvas edit.toggle_orthogonal_wiring}]]
+  set kf_e1 [list [kf_esc 2 0] [kf_esc 2 1] [kf_esc 2 18] [kf_esc 3 0] [kf_esc 2 4]]
+  pcall {xschem unbind key 65307 0 canvas}
+  pcall {xschem unbind key 65307 shift canvas}
+  set kf_e2 [list [kf_esc 2 0] [kf_esc 2 1]]
+  rename kf_esc {}
+  foreach p {over_graph key_at_graph} {
+    rename ::wviewer::$p {}
+    if {[lsearch -exact $swk19_gates $p] >= 0} { rename ::swk19_orig_$p ::wviewer::$p }
+  }
+  rename ::xschem {}
+  rename ::swk19_xschem ::xschem
+  rename kf_one {}
+  set ::wviewer::windows $kf_reg
+  check "SWK24 key_filter forwards none of the family (Ctrl-Shift-M, Caps Lock + Ctrl-m, Alt-s, Super-s, Control-Alt-s, Control-Alt-t, Alt-b, Super-b, Alt-m, Super-m)" \
+    $kf_fam {{} {} {} {} {} {} {} {} {} {}}
+  check "SWK24 ...and still forwards the graph chords, each as typed" \
+    $kf_ctl {{{97 0}} {{97 4}} {{65 5}} {{98 0}} {{100 0}} {{115 0}} {{115 4}} {{109 0}} {{109 4}} {{77 1}} {{116 0}} {{97 16}}}
+  check "SWK24 ...in the Cadence profile plain s goes out as Control-s and Alt-s stays in; with graph_use_ctrl_key bare b stays in and Ctrl-Shift-B goes out; the profile variables are back" \
+    [list $kf_cad $kf_guck [list $::cadence_compat $::graph_use_ctrl_key]] \
+    [list {{{115 4}} {}} {{} {{66 5}}} [list $kf_cad0 $kf_g0]]
+  check "SWK24 ...and it reads the engine's live table: bare m is forwarded, not with a canvas row bound for it, and again once the row is unbound" \
+    [list $kf_b0 $kf_bind $kf_b1 $kf_b2] {{{109 0}} {} {} {{109 0}}}
+  check "SWK24 ...with the pixel gate answering no it forwards no graph key: in the Cadence profile plain s, bare b, Ctrl-m and Shift-M, in the stock profile plain s, bare a and Ctrl-Shift-A" \
+    $kf_nogate {{} {} {} {} {} {} {}}
+  check "SWK24 ...Escape goes to the engine as typed while its table has no row for it (bare, with Shift, under Num Lock), and the verb is not called" \
+    $kf_e0 {{{{65307 0}} 0} {{{65307 1}} 0} {{{65307 16}} 0}}
+  check "SWK24 ...with a row of the user's for Escape and one for Shift-Escape neither is forwarded and each press runs the escape verb once (bare, with Shift, under Caps Lock and Num Lock); the release does nothing; Control-Escape, which has no row, is still forwarded" \
+    [list $kf_ebind $kf_e1] {{{} {}} {{{} 1} {{} 1} {{} 1} {{} 0} {{{65307 4}} 0}}}
+  check "SWK24 ...and with the rows unbound Escape is forwarded again" \
+    $kf_e2 {{{{65307 0}} 0} {{{65307 1}} 0}}
+  # the pixel half of the gate: the band test with the engine's border as inset
+  set kb {{0 0 100 50} {0 50 100 100}}
+  check "SWK25 band_at_inset: a pixel counts for a strip only at least the inset inside all four of its edges, the seam belongs to neither strip, and the border in pixels is a whole number that clears five pixels" \
+    [list [lmap p {{50 7} {50 8} {50 42} {50 43} {50 57} {50 58} {7 25} {8 25} {92 25} {93 25} {50 92} {50 93}} \
+             {pcall {wviewer::band_at_inset $kb [lindex $p 0] [lindex $p 1] 8}}] \
+          [pcall {wviewer::band_at_inset {} 5 5 8}] \
+          [pcall {expr {[string is integer -strict [wviewer::graph_border_px]] && [wviewer::graph_border_px] > 5}}]] \
+    {{-1 0 0 -1 -1 1 -1 0 0 -1 1 -1} -1 1}
+  # the border in pixels against the engine's own: its factor (kc_cfacts) times
+  # the Tk scaling of this display. Not less, or a pixel the engine calls canvas
+  # passes the gate; less than two pixels more. Without Tk there is no scaling
+  # to compare with and the leg says so.
+  set kb_f [dict get $kc_cf border]
+  if {[info commands tk] eq {} || [catch {set kb_sc [tk scaling]}] || ![string is double -strict $kb_f]} {
+    set kb_got no-tk
+    set kb_exp [expr {[info commands tk] eq {} ? {no-tk} : {a-factor-and-a-scaling}}]
+  } else {
+    set kb_px [pcall {wviewer::graph_border_px}]
+    set kb_got [list $kb_px [expr {[string is integer -strict $kb_px] && $kb_px >= $kb_f * $kb_sc && $kb_px < $kb_f * $kb_sc + 2}]]
+    set kb_exp [list $kb_px 1]
+  }
+  check "SWK25 ...graph_border_px is no smaller than the engine's border at this display's Tk scaling (the factor read out of waves_selected) and less than two pixels larger; without Tk there is nothing to compare" \
+    $kb_got $kb_exp
+  # ...and at other scalings than this display's. One display has one scaling,
+  # and at an ordinary one a constant passes the leg above; the engine's border
+  # grows with the scaling and a constant falls short of it on a display that
+  # scales more. The `tk` command is answered by a recorder for the walk (its
+  # `scaling` only; anything else goes on to the real command where there is
+  # one), so the leg runs without Tk too. No event is served while it stands.
+  set kb_tk [expr {[info commands ::tk] ne {}}]
+  if {$kb_tk} { rename ::tk ::swk25_real_tk }
+  proc ::tk {args} {
+    if {$args eq {scaling}} { return $::swk25_sc }
+    if {[info commands ::swk25_real_tk] ne {}} { return [uplevel 1 [list ::swk25_real_tk {*}$args]] }
+    return -code error "no tk here"
+  }
+  set kb_walk {} ; set kb_seen {}
+  foreach ::swk25_sc {1.0 1.25 1.6 2.0 3.0} {
+    set kb_px [pcall {wviewer::graph_border_px}]
+    lappend kb_seen $kb_px
+    lappend kb_walk [expr {[string is integer -strict $kb_px] && [string is double -strict $kb_f] &&
+                           $kb_px >= $kb_f * $::swk25_sc && $kb_px < $kb_f * $::swk25_sc + 2}]
+  }
+  rename ::tk {}
+  if {$kb_tk} { rename ::swk25_real_tk ::tk }
+  check "SWK25 ...and at Tk scalings from 1.0 to 3.0, the tk command answered by a recorder: at each, graph_border_px is no smaller than the engine's border there (the factor times that scaling) and less than two pixels larger, and the answers are not all one number; the tk command is back as it was" \
+    [list $kb_walk [expr {[llength [lsort -unique $kb_seen]] > 1}] [expr {([info commands ::tk] ne {}) == $kb_tk}]] \
+    {{1 1 1 1 1} 1 1}
+  # strip_at_pixel_inset is the same band test behind the press of the
+  # middle-button pan (wviewer::btn2_filter): a press in the engine's border
+  # would pan the schematic canvas (issue 0149). Its bands come from
+  # strip_bands_px, answered here by a recorder. A pixel three pixels inside
+  # an edge is no strip's with the proc's own inset and is the strip's with
+  # inset 0; an inset given by the caller is the one used.
+  set ::swk25_asked {}
+  rename ::wviewer::strip_bands_px ::wviewer::__swk25_real_sbp
+  proc ::wviewer::strip_bands_px {wp} { lappend ::swk25_asked $wp ; return {{0 0 100 50} {0 50 100 100}} }
+  set kb_s [lmap a {{50 3} {50 3 0} {50 97} {50 97 0} {50 25} {50 75} {50 12 13} {50 13 13}} \
+              {pcall {wviewer::strip_at_pixel_inset .swk25 {*}$a}}]
+  rename ::wviewer::strip_bands_px {}
+  rename ::wviewer::__swk25_real_sbp ::wviewer::strip_bands_px
+  check "SWK25 ...strip_at_pixel_inset, the press test of the middle-button pan, with its bands answered by a recorder: three pixels inside the top edge of the first strip, and inside the bottom edge of the second, is no strip with the proc's own inset and the strip itself with inset 0; the middle of each strip is that strip; with an inset given, the pixel one short of it is no strip and the pixel at it is (the answers, the canvas the bands were asked for)" \
+    [list $kb_s [lsort -unique $::swk25_asked]] {{-1 0 -1 1 0 1 -1 0} .swk25}
+  # SWK27: the gate itself, on a registry entry made for the row and with the
+  # engine's getters answered by a recorder (zoom 1, origin 0, so a band is its
+  # own pixels). One condition is moved per leg.
+  set ::swk27 [dict create current_win_path .swk27 ui_state 0 fix_mouse_coord 0 zoom 1 xorigin 0 yorigin 0]
+  rename ::xschem ::swk27_xschem
+  proc ::xschem {args} {
+    if {[lindex $args 0] eq {get} && [dict exists $::swk27 [lindex $args 1]]} {
+      return [dict get $::swk27 [lindex $args 1]]
+    }
+    return [uplevel 1 [list ::swk27_xschem {*}$args]]
+  }
+  set swk27_gm {}
+  foreach p {getmousex getmousey} {
+    if {[info commands ::$p] ne {}} { rename ::$p ::swk27_orig_$p ; lappend swk27_gm $p }
+  }
+  proc ::getmousex {w} { return [lindex $::swk27_ptr 0] }
+  proc ::getmousey {w} { return [lindex $::swk27_ptr 1] }
+  set ::swk27_ptr {50 25}
+  set swk27_bb {}
+  catch {set swk27_bb $::wviewer::graphbb}
+  # five strips, one under the other: in multi-plot mode every signal has a
+  # strip of its own, so a window of more than two is the ordinary one. Beside
+  # them the two strips of a second subwindow: subwindows sit side by side, so
+  # those two have another left edge. The legs that name a strip use the first
+  # two of the first column; the walk takes the middle of every band the
+  # registry entry holds, and says whether the entry has more than two bands
+  # and more than one left edge.
+  set swk27_bands {{0 0 100 50} {0 50 100 100} {0 100 100 150} {0 150 100 200} {0 200 100 250}
+                   {100 0 200 125} {100 125 200 250}}
+  catch {dict set ::wviewer::graphbb .swk27 $swk27_bands}
+  set g27 {}
+  lappend g27 mid [pcall {wviewer::key_at_graph .swk27 50 25}]
+  lappend g27 mid-second-strip [pcall {wviewer::key_at_graph .swk27 50 75}]
+  set g27mid {}
+  set g27left {}
+  catch {
+    foreach b [dict get $::wviewer::graphbb .swk27] {
+      lappend g27left [lindex $b 0]
+      lappend g27mid [pcall {wviewer::key_at_graph .swk27 \
+        [expr {([lindex $b 0] + [lindex $b 2]) / 2}] [expr {([lindex $b 1] + [lindex $b 3]) / 2}]}]
+    }
+  }
+  lappend g27 mid-every-strip [list [expr {[llength $g27mid] > 2}] \
+    [expr {[llength [lsort -unique $g27left]] > 1}] [lsort -unique $g27mid]]
+  lappend g27 edge [pcall {wviewer::key_at_graph .swk27 50 3}]
+  lappend g27 edge-second-strip [pcall {wviewer::key_at_graph .swk27 50 97}]
+  # where the gate begins: a pixel exactly the border's width
+  # (wviewer::graph_border_px) inside an edge is taken, the pixel before it is
+  # not. The top and the left edge of the first strip, the bottom and the
+  # right edge of the second.
+  set gbp27 [pcall {wviewer::graph_border_px}]
+  if {![string is integer -strict $gbp27]} { set gbp27 8 }
+  set far27 [expr {100 - $gbp27}]
+  lappend g27 at-the-border \
+    [lmap p [list [list 50 $gbp27] [list $gbp27 25] [list 50 $far27] [list $far27 75]] \
+       {pcall {wviewer::key_at_graph .swk27 [lindex $p 0] [lindex $p 1]}}]
+  lappend g27 one-pixel-short \
+    [lmap p [list [list 50 [expr {$gbp27 - 1}]] [list [expr {$gbp27 - 1}] 25] \
+                  [list 50 [expr {$far27 + 1}]] [list [expr {$far27 + 1}] 75]] \
+       {pcall {wviewer::key_at_graph .swk27 [lindex $p 0] [lindex $p 1]}}]
+  lappend g27 seam [pcall {wviewer::key_at_graph .swk27 50 50}]
+  lappend g27 no-such-canvas [pcall {wviewer::key_at_graph .swk27x 50 25}]
+  dict set ::swk27 current_win_path .drw
+  lappend g27 other-context [pcall {wviewer::key_at_graph .swk27 50 25}]
+  dict set ::swk27 current_win_path .swk27
+  # every bit of a gesture in flight, one at a time: the bits are the engine's
+  # own, the `excl` set of waves_selected as kc_cfacts read it out of the C
+  # source. Then two bits that are not (a graph pan, a menu command waiting for
+  # its click).
+  set g27busy {}
+  foreach b [dict get $kc_cf excl] {
+    dict set ::swk27 ui_state $b
+    lappend g27busy [pcall {wviewer::key_at_graph .swk27 50 25}]
+  }
+  lappend g27 busy [list [expr {[llength $g27busy] > 0}] [lsort -unique $g27busy]]
+  dict set ::swk27 ui_state [expr {32768 | 65536}]
+  lappend g27 not-busy [pcall {wviewer::key_at_graph .swk27 50 25}]
+  dict set ::swk27 ui_state 0
+  dict set ::swk27 zoom 0
+  lappend g27 zoom-0 [pcall {wviewer::key_at_graph .swk27 50 25}]
+  dict set ::swk27 zoom 1
+  # fix_mouse_coord: the pointer decides, not the event's pixel
+  dict set ::swk27 fix_mouse_coord 1
+  set ::swk27_ptr {50 25}
+  lappend g27 pointer-mid-event-edge [pcall {wviewer::key_at_graph .swk27 50 3}]
+  set ::swk27_ptr {50 3}
+  lappend g27 pointer-edge-event-mid [pcall {wviewer::key_at_graph .swk27 50 25}]
+  dict set ::swk27 fix_mouse_coord 0
+  # The gate reads the strips and the view at EVERY call. The same canvas is
+  # asked again after each of three things moved with the number of bands kept:
+  # the registry entry (every band 300 further down, then put back), the canvas
+  # origin (25 down, then back) and the zoom (halved, then back). For the entry
+  # and for the origin two pixels are asked each time, one that a strip holds
+  # only before the move and one that a strip holds only after it; for the zoom
+  # two pixels that a strip holds only while it is halved.
+  set g27re {}
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27 50 325}]]
+  set swk27_moved [lmap b $swk27_bands {list [lindex $b 0] [expr {[lindex $b 1] + 300}] \
+                                             [lindex $b 2] [expr {[lindex $b 3] + 300}]}]
+  catch {dict set ::wviewer::graphbb .swk27 $swk27_moved}
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27 50 325}]]
+  catch {dict set ::wviewer::graphbb .swk27 $swk27_bands}
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27 50 325}]]
+  dict set ::swk27 yorigin 25
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27 50 50}]]
+  dict set ::swk27 yorigin 0
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27 50 50}]]
+  dict set ::swk27 zoom 0.5
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 50}] [pcall {wviewer::key_at_graph .swk27 50 350}]]
+  dict set ::swk27 zoom 1
+  lappend g27re [list [pcall {wviewer::key_at_graph .swk27 50 50}] [pcall {wviewer::key_at_graph .swk27 50 350}]]
+  set g27n [list [llength $swk27_bands] [llength $swk27_moved]]
+  # A SECOND viewer canvas in the registry, entered after the first: asked in
+  # its own context the gate says yes in the middle of its strip, as it does
+  # for the first canvas in the first one's context; each says no while the
+  # other's context is the current one.
+  catch {dict set ::wviewer::graphbb .swk27b {{0 0 100 50}}}
+  set g27two {}
+  dict set ::swk27 current_win_path .swk27b
+  lappend g27two [pcall {wviewer::key_at_graph .swk27b 50 25}] [pcall {wviewer::key_at_graph .swk27 50 25}]
+  dict set ::swk27 current_win_path .swk27
+  lappend g27two [pcall {wviewer::key_at_graph .swk27 50 25}] [pcall {wviewer::key_at_graph .swk27b 50 25}]
+  set g27pos {-1 -1}
+  catch {
+    set g27keys [dict keys $::wviewer::graphbb]
+    set g27pos [list [lsearch -exact $g27keys .swk27] [lsearch -exact $g27keys .swk27b]]
+  }
+  catch {set ::wviewer::graphbb $swk27_bb}
+  rename ::getmousex {}
+  rename ::getmousey {}
+  foreach p $swk27_gm { rename ::swk27_orig_$p ::$p }
+  rename ::xschem {}
+  rename ::swk27_xschem ::xschem
+  check "SWK27 key_at_graph: yes in the middle of a strip, the second strip like the first, and in the middle of every strip of a window of more than two strips and two subwindows side by side (the entry has more than two bands, more than one left edge, and every middle answers yes); no in the border of either; yes at a pixel exactly the border's width inside an edge and no one pixel before it (four edges); no on the seam, for a canvas that is no viewer's, in another context, with a gesture in flight (each bit of the engine's excl set, some walked), at zoom 0; a graph pan or a waiting menu command is no gesture in flight; with fix_mouse_coord the pointer decides" \
+    $g27 {mid 1 mid-second-strip 1 mid-every-strip {1 1 1} edge 0 edge-second-strip 0 at-the-border {1 1 1 1} one-pixel-short {0 0 0 0} seam 0 no-such-canvas 0 other-context 0 busy {1 0} not-busy 1 zoom-0 0 pointer-mid-event-edge 1 pointer-edge-event-mid 0}
+  check "SWK27 ...and it answers from the strips and the view of the moment: asked again for the same canvas after every band of its registry entry moved 300 down with the number of bands kept, and after they were put back; after the canvas origin moved 25 down, and back; after the zoom was halved, and back (per step two pixels: for the entry and the origin one a strip holds only before the move and one only after it, for the zoom two a strip holds only while it is halved; then the number of bands before and after the entry's move)" \
+    [list $g27re [expr {[lindex $g27n 0] > 0 && [lindex $g27n 0] == [lindex $g27n 1]}]] \
+    {{{1 0} {0 1} {1 0} {0 1} {1 0} {1 1} {0 0}} 1}
+  check "SWK27 ...and it knows every viewer canvas of the registry: for a second canvas, entered after the first, it says yes in the middle of a strip while that canvas's context is the current one and no for the first canvas then; with the first canvas's context current, the other way round (the four answers; the second canvas comes after the first among the registry's keys)" \
+    [list $g27two [expr {[lindex $g27pos 0] >= 0 && [lindex $g27pos 1] > [lindex $g27pos 0]}]] {{1 0 1 0} 1}
+  set gb_p NO-MASK
+  catch {set gb_p $::wviewer::graphbusy}
+  check "SWK27 ...and graphbusy is that excl set, bit for bit" $gb_p $kc_excl
+  rename kc_cfacts {}
+  rename kc_masks {}
+  rename kc_guards {}
+  rename kc_expect {}
 
   # ---- SWT1-SWT4: the trace moves on a model-only window (user request
   # 2026-10-16): a strip emptied INTO ANOTHER subwindow goes, in the same undo
@@ -2613,22 +3274,67 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     lappend kf $N/$st $::swk_rec
   }
   # ...and the keysym it FORWARDS to C carries the typed case too (Ctrl-a):
-  # `xschem callback` and over_graph are recorders for these four calls only
+  # `xschem callback` and the filter's graph gates (the mouse-mirror one and
+  # the pixel one that decides a graph key) are recorders for these four calls
+  # only, so the pixel the calls name does not matter at any Tk scaling
   set ::swk_fwd {}
   rename ::xschem ::swk_orig_xschem
   proc ::xschem {args} {
     if {[lindex $args 0] eq {callback}} { lappend ::swk_fwd [lindex $args 5] ; return {} }
     return [uplevel 1 [list ::swk_orig_xschem {*}$args]]
   }
-  rename ::wviewer::over_graph ::swk_orig_over_graph
-  proc ::wviewer::over_graph {W} { return 1 }
+  set swk18_gates {}
+  foreach p {over_graph key_at_graph} {
+    if {[info commands ::wviewer::$p] ne {}} { rename ::wviewer::$p ::swk18_orig_$p ; lappend swk18_gates $p }
+    proc ::wviewer::$p {args} { return 1 }
+  }
   foreach {N st} {97 6 65 7 97 4 65 5} {
     pcall {wviewer::key_filter $vdrw 2 10 10 $N [format %c $N] $st}
   }
-  rename ::wviewer::over_graph {}
-  rename ::swk_orig_over_graph ::wviewer::over_graph
+  foreach p {over_graph key_at_graph} {
+    rename ::wviewer::$p {}
+    if {[lsearch -exact $swk18_gates $p] >= 0} { rename ::swk18_orig_$p ::wviewer::$p }
+  }
   rename ::xschem {}
   rename ::swk_orig_xschem ::xschem
+  # SWK26: the Caps Lock matrix for m. It is the one letter of case_pairs whose
+  # lower-case chord is the engine's (Ctrl-m makes a marker), not a viewer
+  # shortcut, so its legs need the filter's forward as well as the tag binding.
+  # ks_once sends a key with no coordinates, and with the real engine behind
+  # the filter a Ctrl-m at the window's corner arms a move in this viewer: the
+  # forward of a key to the engine and the filter's pixel test are recorders
+  # here, and so is the wrapper the chord runs.
+  set ::swk_mk {}
+  rename ::xschem ::swk26_xschem
+  proc ::xschem {args} {
+    if {[lindex $args 0] eq {callback} && ([lindex $args 2] == 2 || [lindex $args 2] == 3)} {
+      if {[lindex $args 2] == 2} { lappend ::swk_mk [lindex $args 5] }
+      return {}
+    }
+    return [uplevel 1 [list ::swk26_xschem {*}$args]]
+  }
+  set swk26_gates {}
+  foreach p {over_graph key_at_graph} {
+    if {[info commands ::wviewer::$p] ne {}} { rename ::wviewer::$p ::swk26_orig_$p ; lappend swk26_gates $p }
+    proc ::wviewer::$p {args} { return 1 }
+  }
+  set swk26_had [expr {[info commands ::wviewer::plot_mode_toggle_at] ne {}}]
+  if {$swk26_had} { rename ::wviewer::plot_mode_toggle_at ::swk26_orig_pmt }
+  proc ::wviewer::plot_mode_toggle_at {W} { lappend ::swk_rec plot_mode_toggle_at }
+  set mm {}
+  foreach st {4 5 6 7} {
+    set ::swk_rec {} ; set ::swk_mk {}
+    set ok [ks_once $vdrw [expr {$st == 5 || $st == 6 ? {M} : {m}}] $st]
+    lappend mm m$st [expr {$ok ? [list $::swk_rec $::swk_mk] : {NOFOCUS}}]
+  }
+  rename ::wviewer::plot_mode_toggle_at {}
+  if {$swk26_had} { rename ::swk26_orig_pmt ::wviewer::plot_mode_toggle_at }
+  foreach p {over_graph key_at_graph} {
+    rename ::wviewer::$p {}
+    if {[lsearch -exact $swk26_gates $p] >= 0} { rename ::swk26_orig_$p ::wviewer::$p }
+  }
+  rename ::xschem {}
+  rename ::swk26_xschem ::xschem
   # case_key passes the base script's `break` on: called directly, and then a
   # REAL Caps Lock + Ctrl-g with a recorder on the next bindtag (the toplevel),
   # which only fires if the break was lost
@@ -2649,7 +3355,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   }
   rename ::wviewer::graph_zoom {}
   rename ::swk_orig_graph_zoom ::wviewer::graph_zoom
-  check "SWK8 Caps Lock: the case as typed decides every Ctrl-letter pair (d g n w e u z b c q v, state 4 5 6 7)" \
+  check "SWK8 Caps Lock: the case as typed decides every Ctrl-letter pair (d g n w e u z b c q v, state 4 5 6 7; m is row SWK26's)" \
     $mx $want
   check "SWK8 ...and when the server reports the other keysym case (or no Lock bit) the state still decides" \
     $mv {D7 clear_all_at d6 clear_target_subwin_at N7 new_tab_at w6 close_subwin_at D4 clear_target_subwin_at}
@@ -2659,6 +3365,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     $::swk_fwd {65 97 97 65}
   check "SWK18 case_key passes break on (code 3), and a REAL Caps Lock + Ctrl-g stops at the viewer's tag (no leak to the toplevel)" \
     $kb {3 brk grid_toggle_subwin_at}
+  check "SWK26 Caps Lock and m, real keys with the engine recorded: Ctrl-m and Caps Lock + Ctrl-Shift-M go to the engine as keysym m and run no viewer shortcut; Ctrl-Shift-M and Caps Lock + Ctrl-m run the plot-mode wrapper and reach the engine not at all" \
+    $mm {m4 {{} 109} m5 {plot_mode_toggle_at {}} m6 {plot_mode_toggle_at {}} m7 {{} 109}}
+  # SWK28 on the LIVE tag: a graph keysym whose Control sequence, in the
+  # keysym's own case, carries a script that is not the Caps Lock dispatcher
+  set own_live {}
+  set own_gk {}
+  catch {set own_gk $::wviewer::graphkeys}
+  foreach N $own_gk {
+    set c [format %c $N]
+    set seqs [list <Control-Key-$c>]
+    if {[string is upper $c]} { lappend seqs <Control-Shift-Key-$c> }
+    foreach seq $seqs {
+      set scr [bind WaveViewer $seq]
+      if {$scr ne {} && ![string match {wviewer::case_key *} $scr]} { lappend own_live $N ; break }
+    }
+  }
+  set own_p NO-LIST
+  catch {set own_p $::wviewer::graphown}
+  check "SWK28 DISPLAY: graphown against the live WaveViewer tag, the graph keysyms whose Control sequence runs a viewer shortcut there (the product's list, the live one, which is not empty)" \
+    [list [lsort $own_p] [expr {[llength $own_live] > 0}]] [list [lsort $own_live] 1]
   set ub {}
   set cp8 [pcall {wviewer::case_pairs}]
   if {[string match ERR:* $cp8]} { set ub $cp8 ; set cp8 {} }
@@ -4608,7 +5334,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 250 } else { set expect 544 }
+if {$::arm eq {nogui}} { set expect 280 } else { set expect 576 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

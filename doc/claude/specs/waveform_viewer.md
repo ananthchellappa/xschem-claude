@@ -522,9 +522,242 @@ refuses object mutation). Two survivors were closed in `strip_bindings` /
 Not a hole (recorded in issue 0149): a graph rect can still be *selected* by a
 click in the 5 px `border` inset at a band edge — cosmetic; the drag-move itself
 is gated on `!xctx->readonly`, so nothing in the viewer can be moved or deleted.
+(2026-11-21: that inset WAS a hole for KEYS. A graph key pressed there ran the
+engine's canvas arm; see "What the key filter forwards" below.)
 Making a graph "move" (swap strip positions) shipped on 2026-07-27 as strip
 drag-reorder (below) — and, as anticipated here, it is deliberately NOT a
 schematic move: it is a list move on the Tcl model followed by a regenerate.
+
+## What the key filter forwards (2026-11-21)
+
+Contract: **no key that arrives at a viewer's canvas reaches an editor verb of
+the engine**, in the stock profile and in the Cadence one. A key arrives there
+while that canvas has the keyboard focus. The engine gives the canvas the
+focus when the pointer's entering SWITCHES the context to the viewer (with
+`mouse_follows_focus` on, as it ships), and a click in the plot gives it too.
+A viewer that has just been opened is already the current context, with the
+focus on its toplevel: the pointer coming into its plot switches nothing and
+brings no focus, and no viewer key works there until one click in the plot
+(see the limits).
+(Amended 2026-11-21, second repair of this item: the line read "no key pressed
+in a viewer window". That is more than a filter on the viewer's canvas can
+keep. A key that reaches the engine through ANOTHER window's canvas while the
+viewer's context is current is outside it: see the limits. Amended again the
+same day, third repair: the second sentence read "the engine gives it the
+focus when the pointer comes in from another window", which is false for the
+state every viewer is in right after it opens.) The read-only flag
+was never that guarantee: it stops object mutation, and several of the verbs below
+are not mutations (a reload prompt, a Save form, a new window, a view toggle),
+while `m` and `d` are forwarded with read-only lifted.
+
+Before this date `wviewer::key_filter` forwarded a graph key by KEYSYM (the
+list `graphkeys`, with carve-outs for Ctrl-d and Ctrl-b) whenever the mouse
+mirror sat inside a strip. The engine then decided again, by modifiers,
+profile, binding table and its own graph test, and where it decided "not the
+graph" the same keysym was an editor verb. Measured in a viewer on the product
+of that day, pointer in the middle of a strip unless said otherwise:
+
+| chord | what it reached |
+|-------|-----------------|
+| Ctrl-Shift-M, Caps Lock + Ctrl-m | the "View is Read Only" message box (the schematic's move) |
+| plain `s`, Cadence profile | the same box (the snapped wire) |
+| Alt-s, Super-s | "Are you sure you want to reload from disk?" |
+| Ctrl-Alt-s | the Save-as-symbol form |
+| Ctrl-Alt-t | a new schematic (a tab of the main window) |
+| Alt-b, Super-b | stepped `hide_symbols`, a global |
+| Alt-m, Super-m | with `infix_interface` off, a move armed in the viewer (`ui_state` MENUSTART); with it on, the move started on an empty selection |
+| a graph key two pixels inside a strip's edge | the canvas arm: `a` the make-symbol prompt, `s` the run-simulation prompt, `b`/`t`/Shift-M/Shift-B the read-only box, `m` an armed move, Ctrl-s the Save form |
+| a bare graph key with `graph_use_ctrl_key` set | the canvas arm, anywhere over a strip |
+| a user's `canvas` row in the binding table for a chord the filter forwards (bare `m`, Ctrl-Shift-M) | the row's action, run from the viewer |
+| Escape, with a row of the user's for it in the binding table (none ships) | the row's action, run from the viewer (by reading, the abort is skipped too: the engine returns before its Escape arm) |
+
+**The rule.** The filter forwards a graph key only when the engine itself will
+hand it to the graph. Two questions, both asked in Tcl before the forward; a
+key that fails either is not forwarded, and then nothing happens or the
+`WaveViewer` tag runs the viewer's own shortcut for it.
+
+1. **The chord** (`wviewer::key_chord`, pure). With the state reduced the way
+   `callback()` reduces it (`wviewer::chord_state`: the bits above the modifier
+   range, Num Lock, Caps Lock, Shift and Button-1 dropped), the FILTER forwards
+   a graph key in exactly these cases:
+
+   | reduced state | forwarded |
+   |---------------|-----------|
+   | none | every graph key: `a b d s m t A B M`. Plain `s` only outside the Cadence profile |
+   | Control | `a s m t A B`. Never `b`, `d` or `M` |
+   | anything else (Alt, Super, any mix) | nothing |
+
+   Every chord of that table is one the engine hands to the graph, and the
+   proc reads that rather than listing it twice: a `graph graph.forward` row of
+   the engine's binding table (taken live, `xschem bindings dump`), or, for a
+   chord with no row at all, an arm of the key switch that opens with the graph
+   test (`graphguards`: `m` plain and with Control, `M` plain, `s` plain). A
+   row of the table decides before the switch, so a chord with a row but no
+   graph row of that action is refused. That closes the user's own `canvas`
+   and `global` rows.
+
+   Control with `b`, `d` or `M` is refused BY NAME (`graphown`), before the
+   table is read: those three chords are shortcuts of the viewer's own (the
+   Signal Browser, Clear All, the plot mode). The stock table has no graph row
+   for them, so the table rule alone refuses them there. It would not with a
+   `graph graph.forward` row of the user's for one of them (a keybindings file
+   from before the Signal Browser took Ctrl-B carries the one for Ctrl-b, and
+   it is the natural rc line for a `graph_use_ctrl_key` user who wants cursor B
+   back over embedded graphs): the key would go to the graph and the tag would
+   run the shortcut as well. (Added 2026-11-21 in the repair of this item; the
+   first build of the rule had dropped the old by-keysym refusal of Ctrl-b and
+   Ctrl-d and was measured doing both things with such a row.)
+
+   The table is not the whole of what the engine hands to the graph. Under
+   Control with a further modifier that is neither Alt nor Super (Mod3, Mod5, a
+   held middle or right button) its `case 't'` asks the graph test too. The
+   filter does not forward that chord (see the limits).
+
+   Two profile rules on top. With `graph_use_ctrl_key` set a bare graph key is
+   refused. In the Cadence profile plain `s` is forwarded AS Control-s, which
+   the engine hands to the graph and which swaps the cursors as plain `s` does
+   in the stock profile, so `s` does what the guide says in both.
+
+2. **The pixel** (`wviewer::key_at_graph`). The engine's graph test judges the
+   key event's own pixel and leaves a border of 5 pixels times the Tk scaling
+   inside each graph rect. The filter tests the same pixel (the event's `%x
+   %y`; the pointer's when `fix_mouse_coord` is on) against the strips with
+   that border trimmed off, rounded up plus one pixel
+   (`wviewer::graph_border_px`), and refuses while a gesture is in flight in
+   the context (`graphbusy`, the `excl` set of `waves_selected`). The old gate,
+   `wviewer::over_graph`, read the mouse mirror against the full strips; it
+   stays for Delete, which is never forwarded.
+
+3. **Escape** is the one other key the filter forwards (the engine's abort and
+   redraw). The engine asks its binding table before its Escape arm, so with a
+   row for the chord (`wviewer::key_has_row`; no table that ships has one, a
+   user's rc can) the filter does not forward it: it calls the verb,
+   `xschem escape`, on the press and the key stays in the viewer. (Added
+   2026-11-21 in the repair of this item.)
+
+**Mirrored in C or in the tag, and what fences each.** All in
+`tests/headless/test_wave_subwindows.tcl`, both arms unless said:
+
+| what the Tcl side restates | the row that reads the original |
+|----------------------------|----------------------------------|
+| `graphguards`, the key switch's arms that open with the graph test | SWK21: the arms are read out of `src/callback.c`, the graph rows from the live table, and `key_chord` is compared with a comparand fed from both over every graph key, a matrix of modifier states and the four profiles |
+| `wviewer::chord_state`, the bits `callback()` strips | SWK20: the mask names are read out of `callback()` |
+| `graphbusy`, the `excl` set of `waves_selected` | SWK27: the names are read out of `waves_selected` and looked up in `src/xschem.h` |
+| the factor of `wviewer::graph_border_px` | SWK25: the factor is read out of `waves_selected`. The proc is asked at Tk scalings from 1.0 to 3.0 with the `tk` command answered by a recorder (both arms), and at the display's own scaling (display arm): each answer is no smaller than the factor times the scaling and less than two pixels larger. (Third repair, 2026-11-21: the row used to compare at the display's scaling only, where a constant passes.) |
+| `graphown`, the tag's Control defaults on graph keysyms | SWK28: derived from `wviewer::install_default_binds` as the interpreter holds it, and on the display arm from the live tag |
+
+SWK21's comparand takes its inputs from the engine and combines them by the
+steps `key_chord` takes, so it holds the product to those inputs and is no
+second reading of the engine. Row KM13 of `test_wave_viewer` is: it sends every
+chord the filter forwards, in the four profiles, as a real key through the
+real engine and finds nothing outside the graph moved. (Second repair,
+2026-11-21: KM13 asks the same comparand BEFORE each key and sends only a
+chord it allows; a chord it refuses is counted as an offender and not sent. In
+the engine such a chord is an editor verb, several of them a prompt or a form,
+and on a product whose filter forwarded one the suite stopped there until its
+driver killed it. The comparand's procs are in
+`tests/headless/wvkey_engine.tcl`, which both suites source.)
+
+**Limits, declared.**
+- A user who rebinds a `graph` row of the table to another action gets nothing
+  for that chord in a viewer (the filter forwards only `graph.forward` rows).
+- With `graph_use_ctrl_key` set the measurement tooltip has no key in a viewer
+  (`graph_markers.md` §6.1).
+- Control with Mod3, Mod5 or a held middle or right button, plus `t`, reaches
+  the graph in the engine; the viewer refuses it like every other mixed state.
+- With `graph_use_ctrl_key` set, cursor A, cursor B and the delta marker have
+  no key in a viewer either: Ctrl-a selects all the traces in the engine
+  (issue 1617), Ctrl-b is the Signal Browser and Ctrl-d Clear All (row KM10).
+- The engine runs a key in the CURRENT context, and the context follows the
+  pointer while the keyboard focus does not. A viewer that has the focus while
+  another window's context is current (measured: the pointer in the viewer and
+  the main window made current by a command) forwards no graph key, since the
+  engine would run it there; the keys work again once the pointer has left
+  the canvas and come back. Ctrl-Shift-M does not depend on the context
+  (`waveform_viewer_modes.md` §9.1), and Escape aborts in whichever context is
+  current, as it did before.
+- **The same rule the other way round is NOT closed, and it still brings up
+  the box the user reported.** The viewer's context current and the keyboard
+  focus on another window's canvas: the pointer came into the viewer's plot
+  (the engine made its context current and gave its canvas the focus), then
+  the focus went back to the schematic window with no pointer motion, which is
+  what Alt-Tab or a click on the task bar does. A key typed then goes through
+  the SCHEMATIC canvas's binding to the engine, and the engine runs it in the
+  current context, the viewer's, as the editor key it is. The filter is a
+  binding of the viewer's canvas and never sees it. A viewer that has just
+  opened is a second way into the state, with no Alt-Tab: where the desktop
+  leaves the keyboard focus in the schematic window after the open, a key
+  typed with the pointer over the new plot goes the same road (measured
+  2026-11-21 by a probe with a real pointer and real keys on the test
+  display; on the same display another start left the focus on the viewer's
+  toplevel instead, the limit below. Which of the two the user's desktop
+  gives was not measurable here). Measured with a real
+  pointer and real keys: Ctrl-Shift-M brings up "View is Read Only" and leaves
+  the mode; the Cadence profile's `s`, `w` and bare `b` bring up the same box;
+  Alt-b steps `hide_symbols`. The state ends when the pointer enters the window
+  that has the focus, or a click in the viewer's plot gives it the focus. It
+  predates this item and its cause is not the filter's; the engine is
+  unchanged. Closing it takes a guard in `callback()` for a viewer context (a
+  key whose canvas is not the current context's is dropped, or handed to the
+  viewer's filter), which changes what a key does in every such state and is
+  the user's to rule on. Row KM14 of `test_wave_viewer` holds the limit as it
+  stands: with the viewer's context current and the focus forced onto the main
+  canvas, a Ctrl-Shift-M generated there reaches the engine through `.drw`,
+  the viewer's filter is not called, the box comes up and the mode stays. Its
+  second check builds the state twice more and ends it each way: an Enter on
+  the main canvas makes the main window's context current, and a click in the
+  viewer's plot gives its canvas the focus, after which the chord is the
+  viewer's again. The row turns red the day the engine stops running such a
+  key in the viewer.
+- **A viewer that has just opened takes no key until one click in its plot.**
+  `wviewer::open` leaves the viewer's context the current one and asks for the
+  focus on the viewer's toplevel, not on the plot canvas. The engine hands a
+  canvas the focus only when an Enter switches the context to it, and the
+  viewer's context is current already, so the pointer coming into the plot
+  brings nothing (with `autofocus_mainwindow` set the canvas's own Enter
+  binding asks for the focus, and the pointer coming in is enough). Until a
+  click in the plot, or until the pointer has been over another xschem canvas
+  and come back, a key typed with the pointer over the plot reaches neither
+  the filter nor the `WaveViewer` tag: Ctrl-Shift-M, like every other viewer
+  key, does nothing.
+  Measured with a real pointer and real keys in the Cadence profile. It
+  predates this item (`wviewer::open` is unchanged) and it is the first thing
+  a user who opens a viewer and presses the chord meets. Row G1f of
+  `test_wave_viewer` holds it as it stands, by Tk's own record of where the
+  focus goes inside the toplevel. Changing it (the open gives the plot canvas
+  the focus) is the user's to rule on, with the limit above it.
+- The one-pixel ring between the engine's border and the filter's rounded-up
+  one swallows a graph key the engine would have taken.
+- The engine is unchanged. Over a graph embedded in an ordinary schematic every
+  chord above does what it did (row KM12 of `test_wave_viewer`), the Cadence
+  profile's plain `s` included: there it still starts a wire.
+
+Rows: `test_wave_subwindows` SWK19 to SWK25 and SWK27 to SWK29 (both arms),
+SWK26 and one leg of SWK28 (display); `test_wave_viewer` KM0 to KM15 (display,
+real keys; the chords that are a reload, a Save form or a new window are asked
+of the filter first and sent for real only when it refuses them, and a chord
+the filter forwards is sent only when the comparand allows it). Added in the
+second repair, each for a break no row caught before: the readout bar after
+the Cadence profile's `s` (KM7), the delta marker of a bare `d` (KM2), the
+first pixel the gate must accept (KM9, and SWK27 on both arms), the chord with
+two tabs (KM6), and a binding of the user's own against every default of the
+tag (KM1). Added in the third repair, again each for a break no row caught:
+the middle of every strip of a window of more than two (KM9 with real keys,
+SWK27 on both arms), the border at other Tk scalings than the display's
+(SWK25), the tag walk in the Cadence profile as well as the stock one (KM1),
+the band test behind the middle-button pan's press (SWK25, and a CG-mmb leg of
+`test_wave_viewer` whose press is generated three pixels inside a strip's
+edge), the
+readout bar after a typed Control-s (KM7), and the chord's silence in the
+command window (KM1). G1f holds the limit of the viewer that has just opened.
+Added in the fourth repair, once more each for a break no row caught: the
+gate in the right-hand one of two subwindows and after the window changed its
+size (KM9 with real keys, SWK27 on both arms), the graph keys on a second tab
+(KM6), the chord while the cursors show (KM7), the marker keys and the two
+cursor keys in the Cadence profile as well as the stock one (KM2), and a
+second viewer window open beside the first (KM15 with real keys; SWK19 and
+SWK27 hold the wrapper and the gate with two canvases in the registry on both
+arms).
 
 ## A viewer context says so: `wave_viewer` (issue 0172, 2026-07-31)
 

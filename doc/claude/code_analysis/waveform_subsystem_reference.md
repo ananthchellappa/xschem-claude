@@ -918,7 +918,22 @@ in **no** runner (issue 0465), so name it explicitly or it will not run.
   viewer binding table: `bind WaveViewer <seq> {wviewer::clear_all_at %W; break}`,
   disabled with `{break}` (an empty script deletes the binding and gets
   re-defaulted). `clear_all_at` resolves the token from `%W`, never the current
-  ctx. Any new viewer key belongs here, not in `key_filter`'s hardcoded arms.
+  ctx. Any new viewer key belongs here, not in `key_filter`'s hardcoded arms,
+  and goes in behind the same guard as its neighbours (installed only for a
+  sequence nothing has bound): row KM1 of `test_wave_viewer` binds every
+  sequence of the tag to a bare `break`, runs the installer again and reddens
+  on any it overwrote.
+  **And if the new key's keysym is a graph key (`graphkeys`), check
+  `wviewer::key_chord` too** (2026-11-21): the filter runs before the tag and
+  never `break`s, so a chord it forwards reaches the engine AND the tag. It
+  forwards a graph key only as a chord the engine hands to the graph — bare, or
+  Control with `a s m t A B` — and it refuses Control with the keysyms of
+  `graphown` by name, whatever the engine's table holds: Ctrl-D, Ctrl-B and
+  Ctrl-Shift-M, so only their tag bindings run. A new Control chord of the
+  viewer's on a graph keysym goes into `graphown` (row SWK28 of
+  `test_wave_subwindows` reddens when the tag's defaults and that list
+  disagree); a chord inside the forwarded table would do two things per
+  keystroke.
 
 ---
 
@@ -1201,6 +1216,23 @@ in **no** runner (issue 0465), so name it explicitly or it will not run.
   `[bind WaveViewer <seq>] eq {}` so an rc keeps winning, plus a `%W`-resolving
   wrapper like `clear_all_at`. NOT a `key_filter` arm (those are the C-forward
   and intercept cases) and NOT a `bind $wp` — `strip_bindings` sweeps that.
+  Since 2026-11-21 the filter decides its forward by CHORD, not by keysym
+  (`wviewer::key_chord`, pure, plus `wviewer::key_at_graph` for the pixel;
+  `doc/claude/specs/waveform_viewer.md`, "What the key filter forwards"). So:
+  (a) a chord on a keysym that is no graph key needs only the two things above
+  (Ctrl-Shift-D, `u`, `9`); (b) a chord on a graph keysym works as long as
+  `key_chord` refuses it, which it does for everything but the bare key and
+  Control with `a s m t A B` — Ctrl-Shift-M is the worked example, and as a
+  Control chord its keysym is also listed in `graphown`, so that a graph row
+  of the user's for it in the engine's table cannot bring the forward back; (c) a chord
+  the engine hands to the graph cannot be taken without an engine change
+  (issue 1617, Ctrl-A, is the worked example). A Ctrl-letter chord also gets a
+  row in `wviewer::case_pairs` (the Caps Lock ruling), a row in the guide's
+  §9.1 table with `data-seq` (and `data-menu`/`data-accel` when a menu entry
+  shows it), a line in §10.1's table of commands, and a commented remap recipe
+  in `src/cadence_style_rc`; the count literals of the census move in the same
+  change (GH0 of `test_wave_grid`, BT09 of `test_wave_sigbrowser`, BK10 of
+  `test_wave_sigbrowser_keys`, BX13 of `test_wave_sigbrowser_i12`).
 
 ---
 

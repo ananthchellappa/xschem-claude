@@ -396,7 +396,7 @@ be unconditional. Reference doc landmine 40.
 |---|---|---|
 | `m` | measurement tooltip (`graph_flags ^= 64`) | **create a marker** — **anywhere inside the strip's PLOT BOX**, at the sample the item-9 diamond snap cursor has snapped to (D12, issue 0188) |
 | `d` | fell through to the canvas `deselect_mode` (there was no `ACTX_OVER_GRAPH` row) | **create a marker with a delta block** against the most recently created marker — same plot-box gate, same snapped sample |
-| `M` (Shift+m) | broken — no waves guard, ran `readonly_block()` + the cadence schematic move | **the measurement tooltip**, relocated |
+| `M` (Shift+m) | broken — no waves guard, ran `readonly_block()` + the cadence schematic move | **the measurement tooltip**, relocated. (2026-11-21: only the plain-Shift arm of `case 'M'` got the guard. With Control the keysym is still the schematic's move; in the ASE viewer Ctrl-Shift-M is now the plot mode and is not forwarded to the engine — `waveform_viewer.md`, "What the key filter forwards".) |
 | `Delete` | deletes the schematic selection | **deletes the WHOLE marker selection** when the HEAD is selected *in the strip under the pointer* — one gesture, **ONE undo point**, however many members and however many strips they live on (issue 0189: `graph_marker_delete_selected()` pushes once and then calls a no-push `graph_marker_delete_1()` per member, each of which still self-logs its own `xschem graph_marker delete <n>` line). Otherwise unchanged. ⚠ In the **ASE viewer** this is now only ONE of two arms — see below |
 | `d` **off** a graph | deselect-one mode | unchanged — this is a context split, not a key change |
 
@@ -457,6 +457,16 @@ is exactly **one** read-only gate, and it is not in `callback.c`.
 same arm today, but when `graph_use_ctrl_key` is 1 the arm's `access_cond`
 *requires* Ctrl — plain `m` is then refused entirely and `Ctrl+m` would have to
 be both the marker and the tooltip. `M` has no such collision in either mode.
+(Corrected 2026-11-21: true of the stock mode only. With `graph_use_ctrl_key`
+set the tooltip's chord is Ctrl+Shift+M, and that never reached the tooltip:
+`case 'M'` has a Control arm with no graph guard, the schematic's move, which
+in a read-only viewer stops at the message box. Since 2026-11-21 the ASE viewer
+binds Ctrl-Shift-M to the plot mode and does not forward it, whatever
+`graph_use_ctrl_key` says, and with that variable set it forwards no bare graph
+key either. So in that mode the measurement tooltip has no key in a viewer: a
+declared limit, the shape of limits 8 and 9 of
+`waveform_signal_browser_two_pane.md`. Over a graph embedded in a schematic
+nothing changed.)
 `graph_flags` bit 64 and both of its teardown paths (`waves_selected`'s
 leave-the-graph stop, the `<Leave>` bind) stay wired; losing the only key that
 can *set* bit 64 would make the whole tooltip render block dead code.
@@ -1229,6 +1239,12 @@ through `key_filter` → `strip_drag_cancel` → the forward → C's
   `set fwd [expr {!($N == 100 && ($s & 4))}]`, leaving Ctrl-D to the
   `WaveViewer` bindtag's Clear All. `M` needs no such gate: `case 'M'` is
   `rstate == 0`-only.
+  (2026-11-21: superseded, both halves. `case 'M'` has a Control arm as well,
+  which is what Ctrl-Shift-M reached from a viewer. And the filter no longer
+  carves keysyms out of an unconditional forward: `wviewer::key_chord` forwards
+  a graph key only as a chord the engine hands to the graph, which refuses
+  Ctrl-d, Ctrl-b and Control with `M` alike. `waveform_viewer.md`, "What the
+  key filter forwards".)
 * `Delete` (65535) is deliberately **not** a `graphkeys` member, and **since
   issue 0176 it is not forwarded to C from this window at all.** It gets its own
   arm, gated on `over_graph`, which hands the whole gesture to

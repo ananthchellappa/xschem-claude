@@ -1429,8 +1429,11 @@ set bt_accs [regexp -all {data-menu="[^"]+" data-accel="[^"]+"} $gsrc]
 # ⚠ WIDENED IN PLACE again by per-subwindow settings (2026-10-15): 18/13 ->
 # 20/15, for Ctrl-Shift-D (Clear SubWin) and Ctrl-Shift-G (SubWin Grid), both
 # `bind WaveViewer` defaults with Graph-menu twins.
-check {BT09 ...so the guide carries GH0's twenty keys and fifteen accelerators} \
-  [list $bt_seqs $bt_accs] [list 20 15]
+# ⚠ WIDENED IN PLACE again 2026-11-21: 20/15 -> 21/16, for Ctrl-Shift-M (the
+# plot mode of the target subwindow), a `bind WaveViewer` default whose menu
+# twin is the Options > Plot Mode entry.
+check {BT09 ...so the guide carries GH0's twenty-one keys and sixteen accelerators} \
+  [list $bt_seqs $bt_accs] [list 21 16]
 set bt_i11 [wvproc_body $wsrc wviewer::install_default_binds]
 set bt_m11 [wvproc_body $wsrc wviewer::build_menubar]
 # count bind STATEMENTS only (test_wave_grid GH2's rule): each one sits under an

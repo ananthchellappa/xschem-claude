@@ -1,8 +1,12 @@
 # tests/headless/test_wave_sigbrowser_keys.tcl — TWO-PANE item 16, R9:
 # the Signal Browser's chord moves from Ctrl-L to Ctrl-B, and the C binding
-# table loses its `key 98 ctrl graph graph.forward` row so the viewer's own
-# key_filter carve-out is the ONLY thing standing between Ctrl-B and the
-# schematic's `case 'b'`.
+# table loses its `key 98 ctrl graph graph.forward` row, so a Ctrl-B that the
+# viewer's key filter let through would reach the schematic's `case 'b'`.
+# (Restated 2026-11-21. This used to say the key_filter carve-out is the only
+# thing in the way. The filter now asks wviewer::key_chord, which keeps the
+# chord in the viewer twice over: it refuses Control with keysym 98 by name,
+# and it forwards no chord the engine has neither a graph row nor a graph arm
+# for.)
 # Spec: doc/claude/specs/waveform_signal_browser_two_pane.md §8.1, R9.
 # PLAN: doc/claude/signal_browser_2pane_batch/PLAN.md item 16.
 #
@@ -65,6 +69,16 @@
 # moved graph_flags 4 -> 0; the carve-out is what takes that forward to 0.
 # BK12 and BK18 are the only checks in the repo that can see it — `set fwd` at
 # wave_viewer.tcl had ZERO test coverage before this file existed.
+#
+# (2026-11-21: "the carve-out" of this header, and of the names of BK03 and
+# BK14, is no longer an expression in key_filter. It is the refusal by name in
+# wviewer::key_chord: the list `graphown`, which holds 98 and 100 as the old
+# expression did, and 77 for Ctrl-Shift-M. BK12 and BK18 are no longer the only
+# checks that can see it. In registered suites: row SWK22 of
+# tests/headless/test_wave_subwindows.tcl holds the refusal under the stock
+# table, row SWK23 there and row KM11 of tests/headless/test_wave_viewer.tcl
+# hold it with the C row put back, and row SWK28 holds the list against the
+# tag's defaults.)
 # ============================================================================
 
 set ::wvbs_tag  wvsigbrowser_keys
@@ -89,41 +103,46 @@ set kbcsv [bk_slurp $kbpath]
 
 # ============================================================================
 # BK01-BK10 — BOTH ARMS. Source greps, file greps and one PURE evaluation of
-# the shipped expression.
+# the shipped decision.
 # ============================================================================
 
-# ⚠ TWO LEGS, NOT ONE. Leg 1 is the carve-out; leg 2 is the ABSENCE of the old
-# single-keysym form, which is what stops a "fix" that ADDS a second `set fwd`
-# line beside the original and leaves the original winning.
-check {BK01 (SOURCE) the carve-out names BOTH keysyms in ONE expression, and the
-       single-keysym form is gone} \
-  [list [regexp {set fwd \[expr \{!\(\(\$N == 100 \|\| \$N == 98\) && \(\$s & 4\)\)\}\]} $wsrc] \
-        [regexp {set fwd \[expr \{!\(\$N == 100 && \(\$s & 4\)\)\}\]} $wsrc]] \
+# ⚠ RESTATED 2026-11-21. These two rows used to match and evaluate the text of
+# one expression in wviewer::key_filter, a carve-out that named the keysyms of
+# Ctrl-b and Ctrl-d. The filter no longer decides by keysym: it asks
+# wviewer::key_chord, which forwards a graph key only as a chord the engine
+# hands to the graph, and which refuses Control with the keysyms of Ctrl-b and
+# Ctrl-d by name (`graphown`) before it reads the engine's table. Leg 1: the
+# filter asks key_chord (read off the interpreter's own
+# parsed proc, comments out). Leg 2: the old expression is gone from the source,
+# so a second decision cannot sit beside the first and win.
+set bk_kf {}
+catch {set bk_kf [info body ::wviewer::key_filter]}
+regsub -all -line {^\s*#.*$} $bk_kf {} bk_kf
+check {BK01 (SOURCE) the filter's forward of a graph key is wviewer::key_chord's
+       answer, and the keysym carve-out expression is gone} \
+  [list [regexp {set fs \[wviewer::key_chord \$N \$s } $bk_kf] \
+        [regexp {set fwd \[expr \{!\(} $wsrc]] \
   {1 0}
 
 # ⚠ THE PLAN'S BK02 WAS VACUOUS AND IS REPLACED. It read
 #     [lsearch -exact {97 98 100 115 109 116 65 66 77} 98] 1
 # i.e. it searched a literal the check itself had just written — green before
 # the code existed, green after, and green under the very sabotage it was named
-# to catch. This one instead EXTRACTS the shipped expression from the source and
-# EVALUATES it, so the check's answer comes from the code rather than from the
-# test. MEASURED on the unchanged tree: 1 1 0 1 1 1 (Ctrl-b forwarded).
-set bk_ex NO-EXPR
-regexp -line {set fwd \[expr \{(.+)\}\]} $wsrc -> bk_ex
-# NEVER THROWS: a vanished or unparsable expression is an assertable VALUE, so
-# "the line I am reading is gone" cannot masquerade as a routing answer.
-proc bk_fwd {ex N s} {
-  if {$ex eq {NO-EXPR}} { return NO-EXPR }
-  if {[catch {expr $ex} r]} { return ERR }
+# to catch. This one asks the SHIPPED decision, with the engine's LIVE binding
+# table, so the check's answer comes from the code rather than from the test.
+# {} is "not forwarded"; a number is the modifier state the engine is handed.
+# NEVER THROWS: a vanished proc is an assertable VALUE.
+proc bk_fwd {N s} {
+  if {[catch {wviewer::key_chord $N $s 0 0 [xschem bindings dump]} r]} { return ERR }
   return $r
 }
 set bk_dec {}
-foreach pr {{98 0} {98 4} {100 4} {97 4} {66 4} {100 0}} {
-  lappend bk_dec [bk_fwd $bk_ex [lindex $pr 0] [lindex $pr 1]]
+foreach pr {{98 0} {98 4} {100 4} {97 4} {66 5} {100 0}} {
+  lappend bk_dec [bk_fwd [lindex $pr 0] [lindex $pr 1]]
 }
-check {BK02 (PURE) the SHIPPED expression, evaluated: bare b forwards, Ctrl-b
+check {BK02 (PURE) the SHIPPED decision, evaluated: bare b forwards, Ctrl-b
        does not, Ctrl-d does not, Ctrl-a / Ctrl-Shift-B / bare d all still do} \
-  $bk_dec {1 0 0 1 1 1}
+  $bk_dec {0 {} {} 4 5 0}
 
 # ⚠ POSITIVE CONTROL, and it reads the LIVE variable rather than a literal.
 # R9's fix is a MODIFIER CARVE-OUT, not a membership deletion: delete 98 from
@@ -196,14 +215,16 @@ check {BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
 # ⚠ WIDENED IN PLACE again by per-subwindow settings (2026-10-15): 18/13 ->
 # 20/15, for Ctrl-Shift-D (Clear SubWin) and Ctrl-Shift-G (SubWin Grid), both
 # `bind WaveViewer` defaults with Graph-menu twins.
+# ⚠ WIDENED IN PLACE again 2026-11-21: 20/15 -> 21/16, for Ctrl-Shift-M (the
+# plot mode of the target subwindow) and its Options > Plot Mode twin.
 check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide has
-       twenty data-seq rows and fifteen menu/accel pairs, and test_wave_grid
-       pins exactly those two numbers} \
+       twenty-one data-seq rows and sixteen menu/accel pairs, and
+       test_wave_grid pins exactly those two numbers} \
   [list [regexp -all {data-seq="} $gsrc] \
         [regexp -all {data-menu="[^"]*" data-accel="[^"]*"} $gsrc] \
-        [regexp {\[llength \$gh_seqs\] 20} $gridsrc] \
-        [regexp {\[llength \$gh_menus\] 15} $gridsrc]] \
-  {20 15 1 1}
+        [regexp {\[llength \$gh_seqs\] 21} $gridsrc] \
+        [regexp {\[llength \$gh_menus\] 16} $gridsrc]] \
+  {21 16 1 1}
 
 # ============================================================================
 # BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the

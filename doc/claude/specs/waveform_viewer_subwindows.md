@@ -56,7 +56,7 @@ These are rulings, not guesses. Words in quotes are the user's.
 | SW19 | The multi-plot auto-plot strip ORDER (last Outputs row on top, R-OUT14) is unchanged. A separate user ruling is pending on it; nothing here touches it. |
 | SW20 | Every new gesture/command is logged through `wviewer::log_action`/`wviewer::echo` (tabs R6) and is undoable as ONE step where it mutates the model. |
 | SW21 | (user 2026-10-15) The plot mode (single/multi) and the grid are settings of each SUBWINDOW. "The active subwindow" is the TARGET one. A new subwindow takes the target's settings; with one subwindow nothing changes. |
-| SW22 | The status bar's `Plot: single/multi` shows the target subwindow's mode and follows the target (a click, New/Close SubWin, a tab switch). Options > Plot Mode and Ctrl-Shift-4 change the target subwindow only. Ctrl-Shift-D (Graph > Clear SubWin) empties the target subwindow only; Ctrl-D Clear All is unchanged. |
+| SW22 | The status bar's `Plot: single/multi` shows the target subwindow's mode and follows the target (a click, New/Close SubWin, a tab switch). Options > Plot Mode and Ctrl-Shift-4 change the target subwindow only; so does Ctrl-Shift-M pressed in the viewer (added 2026-11-21, see the Keys paragraph of §16). Ctrl-Shift-D (Graph > Clear SubWin) empties the target subwindow only; Ctrl-D Clear All is unchanged. |
 | SW23 | Ctrl-G (Graph > Grid) flips every subwindow's grid individually: a mixed set stays mixed, inverted. Ctrl-Shift-G (Graph > SubWin Grid) flips the target subwindow's grid only. The Grid checkbutton shows the target subwindow's grid. |
 | SW24 | Closing down to one subwindow, or Clear All, keeps the survivor's / the target's settings as the window's own. |
 | SW25 | The settings are saved and restored with the layout (per tab), and are outside undo like the window's other options. |
@@ -551,10 +551,39 @@ subwindows, and the old `ase: waveform viewer plot mode = <m> (<key>)` with one.
 
 **Keys.** `<Control-Shift-Key-D>` → `wviewer::clear_target_subwin_at`,
 `<Control-Shift-Key-G>` → `wviewer::grid_toggle_subwin_at`.
+**Ctrl-Shift-M (user request 2026-11-21).** `<Control-Shift-Key-M>` →
+`wviewer::plot_mode_toggle_at`, which resolves the token from `%W` and calls
+`wviewer::set_plot_mode invert`: the plot mode of the TARGET subwindow flips,
+whichever subwindow the pointer is over; the status bar follows and one
+`wviewer::set_plot_mode <resolved> <token>` line is logged. It is the viewer's
+own key for what Ctrl-Shift-4 does from the design window, and the Options >
+Plot Mode entry shows it as its accelerator. Decisions taken with it:
+- It prints nothing in the command window, like the menu entry (Ctrl-Shift-4
+  echoes because nothing else on the design window shows the mode). Row KM1
+  of `test_wave_viewer` records `ciw_echo` and `wviewer::echo` while the real
+  chord is pressed and while the entry is invoked: neither echoes a line of
+  its own.
+- It works where the viewer's other chords work, with the plot area focused.
+  The Signal Browser's panes are unchanged. A viewer that has just opened has
+  the focus on its toplevel, so the chord, like every viewer key, does
+  nothing there until one click in the plot (`waveform_viewer.md`, the limits
+  of "What the key filter forwards"; row G1f of `test_wave_viewer`).
+- Tk runs a binding when the event carries more modifiers than the binding
+  names, so Ctrl-Alt-Shift-M runs it too, as Ctrl-Alt-D already runs Clear All.
+- With `graph_use_ctrl_key` set it is the plot mode all the same (the Ctrl-B
+  precedent: the carve-out is not conditioned on that variable); what that
+  costs is in `graph_markers.md` §6.1.
+- `key_filter` does not forward the chord to the engine, where Control with
+  keysym `M` is the schematic's move and stops at the read-only message box.
+  The refusal is by name, with Ctrl-b and Ctrl-d (`graphown`), inside a general
+  rule stated in `waveform_viewer.md` ("What the key filter forwards").
 **Caps Lock (user ruling 2026-10-16): the case of the letter as typed decides a
 Ctrl shortcut.** Caps Lock + Ctrl-d is Ctrl-Shift-D (Clear SubWin) and Caps Lock +
 Ctrl-Shift-D is Ctrl-D (Clear All); likewise G, N, W, E, U, Z, and B/C/Q/V (whose
-upper case has no shortcut). Upper case = Shift XOR Lock, read from the event
+upper case has no shortcut), and M, whose LOWER case has no viewer shortcut:
+Ctrl-m is the engine's (a marker) and `key_filter` forwards it in the case as
+typed, so Caps Lock + Ctrl-m is the plot mode and Caps Lock + Ctrl-Shift-M the
+marker. Upper case = Shift XOR Lock, read from the event
 STATE, because whether Shift+Lock arrives as keysym `d` or `D` is the keymap's
 business (`d` on Xvfb, measured with real XTest input). `wviewer::case_pairs`
 lists each letter's two base sequences; `wviewer::install_case_binds` binds every
@@ -578,8 +607,13 @@ grid; a later change still wins; a change is no undo step), SWS1-SWS2 (the flat
 Ctrl-Shift-D, the Caps Lock state 4-7 matrix over every Ctrl-letter pair
 (plus SWK14-SWK16, both arms: `typed_upper`, `case_keysym`, `case_pairs`), the menu entries, Graph > Clear
 SubWin's `-command` (SWK12), tabs, save and restore, a one-tab grid round trip
-(SWK13)). `test_wave_grid` GH0 (20 keys, 15 accelerators), GX1's `gx_must`
-(`grid_apply`), GX8. `test_wave_add_graph_undo` AF3. Red proofs are in the suite
+(SWK13)). `test_wave_grid` GH0 (the count of the guide's key rows and of its
+menu accelerators) with GH1 to GH4 (each key row and each accelerator against
+the source, in both directions), GX1's `gx_must`
+(`grid_apply`), GX8. For Ctrl-Shift-M and the key filter's chord rule:
+`test_wave_subwindows` SWK19 to SWK25 and SWK27 to SWK29 (both arms), SWK26
+and one leg of SWK28 (display; SWK26 is the Caps Lock states of `m` with the
+engine recorded), `test_wave_viewer` KM0 to KM15 and G1f (display, real keys). `test_wave_add_graph_undo` AF3. Red proofs are in the suite
 header.
 
 ## 16. As built — the viewer has no destination (2026-10-16)

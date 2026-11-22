@@ -108,6 +108,17 @@ ESC, `f`/`Z`/`Ctrl-z` and the `graphkeys` `{97 98 100 115 109 116 65 66 77}` —
 viewer's File menu has only Close. It is reachable by typing `xschem reload` in the CIW
 while the viewer holds the context, and by any Tcl that calls it.
 
+**Note, 2026-11-21 (overnight batch, item 03): the first sentence was wrong when it was
+written.** `graphkeys` holds the keysym of `s`, and the filter forwarded a member with
+any modifier. So Alt-s (and Super-s) with the pointer over a strip reached the engine's
+reload arm from the viewer's own keyboard: measured that day, the "Are you sure you want
+to reload from disk?" box came up over the viewer, and OK would have run the reload this
+issue describes. The key path is closed now: the filter forwards a graph key only as a
+chord the engine hands to the graph (`doc/claude/specs/waveform_viewer.md`, "What the
+key filter forwards"), and Alt or Super with any graph key is refused. The issue itself
+is unchanged by that and stays open: `xschem reload` typed in the CIW, or called from
+Tcl, still does what §1 says.
+
 ## 2. The routing-exempt loads
 
 `xschem load -window <winpath>` (an explicitly named target) and any load carrying an

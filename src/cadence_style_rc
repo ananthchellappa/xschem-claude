@@ -585,6 +585,14 @@ bind .drw <Alt-Shift-Key-6>     {cadence::annot_tran;             break}
 #                       1 = DEFAULT (shown). Anything not a boolean -> 1.
 # set wviewer_grid_show 1
 #
+# Ctrl-Shift-M INSIDE the waveform viewer : flip the PLOT MODE of the target
+# subwindow (single-plot / multi-plot). It is the viewer's own key for what
+# Ctrl-Shift-4 does from the schematic window (the `bind .drw` lines further
+# up) and for Options > Plot Mode; the status bar shows the mode. Same bindtag
+# rules as Ctrl-D/`e` above -- a line here WINS:
+# bind WaveViewer <Control-Shift-Key-M> {break}
+# bind WaveViewer <Control-Shift-Key-P> {wviewer::plot_mode_toggle_at %W; break}
+#
 # --- waveform viewer: mid-drag shrink preview (viewer plan item 6) -----------
 # While a trace is being DRAGGED to another strip (LMB press on the trace, drag,
 # drop on another strip) it is drawn shrunk in BOTH axes about the plot box

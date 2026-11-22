@@ -792,6 +792,19 @@ Every word of that is still true. The ruling overrides it, and here is the whole
   set fwd [expr {!(($N == 100 || $N == 98) && ($s & 4))}]
   ```
 
+  (2026-11-21: that line is gone as an expression of `key_filter`; the carve-out it
+  made is kept. `key_filter` now forwards a graph key only as `wviewer::key_chord`
+  allows, and that proc refuses Control with keysyms 98 and 100 by name (the list
+  `graphown`, which also holds 77 for Ctrl-Shift-M), before it reads the engine's
+  binding table. So the refusal still does not depend on what the table holds. The
+  cost stated in this section is unchanged. `doc/claude/specs/waveform_viewer.md`,
+  "What the key filter forwards"; rows BK01 and BK02 of
+  `tests/headless/test_wave_sigbrowser_keys.tcl` were restated the same day. In
+  registered suites: row SWK22 of `tests/headless/test_wave_subwindows.tcl` holds
+  the refusal under the stock table, row SWK23 there and row KM11 of
+  `tests/headless/test_wave_viewer.tcl` hold it with the C row put back, and row
+  SWK28 holds the list against the tag's defaults.)
+
 * `src/keybindings.csv:23` (`key,98,ctrl,graph,graph.forward`) is **deleted**, and the file
   regenerated so `test_bindings_file.tcl:22-32`'s byte-identity check stays green.
 
@@ -828,6 +841,10 @@ Every word of that is still true. The ruling overrides it, and here is the whole
   **regenerated** — measured trap: regenerating with the old csv still on disk reproduces
   the row (it is loaded at startup and lands back in the table, merely reordered). The
   correct operation is to move the csv aside and generate from the builtins.
+  (2026-11-21: still so. The carve-out is now the by-name refusal in
+  `wviewer::key_chord`, see the dated note above. A csv from before this item, or an
+  rc line, that puts the `key 98 ctrl graph graph.forward` row back does not bring
+  the forward back in a viewer: row SWK23 binds exactly that row and asks.)
 
 The change is otherwise a **pure rename**. ~~across 13 sites~~ **Measured: 12 literal edit
 sites** — `src/wave_viewer.tcl` 7 lines (a raw `grep -c` says 11, but 4 are
@@ -995,7 +1012,8 @@ site" check is what proves it did not grow a second one.
    of R9's intent. **Measured 0 → 1** and pinned by an inverted check in
    `tests/headless/test_key_graph_context.tcl`, so the next reader finds a record instead
    of filing a bug. The **viewer** is unaffected — its `key_filter` carve-out refuses the
-   forward before the C dispatch ever sees the chord.
+   forward before the C dispatch ever sees the chord. (2026-11-21: the carve-out lives
+   in `wviewer::key_chord` now, which `key_filter` asks; see the dated note in §8.1.)
 
 ---
 

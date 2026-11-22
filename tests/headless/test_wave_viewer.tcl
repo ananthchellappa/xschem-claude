@@ -96,6 +96,163 @@
 #       This fixture has ONE trace, so the
 #       multi-trace half — moving the selection from trace A to trace B in one
 #       click — lives in test_wave_trace_menu.tcl's TB* block.
+#   KM* (2026-11-21): Ctrl-Shift-M in the viewer flips the plot mode of the
+#       TARGET subwindow, and no key that arrives at a viewer's canvas reaches
+#       an editor verb of the engine (doc/claude/specs/waveform_viewer.md,
+#       "What the key filter forwards"). DISPLAY, real keys sent with their
+#       pixel; needs the real raw like WB*, for the marker keys.
+#         KM1  the chord (filter saw it, no box, nothing forwarded, mode, status
+#              bar, one log line, tooltip flag); its silence in the command
+#              window, beside the menu entry's; the wrapper and the canvas it
+#              is called for; the default under the Cadence profile; a binding
+#              of the user's own against every sequence of the tag, in the
+#              stock profile and in the Cadence one
+#         KM2  the keys that stay: Shift-M, m, Ctrl-m, and d (a delta marker);
+#              the marker keys and the cursor keys a and b in both profiles
+#         KM3  two subwindows
+#         KM6  two tabs: the chord, and the graph keys on the second tab
+#         KM4, KM5  Caps Lock and Num Lock
+#         KM7  the chord while both cursors show; the Cadence profile's plain
+#              s, and a typed Control-s in both profiles: the engine's cursors
+#              and the readout bar
+#         KM8  Alt, Super, Control-Alt and Control-Super with every graph key
+#         KM9  the pixels just inside a strip's edge (two pixels in, and the
+#              deepest the engine takes for the canvas; stock profile, then
+#              Cadence), the middle of both strips, the first pixel the gate
+#              must accept, and the middle of every strip of a window of more
+#              than two, of two subwindows side by side, and of a window made
+#              taller and put back (there also a pixel no strip held before)
+#         KM10 graph_use_ctrl_key
+#         KM11 a user's row in the engine's binding table (a canvas row for
+#              bare m, a graph.forward row for the viewer's own Control chords,
+#              a row for Escape)
+#         KM13 every chord the filter forwards, sent through the real engine in
+#              the four profiles
+#         KM15 two viewer windows open at once: each takes its own b and its
+#              own chord
+#         KM14 a limit, declared: a key that reaches the engine through another
+#              window's canvas while the viewer's context is current
+#         KM12 the fence: over a graph embedded in a schematic the same chords
+#              do what they did before
+#         G1f  (with the G rows) a limit, declared: after an open the keyboard
+#              focus is on the viewer's toplevel and the pointer coming into
+#              the plot brings none, so no viewer key works until a click
+#         CG-mmb (its second check) the middle-button pan's press three pixels
+#              inside a strip's edge leaves the canvas where it was
+#       NOTHING DANGEROUS IS SENT. Several of these chords are a reload, a Save
+#       form or a new window once the engine gets them, and a prompt nothing
+#       dismisses stops the suite. KM8 to KM11 ask the filter what it would
+#       forward and send a real key only when it refuses the chord. KM13, whose
+#       population is what the filter forwards, asks a comparand fed from the
+#       engine (wvkey_engine.tcl) and sends a real key only when that allows
+#       the chord. KM9's first-pixel legs send bare b only at a pixel past the
+#       engine's own border. KM7's typed Control-s (off a graph it is Save) is
+#       sent only in the middle of a strip and only when the filter, asked
+#       first, forwards it as typed.
+#       RED FIRST, measured by the build on the product before the change:
+#       every row it wrote but the fixtures and put-back legs, KM1's "reaches
+#       the filter" and tooltip flag legs, KM2's tooltip leg and KM9's control.
+#       KM12 is a fence and was green there by construction: its expected
+#       values were taken there. The first repair measured red first KM11's
+#       graph.forward leg and its Escape leg. The legs of the second repair
+#       (KM1's walk of the tag, KM2's d, KM6, KM7's readout, KM9's first
+#       pixel, KM13's question to the comparand, KM14) were written against a
+#       product that was right; each is held by a break below. KM14's first
+#       check is held by none: it states what the unchanged engine does. Its
+#       second check sends the chord and goes red with it. The legs of the
+#       third repair (KM1's tag walk in the Cadence profile and its
+#       command-window leg, KM7's typed Control-s, KM9's window of more than
+#       two strips, CG-mmb's press in the border, G1f) were written against a
+#       product that was right as well; each is held by a break of the
+#       second list below, G1f by the change it says has not been made.
+#       The legs of the fourth repair (KM2's two profiles, KM6's graph keys
+#       on the second tab, KM7's chord with the cursors showing, KM9's two
+#       subwindows and its window made taller, KM15) were written against a
+#       product that was right too; each is held by a break of the third
+#       list below.
+#       SABOTAGES, test_wave_viewer on the display arm. Every line of this
+#       first list was measured again in the third repair, with all the rows
+#       above in place, and names EVERY row that went red:
+#         no Ctrl-Shift-M default            -> KM1, KM3, KM4, KM5, KM6, KM10,
+#                                               KM11, KM14
+#         key_chord back to the keysym decision (every graph key but Ctrl-b,
+#           Ctrl-d)                          -> KM1 to KM11, KM13, KM14
+#         the filter made to forward Ctrl-Shift-M (the arm list gains the
+#           pair, graphown loses the keysym) -> KM1 to KM6, KM9, KM10, KM11,
+#                                               KM13, KM14
+#         key_filter gated on the mouse mirror again -> KM9
+#         graph_border_px answers 0          -> KM9
+#         graph_border_px is int(5 * scaling) -> KM9
+#         the pixel gate ten pixels wider than the border, or one pixel
+#           wider                            -> KM9, each
+#         the pixel gate skipped in the Cadence profile, for plain s or for
+#           every graph key                  -> KM9, each
+#         key_at_graph looks at the first strip only -> KM9
+#         chord_state keeps Num Lock         -> KM5
+#         case_pairs without m               -> KM4
+#         the wrapper retargets a fixed strip first -> KM3
+#         the wrapper without its foreign-canvas test -> KM1
+#         the wrapper asks the mouse mirror where the pointer is -> KM1, KM14
+#         the wrapper does nothing in a window with two tabs -> KM6
+#         the default installed only outside the Cadence profile -> KM1
+#         the default installed over whatever the tag holds; the same for
+#           another default (Ctrl-G); the Caps Lock dispatch installed over
+#           whatever the tag holds           -> KM1, each
+#         no reroute of the Cadence profile's plain s -> KM7, KM9
+#         key_filter forwards the state as typed, not key_chord's -> KM7, KM13
+#         the cursor tail skipped for a key that goes out with another state
+#           than typed; the tail skipped for b -> KM7, each
+#         d forwarded without the edit bracket -> KM2
+#         no graph_use_ctrl_key rule         -> KM10, KM13
+#         a table row that is no graph row is ignored -> KM11
+#         graphguards without Shift-M's pair -> KM2, KM9
+#         key_chord without its refusal by name; graphown without M; graphown
+#           without b                        -> KM11, each
+#         Escape always forwarded; a row but no verb -> KM11, each
+#         the border factor changed in the TEXT of src/callback.c, the binary
+#           not rebuilt                      -> KM9
+#       THE THIRD REPAIR's own breaks, each green in every viewer suite
+#       before its leg existed:
+#         the pixel gate knows the first two strips only -> KM9
+#         the pixel gate knows every strip but the last -> KM9, CA8
+#         in the Cadence profile the Ctrl-Shift-M default goes in over
+#           whatever the tag holds           -> KM1
+#         the wrapper echoes a line of its own, through ciw_echo or through
+#           wviewer::echo                    -> KM1, each, and each again
+#                                               with an action log open
+#                                               (run_suites.sh --logdir, the
+#                                               arm the full regression runs)
+#         strip_at_pixel_inset hands the band test no inset -> CG-mmb; the
+#           canvas is then panned for the rest of the suite and CG-shift-b1,
+#           WB-click, WB-lmb-drag, WB-mmb-drag, SD4 and IX-fit follow it
+#         the cursor tail skipped for a typed Control-s -> KM7
+#         wviewer::open gives the focus to the plot canvas -> G1f
+#       THE FOURTH REPAIR's breaks. This suite was green under each before
+#       the repair (measured by the attack that found them). Each was built,
+#       went red on the one row named and on no other row of this suite, on
+#       the display arm and again with an action log open, and was put back:
+#         the pixel gate keeps only the bands that share the first band's
+#           left edge (the right-hand subwindow takes no graph key) -> KM9
+#         the pixel gate says no on every tab but the first -> KM6
+#         the pixel gate remembers a canvas's bands by its strip count
+#           (the old geometry after a resize) -> KM9
+#         the pixel gate says yes for the first viewer canvas of the
+#           session only                     -> KM15
+#         the wrapper flips the first viewer of the registry, whichever
+#           canvas the key came from         -> KM15
+#         the wrapper does nothing while a cursor shows -> KM7
+#         in the Cadence profile m and d are forwarded without the edit
+#           bracket                          -> KM2
+#         in the Cadence profile the cursor tail is skipped for a and b
+#                                            -> KM2
+#       NOT caught in this suite: graph_border_px answering one constant
+#       (the formula's own answer at the Tk scaling of the display this ran
+#       on), and strip_at_pixel_inset using its own inset whatever the
+#       caller gives. Row SWK25 of test_wave_subwindows catches both, on
+#       both arms.
+#       NOT measured again (the engine would have to be rebuilt):
+#         ENGINE (src/callback.c, rebuilt): a graph guard put in front of the
+#           Cadence arm of `case 's'`        -> KM12, measured by the build
 #
 # Honest assertability (spec D8): headless/GUI legs can assert raw
 # points/vars/sim_type, layer-2 rect count/props, redraw rc 0 and
@@ -642,6 +799,55 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   # above built a NEW toplevel, so the old $vtop/$vdrw are stale.
   set vtop [wviewer::window_for $tok]
   set vdrw $vtop.drw
+
+  # --- G1f: A LIMIT, DECLARED: where the keyboard focus is after an open ------
+  # doc/claude/specs/waveform_viewer.md, "What the key filter forwards". A key
+  # reaches the viewer's key filter and the WaveViewer tag only while the plot
+  # canvas has the keyboard focus. wviewer::open leaves the viewer's context
+  # the current one and asks for the focus on the viewer's TOPLEVEL. The engine
+  # hands a canvas the focus when the pointer's entering SWITCHES the context
+  # to it; into a window whose context is the current one already the pointer
+  # brings no focus (autofocus_mainwindow off, as it ships). So right after an
+  # open no viewer key works until one click in the plot, or until the pointer
+  # has been over another xschem canvas and come back.
+  # What is read is Tk's own record of where the focus goes inside the
+  # toplevel (focus -lastfor), which does not wait for the window manager to
+  # hand this application the focus. Four legs: straight after the open of the
+  # row above, nothing served in between; an Enter on the plot with the
+  # viewer's context current and the focus where the open asks for it; the
+  # same Enter with autofocus_mainwindow switched on for it (the canvas's own
+  # Enter binding then asks for the focus); an Enter on the plot after the
+  # main window's context was made current.
+  # The row turns red the day an open gives the plot canvas the focus, and
+  # then that sentence of the spec and the guide's troubleshooting row go.
+  set g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vtop}]]
+  set g1f_af 1
+  catch {set g1f_af $::autofocus_mainwindow}
+  if {![viewer_ready $vtop]} {
+    puts "skip: G1f's two Enter legs need a mapped viewer canvas"
+    check "G1f a limit, declared: straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, not on the plot canvas" \
+      $g1f {1 1}
+  } else {
+    for {set i 0} {$i < 10} {incr i} { update; after 20 }
+    catch {focus $vtop}
+    xschem new_schematic switch $vdrw
+    event generate $vdrw <Enter> -x 40 -y 40
+    update
+    lappend g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vtop}]]
+    set ::autofocus_mainwindow 1
+    event generate $vdrw <Enter> -x 40 -y 40
+    update
+    lappend g1f [expr {[focus -lastfor $vtop] eq $vdrw}]
+    set ::autofocus_mainwindow $g1f_af
+    catch {focus $vtop}
+    xschem new_schematic switch .drw
+    event generate $vdrw <Enter> -x 40 -y 40
+    update
+    lappend g1f [list [expr {[xschem get current_win_path] eq $vdrw}] [expr {[focus -lastfor $vtop] eq $vdrw}]]
+    check "G1f a limit, declared: straight after wviewer::open the viewer's context is the current one and the focus inside its toplevel is on the toplevel, not on the plot canvas; an Enter on the plot while that context is current leaves it there, and puts it on the canvas with autofocus_mainwindow on; an Enter that switches the context to the viewer puts it on the plot canvas (autofocus_mainwindow as the suite runs; after the open: context the viewer's, focus on the toplevel; after the first Enter: the same two; with autofocus_mainwindow on: focus on the canvas; after an Enter from the main window's context: context the viewer's, focus on the canvas)" \
+      [list $g1f_af $g1f] {0 {1 1 {1 1} 1 {1 1}}}
+    xschem new_schematic switch $vdrw
+  }
 
   # --- G1c: THE VIEWER RECORDS ITS OWN ARRIVAL -------------------------------
   # ⚠ THIS IS INSTRUMENTATION, AND INSTRUMENTATION DIES SILENTLY. Issue 0840's
@@ -1845,6 +2051,26 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update
     check_true "CG-mmb middle-drag left the canvas at baseline (no pan)" \
       [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]
+    # ...and the same gesture STARTED IN THE ENGINE'S BORDER, three pixels
+    # inside the top edge of the strip. The engine's graph test does not take
+    # that pixel for the graph, so a press forwarded there is the schematic
+    # canvas pan, the gesture issue 0149 took out of this window. btn2_filter
+    # refuses such a press (wviewer::strip_at_pixel_inset) and the motion and
+    # the release follow the press: the canvas view stays where it was. The
+    # band is the canvas' own (wviewer::strip_bands_px).
+    set mmb_b [lindex [wviewer::strip_bands_px $vdrw] 0]
+    set mmb_in no-band
+    if {[llength $mmb_b] == 4} {
+      set mby [expr {int(ceil([lindex $mmb_b 1])) + 3}]
+      set mmb_in [expr {$mpx1 > [lindex $mmb_b 0] && $mpx1 < [lindex $mmb_b 2] &&
+                        $mby > [lindex $mmb_b 1] && $mby < [lindex $mmb_b 3]}]
+      event generate $vdrw <ButtonPress-2>   -x $mpx1 -y $mby
+      event generate $vdrw <Motion>          -x $mpx2 -y [expr {$mby + 60}] -state 0x200
+      event generate $vdrw <ButtonRelease-2> -x $mpx2 -y [expr {$mby + 60}] -state 0x200
+      update
+    }
+    check "CG-mmb a middle-button press, drag and release that starts three pixels inside the top edge of the strip leaves the canvas view where it was (the press pixel is inside the strip's band, the canvas is at its baseline)" \
+      [list $mmb_in [ix_canvas_ok $vdrw $cx0 $cy0 $cz0]] {1 1}
 
     # CG-shift-b1: Shift+drag is the schematic rubber-band/copy gesture and
     # Alt+B1 the unselect-at-pointer click — both canvas-only (waves_selected
@@ -2869,12 +3095,1581 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         check "CA8 the cap holds at 64, the first 64 node indices" \
           [list [llength $ca_big] [lindex $ca_big 0] [lindex $ca_big end]] {64 0 63}
 
+        # === KM: Ctrl-Shift-M in the viewer, and the keys that are not the viewer's ===
+        # Two claims (doc/claude/specs/waveform_viewer_subwindows.md, rule SW22 and
+        # the keys section; doc/claude/specs/waveform_viewer.md, what the key filter
+        # forwards):
+        #   1. Ctrl-Shift-M in a viewer flips the plot mode of the TARGET subwindow,
+        #      as Options > Plot Mode does.
+        #   2. No key pressed in a viewer reaches an editor verb of the engine. The
+        #      filter forwards a graph key only as a chord the engine itself hands to
+        #      the graph, at a pixel the engine's own graph test accepts.
+        #
+        # HOW A KEY IS SENT (km_key): a Motion to the pixel, then a KeyPress with
+        # -keysym and -state AT that pixel. The state is a number because Tk's Alt
+        # pattern modifier does not set Mod1, and Caps Lock and Num Lock have no
+        # pattern modifier.
+        #
+        # THE WITNESSES. ::km_fwd lists every KeyPress the engine is handed, as
+        # keysym and state, while the wrapper passes each call on unchanged;
+        # ::km_via lists the same calls with the canvas each came through.
+        # ::km_log lists the viewer's action-log lines. km_snap is the state a
+        # refused key must leave alone.
+        #
+        # THE PRE-FLIGHT (km_decides). Several of these chords are a reload, a Save
+        # form or a new window once they reach the engine. So a row first asks the
+        # filter what it WOULD forward, with the forward swallowed, and sends the
+        # real key only when the answer is nothing. On a product that forwards the
+        # chord the row fails at the pre-flight and the engine never sees the key.
+        set ::km_fwd {}
+        set ::km_via {}
+        set ::km_would {}
+        set ::km_swallow 0
+        set ::km_esc 0
+        rename ::xschem ::km_real_xschem
+        proc ::xschem {args} {
+          if {[lindex $args 0] eq {callback} && [lindex $args 2] == 2} {
+            set kmrec [list [lindex $args 5] [lindex $args 8]]
+            if {$::km_swallow} { lappend ::km_would $kmrec ; return {} }
+            lappend ::km_fwd $kmrec
+            lappend ::km_via [list [lindex $args 1] [lindex $args 5] [lindex $args 8]]
+          }
+          if {$args eq {escape}} { incr ::km_esc }
+          return [uplevel 1 [list ::km_real_xschem {*}$args]]
+        }
+        set ::km_log {}
+        rename ::wviewer::log_action ::wviewer::__km_real_log
+        proc ::wviewer::log_action {line} { lappend ::km_log $line ; ::wviewer::__km_real_log $line }
+        set ::km_sacd 0
+        set km_had_sacd [expr {[info commands ::save_as_cellview_dialog] ne {}}]
+        if {$km_had_sacd} { rename ::save_as_cellview_dialog ::km_real_sacd }
+        proc ::save_as_cellview_dialog {args} { incr ::km_sacd ; return {} }
+        proc km_key {vdrw ks st px py} {
+          wb_ev $vdrw <Motion> -x $px -y $py
+          update
+          set k0 $::kf_calls
+          set d [send_key $vdrw <KeyPress> {$::kf_calls > $k0} \
+                   [list -keysym $ks -state $st -x $px -y $py]]
+          update
+          return $d
+        }
+        proc km_decides {vdrw N s px py} {
+          wb_ev $vdrw <Motion> -x $px -y $py
+          update
+          set ::km_would {}
+          set ::km_swallow 1
+          set rc [catch {wviewer::key_filter $vdrw 2 $px $py $N [format %c $N] $s} e]
+          set ::km_swallow 0
+          if {$rc} { return "threw ($e)" }
+          return $::km_would
+        }
+        proc km_snap {vdrw tok} {
+          if {[catch {
+            xschem new_schematic switch $vdrw
+            set v [list mode [wviewer::plot_mode $tok] gf [xschem get graph_flags] \
+              ui [xschem get ui_state] ro [xschem get readonly] hs $::hide_symbols \
+              win [llength [xschem windows]] rects [xschem get rects 2] \
+              mk [llength [xschem graph_marker list]] \
+              cur [list [xschem get cursor1_x] [xschem get cursor2_x]] \
+              view [list [xschem get zoom] [xschem get xorigin] [xschem get yorigin]] \
+              ow $::orthogonal_wiring]
+          } e]} { return "threw ($e)" }
+          return $v
+        }
+        proc km_gf {vdrw} {
+          xschem new_schematic switch $vdrw
+          set f -1
+          catch {set f [xschem get graph_flags]}
+          return $f
+        }
+        proc km_mk {vdrw} {
+          xschem new_schematic switch $vdrw
+          set n -1
+          catch {set n [llength [xschem graph_marker list]]}
+          return $n
+        }
+        proc km_cur {vdrw} {
+          xschem new_schematic switch $vdrw
+          set c {? ?}
+          catch {set c [list [xschem get cursor1_x] [xschem get cursor2_x]]}
+          return $c
+        }
+        proc km_status {vtop} {
+          set t {}
+          catch {set t [lindex [$vtop.wvstatus.l cget -text] 1]}
+          return $t
+        }
+        # what the readout bar reads as the x of cursor A and of cursor B: the
+        # text after `x=` of its two labels, {} for a label that shows none
+        proc km_readout {vtop} {
+          set r {}
+          foreach l {a b} {
+            set t {}
+            catch {set t [$vtop.wvreadout.$l cget -text]}
+            set x {}
+            regexp {x=(\S+)} $t -> x
+            lappend r $x
+          }
+          return $r
+        }
+        # centre pixel of strip gi, from the canvas' own bands; a fraction of the
+        # canvas when the strip has no band, so a gesture cannot throw
+        proc km_mid {vdrw gi} {
+          set b [lindex [ca_bands $vdrw] $gi]
+          if {[llength $b] == 4} {
+            return [list [expr {int(([lindex $b 0] + [lindex $b 2]) / 2.0)}] \
+                         [expr {int(([lindex $b 1] + [lindex $b 3]) / 2.0)}]]
+          }
+          return [list [expr {int(0.5 * [winfo width $vdrw])}] [expr {int(0.25 * [winfo height $vdrw])}]]
+        }
+        # every graph key as the filter gets it with no Control: an upper-case
+        # keysym carries Shift
+        proc km_plain {N} { return [expr {$N >= 65 && $N <= 90 ? 1 : 0}] }
+
+        # the fixture: one subwindow, two strips, one trace each, single mode,
+        # cursors off, no marker
+        wviewer::set_graphs $tok [list \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0]] \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0]]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        wviewer::set_plot_mode single $tok
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        set ::wviewer::cvb($tok) 0
+        wviewer::cursor_toggle $tok 2
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        lassign [km_mid $vdrw 0] kmx kmy
+        # two pixels of strip 0 that the engine agrees are ON the trace, for the
+        # marker keys
+        set km_on {}
+        set km_b0 [lindex [ca_bands $vdrw] 0]
+        if {[llength $km_b0] == 4} {
+          foreach km_px [list $kmx [expr {$kmx + 90}]] {
+            for {set y [expr {int([lindex $km_b0 1]) + 14}]} {$y < int([lindex $km_b0 3]) - 14} {incr y} {
+              if {[wb_at $vdrw 0 $km_px $y 3] >= 0} { lappend km_on [list $km_px $y] ; break }
+            }
+          }
+        }
+        check "KM0 fixture: two strips with a band each, single mode, cursors and tooltip off, no marker, two on-trace pixels" \
+          [list [llength [ca_bands $vdrw]] [wviewer::plot_mode $tok] [km_status $vtop] \
+                [expr {[km_gf $vdrw] & 70}] [km_mk $vdrw] [llength $km_on]] \
+          {2 single single 0 0 2}
+        if {[llength $km_on] < 2} { set km_on [list [list $kmx $kmy] [list [expr {$kmx + 90}] $kmy]] }
+        set km_nkeys [llength $::wviewer::graphkeys]
+        check_true "KM0 fixture: the product's graph-key list is not empty" [expr {$km_nkeys > 0}]
+
+        # --- KM1: the chord itself --------------------------------------------
+        set km_mb0 $::mb_hits
+        set ::km_fwd {} ; set ::km_log {}
+        set km_d [km_key $vdrw M 5 $kmx $kmy]
+        check "KM1 a real Ctrl-Shift-M reaches the viewer's key filter as keysym M with Control and Shift" \
+          [list $km_d $::kf_last] {1 {2 77 5}}
+        check "KM1 ...it pops no message box" [expr {$::mb_hits - $km_mb0}] 0
+        check "KM1 ...the filter hands the engine nothing" $::km_fwd {}
+        check "KM1 ...the plot mode flips" [wviewer::plot_mode $tok] multi
+        check "KM1 ...the status bar follows" [km_status $vtop] multi
+        check "KM1 ...one action-log line, set_plot_mode with the resolved mode and the token" \
+          $::km_log [list [list wviewer::set_plot_mode multi $tok]]
+        check "KM1 ...the measurement-tooltip flag does not move" [expr {[km_gf $vdrw] & 64}] 0
+        set ::km_fwd {} ; set ::km_log {}
+        km_key $vdrw M 5 $kmx $kmy
+        check "KM1 a second press flips back: mode, status bar, one line, no box, nothing forwarded" \
+          [list [wviewer::plot_mode $tok] [km_status $vtop] $::km_log \
+                [expr {$::mb_hits - $km_mb0}] $::km_fwd] \
+          [list single single [list [list wviewer::set_plot_mode single $tok]] 0 {}]
+
+        # the chord is as quiet in the command window as the menu entry (the
+        # status bar shows the mode). Both doors a line can go through are
+        # recorded while the real chord is pressed and while Options > Plot
+        # Mode is invoked after it: ciw_echo and the viewer's own
+        # wviewer::echo. With an action log open the engine mirrors each
+        # action-log line into the command window through ciw_echo; that
+        # mirror is the action's own line (the one ::km_log holds) and is not
+        # counted. The entry is found by its command, not by its label (the
+        # label changes with the mode).
+        proc km_own_lines {} {
+          set own {}
+          foreach km_l $::km_echo { if {[lsearch -exact $::km_log $km_l] < 0} { lappend own $km_l } }
+          return $own
+        }
+        set ::km_echo {}
+        set km_echo_had {}
+        foreach km_p {::ciw_echo ::wviewer::echo} {
+          if {[info commands $km_p] eq {}} continue
+          lappend km_echo_had $km_p
+          rename $km_p ${km_p}__km_real
+          proc $km_p {args} [string map [list @P@ $km_p] {
+            lappend ::km_echo [lindex $args 0]
+            return [uplevel 1 [list @P@__km_real {*}$args]]
+          }]
+        }
+        wviewer::set_plot_mode single $tok
+        set ::km_echo {} ; set ::km_log {}
+        km_key $vdrw M 5 $kmx $kmy
+        set km_q1 [list [wviewer::plot_mode $tok] [llength $::km_log] [km_own_lines]]
+        set km_pm $vtop.wvmenubar.options.plotmode
+        set km_pmi {}
+        catch {
+          for {set i 0} {$i <= [$km_pm index end]} {incr i} {
+            if {[$km_pm type $i] eq {command} &&
+                [$km_pm entrycget $i -command] eq [list wviewer::set_plot_mode invert $tok]} { set km_pmi $i ; break }
+          }
+        }
+        set ::km_echo {} ; set ::km_log {}
+        set km_q2 no-such-entry
+        if {$km_pmi ne {}} {
+          $km_pm invoke $km_pmi
+          set km_q2 [list [wviewer::plot_mode $tok] [llength $::km_log] [km_own_lines]]
+        }
+        foreach km_p $km_echo_had {
+          rename $km_p {}
+          rename ${km_p}__km_real $km_p
+        }
+        rename km_own_lines {}
+        check "KM1 the chord is as quiet in the command window as the menu entry: with ciw_echo and wviewer::echo recorded, a real Ctrl-Shift-M flips the mode, writes its one action-log line and echoes no line of its own, and Options > Plot Mode invoked after it flips the mode back the same way (the doors recorded; for the chord and for the entry: the mode it left, its action-log lines, the lines echoed that are not the mirror of one)" \
+          [list $km_echo_had $km_q1 $km_q2] [list {::ciw_echo ::wviewer::echo} {multi 1 {}} {single 1 {}}]
+        wviewer::set_plot_mode single $tok
+
+        # the wrapper acts on the canvas the key came from, not on whichever
+        # context is current: called for the main window's canvas while this
+        # viewer's context is the current one, it does nothing
+        xschem new_schematic switch $vdrw
+        set ::km_log {}
+        set km_w [list [catch {wviewer::plot_mode_toggle_at .drw} km_we] $km_we]
+        check "KM1 the wrapper, called for a canvas that is no viewer's while this viewer's context is current, does nothing: answer {}, mode and log unmoved" \
+          [list $km_w [wviewer::plot_mode $tok] $::km_log] {{0 {}} single {}}
+
+        # ...and it does not need the viewer's context to be the current one
+        # (the context follows the pointer, the keyboard focus does not): called
+        # for this viewer's canvas while the main window's context is current,
+        # the wrapper flips this viewer's mode
+        xschem new_schematic switch .drw
+        set ::km_log {}
+        set km_w2 [list [catch {wviewer::plot_mode_toggle_at $vdrw} km_we] $km_we]
+        check "KM1 the wrapper, called for this viewer's canvas while the main window's context is the current one, flips this viewer's mode (answer, mode, one line)" \
+          [list $km_w2 [wviewer::plot_mode $tok] $::km_log] \
+          [list {0 multi} multi [list [list wviewer::set_plot_mode multi $tok]]]
+        xschem new_schematic switch $vdrw
+        wviewer::set_plot_mode single $tok
+
+        # the chord goes by the focus, not by where the pointer or the key's
+        # pixel is: pressed two pixels inside the strip's top edge, where no
+        # graph key is forwarded, and with both of the filter's graph gates
+        # answering no, it flips the mode all the same
+        set km_gates {}
+        foreach km_p {over_graph key_at_graph} {
+          rename ::wviewer::$km_p ::wviewer::__km_gate_$km_p
+          proc ::wviewer::$km_p {args} { return 0 }
+          lappend km_gates $km_p
+        }
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {} ; set ::km_log {}
+        km_key $vdrw M 5 $kmx [expr {int([lindex [lindex [ca_bands $vdrw] 0] 1]) + 2}]
+        set km_1b [list [wviewer::plot_mode $tok] $::km_log $::km_fwd]
+        foreach km_p $km_gates {
+          rename ::wviewer::$km_p {}
+          rename ::wviewer::__km_gate_$km_p ::wviewer::$km_p
+        }
+        check "KM1 the chord goes by the focus, not by the pointer: pressed two pixels inside the strip's edge, with both graph gates of the filter answering no, it flips the mode all the same (one line, nothing forwarded)" \
+          $km_1b [list multi [list [list wviewer::set_plot_mode multi $tok]] {}]
+        wviewer::set_plot_mode single $tok
+
+        # the default is installed whatever the profile. Every suite opens its
+        # first viewer in the stock profile and the defaults go in once per
+        # session, so the binding is taken off the tag here, the Cadence profile
+        # switched on, and the installer run again.
+        set km_seq <Control-Shift-Key-M>
+        set km_old [bind WaveViewer $km_seq]
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        bind WaveViewer $km_seq {}
+        set km_gone [bind WaveViewer $km_seq]
+        set ::cadence_compat 1
+        set ::wviewer::tagbinds 0
+        set km_inst [list [catch {wviewer::install_default_binds} km_ie] $km_ie]
+        set km_new [bind WaveViewer $km_seq]
+        set ::km_fwd {} ; set km_mb3 $::mb_hits
+        km_key $vdrw M 5 $kmx $kmy
+        set km_x2 [list [wviewer::plot_mode $tok] $::km_fwd [expr {$::mb_hits - $km_mb3}]]
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        if {[bind WaveViewer $km_seq] eq {}} { bind WaveViewer $km_seq $km_old }
+        set ::wviewer::tagbinds 1
+        check "KM1 the default goes in under the Cadence profile too: with the tag's binding taken off and cadence_compat on, install_default_binds puts the same script back and a real Ctrl-Shift-M flips the mode (nothing forwarded, no box); the profile is back" \
+          [list $km_gone $km_inst [expr {$km_old ne {} && $km_new eq $km_old}] $km_x2 \
+                [list $::cadence_compat $::autotrim_wires]] \
+          [list {} {0 1} 1 {multi {} 0} [list $km_cad0 $km_at0]]
+        wviewer::set_plot_mode single $tok
+
+        # a binding the user made first WINS: install_default_binds installs a
+        # default only for a sequence nothing has bound. The population is every
+        # sequence the WaveViewer tag holds at this point (the defaults and the
+        # Caps Lock dispatch went in at the first viewer open): each is bound to
+        # a bare break, the installer is run again as at a first open, and none
+        # may come back overwritten. That the population is the installer's is
+        # held by a second reading: every sequence a bind statement of the proc
+        # names (its body as the interpreter holds it, comment lines out) has a
+        # binding on the tag, the chord of this item among them.
+        set km_ib {}
+        catch {set km_ib [info body ::wviewer::install_default_binds]}
+        regsub -all -line {^\s*#.*$} $km_ib {} km_ib
+        set km_named {}
+        foreach {km_all km_sq} [regexp -all -inline {bind WaveViewer (<[^>\s]+>) \{} $km_ib] {
+          if {[lsearch -exact $km_named $km_sq] < 0} { lappend km_named $km_sq }
+        }
+        set km_tagseqs [bind WaveViewer]
+        set km_unbound {}
+        foreach km_sq $km_named { if {[bind WaveViewer $km_sq] eq {}} { lappend km_unbound $km_sq } }
+        set km_tag0 {}
+        foreach km_sq $km_tagseqs { lappend km_tag0 [bind WaveViewer $km_sq] }
+        # The walk is taken in BOTH profiles, stock and then Cadence. The
+        # Cadence profile is the one whose rc carries the remap recipe for this
+        # chord (src/cadence_style_rc: the user's own binding goes on the tag
+        # before the first viewer opens), so it is there that a default going
+        # in over a binding would undo the remap.
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set km_walk {}
+        foreach km_prof {0 1} {
+          set ::cadence_compat $km_prof
+          foreach km_sq $km_tagseqs { bind WaveViewer $km_sq {break} }
+          set ::wviewer::tagbinds 0
+          set km_inst [list [catch {wviewer::install_default_binds} km_ie] $km_ie]
+          set ::wviewer::tagbinds 1
+          set km_lost {}
+          foreach km_sq $km_tagseqs { if {[bind WaveViewer $km_sq] ne {break}} { lappend km_lost $km_sq } }
+          lappend km_walk [list $km_prof [expr {$::cadence_compat ? 1 : 0}] $km_inst $km_lost]
+          foreach km_sq $km_tagseqs km_scr $km_tag0 { bind WaveViewer $km_sq $km_scr }
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        set km_tag1 {}
+        foreach km_sq $km_tagseqs { lappend km_tag1 [bind WaveViewer $km_sq] }
+        check "KM1 a binding of the user's own wins over every default, in the stock profile and in the Cadence one: with each sequence of the WaveViewer tag bound to a bare break, install_default_binds run again overwrites none (the tag holds sequences, the installer's bind statements name some and Ctrl-Shift-M among them, the named ones with no binding; per profile: cadence_compat as the leg set it and as it reads while the installer runs, the installer's answer, the sequences it overwrote); the tag and the profile are put back as they were" \
+          [list [expr {[llength $km_tagseqs] > 0}] \
+                [expr {[llength $km_named] > 0 && [lsearch -exact $km_named <Control-Shift-Key-M>] >= 0}] \
+                $km_unbound $km_walk [expr {$km_tag1 eq $km_tag0}] \
+                [list $::cadence_compat $::autotrim_wires]] \
+          [list 1 1 {} {{0 0 {0 1} {}} {1 1 {0 1} {}}} 1 [list $km_cad0 $km_at0]]
+
+        # --- KM2: what must stay as it is ---------------------------------------
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {}
+        km_key $vdrw M 1 $kmx $kmy
+        set km_t1 [list [expr {[km_gf $vdrw] & 64}] [wviewer::plot_mode $tok] $::km_fwd]
+        set ::km_fwd {}
+        km_key $vdrw M 1 $kmx $kmy
+        check "KM2 Shift-M still toggles the measurement tooltip (on, then off) and leaves the mode alone" \
+          [list $km_t1 [list [expr {[km_gf $vdrw] & 64}] [wviewer::plot_mode $tok] $::km_fwd]] \
+          {{64 single {{77 1}}} {0 single {{77 1}}}}
+        set km_m0 [km_mk $vdrw]
+        km_key $vdrw m 0 {*}[lindex $km_on 0]
+        set km_m1 [km_mk $vdrw]
+        km_key $vdrw m 4 {*}[lindex $km_on 1]
+        check "KM2 bare m and Ctrl-m over a trace still create one marker each, and no box" \
+          [list [expr {$km_m1 - $km_m0}] [expr {[km_mk $vdrw] - $km_m1}] [expr {$::mb_hits - $km_mb0}]] {1 1 0}
+        # d, the delta marker, is the other key that reaches the engine with the
+        # read-only flag lifted. With one marker in place a bare d over a trace
+        # makes a second one, measured from the first: the `prev` field of its
+        # record (the eighth of `xschem graph_marker list`) holds the first
+        # marker's number, and the first marker's own holds 0.
+        catch {wviewer::delete_all_markers_at $vdrw}
+        km_key $vdrw m 0 {*}[lindex $km_on 0]
+        xschem new_schematic switch $vdrw
+        set km_dl0 [xschem graph_marker list]
+        set ::km_fwd {}
+        km_key $vdrw d 0 {*}[lindex $km_on 1]
+        xschem new_schematic switch $vdrw
+        set km_dl1 [xschem graph_marker list]
+        check "KM2 with one marker in place a bare d over a trace makes a second, a delta marker measured from the first: forwarded as typed, the markers before and after, the first marker's prev field, whether the new one's holds the first one's number, no box" \
+          [list $::km_fwd [llength $km_dl0] [llength $km_dl1] [lindex $km_dl0 0 7] \
+                [expr {[llength $km_dl1] == 2 && [lindex $km_dl0 0 0] > 0 &&
+                       [lindex $km_dl1 1 7] == [lindex $km_dl0 0 0]}] \
+                [expr {$::mb_hits - $km_mb0}]] \
+          {{{100 0}} 1 2 0 1 0}
+
+        # ...and the marker keys and the two cursor keys in BOTH profiles, the
+        # stock one and then the Cadence one (the one src/cadence_style_rc
+        # sets). The rows above run in the stock profile only. Per profile
+        # (km_profile_keys):
+        #   * the readout bar is taken down the way its checkbutton does it and
+        #     the on-trace pixels are scanned again (the bar changes the height
+        #     of the canvas);
+        #   * bare m, Control-m and bare d on the trace: each is handed to the
+        #     engine as typed and each makes one marker. These are the keys that
+        #     reach the engine with the read-only flag lifted;
+        #   * bare a, then bare b 60 pixels to its right: each is handed on as
+        #     typed, the engine's cursor comes on and the checkbutton of the
+        #     Cursors menu with it (the pair ca_cursorA reads, and km_curB for
+        #     B), the readout bar is shown again and reads an x under that
+        #     cursor;
+        #   * a and b once more: both pairs off, both lines of the bar empty.
+        # Afterwards the bar is put back as it was, and the canvas must be as
+        # tall as it was before the leg: the pixels the later rows use were
+        # taken at that height.
+        proc km_curB {vdrw tok} {
+          xschem new_schematic switch $vdrw
+          set bit 0
+          catch {set bit [expr {([xschem get graph_flags] & 4) ? 1 : 0}]}
+          set mir 0
+          catch {set mir [expr {$::wviewer::cvb($tok) ? 1 : 0}]}
+          return [list $mir $bit]
+        }
+        proc km_bar {vtop} {
+          set m 0
+          catch {set m [winfo ismapped $vtop.wvreadout]}
+          return $m
+        }
+        # two pixels of strip 0 that the engine agrees are on the trace, at the
+        # middle of the strip and 90 pixels to its right; fewer when it finds
+        # fewer
+        proc km_scan_on {vdrw} {
+          set on {}
+          set b0 [lindex [ca_bands $vdrw] 0]
+          if {[llength $b0] != 4} { return $on }
+          lassign [km_mid $vdrw 0] mx my
+          foreach px [list $mx [expr {$mx + 90}]] {
+            for {set y [expr {int([lindex $b0 1]) + 14}]} {$y < int([lindex $b0 3]) - 14} {incr y} {
+              if {[wb_at $vdrw 0 $px $y 3] >= 0} { lappend on [list $px $y] ; break }
+            }
+          }
+          return $on
+        }
+        proc km_profile_keys {vdrw vtop tok} {
+          set ::wviewer::cvr($tok) 0
+          wviewer::readout_show $tok
+          for {set i 0} {$i < 10} {incr i} { update; after 20 }
+          xschem new_schematic switch $vdrw
+          catch {wviewer::delete_all_markers_at $vdrw}
+          set on [km_scan_on $vdrw]
+          if {[llength $on] < 2} { return [list no-two-pixels-on-the-trace $on] }
+          set mk {}
+          foreach {ks st p} [list m 0 [lindex $on 0] m 4 [lindex $on 1] d 0 [lindex $on 0]] {
+            set m0 [km_mk $vdrw]
+            set ::km_fwd {}
+            km_key $vdrw $ks $st {*}$p
+            lappend mk [list $::km_fwd [expr {[km_mk $vdrw] - $m0}]]
+          }
+          catch {wviewer::delete_all_markers_at $vdrw}
+          set r [list $mk]
+          set bar0 [km_bar $vtop]
+          lassign [km_mid $vdrw 0] mx my
+          set ::km_fwd {}
+          km_key $vdrw a 0 $mx $my
+          for {set i 0} {$i < 5} {incr i} { update; after 20 }
+          lappend r [list $bar0 $::km_fwd [ca_cursorA $vdrw $tok] [km_bar $vtop] \
+                          [expr {[lindex [km_readout $vtop] 0] ne {}}]]
+          lassign [km_mid $vdrw 0] mx my
+          set ::km_fwd {}
+          km_key $vdrw b 0 [expr {$mx + 60}] $my
+          lappend r [list $::km_fwd [km_curB $vdrw $tok] [expr {[lindex [km_readout $vtop] 1] ne {}}]]
+          km_key $vdrw a 0 $mx $my
+          km_key $vdrw b 0 [expr {$mx + 60}] $my
+          lappend r [list [ca_cursorA $vdrw $tok] [km_curB $vdrw $tok] [km_readout $vtop]]
+          return $r
+        }
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set km_cvr0 0
+        catch {set km_cvr0 $::wviewer::cvr($tok)}
+        set km_h0 [winfo height $vdrw]
+        set km2p {}
+        foreach km_prof {0 1} {
+          set ::cadence_compat $km_prof
+          lappend km2p [list $km_prof [expr {$::cadence_compat ? 1 : 0}] [km_profile_keys $vdrw $vtop $tok]]
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        # whatever a leg left behind: both cursors off on both sides, no marker,
+        # the bar as it was
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        set ::wviewer::cvb($tok) 0
+        wviewer::cursor_toggle $tok 2
+        catch {wviewer::delete_all_markers_at $vdrw}
+        set ::wviewer::cvr($tok) $km_cvr0
+        wviewer::readout_show $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        set km_p1 {{{{109 0}} 1} {{{109 4}} 1} {{{100 0}} 1}}
+        set km_p2 {0 {{97 0}} {1 1} 1 1}
+        set km_p3 {{{98 0}} {1 1} 1}
+        set km_p4 {{0 0} {0 0} {{} {}}}
+        check "KM2 the marker keys and the cursor keys in both profiles, stock and then Cadence (per profile: cadence_compat as the leg set it and as it reads; bare m, Control-m and bare d on a trace, each with what the engine was handed and the markers it made; bare a with the readout bar down before it, what the engine was handed, the Cursor A checkbutton and the engine's cursor A, the bar shown, an x read under A; bare b the same for B; a and b again, both pairs and both lines of the bar)" \
+          $km2p [list [list 0 0 [list $km_p1 $km_p2 $km_p3 $km_p4]] [list 1 1 [list $km_p1 $km_p2 $km_p3 $km_p4]]]
+        check "KM2 fixture: the profile is back, the cursors are off on both sides, no marker is left, and the canvas is as tall as it was before the leg" \
+          [list $::cadence_compat $::autotrim_wires [ca_cursorA $vdrw $tok] [km_curB $vdrw $tok] [km_mk $vdrw] \
+                [expr {[winfo height $vdrw] == $km_h0}]] \
+          [list $km_cad0 $km_at0 {0 0} {0 0} 0 1]
+        rename km_profile_keys {}
+        rename km_scan_on {}
+
+        # --- KM4: Caps Lock (the case as typed decides, ruling 2026-10-16) ------
+        # Each row from here on sets the mode it starts from: a row that read
+        # the mode the row before left would pass or fail with that row.
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {} ; set ::km_log {}
+        km_key $vdrw M 6 $kmx $kmy
+        check "KM4 Caps Lock + Ctrl-m is the same chord: the mode flips, one line, no box, nothing forwarded" \
+          [list [wviewer::plot_mode $tok] $::km_log [expr {$::mb_hits - $km_mb0}] $::km_fwd] \
+          [list multi [list [list wviewer::set_plot_mode multi $tok]] 0 {}]
+        wviewer::set_plot_mode multi $tok
+        set km_m2 [km_mk $vdrw]
+        set ::km_fwd {} ; set ::km_log {}
+        km_key $vdrw m 7 {*}[lindex $km_on 0]
+        check "KM4 Caps Lock + Ctrl-Shift-M is typed lower: it stays the engine's Ctrl-m (a marker), and the mode stays" \
+          [list [wviewer::plot_mode $tok] $::km_log [expr {[km_mk $vdrw] - $km_m2}] \
+                [expr {$::mb_hits - $km_mb0}] [lindex $::km_fwd 0 0]] \
+          {multi {} 1 0 109}
+        # Num Lock on top: the chord still flips, and a bare graph key still works
+        wviewer::set_plot_mode multi $tok
+        set ::km_fwd {} ; set ::km_log {}
+        km_key $vdrw M 21 $kmx $kmy
+        set km_n1 [list [wviewer::plot_mode $tok] $::km_fwd [expr {$::mb_hits - $km_mb0}]]
+        set ::km_fwd {}
+        km_key $vdrw a 16 $kmx $kmy
+        set km_n2 [list [ca_cursorA $vdrw $tok] $::km_fwd]
+        km_key $vdrw a 16 $kmx $kmy
+        check "KM5 with Num Lock on Ctrl-Shift-M flips the mode (multi to single), and bare a still toggles cursor A (on, off)" \
+          [list $km_n1 $km_n2 [ca_cursorA $vdrw $tok]] \
+          {{single {} 0} {{1 1} {{97 16}}} {0 0}}
+        catch {wviewer::delete_all_markers_at $vdrw}
+        check "KM5 fixture: the markers of the rows above are gone again" [km_mk $vdrw] 0
+
+        # --- KM3: two subwindows, the TARGET one flips --------------------------
+        # The pointer stays over subwindow 1 for every press: the chord follows
+        # the target, not the pointer.
+        wviewer::set_plot_mode single $tok
+        wviewer::new_subwin $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        lassign [km_mid $vdrw 0] km3x km3y
+        lassign [km_mid $vdrw 2] km3x2 km3y2
+        check "KM3 fixture: two subwindows, the new one the target, both single" \
+          [list [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] \
+                [wviewer::target_index $tok] [wviewer::plot_mode $tok] [wviewer::base_mode $tok]] \
+          {2 2 single single}
+        set ::km_fwd {}
+        km_key $vdrw M 5 $km3x $km3y
+        set km3a [list [wviewer::plot_mode $tok] [km_status $vtop]]
+        wviewer::click_target $vdrw $km3x $km3y
+        set km3b [list [wviewer::target_index $tok] [wviewer::plot_mode $tok] [km_status $vtop]]
+        check "KM3 the chord flips the TARGET subwindow only: it reads multi, the one under the pointer still single" \
+          [list $km3a $km3b] {{multi multi} {0 single single}}
+        km_key $vdrw M 5 $km3x $km3y
+        set km3c [list [wviewer::plot_mode $tok] [km_status $vtop]]
+        km_key $vdrw M 5 $km3x $km3y
+        set km3d [wviewer::plot_mode $tok]
+        wviewer::click_target $vdrw $km3x2 $km3y2
+        check "KM3 after a click in the other subwindow the chord flips that one (multi, back to single); the first keeps its multi; no box, nothing forwarded" \
+          [list $km3c $km3d [wviewer::target_index $tok] [wviewer::plot_mode $tok] \
+                [expr {$::mb_hits - $km_mb0}] $::km_fwd] \
+          {{multi multi} single 2 multi 0 {}}
+        wviewer::close_subwin $tok
+        wviewer::set_plot_mode single $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        lassign [km_mid $vdrw 0] kmx kmy
+        check "KM3 fixture: back to one subwindow, single" \
+          [list [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] [wviewer::plot_mode $tok]] {1 single}
+
+        # --- KM7: plain s in the Cadence profile swaps the cursors -------------
+        # Writing cadence_compat turns autotrim_wires on through a write trace:
+        # both are saved and put back.
+        km_key $vdrw a 0 $kmx $kmy
+        km_key $vdrw b 0 [expr {$kmx + 60}] $kmy
+        set km_c0 [km_cur $vdrw]
+        check_true "KM7 fixture: cursors A and B are on, at two different x" \
+          [expr {([km_gf $vdrw] & 6) == 6 && [lindex $km_c0 0] != [lindex $km_c0 1]}]
+        # the readout bar came up with the cursors; what it reads under A and
+        # under B is taken before and after each swap
+        update
+        set km_r0 [km_readout $vtop]
+        set km_rm 0
+        catch {set km_rm [winfo ismapped $vtop.wvreadout]}
+        check_true "KM7 fixture: the readout bar is shown and reads cursor A and cursor B at two different x" \
+          [expr {$km_rm && [lindex $km_r0 0] ne {} && [lindex $km_r0 1] ne {} &&
+                 [lindex $km_r0 0] ne [lindex $km_r0 1]}]
+        # the chord of this item WHILE THE CURSORS SHOW, the state of a user who
+        # is measuring (the other rows press it with the cursors off). A
+        # real Ctrl-Shift-M flips the mode and the status bar follows, with one
+        # action-log line, nothing handed to the engine and no box; the engine's
+        # two cursors stay on where they were and the readout bar reads what it
+        # read. A second press flips back.
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {} ; set ::km_log {} ; set km_mb7c $::mb_hits
+        km_key $vdrw M 5 $kmx $kmy
+        set km7c [list [wviewer::plot_mode $tok] [km_status $vtop] $::km_log $::km_fwd \
+                       [expr {$::mb_hits - $km_mb7c}] [expr {[km_gf $vdrw] & 6}] \
+                       [expr {[km_cur $vdrw] eq $km_c0}] [km_bar $vtop] [expr {[km_readout $vtop] eq $km_r0}]]
+        set ::km_log {}
+        km_key $vdrw M 5 $kmx $kmy
+        lappend km7c [wviewer::plot_mode $tok] $::km_log
+        check "KM7 with cursors A and B showing, a real Ctrl-Shift-M flips the mode all the same: multi, the status bar with it, one action-log line, nothing handed to the engine, no box, both cursors still on in the engine and at the x they had, the readout bar still shown and reading what it read; a second press gives single with its one line" \
+          $km7c [list multi multi [list [list wviewer::set_plot_mode multi $tok]] {} 0 6 1 1 1 \
+                      single [list [list wviewer::set_plot_mode single $tok]]]
+        wviewer::set_plot_mode single $tok
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set ::cadence_compat 1
+        set km_mb1 $::mb_hits
+        set ::km_fwd {}
+        km_key $vdrw s 0 $kmx $kmy
+        set km_r1 [km_readout $vtop]
+        check "KM7 Cadence profile: plain s over a strip swaps the cursors, pops nothing, and reaches the engine as its Control-s graph chord" \
+          [list [km_cur $vdrw] [expr {$::mb_hits - $km_mb1}] $::km_fwd] \
+          [list [list [lindex $km_c0 1] [lindex $km_c0 0]] 0 {{115 4}}]
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        set ::km_fwd {}
+        km_key $vdrw s 0 $kmx $kmy
+        set km_r2 [km_readout $vtop]
+        check "KM7 stock profile: plain s swaps them back, forwarded as it is typed" \
+          [list [km_cur $vdrw] [expr {$::mb_hits - $km_mb1}] $::km_fwd] [list $km_c0 0 {{115 0}}]
+        check "KM7 the readout bar follows both swaps: the x it reads under A and the x it reads under B change places after the Cadence profile's s, and again after the stock profile's" \
+          [list $km_r1 $km_r2] [list [lreverse $km_r0] $km_r0]
+        # ...and the third way the cursors swap: a TYPED Control-s, which the
+        # engine hands to the graph in both profiles. Stock profile, then
+        # Cadence. The filter is asked first and the key is sent only when it
+        # forwards the chord as typed (off a graph Control-s is Save). After
+        # each press the engine's two cursor x have changed places, and so
+        # have the two x the readout bar reads.
+        set km7s {}
+        foreach km_prof {0 1} {
+          set ::cadence_compat $km_prof
+          set km_cb [km_cur $vdrw]
+          set km_rb [km_readout $vtop]
+          set km_w [km_decides $vdrw 115 4 $kmx $kmy]
+          if {$km_w ne {{115 4}}} { lappend km7s [list $km_prof not-sent-the-filter-would-forward $km_w] ; continue }
+          set ::km_fwd {} ; set km_mb7 $::mb_hits ; set km_sa7 $::km_sacd
+          km_key $vdrw s 4 $kmx $kmy
+          lappend km7s [list $km_prof $::km_fwd \
+            [expr {[lindex $km_cb 0] != [lindex $km_cb 1] && [km_cur $vdrw] eq [lreverse $km_cb]}] \
+            [expr {[lindex $km_rb 0] ne [lindex $km_rb 1] && [km_readout $vtop] eq [lreverse $km_rb]}] \
+            [expr {$::mb_hits - $km_mb7}] [expr {$::km_sacd - $km_sa7}]]
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        check "KM7 a typed Control-s swaps the cursors too, stock profile then Cadence: the filter forwards it as typed, the engine's two cursor x change places and so do the two x the readout bar reads, no box, no Save form (per profile: cadence_compat, what the engine was handed, the cursors swapped, the readout swapped, boxes, forms)" \
+          $km7s {{0 {{115 4}} 1 1 0 0} {1 {{115 4}} 1 1 0 0}}
+        check "KM7 the profile was put back" \
+          [list $::cadence_compat $::autotrim_wires] [list $km_cad0 $km_at0]
+        km_key $vdrw a 0 $kmx $kmy
+        km_key $vdrw b 0 [expr {$kmx + 60}] $kmy
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        set ::wviewer::cvb($tok) 0
+        wviewer::cursor_toggle $tok 2
+
+        # --- KM8: Alt, Super, Control-Alt and Control-Super with a graph key ----
+        # The population is the product's graph-key list times four modifier sets.
+        # The family of the report is inside it: Alt-s and Super-s (a reload
+        # prompt), Control-Alt-s (the Save-as-symbol form), Control-Alt-t (a new
+        # schematic), Alt-b and Super-b (hide-symbols), Alt-m and Super-m (a move).
+        # Every chord goes through the pre-flight. The real key is not sent for a
+        # chord whose Control half is a shortcut of the viewer's own (km_tagged):
+        # Tk runs a binding when the event carries more modifiers than the binding
+        # names, so Control-Alt-d is still Clear All.
+        proc km_tagged {N s} {
+          if {!($s & 4)} { return 0 }
+          set c [format %c $N]
+          set seqs [list <Control-Key-$c>]
+          if {$s & 1} { lappend seqs <Control-Shift-Key-$c> }
+          foreach seq $seqs { if {[bind WaveViewer $seq] ne {}} { return 1 } }
+          return 0
+        }
+        set km_bad {} ; set km_n 0 ; set km_sent 0
+        foreach N $::wviewer::graphkeys {
+          foreach km_mod {8 64 12 68} {
+            incr km_n
+            set s [expr {$km_mod | [km_plain $N]}]
+            set nm "[format %c $N]/$s"
+            set w [km_decides $vdrw $N $s $kmx $kmy]
+            if {$w ne {}} { lappend km_bad [list $nm the-filter-would-forward $w] ; continue }
+            if {[km_tagged $N $s]} continue
+            incr km_sent
+            set s0 [km_snap $vdrw $tok]
+            set mb0 $::mb_hits ; set sa0 $::km_sacd ; set ::km_fwd {}
+            set d [km_key $vdrw [format %c $N] $s $kmx $kmy]
+            set s1 [km_snap $vdrw $tok]
+            if {!$d} { lappend km_bad [list $nm not-delivered] ; continue }
+            if {$::kf_last ne [list 2 $N $s]} { lappend km_bad [list $nm arrived-as $::kf_last] }
+            if {$::km_fwd ne {}} { lappend km_bad [list $nm forwarded $::km_fwd] }
+            if {$::mb_hits != $mb0} { lappend km_bad [list $nm message-box] }
+            if {$::km_sacd != $sa0} { lappend km_bad [list $nm save-form] }
+            if {$s1 ne $s0} { lappend km_bad [list $nm state-moved $s0 $s1] }
+          }
+        }
+        check "KM8 every graph key with Alt, Super, Control-Alt or Control-Super: the filter forwards none, and a real press changes nothing (chords walked, offenders)" \
+          [list $km_n $km_bad] [list [expr {4 * $km_nkeys}] {}]
+        check_true "KM8 ...and the real key was sent for every Alt and Super chord at least" \
+          [expr {$km_sent >= 2 * $km_nkeys}]
+        rename km_tagged {}
+
+        # --- KM9: the few pixels just inside a strip's edge ---------------------
+        # The engine's graph test leaves a border inside each graph rect, and there
+        # a forwarded graph key runs the canvas arm. The population is every graph
+        # key, plain and with Control, that the filter forwards in the middle of
+        # the strip (the pre-flight says which). Each is tried at two pixels of the
+        # top edge: two pixels in, and the deepest whole pixel the engine still
+        # takes for the canvas (its border is a factor, read out of waves_selected
+        # here, times the Tk scaling). Bare b is tried at the three other edges as
+        # well. Then the same walk of the top edge in the Cadence profile, where
+        # plain s goes out as Control-s: off a graph that is Save.
+        set km_bf {}
+        if {![catch {set km_fd [open [file join $repo src callback.c] r]}]} {
+          set km_c [read $km_fd]
+          close $km_fd
+          set km_a [string first "\nstatic int waves_selected(" $km_c]
+          if {$km_a >= 0} {
+            set km_c [string range $km_c $km_a [string first "\n\x7d\n" $km_c $km_a]]
+            regsub -all {/\*.*?\*/} $km_c {} km_c
+            regexp {\mborder\s*=\s*([0-9.]+)\s*\*\s*tk_scaling\s*\*\s*xctx->zoom\s*;} $km_c -> km_bf
+          }
+          unset km_c
+        }
+        check_true "KM9 fixture: waves_selected in src/callback.c gave up the factor of its border" \
+          [string is double -strict $km_bf]
+        if {![string is double -strict $km_bf]} { set km_bf 5.0 }
+        set km_b0 [lindex [ca_bands $vdrw] 0]
+        set km_edge {}
+        set km_deep -1
+        if {[llength $km_b0] == 4} {
+          lassign $km_b0 ex1 ey1 ex2 ey2
+          set km_deep [expr {int(ceil($ey1 + $km_bf * [tk scaling])) - 1}]
+          set km_edge [list top [list $kmx [expr {int($ey1) + 2}]] \
+                            top-deep [list $kmx $km_deep] \
+                            bottom [list $kmx [expr {int($ey2) - 2}]] \
+                            left [list [expr {int($ex1) + 2}] $kmy] \
+                            right [list [expr {int($ex2) - 3}] $kmy]]
+        }
+        # the engine's own word on the deep pixel and on the next one in, asked
+        # with Shift-M sent to it directly: the read-only box is the canvas arm,
+        # the tooltip flag is the graph
+        set km_e {}
+        if {$km_deep >= 0} {
+          foreach km_y [list $km_deep [expr {$km_deep + 1}]] {
+            set mb0 $::mb_hits
+            set km_g0 [expr {[km_gf $vdrw] & 64}]
+            ::km_real_xschem callback $vdrw 6 $kmx $km_y 0 0 0 0
+            ::km_real_xschem callback $vdrw 2 $kmx $km_y 77 0 0 1
+            set km_g1 [expr {[km_gf $vdrw] & 64}]
+            lappend km_e [list [expr {$::mb_hits - $mb0}] [expr {$km_g1 != $km_g0}]]
+            if {$km_g1 != $km_g0} { ::km_real_xschem callback $vdrw 2 $kmx $km_y 77 0 0 1 }
+          }
+        }
+        check "KM9 fixture: the engine itself takes the deep pixel for the canvas (Shift-M sent to it there stops at the read-only box and leaves the tooltip flag) and the next pixel in for the graph (the flag moves, no box)" \
+          $km_e {{1 0} {0 1}}
+        # the keys the filter forwards in the middle of the strip, by pre-flight
+        proc km_members {vdrw px py} {
+          set mem {}
+          foreach N $::wviewer::graphkeys {
+            foreach ctl {0 4} {
+              set s [expr {$ctl | [km_plain $N]}]
+              if {[km_decides $vdrw $N $s $px $py] ne {}} { lappend mem [list $N $s] }
+            }
+          }
+          return $mem
+        }
+        # every member at the two top-edge pixels, bare b at the other edges:
+        # the pre-flight first, the real key only when the filter refuses it.
+        # Answers the number of keys walked and the offenders.
+        proc km_walk {vdrw tok edge mem} {
+          set bad {}
+          set n 0
+          foreach {side p} $edge {
+            lassign $p ex ey
+            foreach ch $mem {
+              lassign $ch N s
+              if {![string match top* $side] && !($N == 98 && $s == 0)} continue
+              incr n
+              set nm "$side [format %c $N]/$s"
+              set w [km_decides $vdrw $N $s $ex $ey]
+              if {$w ne {}} { lappend bad [list $nm the-filter-would-forward $w] ; continue }
+              set s0 [km_snap $vdrw $tok]
+              set mb0 $::mb_hits ; set sa0 $::km_sacd ; set ::km_fwd {}
+              set d [km_key $vdrw [format %c $N] $s $ex $ey]
+              set s1 [km_snap $vdrw $tok]
+              if {!$d} { lappend bad [list $nm not-delivered] ; continue }
+              if {$::km_fwd ne {}} { lappend bad [list $nm forwarded $::km_fwd] }
+              if {$::mb_hits != $mb0} { lappend bad [list $nm message-box] }
+              if {$::km_sacd != $sa0} { lappend bad [list $nm save-form] }
+              if {$s1 ne $s0} { lappend bad [list $nm state-moved $s0 $s1] }
+            }
+          }
+          return [list $n $bad]
+        }
+        set km_mem [km_members $vdrw $kmx $kmy]
+        check_true "KM9 fixture: in the middle of the strip the filter forwards every bare graph key at least" \
+          [expr {[llength $km_mem] >= $km_nkeys}]
+        check "KM9 a graph key at the two top-edge pixels (two pixels in, and the deepest the engine still takes for the canvas), bare b at the other three edges: the filter forwards none, and a real press changes nothing (keys walked, offenders)" \
+          [km_walk $vdrw $tok $km_edge $km_mem] [list [expr {2 * [llength $km_mem] + 3}] {}]
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set ::cadence_compat 1
+        set km_memc [km_members $vdrw $kmx $kmy]
+        set km_wc [km_walk $vdrw $tok [lrange $km_edge 0 3] $km_memc]
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        check_true "KM9 fixture, Cadence profile: in the middle of the strip the filter forwards plain s and every other bare graph key" \
+          [expr {[lsearch -exact $km_memc {115 0}] >= 0 && [llength $km_memc] >= $km_nkeys}]
+        check "KM9 Cadence profile: a graph key at the two top-edge pixels, plain s among them: the filter forwards none, and a real press changes nothing, no Save form either (keys walked, offenders); the profile is back" \
+          [list $km_wc [list $::cadence_compat $::autotrim_wires]] \
+          [list [list [expr {2 * [llength $km_memc]}] {}] [list $km_cad0 $km_at0]]
+        rename km_members {}
+        rename km_walk {}
+        set ::km_fwd {}
+        km_key $vdrw b 0 $kmx $kmy
+        set km9c [list [expr {[km_gf $vdrw] & 4}] $::km_fwd]
+        km_key $vdrw b 0 $kmx $kmy
+        check "KM9 control: in the middle of the strip bare b is forwarded and toggles cursor B (on, off)" \
+          [list $km9c [expr {[km_gf $vdrw] & 4}]] {{4 {{98 0}}} 0}
+        # ...and in the middle of the SECOND strip: the pixel gate knows every
+        # strip of the window, not the first alone
+        lassign [km_mid $vdrw 1] km_x1 km_y1
+        set ::km_fwd {}
+        km_key $vdrw b 0 $km_x1 $km_y1
+        set km9d [list [expr {[km_gf $vdrw] & 4}] $::km_fwd]
+        km_key $vdrw b 0 $km_x1 $km_y1
+        set ::km_fwd {}
+        km_key $vdrw M 1 $km_x1 $km_y1
+        set km9e [list [expr {[km_gf $vdrw] & 64}] $::km_fwd]
+        km_key $vdrw M 1 $km_x1 $km_y1
+        check "KM9 control: in the middle of the second strip bare b is forwarded and toggles cursor B, and Shift-M the tooltip (each on, then off again)" \
+          [list $km9d $km9e [expr {[km_gf $vdrw] & 68}]] {{4 {{98 0}}} {64 {{77 1}}} 0}
+        # ...and where the gate BEGINS. The walks above hold it from outside (the
+        # pixels it must refuse); these two legs hold it from inside: the first
+        # pixel it must accept, the width of the border the product states
+        # (wviewer::graph_border_px) inside the top edge of strip 0, and inside
+        # its left edge. Bare b is forwarded there and toggles cursor B. The key
+        # is sent only at a pixel past the engine's own border (the factor read
+        # above), where the engine takes it for the graph whatever the filter
+        # does; at any other pixel the leg says so and sends nothing.
+        set km_gbp {}
+        catch {set km_gbp [wviewer::graph_border_px]}
+        set km9f {}
+        if {[llength $km_b0] == 4 && [string is integer -strict $km_gbp]} {
+          lassign $km_b0 ex1 ey1 ex2 ey2
+          set km_eb [expr {$km_bf * [tk scaling]}]
+          foreach {side fx fy at lo} [list \
+              top  $kmx [expr {int(ceil($ey1 + $km_gbp))}] [expr {int(ceil($ey1 + $km_gbp))}] [expr {int(ceil($ey1 + $km_eb))}] \
+              left [expr {int(ceil($ex1 + $km_gbp))}] $kmy [expr {int(ceil($ex1 + $km_gbp))}] [expr {int(ceil($ex1 + $km_eb))}]] {
+            if {$at < $lo} { lappend km9f $side the-engine-takes-that-pixel-for-the-canvas ; continue }
+            set ::km_fwd {}
+            km_key $vdrw b 0 $fx $fy
+            set km_on1 [expr {[km_gf $vdrw] & 4}]
+            set km_f1 $::km_fwd
+            if {$km_on1} { km_key $vdrw b 0 $fx $fy }
+            lappend km9f $side [list $km_f1 $km_on1 [expr {[km_gf $vdrw] & 4}]]
+          }
+        }
+        check "KM9 where the gate begins: at the first pixel the border's width (graph_border_px) inside the top edge of the strip, and inside its left edge, bare b is forwarded and toggles cursor B (per edge: what the engine was handed, B on, B off again)" \
+          $km9f {top {{{98 0}} 4 0} left {{{98 0}} 4 0}}
+        # ...and in a window of MORE than two strips. In multi-plot mode every
+        # signal has a strip of its own, so three strips and more is the
+        # ordinary window. The fixture gets two strips more for this leg. The
+        # strips walked are the canvas' own bands (wviewer::strip_bands_px),
+        # every one of them: a real bare b in the middle of each is forwarded
+        # and toggles cursor B (on, then off again). Then the fixture is put
+        # back to its two strips.
+        set km_gs9 [dict get [wviewer::layout_for $tok] graphs]
+        wviewer::set_graphs $tok [concat $km_gs9 [list \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0]] \
+          [dict replace [wviewer::empty_graph] traces [list $ca_t0]]]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        set km_nb9 [llength [ca_bands $vdrw]]
+        set km9g {} ; set km9w {}
+        for {set km_gi 0} {$km_gi < $km_nb9} {incr km_gi} {
+          lassign [km_mid $vdrw $km_gi] km_gx km_gy
+          set ::km_fwd {}
+          km_key $vdrw b 0 $km_gx $km_gy
+          set km_on1 [expr {[km_gf $vdrw] & 4}]
+          set km_f1 $::km_fwd
+          if {$km_on1} { km_key $vdrw b 0 $km_gx $km_gy }
+          lappend km9g [list $km_f1 $km_on1 [expr {[km_gf $vdrw] & 4}]]
+          lappend km9w {{{98 0}} 4 0}
+        }
+        check "KM9 control, a window of more than two strips: in the middle of every strip, the last like the first, bare b is forwarded and toggles cursor B (the canvas has more than two bands; per band: what the engine was handed, B on, B off again)" \
+          [list [expr {$km_nb9 > 2}] $km9g] [list 1 $km9w]
+        wviewer::set_graphs $tok $km_gs9
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        lassign [km_mid $vdrw 0] kmx kmy
+        check "KM9 fixture: back to two strips with a band each" [llength [ca_bands $vdrw]] 2
+        # MORE CONTROLS, each a window the legs above do not have: here two
+        # subwindows and a window whose size changed, in KM6 and KM15 below a
+        # second tab and a second viewer window. In each the gate must go on
+        # saying yes in the middle of a strip.
+        # km_bwalk: a real bare b in the middle of every band the canvas holds
+        # (wviewer::strip_bands_px). Per band: what the engine was handed,
+        # cursor B on after the press, off again after a second one.
+        # km_bwant: what that walk gives for n bands when every b arrives.
+        proc km_bwalk {vdrw} {
+          set r {}
+          set n [llength [ca_bands $vdrw]]
+          for {set gi 0} {$gi < $n} {incr gi} {
+            lassign [km_mid $vdrw $gi] x y
+            set ::km_fwd {}
+            km_key $vdrw b 0 $x $y
+            set on [expr {[km_gf $vdrw] & 4}]
+            set f $::km_fwd
+            if {$on} { km_key $vdrw b 0 $x $y }
+            lappend r [list $f $on [expr {[km_gf $vdrw] & 4}]]
+          }
+          return $r
+        }
+        proc km_bwant {n} {
+          set r {}
+          for {set i 0} {$i < $n} {incr i} { lappend r {{{98 0}} 4 0} }
+          return $r
+        }
+        # 1 when pixel (px,py) lies inside one of `bands` by at least `inset`
+        proc km_inband {bands px py inset} {
+          foreach b $bands {
+            lassign $b x1 y1 x2 y2
+            if {$px >= $x1 + $inset && $px <= $x2 - $inset &&
+                $py >= $y1 + $inset && $py <= $y2 - $inset} { return 1 }
+          }
+          return 0
+        }
+        # TWO SUBWINDOWS. They sit side by side, so the bands of the canvas no
+        # longer share one left edge: the row counts the distinct left edges and
+        # wants more than one, then walks every band.
+        wviewer::set_plot_mode single $tok
+        wviewer::new_subwin $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        set km_bb9 [ca_bands $vdrw]
+        set km_cols9 [llength [lsort -unique [lmap km_b $km_bb9 {expr {int([lindex $km_b 0])}}]]]
+        set km9h [km_bwalk $vdrw]
+        check "KM9 control, two subwindows side by side: in the middle of every strip of both, bare b is forwarded and toggles cursor B (subwindows; the bands of the canvas have more than one left edge; per band: what the engine was handed, B on, B off again)" \
+          [list [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] [expr {$km_cols9 > 1}] $km9h] \
+          [list 2 1 [km_bwant [llength $km_bb9]]]
+        wviewer::close_subwin $tok
+        wviewer::set_plot_mode single $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        check "KM9 fixture: back to one subwindow of two strips, single" \
+          [list [wviewer::sw_count [dict get [wviewer::layout_for $tok] graphs]] [llength [ca_bands $vdrw]] \
+                [wviewer::plot_mode $tok]] {1 2 single}
+        # THE WINDOW CHANGES ITS SIZE, the strips kept. The viewer is made
+        # taller (wm geometry; the canvas is waited for, then the re-tile). The
+        # pixel pressed first is one no strip held before: in the lower strip
+        # as it is now, the border's width and more inside it, and below the
+        # bottom of every band the canvas had at the old size. Bare b there is
+        # forwarded and toggles cursor B; so it is in the middle of every band
+        # at the new size, and again in the middle of every band once the
+        # window is back at its old size.
+        set km_geo0 [wm geometry $vtop]
+        set km_bb0 [ca_bands $vdrw]
+        set km_ch0 [winfo height $vdrw]
+        set km_grown 0
+        if {[regexp {^(\d+)x(\d+)} $km_geo0 -> km_gw km_gh]} {
+          wm geometry $vtop ${km_gw}x[expr {$km_gh + 200}]+0+0
+          for {set i 0} {$i < 150} {incr i} {
+            update
+            if {[winfo height $vdrw] >= $km_ch0 + 150} { set km_grown 1 ; break }
+            after 30
+          }
+          for {set i 0} {$i < 15} {incr i} { update; after 20 }
+        }
+        xschem new_schematic switch $vdrw
+        set km_bb1 [ca_bands $vdrw]
+        set km_ob 0
+        foreach km_b $km_bb0 { if {[lindex $km_b 3] > $km_ob} { set km_ob [lindex $km_b 3] } }
+        set km_lb [lindex $km_bb1 end]
+        set km9r not-pressed
+        set km_fresh 0
+        if {[llength $km_lb] == 4} {
+          set km_fx [expr {int(([lindex $km_lb 0] + [lindex $km_lb 2]) / 2.0)}]
+          set km_fy [expr {int(($km_ob + [lindex $km_lb 3]) / 2.0)}]
+          set km_fresh [expr {[km_inband $km_bb1 $km_fx $km_fy [expr {2 * [wviewer::graph_border_px]}]] &&
+                              ![km_inband $km_bb0 $km_fx $km_fy 0]}]
+          if {$km_fresh} {
+            set ::km_fwd {}
+            km_key $vdrw b 0 $km_fx $km_fy
+            set km_on1 [expr {[km_gf $vdrw] & 4}]
+            set km_f1 $::km_fwd
+            if {$km_on1} { km_key $vdrw b 0 $km_fx $km_fy }
+            set km9r [list $km_f1 $km_on1 [expr {[km_gf $vdrw] & 4}]]
+          }
+        }
+        set km9s [km_bwalk $vdrw]
+        check "KM9 control, the window made taller with its strips kept: at a pixel that lies well inside the lower strip now and below every band the canvas had before, bare b is forwarded and toggles cursor B, and so it is in the middle of every band at the new size (the canvas grew; the bands kept their number and the lower one reaches further down; the pixel is inside a band now and was in none; at that pixel: what the engine was handed, B on, B off again; per band the same)" \
+          [list $km_grown [expr {[llength $km_bb1] == [llength $km_bb0] && [llength $km_lb] == 4 && [lindex $km_lb 3] > $km_ob}] \
+                $km_fresh $km9r $km9s] \
+          [list 1 1 1 {{{98 0}} 4 0} [km_bwant [llength $km_bb0]]]
+        wm geometry $vtop $km_geo0
+        for {set i 0} {$i < 150} {incr i} {
+          update
+          if {[winfo height $vdrw] == $km_ch0} break
+          after 30
+        }
+        for {set i 0} {$i < 15} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        lassign [km_mid $vdrw 0] kmx kmy
+        check "KM9 control, the window back at its old size: the canvas is as tall as it was, the bands are the ones it had, and in the middle of each bare b is forwarded and toggles cursor B" \
+          [list [expr {[winfo height $vdrw] == $km_ch0}] [expr {[ca_bands $vdrw] eq $km_bb0}] [km_bwalk $vdrw]] \
+          [list 1 1 [km_bwant [llength $km_bb0]]]
+        set ::wviewer::cvb($tok) 0
+        wviewer::cursor_toggle $tok 2
+
+        # --- KM10: graph_use_ctrl_key set ---------------------------------------
+        # There the engine's graph test needs Control, so a bare graph key runs
+        # the canvas arm. Every graph key bare, then the chord of this item.
+        set km_g0 0
+        if {[info exists ::graph_use_ctrl_key]} { set km_g0 $::graph_use_ctrl_key }
+        set ::graph_use_ctrl_key 1
+        set km_bad {} ; set km_n 0
+        foreach N $::wviewer::graphkeys {
+          incr km_n
+          set s [km_plain $N]
+          set nm "[format %c $N]/$s"
+          set w [km_decides $vdrw $N $s $kmx $kmy]
+          if {$w ne {}} { lappend km_bad [list $nm the-filter-would-forward $w] ; continue }
+          set s0 [km_snap $vdrw $tok]
+          set mb0 $::mb_hits ; set ::km_fwd {}
+          set d [km_key $vdrw [format %c $N] $s $kmx $kmy]
+          if {!$d} { lappend km_bad [list $nm not-delivered] ; continue }
+          if {$::km_fwd ne {}} { lappend km_bad [list $nm forwarded $::km_fwd] }
+          if {$::mb_hits != $mb0} { lappend km_bad [list $nm message-box] }
+          if {[km_snap $vdrw $tok] ne $s0} { lappend km_bad [list $nm state-moved] }
+        }
+        check "KM10 graph_use_ctrl_key set: a bare graph key is not forwarded and a real press changes nothing (keys walked, offenders)" \
+          [list $km_n $km_bad] [list $km_nkeys {}]
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {} ; set km_mb2 $::mb_hits
+        km_key $vdrw M 5 $kmx $kmy
+        set km10 [list [wviewer::plot_mode $tok] $::km_fwd [expr {$::mb_hits - $km_mb2}]]
+        km_key $vdrw M 5 $kmx $kmy
+        check "KM10 ...and Ctrl-Shift-M is the plot mode there too (multi, back to single), no box, nothing forwarded" \
+          [list $km10 [wviewer::plot_mode $tok]] {{multi {} 0} single}
+        # the graph functions whose Control chord means something else in a
+        # viewer, and which that option therefore leaves without a key there (the
+        # guide's section on the graph keys names them): cursor A, cursor B, the
+        # delta marker, the measurement tooltip. Ctrl-a is sent for real; the
+        # other three are asked of the filter.
+        set ::km_fwd {}
+        km_key $vdrw a 4 $kmx $kmy
+        set km10a [list $::km_fwd [expr {[km_gf $vdrw] & 2}]]
+        set km10b {}
+        foreach {N s} {98 4 100 4 77 5} { lappend km10b [km_decides $vdrw $N $s $kmx $kmy] }
+        check "KM10 ...Ctrl-a goes to the engine and leaves cursor A off; Ctrl-b, Ctrl-d and Ctrl-Shift-M are not forwarded, so cursor B, the delta marker and the tooltip have no key there" \
+          [list $km10a $km10b] {{{{97 4}} 0} {{} {} {}}}
+        set ::graph_use_ctrl_key $km_g0
+        check "KM10 the profile was put back" $::graph_use_ctrl_key $km_g0
+
+        # --- KM11: a row of the user's own in the engine's binding table --------
+        # A canvas row for a chord the filter forwards would run from the viewer:
+        # the engine consults its table before its graph test. The row is bound
+        # only after the pre-flight on the stock table said the key is forwarded
+        # (so the refusal that follows is the row's doing), and the real key is
+        # sent only when the filter refuses it with the row in place.
+        set km_ow0 $::orthogonal_wiring
+        set km_u0 [km_decides $vdrw 109 0 {*}[lindex $km_on 0]]
+        catch {xschem bind key 109 0 canvas edit.toggle_orthogonal_wiring}
+        set km_u1 [km_decides $vdrw 109 0 {*}[lindex $km_on 0]]
+        set km_u2 not-sent
+        if {$km_u1 eq {}} {
+          set km_m3 [km_mk $vdrw] ; set ::km_fwd {}
+          km_key $vdrw m 0 {*}[lindex $km_on 0]
+          set km_u2 [list $::orthogonal_wiring [expr {[km_mk $vdrw] - $km_m3}] $::km_fwd]
+        }
+        catch {xschem unbind key 109 0 canvas}
+        set km_m4 [km_mk $vdrw] ; set ::km_fwd {}
+        km_key $vdrw m 0 {*}[lindex $km_on 0]
+        check "KM11 a user's canvas row for bare m: forwarded before the row, refused with it (the row's action does not run, no marker), forwarded again without it (one marker)" \
+          [list $km_u0 $km_u1 $km_u2 [list $::orthogonal_wiring [expr {[km_mk $vdrw] - $km_m4}] $::km_fwd]] \
+          [list {{109 0}} {} [list $km_ow0 0 {}] [list $km_ow0 1 {{109 0}}]]
+        catch {xschem set orthogonal_wiring $km_ow0}
+        catch {wviewer::delete_all_markers_at $vdrw}
+
+        # A graph.forward row of the user's for a Control chord that is a
+        # shortcut of the viewer's own (the stock table has none; a keybindings
+        # file from before the Signal Browser took Ctrl-B, or an rc line, puts
+        # one back). Forwarded, one key press would run the shortcut and reach
+        # the graph as well. All three are asked of the filter; the real key is
+        # sent for Ctrl-Shift-M only (Ctrl-d would empty the fixture), and only
+        # when the filter refuses it.
+        set km_o {}
+        foreach {N s} {98 4 100 4 77 5} {
+          catch {xschem bind key $N ctrl graph graph.forward}
+          lappend km_o [km_decides $vdrw $N $s $kmx $kmy]
+        }
+        wviewer::set_plot_mode single $tok
+        set km_o2 not-sent
+        if {[lindex $km_o 2] eq {}} {
+          set ::km_fwd {} ; set ::km_log {}
+          km_key $vdrw M 5 $kmx $kmy
+          set km_o2 [list [wviewer::plot_mode $tok] [expr {[km_gf $vdrw] & 64}] $::km_fwd [llength $::km_log]]
+        }
+        foreach N {98 100 77} { catch {xschem unbind key $N ctrl graph} }
+        check "KM11 a user's graph.forward row for Control with b, d or M: the filter forwards none of the three chords, and a real Ctrl-Shift-M with its row in place flips the mode once, leaves the tooltip flag and reaches the engine not at all" \
+          [list $km_o $km_o2] [list {{} {} {}} {multi 0 {} 1}]
+        if {[km_gf $vdrw] & 64} { ::km_real_xschem callback $vdrw 2 $kmx $kmy 77 0 0 1 }
+        wviewer::set_plot_mode single $tok
+        check "KM11 fixture: the three rows are unbound again" \
+          [lsearch -all -inline -regexp [xschem bindings dump] {^key (98|100|77) ctrl graph}] {}
+
+        # A row of the user's for Escape. The engine asks its table before its
+        # Escape arm, so a forwarded Escape would run the row's action here. With
+        # a row for the chord the key stays in the viewer and the abort is done
+        # by the verb.
+        set km_ow1 $::orthogonal_wiring
+        set km_es {}
+        set ::km_fwd {} ; set ::km_esc 0
+        km_key $vdrw Escape 0 $kmx $kmy
+        lappend km_es [list $::orthogonal_wiring $::km_fwd $::km_esc]
+        catch {xschem bind key 65307 0 canvas edit.toggle_orthogonal_wiring}
+        catch {xschem bind key 65307 shift canvas edit.toggle_orthogonal_wiring}
+        set ::km_fwd {} ; set ::km_esc 0
+        km_key $vdrw Escape 0 $kmx $kmy
+        lappend km_es [list $::orthogonal_wiring $::km_fwd $::km_esc]
+        set ::km_fwd {} ; set ::km_esc 0
+        km_key $vdrw Escape 1 $kmx $kmy
+        lappend km_es [list $::orthogonal_wiring $::km_fwd $::km_esc]
+        catch {xschem unbind key 65307 0 canvas}
+        catch {xschem unbind key 65307 shift canvas}
+        set ::km_fwd {} ; set ::km_esc 0
+        km_key $vdrw Escape 0 $kmx $kmy
+        lappend km_es [list $::orthogonal_wiring $::km_fwd $::km_esc]
+        check "KM11 a user's row for Escape and one for Shift-Escape: without them a real Escape is forwarded as typed; with them neither key reaches the engine, the row's action does not run and the escape verb runs once; without them again it is forwarded" \
+          $km_es [list [list $km_ow1 {{65307 0}} 0] [list $km_ow1 {} 1] [list $km_ow1 {} 1] [list $km_ow1 {{65307 0}} 0]]
+        catch {xschem set orthogonal_wiring $km_ow1}
+        set ::orthogonal_wiring $km_ow1
+        check "KM11 fixture: the Escape rows are unbound again" \
+          [lsearch -all -inline -regexp [xschem bindings dump] {^key 65307 }] {}
+
+        # --- KM13: every chord the filter forwards, through the real engine -----
+        # The population is what the filter itself forwards in the middle of a
+        # strip (the pre-flight), every graph key plain and with Control, in the
+        # four profiles (Cadence or stock, graph_use_ctrl_key set or not).
+        #
+        # BEFORE a chord is sent it is asked of a comparand fed from the engine
+        # (wvkey_engine.tcl: the live binding table, the arms of the key switch
+        # that open with the graph test and the masks callback() strips, the last
+        # two read out of src/callback.c): is this a chord the engine hands to
+        # the graph in this profile, with the state the filter gives it? A chord
+        # the comparand does not allow is an offender and is NOT sent: in the
+        # engine it is an editor verb, and several of those are a prompt or a
+        # form that nothing here dismisses.
+        #
+        # Each chord the comparand allows is then sent as a real key and must
+        # change nothing outside the graph: no message box, no Save form, no new
+        # window, and hide-symbols, ui_state, read-only, the layer-2 rect count,
+        # orthogonal wiring and the plot mode as they were. A chord that moved a
+        # graph flag is pressed again, so cursors and tooltip end as they began;
+        # the markers the marker keys made are deleted.
+        proc km_editor {vdrw tok} {
+          xschem new_schematic switch $vdrw
+          return [list mb $::mb_hits sacd $::km_sacd win [llength [xschem windows]] hs $::hide_symbols \
+            ui [xschem get ui_state] ro [xschem get readonly] rects [xschem get rects 2] \
+            ow $::orthogonal_wiring mode [wviewer::plot_mode $tok]]
+        }
+        source [file join $here wvkey_engine.tcl]
+        set km_csrc {} ; set km_hsrc {}
+        catch {set km_fd [open [file join $repo src callback.c] r] ; set km_csrc [read $km_fd] ; close $km_fd}
+        catch {set km_fd [open [file join $repo src xschem.h] r] ; set km_hsrc [read $km_fd] ; close $km_fd}
+        set km_msk [kc_masks [kc_cfacts $km_csrc $km_hsrc]]
+        set km_guards [kc_guards $km_csrc]
+        unset km_csrc km_hsrc
+        check_true "KM13 fixture: src/callback.c gave up the masks callback() strips off a key's state, the bit count it keeps, and the arms of its key switch that open with the graph test, bare m among them" \
+          [expr {[dict get $km_msk strip_ok] && [dict get $km_msk strip] != 0 && [dict get $km_msk range] != 0 &&
+                 [lsearch -exact $km_guards {109 0 {}}] >= 0}]
+        set km_cad0 $::cadence_compat
+        set km_at0 $::autotrim_wires
+        set km_g0 0
+        if {[info exists ::graph_use_ctrl_key]} { set km_g0 $::graph_use_ctrl_key }
+        wviewer::set_plot_mode single $tok
+        set km_13 {}
+        foreach {km_cad km_guck} {0 0 1 0 0 1 1 1} {
+          set ::cadence_compat $km_cad
+          set ::graph_use_ctrl_key $km_guck
+          set km_n 0 ; set km_bad {}
+          foreach N $::wviewer::graphkeys {
+            foreach km_ctl {0 4} {
+              set s [expr {$km_ctl | [km_plain $N]}]
+              set km_w [km_decides $vdrw $N $s $kmx $kmy]
+              if {$km_w eq {}} continue
+              incr km_n
+              set nm "[format %c $N]/$s"
+              set km_x [kc_expect $N $s $km_cad $km_guck [::km_real_xschem bindings dump] $km_guards \
+                          [dict get $km_msk strip] [dict get $km_msk range]]
+              if {$km_x eq {} || $km_w ne [list [list $N $km_x]]} {
+                lappend km_bad [list $nm not-a-chord-the-engine-hands-to-the-graph-so-not-sent the-filter-forwards $km_w the-engine-takes $km_x]
+                continue
+              }
+              set km_e0 [km_editor $vdrw $tok]
+              set km_f0 [km_gf $vdrw]
+              set ::km_fwd {}
+              set d [km_key $vdrw [format %c $N] $s $kmx $kmy]
+              set km_e1 [km_editor $vdrw $tok]
+              if {!$d} { lappend km_bad [list $nm not-delivered] ; continue }
+              if {$::km_fwd eq {}} { lappend km_bad [list $nm not-forwarded] }
+              if {$km_e1 ne $km_e0} { lappend km_bad [list $nm moved $km_e0 $km_e1] }
+              if {[km_gf $vdrw] != $km_f0} { km_key $vdrw [format %c $N] $s $kmx $kmy }
+            }
+          }
+          lappend km_13 [list $km_cad $km_guck [expr {$km_n > 0}] $km_bad]
+          catch {wviewer::delete_all_markers_at $vdrw}
+        }
+        set ::cadence_compat $km_cad0
+        set ::autotrim_wires $km_at0
+        set ::graph_use_ctrl_key $km_g0
+        check "KM13 every chord the filter forwards in the middle of a strip, in the four profiles: a comparand fed from the engine allows it, asked before the key is sent, and sent as a real key it reaches the engine and nothing outside the graph moves (per profile: Cadence, graph_use_ctrl_key, some chords walked, offenders)" \
+          $km_13 {{0 0 1 {}} {1 0 1 {}} {0 1 1 {}} {1 1 1 {}}}
+        check "KM13 the profile is back, and so are the graph flags of the cursors and the tooltip, and the markers" \
+          [list $::cadence_compat $::autotrim_wires $::graph_use_ctrl_key [expr {[km_gf $vdrw] & 454}] [km_mk $vdrw]] \
+          [list $km_cad0 $km_at0 $km_g0 0 0]
+        rename km_editor {}
+        foreach km_p {kc_cfacts kc_masks kc_guards kc_expect} { rename $km_p {} }
+        set ::wviewer::cva($tok) 0
+        wviewer::cursor_toggle $tok 1
+        set ::wviewer::cvb($tok) 0
+        wviewer::cursor_toggle $tok 2
+
+        # --- KM6: two tabs, the ACTIVE tab's mode flips -------------------------
+        # The plot mode is kept per tab. A second tab is opened (it becomes the
+        # active one and starts in the mode of the tab it was opened from), the
+        # real chord is sent there, and the first tab is looked at again.
+        wviewer::set_plot_mode single $tok
+        set km6_id0 [wviewer::tab_id $tok]
+        set km6_n0 [wviewer::tab_count $tok]
+        set km6_id1 [wviewer::new_tab $tok]
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        lassign [km_mid $vdrw 0] km6x km6y
+        check "KM6 fixture: a second tab is open and active, in single mode like the first" \
+          [list [expr {[wviewer::tab_count $tok] - $km6_n0}] \
+                [expr {$km6_id1 ne {} && $km6_id1 ne $km6_id0 && [wviewer::tab_id $tok] eq $km6_id1}] \
+                [wviewer::plot_mode $tok]] {1 1 single}
+        set ::km_fwd {} ; set ::km_log {} ; set km_mb6 $::mb_hits
+        km_key $vdrw M 5 $km6x $km6y
+        set km6a [list [wviewer::plot_mode $tok] [km_status $vtop] $::km_log $::km_fwd [expr {$::mb_hits - $km_mb6}]]
+        wviewer::select_tab $km6_id0 $tok
+        for {set i 0} {$i < 5} {incr i} { update; after 20 }
+        set km6b [list [expr {[wviewer::tab_id $tok] eq $km6_id0}] [wviewer::plot_mode $tok] [km_status $vtop]]
+        wviewer::select_tab $km6_id1 $tok
+        for {set i 0} {$i < 5} {incr i} { update; after 20 }
+        set km6c [list [expr {[wviewer::tab_id $tok] eq $km6_id1}] [wviewer::plot_mode $tok] [km_status $vtop]]
+        km_key $vdrw M 5 $km6x $km6y
+        lappend km6c [wviewer::plot_mode $tok]
+        check "KM6 with two tabs the chord flips the mode of the active tab: there it reads multi, the status bar follows, one line, nothing forwarded, no box; the first tab, looked at again, is still single; back in the second it is still multi, and a second press there gives single" \
+          [list $km6a $km6b $km6c] \
+          [list [list multi multi [list [list wviewer::set_plot_mode multi $tok]] {} 0] {1 single single} {1 multi multi single}]
+        # ...and the GRAPH KEYS on the second tab (the other rows press them on
+        # the first). The tab gets one strip with the fixture's trace. A real
+        # bare b in the middle of every band is forwarded and toggles cursor B
+        # (km_bwalk), and a real bare m on the trace, at a pixel scanned for on
+        # this tab, is forwarded and makes one marker.
+        wviewer::set_graphs $tok [list [dict replace [wviewer::empty_graph] traces [list $ca_t0]]]
+        wviewer::regenerate $tok
+        wviewer::fit $tok
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        set km6_bb [ca_bands $vdrw]
+        set km6_bw [km_bwalk $vdrw]
+        lassign [km_mid $vdrw 0] km6x km6y
+        set km6_on {}
+        set km6_b0 [lindex $km6_bb 0]
+        if {[llength $km6_b0] == 4} {
+          for {set y [expr {int([lindex $km6_b0 1]) + 14}]} {$y < int([lindex $km6_b0 3]) - 14} {incr y} {
+            if {[wb_at $vdrw 0 $km6x $y 3] >= 0} { set km6_on [list $km6x $y] ; break }
+          }
+        }
+        set km6_m no-pixel-on-the-trace-so-not-pressed
+        if {[llength $km6_on] == 2} {
+          catch {wviewer::delete_all_markers_at $vdrw}
+          set km6_m0 [km_mk $vdrw]
+          set ::km_fwd {} ; set km_mb6m $::mb_hits
+          km_key $vdrw m 0 {*}$km6_on
+          set km6_m [list $::km_fwd [expr {[km_mk $vdrw] - $km6_m0}] [expr {$::mb_hits - $km_mb6m}]]
+          catch {wviewer::delete_all_markers_at $vdrw}
+        }
+        check "KM6 the graph keys on the second tab: in the middle of every band bare b is forwarded and toggles cursor B, and bare m on the trace is forwarded and makes one marker (the second tab is the active one and not the first of the window; it has a band; per band: what the engine was handed, B on, B off again; for m: what the engine was handed, markers made, boxes; markers left)" \
+          [list [expr {[wviewer::tab_id $tok] eq $km6_id1}] [expr {[wviewer::tab_index $tok] > 0}] \
+                [expr {[llength $km6_bb] > 0}] $km6_bw $km6_m [km_mk $vdrw]] \
+          [list 1 1 1 [km_bwant [llength $km6_bb]] {{{109 0}} 1 0} 0]
+        catch {wviewer::close_tab $km6_id1 $tok}
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        wviewer::set_plot_mode single $tok
+        lassign [km_mid $vdrw 0] kmx kmy
+        check "KM6 fixture: the second tab is closed again, the first is the active one, single" \
+          [list [expr {[wviewer::tab_count $tok] - $km6_n0}] [expr {[wviewer::tab_id $tok] eq $km6_id0}] [wviewer::plot_mode $tok]] \
+          {0 1 single}
+
+        # --- KM15: TWO VIEWER WINDOWS open at once ------------------------------
+        # The other rows have one viewer. A second session is opened (the same
+        # state under another view name) and its viewer with it: a second
+        # toplevel, a second canvas, a second entry in the viewer's registry.
+        # Both start in single mode. Then, in the first viewer and in the
+        # second, each in its own canvas:
+        #   * a real bare b in the middle of strip 0 goes to the engine through
+        #     THAT canvas and toggles cursor B there (on, off again);
+        #   * a real Ctrl-Shift-M flips the mode of THAT viewer: its mode and
+        #     its status bar read multi, the other viewer's still single, one
+        #     action-log line that names that viewer's token, nothing handed
+        #     to the engine, no box. A second press flips it back.
+        # The second viewer and its session are closed again afterwards.
+        wviewer::set_plot_mode single $tok
+        set km_tok2 [ase::session_key sky130_tests test_nfet_final km_second_viewer]
+        set km_ss2 [file join $scratch km_session2.state]
+        ase::state_save $km_ss2 $st
+        ase::session_open $km_tok2 $km_ss2
+        set km_win0 [llength [xschem windows]]
+        set km_open2 [wviewer::open $km_tok2]
+        set km_vtop2 [wviewer::window_for $km_tok2]
+        set km_vdrw2 $km_vtop2.drw
+        set km_rdy2 0
+        if {$km_vtop2 ne {}} { set km_rdy2 [viewer_ready $km_vtop2] }
+        for {set i 0} {$i < 15} {incr i} { update; after 20 }
+        catch {wviewer::set_plot_mode single $km_tok2}
+        check "KM15 fixture: a second viewer is open beside the first: its own toplevel and canvas, both canvases in the viewer's registry, each with a band, both in single mode" \
+          [list $km_open2 $km_rdy2 [expr {$km_vtop2 ne {} && $km_vtop2 ne $vtop}] \
+                [wviewer::token_for_canvas $vdrw] [wviewer::token_for_canvas $km_vdrw2] \
+                [expr {[llength [ca_bands $vdrw]] > 0}] [expr {[llength [ca_bands $km_vdrw2]] > 0}] \
+                [wviewer::plot_mode $tok] [wviewer::plot_mode $km_tok2]] \
+          [list 1 1 1 $tok $km_tok2 1 1 single single]
+        set km15 {}
+        if {$km_rdy2} {
+          foreach {km_w km_t} [list $vdrw $tok $km_vdrw2 $km_tok2] {
+            lassign [km_mid $km_w 0] km_x15 km_y15
+            set ::km_via {}
+            km_key $km_w b 0 $km_x15 $km_y15
+            set km_on1 [expr {[km_gf $km_w] & 4}]
+            set km_v1 $::km_via
+            if {$km_on1} { km_key $km_w b 0 $km_x15 $km_y15 }
+            set km_b15 [list $km_v1 $km_on1 [expr {[km_gf $km_w] & 4}]]
+            set ::km_fwd {} ; set ::km_log {} ; set km_mb15b $::mb_hits
+            km_key $km_w M 5 $km_x15 $km_y15
+            set km_c15 [list [wviewer::plot_mode $tok] [wviewer::plot_mode $km_tok2] \
+                             [km_status $vtop] [km_status $km_vtop2] $::km_log $::km_fwd \
+                             [expr {$::mb_hits - $km_mb15b}]]
+            set ::km_log {}
+            km_key $km_w M 5 $km_x15 $km_y15
+            lappend km_c15 [wviewer::plot_mode $tok] [wviewer::plot_mode $km_tok2] $::km_log
+            lappend km15 [list $km_b15 $km_c15]
+          }
+        }
+        check "KM15 with two viewers open each takes its own keys: bare b in the middle of a strip goes to the engine through the canvas it was typed in and toggles cursor B there, and Ctrl-Shift-M flips the mode of the viewer it was typed in and of no other (per viewer, the first and then the second; for b: the canvas, keysym and state the engine was handed, B on, B off again; for the chord: the modes of the first and of the second viewer, their two status bars, the action-log lines, what the engine was handed, boxes; after a second press: the two modes, the lines)" \
+          $km15 [list \
+            [list [list [list [list $vdrw 98 0]] 4 0] \
+                  [list multi single multi single [list [list wviewer::set_plot_mode multi $tok]] {} 0 \
+                        single single [list [list wviewer::set_plot_mode single $tok]]]] \
+            [list [list [list [list $km_vdrw2 98 0]] 4 0] \
+                  [list single multi single multi [list [list wviewer::set_plot_mode multi $km_tok2]] {} 0 \
+                        single single [list [list wviewer::set_plot_mode single $km_tok2]]]]]
+        catch {wviewer::close $km_tok2}
+        catch {ase::session_close $km_tok2}
+        for {set i 0} {$i < 10} {incr i} { update; after 20 }
+        xschem new_schematic switch $vdrw
+        wviewer::set_plot_mode single $tok
+        lassign [km_mid $vdrw 0] kmx kmy
+        check "KM15 fixture: the second viewer is closed again: as many windows as before it, no toplevel of its own, its canvas out of the registry, the first viewer's context current, single" \
+          [list [expr {[llength [xschem windows]] - $km_win0}] [wviewer::window_for $km_tok2] \
+                [wviewer::token_for_canvas $km_vdrw2] [xschem get current_win_path] [wviewer::plot_mode $tok]] \
+          [list 0 {} {} $vdrw single]
+
+        # --- KM14: A LIMIT, DECLARED --------------------------------------------
+        # doc/claude/specs/waveform_viewer.md, "What the key filter forwards", the
+        # limits. The filter sees a key only when it arrives at the viewer's own
+        # canvas. The engine runs a key in the CURRENT context, whichever canvas
+        # it came through, and the context follows the pointer while the keyboard
+        # focus need not. So with the viewer's context current and the focus on
+        # the schematic window's canvas, a key goes through that canvas to the
+        # engine and runs in the viewer, as the editor key it is there. The row
+        # builds the two facts of that state by command (the focus forced onto
+        # the main window's canvas, the viewer's context made current) and
+        # generates Ctrl-Shift-M on the main canvas. No C file is in this item's
+        # change, and no break of the viewer's Tcl turns this row red; it turns
+        # red the day a key that came through another canvas stops running in a
+        # viewer's context, and then the limit in the spec and the guide's note
+        # about it go.
+        wviewer::set_plot_mode single $tok
+        set km14 not-sent
+        for {set i 0} {$i < 100} {incr i} {
+          focus -force .drw
+          update
+          if {[focus -displayof .drw] eq {.drw}} {
+            xschem new_schematic switch $vdrw
+            set km_c14 [::km_real_xschem get current_win_path]
+            set ::km_via {} ; set km_mb14 $::mb_hits ; set km_k14 $::kf_calls
+            event generate .drw <KeyPress> -keysym M -state 5 -x 40 -y 40
+            update
+            set km14 [list [expr {$km_c14 eq $vdrw}] $::km_via [expr {$::kf_calls - $km_k14}] \
+                           [expr {$::mb_hits - $km_mb14}] [wviewer::plot_mode $tok] \
+                           [expr {[::km_real_xschem get current_win_path] eq $vdrw}]]
+            event generate .drw <KeyRelease> -keysym M -state 5 -x 40 -y 40
+            update
+            break
+          }
+          after 50
+        }
+        xschem new_schematic switch $vdrw
+        check "KM14 a limit, declared: with the viewer's context current and the keyboard focus on the main window's canvas, a Ctrl-Shift-M typed there goes through that canvas to the engine and runs in the viewer's context (the context was the viewer's, the canvas and chord the engine got, calls of the viewer's key filter, message boxes, the plot mode, the context still the viewer's)" \
+          $km14 [list 1 {{.drw 77 5}} 0 1 single 1]
+        # ...and the two ways the state ends, each from the state built again.
+        # The pointer enters the window that has the focus: an Enter on the main
+        # canvas makes the main window's context the current one. Or a click in
+        # the viewer's plot: it gives the viewer's canvas the focus, and the
+        # same chord, generated with the focus left where the click put it, is
+        # the viewer's own again.
+        set km14b {}
+        focus -force .drw
+        update
+        xschem new_schematic switch $vdrw
+        event generate .drw <Enter> -x 40 -y 40
+        update
+        lappend km14b [::km_real_xschem get current_win_path]
+        xschem new_schematic switch $vdrw
+        lappend km14b [focus -displayof .drw]
+        wb_ev $vdrw <ButtonPress-1>   -x $kmx -y $kmy
+        wb_ev $vdrw <ButtonRelease-1> -x $kmx -y $kmy -state 0x100
+        update
+        lappend km14b [expr {[focus -displayof $vdrw] eq $vdrw}]
+        wviewer::set_plot_mode single $tok
+        set ::km_fwd {} ; set km_mb15 $::mb_hits ; set km_k15 $::kf_calls
+        event generate $vdrw <KeyPress> -keysym M -state 5 -x $kmx -y $kmy
+        event generate $vdrw <KeyRelease> -keysym M -state 5 -x $kmx -y $kmy
+        update
+        lappend km14b [expr {$::kf_calls > $km_k15}] [wviewer::plot_mode $tok] \
+                      [expr {$::mb_hits - $km_mb15}] $::km_fwd
+        check "KM14 ...and the state ends two ways: an Enter on the main canvas makes the main window's context the current one; a click in the viewer's plot gives its canvas the focus, and the chord generated there without forcing the focus is the viewer's again (the context after the Enter, the focus before the click, whether the click gave the viewer's canvas the focus, whether its key filter was called, the plot mode, message boxes, what the engine was handed)" \
+          $km14b [list .drw .drw 1 1 multi 0 {}]
+        wviewer::set_plot_mode single $tok
+        xschem new_schematic switch $vdrw
+
+        # --- KM12: nothing changes outside a viewer -----------------------------
+        # The fence for the decision that this item changes no key over a graph
+        # embedded in an ordinary schematic. The main window holds the shipped
+        # example with one graph rect; each chord of the family goes straight to
+        # the engine at the centre of that rect, in the stock profile and in the
+        # Cadence one, and the outcome is compared with the one taken on the
+        # product before the change. The message box answers cancel for this row
+        # (the suite's recorder answers ok, which would let Alt-s reload).
+        set km_sch [file join $repo xschem_library examples test_ne555.sch]
+        set km_rect {}
+        if {![catch {set km_fd [open $km_sch r]}]} {
+          regexp -line {^B 2 (\S+) (\S+) (\S+) (\S+) \{flags=graph} [read $km_fd] -> gx1 gy1 gx2 gy2
+          close $km_fd
+          if {[info exists gx1]} { set km_rect [list $gx1 $gy1 $gx2 $gy2] }
+        }
+        check "KM12 fixture: the main window's schematic file names one graph rect" [llength $km_rect] 4
+        if {[llength $km_rect] == 4} {
+          xschem new_schematic switch .drw
+          set km_ro [xschem get readonly]
+          xschem set readonly 0
+          set ::km_mbs {}
+          rename ::tk_messageBox ::km_suite_mb
+          proc ::tk_messageBox {args} {
+            set m {}
+            catch {set m [dict get $args -message]}
+            lappend ::km_mbs [lindex [split $m "\n"] 0]
+            return cancel
+          }
+          proc km_sch_px {r} {
+            lassign $r x1 y1 x2 y2
+            set z [xschem get zoom]
+            return [list [expr {int((($x1 + $x2) / 2.0 + [xschem get xorigin]) / $z)}] \
+                         [expr {int((($y1 + $y2) / 2.0 + [xschem get yorigin]) / $z)}]]
+          }
+          proc km_sch_state {w0} {
+            return [list gf [expr {[xschem get graph_flags] & 70}] ui [xschem get ui_state] \
+              hs $::hide_symbols newwin [expr {[llength [xschem windows]] - [llength $w0]}] \
+              wires [xschem get wires] sacd $::km_sacd mb $::km_mbs]
+          }
+          set km_out {}
+          set km_cad0 $::cadence_compat
+          set km_at0 $::autotrim_wires
+          set km_hs0 $::hide_symbols
+          set km_wires [xschem get wires]
+          foreach km_prof {0 1} {
+            set ::cadence_compat $km_prof
+            foreach {nm N s} {Ctrl-Shift-M 77 5 s 115 0 Alt-s 115 8 Ctrl-Alt-s 115 12
+                              Ctrl-Alt-t 116 12 Alt-b 98 8 Alt-m 109 8} {
+              xschem new_schematic switch .drw
+              set km_w0 [xschem windows]
+              set ::km_mbs {} ; set ::km_sacd 0
+              lassign [km_sch_px $km_rect] spx spy
+              # the two move chords show only with something to move
+              if {$N == 77 || $N == 109} { xschem select_all }
+              ::km_real_xschem callback .drw 6 $spx $spy 0 0 0 0
+              ::km_real_xschem callback .drw 2 $spx $spy $N 0 0 $s
+              update
+              xschem new_schematic switch .drw
+              lappend km_out $km_prof/$nm [km_sch_state $km_w0]
+              # put the window back: leave any armed command, close a tab the key
+              # made (a tab is destroyed from inside it)
+              ::km_real_xschem callback .drw 2 $spx $spy 65307 0 0 0
+              catch {xschem abort_operation}
+              foreach km_w [xschem windows] {
+                if {[lsearch -exact $km_w0 $km_w] < 0} {
+                  catch {xschem new_schematic switch [lindex $km_w 0]}
+                  catch {xschem new_schematic destroy [lindex $km_w 0] {}}
+                }
+              }
+              xschem new_schematic switch .drw
+              catch {xschem unselect_all}
+              catch {xschem set hide_symbols $km_hs0}
+              set ::hide_symbols $km_hs0
+            }
+          }
+          lappend km_out left-behind [expr {[llength [xschem windows]] - [llength $km_w0]}]
+          set ::cadence_compat $km_cad0
+          set ::autotrim_wires $km_at0
+          rename ::tk_messageBox {}
+          rename ::km_suite_mb ::tk_messageBox
+          rename km_sch_px {}
+          rename km_sch_state {}
+          xschem new_schematic switch .drw
+          xschem set readonly $km_ro
+          # What each chord did on the product before this item, as the
+          # difference from a window where nothing happened: the schematic's move
+          # picks the selection up (ui_state 40), plain s is the graph's cursor
+          # swap in the stock profile and the snapped wire in the Cadence one
+          # (ui_state 1), Alt-s asks about a reload, Control-Alt-s opens the Save
+          # form, Control-Alt-t makes a schematic, Alt-b steps hide-symbols.
+          set km_want {}
+          foreach km_prof {0 1} {
+            foreach {nm km_d} {Ctrl-Shift-M {ui 40} s {}
+                               Alt-s {mb {{Are you sure you want to reload from disk?}}}
+                               Ctrl-Alt-s {sacd 1} Ctrl-Alt-t {newwin 1} Alt-b {hs +1} Alt-m {ui 40}} {
+              set km_v [list gf 0 ui 0 hs $km_hs0 newwin 0 wires $km_wires sacd 0 mb {}]
+              foreach {k val} $km_d {
+                if {$val eq {+1}} { set val [expr {($km_hs0 + 1) % 3}] }
+                dict set km_v $k $val
+              }
+              if {$km_prof == 1 && $nm eq {s}} { dict set km_v ui 1 }
+              lappend km_want $km_prof/$nm $km_v
+            }
+          }
+          lappend km_want left-behind 0
+          check "KM12 over a graph embedded in a schematic each chord of the family does what it did before this item, stock profile then Cadence" \
+            $km_out $km_want
+          xschem new_schematic switch $vdrw
+        }
+
+        # take the band's instruments out again
+        rename ::save_as_cellview_dialog {}
+        if {$km_had_sacd} { rename ::km_real_sacd ::save_as_cellview_dialog }
+        rename ::wviewer::log_action {}
+        rename ::wviewer::__km_real_log ::wviewer::log_action
+        rename ::xschem {}
+        rename ::km_real_xschem ::xschem
+        foreach km_p {km_key km_decides km_snap km_gf km_mk km_cur km_status km_readout km_mid km_plain
+                      km_curB km_bar km_bwalk km_bwant km_inband} { rename $km_p {} }
+
         # put the WB/SD fixture back for whatever runs after this band
         wviewer::set_graphs $tok $ca_save
         wviewer::regenerate $tok
         wviewer::fit $tok
       } else {
         puts "SKIPPED: CA1-CA8 (no trace dict in the model to build a fixture from)"
+        puts "skip: the KM rows (Ctrl-Shift-M and the key filter, real keys) did not run: no trace in the model to build their fixture from"
       }
       rename ca_sel {}
       rename ca_tok {}
@@ -2901,6 +4696,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       wviewer::regenerate $tok
     } else {
       puts "SKIPPED: WB wave-bold legs (no raw artifact)"
+      puts "skip: the KM rows (Ctrl-Shift-M and the key filter, real keys) did not run: no raw artifact (ngspice not found, or its run left none)"
     }
 
     # --- IX-fit: Fit reframes the GRAPH data range, never the canvas ---------

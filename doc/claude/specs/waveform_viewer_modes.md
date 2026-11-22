@@ -38,6 +38,7 @@ pan moved from LMB to MMB).
 | D5 | persistence | **Mode and target both persist** in the ASE session's `viewer` state dict, after `graphs`. |
 | D6 | config default | `wviewer_plot_mode` defaults to **`single`**. |
 | D7 | schematic chord | **Ctrl-Shift-4** = invert the associated viewer's mode (next to Ctrl-4 = Direct Plot). |
+| D7a | viewer chord (user request 2026-11-21) | **Ctrl-Shift-M** pressed in the viewer = invert the mode of that viewer's target subwindow. See §9.1. |
 | D8 | indicator scope | **Viewer only** — gated by a prop token only the viewer writes, so the 127 shipped files with embedded graphs look unchanged. |
 
 ## 3. Model
@@ -311,6 +312,12 @@ the mode was last changed — menu, command, chord, or state restore. Invoking i
 calls `wviewer::set_plot_mode invert $token`, which performs the change and
 writes the replayable line.
 
+Since 2026-11-21 the entry carries the accelerator `Ctrl+Shift+M`, the viewer's
+own chord (§9.1). The relabel changes the label only, so the accelerator stays
+whichever mode the entry offers. The guide's key table names the entry by its
+single-mode label; rows GH3, GH4 and GH6 of `tests/headless/test_wave_grid.tcl`
+follow it there (GH6 descends into the submenu and runs its `-postcommand`).
+
 ## 9. Schematic-side entry
 
 - **Ctrl-Shift-4** in `src/cadence_style_rc`, next to the Ctrl-4 Direct Plot
@@ -358,6 +365,55 @@ writes the replayable line.
   `wviewer::enter_ctx` / `wviewer::leave_ctx` ticket — verified both ways
   (landmine 17), restores the context, re-asserts the viewer title — never a bare
   `new_schematic switch`.
+
+### 9.1 Viewer-side entry (2026-11-21)
+
+- **Ctrl-Shift-M**, a default of the `WaveViewer` bindtag
+  (`wviewer::install_default_binds`), installed only when nothing has bound
+  the sequence (row KM1 of `test_wave_viewer` binds every sequence of the tag
+  first, runs the installer again and finds none overwritten, in the stock
+  profile and in the Cadence one), ending in `break`:
+
+  ```tcl
+  bind WaveViewer <Control-Shift-Key-M> {wviewer::plot_mode_toggle_at %W; break}
+  ```
+
+- `wviewer::plot_mode_toggle_at` resolves the token from the event's canvas,
+  answers `{}` for a canvas that is no viewer's, and calls
+  `wviewer::set_plot_mode invert`. So it changes the TARGET subwindow
+  (`waveform_viewer_subwindows.md` SW22), pushes the status bar and writes the
+  one replayable line, exactly as the menu entry does. No echo line (row KM1
+  records the command window's two doors for the chord and for the entry).
+
+- The chord does not depend on which context is current. The wrapper takes
+  the token from the event's canvas and hands it to `set_plot_mode`, so a
+  viewer that has the keyboard focus while another window's context is the
+  current one (the context follows the pointer, the focus does not) still
+  flips its own mode (row KM1 of `test_wave_viewer`). (Corrected 2026-11-21
+  in the repair of this item: this bullet used to say the viewer's context is
+  the current one whenever the key is pressed there, which does not hold.)
+  The reverse state is NOT covered: the viewer's context current and the
+  keyboard focus in another window. The chord typed then is that window's key;
+  it reaches the engine through that window's canvas and never this binding
+  (`waveform_viewer.md`, "What the key filter forwards", the limits; row KM14).
+
+- The binding is a tag of the plot canvas, so the chord needs the keyboard
+  focus there. A viewer that has just opened has it on its toplevel: the chord
+  does nothing until one click in the plot (same section, the limits; row
+  G1f of `test_wave_viewer`). (Added 2026-11-21, third repair of this item.)
+
+- The plot mode is kept per tab. With several tabs the chord flips the mode of
+  the active one and leaves the others as they were (row KM6).
+
+- The chord's keysym is a graph key (Shift-M is the measurement tooltip). The
+  key filter runs before the tag and does not `break`, so the binding alone
+  would have left the engine to see the chord as well, where it is the
+  schematic's move and stops at the read-only message box. The filter refuses
+  it (`wviewer::key_chord`; `waveform_viewer.md`, "What the key filter
+  forwards").
+
+- Caps Lock: `wviewer::case_pairs` lists `m` with no lower base, so Caps Lock +
+  Ctrl-m is this chord and Ctrl-m itself stays the engine's marker key.
 
 ## 10. Persistence
 

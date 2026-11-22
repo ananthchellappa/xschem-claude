@@ -23,9 +23,13 @@
 #     — e.g. cadence_style_rc `bind .drw <Key-i>` — and set_bindings'
 #     Windows-only per-widget Alt/Mod4 arms would otherwise reach editor
 #     verbs and their readonly modal), then installs wviewer::key_filter
-#     as the generic <KeyPress>/<KeyRelease> handler (allowlist:
-#     Escape always; arrows = graph pan (0149); the waves_callback key set only over a graph;
-#     Ctrl-W = close; everything else silently swallowed — readonly alone
+#     as the generic <KeyPress>/<KeyRelease> handler. What it hands the
+#     engine: Escape, and a graph key (the waves_callback key set) as a chord
+#     the engine hands to the graph, at a pixel its graph test accepts
+#     (wviewer::key_chord, wviewer::key_at_graph). It handles the arrows (graph
+#     pan, 0149) and f / Z / Ctrl-z itself. The viewer's own shortcuts, Ctrl-W
+#     among them, are bindings of the WaveViewer tag, not arms of the filter.
+#     Everything else is silently swallowed — readonly alone
 #     would pop the readonly_block MODAL on every editing key). Button-3 is
 #     forwarded only over a graph (kills the schematic context menu, keeps
 #     the C engine's graph pan/zoom), double-clicks are swallowed entirely
@@ -94,9 +98,10 @@
 # wviewer::interp_value, a Tcl mirror of the C interpolate_yval
 # (callback.c) used uniformly for BOTH cursors (the engine only
 # interpolates for B). Cursor state is MIRRORED per-window in Tcl (D8):
-# there is no `xschem get graph_flags` getter, so the menu checkbutton
-# vars are authoritative and key_filter flips them when it forwards a/b
-# over a graph.
+# the menu checkbutton vars are the Tcl-side cursor state and key_filter
+# flips them when it forwards a/b over a graph. (When this was written the
+# engine had no getter for its graph flags. It has one now, `xschem get
+# graph_flags`; the mirrors stayed.)
 #
 # Graph display seam (D12, reshaped from item 11): wviewer::display_raw is
 # a thin model wrapper — ensure graph 0, append the trace, `xschem raw
@@ -117,9 +122,11 @@
 # wviewer::plan_plot; wviewer::plot_signals applies it. Mode + target are
 # per-window (arrays keyed by session token, the `sharedx` mirror shape),
 # seeded from the config var `wviewer_plot_mode` at open time, persisted in
-# the ASE state `viewer` dict, changed by Options > Plot Mode, the Tcl
-# commands (plot_mode / set_plot_mode / target_strip / set_target_strip) or
-# a canvas click, and logged replayably through wviewer::log_action. When
+# the ASE state `viewer` dict, changed by Options > Plot Mode, by Ctrl-Shift-M
+# in the viewer (wviewer::plot_mode_toggle_at, a WaveViewer tag binding), by
+# Ctrl-Shift-4 on the design window, by the Tcl commands (plot_mode /
+# set_plot_mode / target_strip / set_target_strip) or a canvas click, and
+# logged replayably through wviewer::log_action. When
 # more than one strip is up, the target rect carries an `active=1` prop
 # token and the C engine paints a dull-yellow bar at its right edge
 # (draw.c, gated on draw_graph's on-screen flags bit 16).
@@ -347,16 +354,42 @@ namespace eval wviewer {
   # top-right corner of each sub-window.
   variable fsz_zone {64 40}
   # keysyms of the waves_callback key set (a b d s m t A B M) — forwarded ONLY
-  # over a graph; outside graphs these are editor verbs (m=move, t=text ...)
-  # and must do nothing, silently.
+  # over a graph, and only as a chord the engine hands to the graph
+  # (wviewer::key_chord); everywhere else these are editor verbs (m=move,
+  # t=text ...) and must do nothing, silently.
   # 100 (`d`) and 77 (`M`) joined for waveform markers
   # (doc/claude/specs/graph_markers.md): `m` now CREATES a marker, `d` creates
   # one with a delta block against the previous marker, and the measurement
   # tooltip moved from `m` to `M`. Delete (65535) is deliberately NOT here —
-  # membership means UNCONDITIONAL forwarding, and an unguarded Delete would
-  # land on the C canvas delete (readonly_block modal). It gets its own
-  # doubly-gated arm in key_filter instead.
+  # a member's bare key is forwarded wherever the pointer is over a graph, and
+  # a Delete with nothing of the graph's to delete would land on the C canvas
+  # delete (readonly_block modal). It gets its own doubly-gated arm in
+  # key_filter instead.
   variable graphkeys {97 98 100 115 109 116 65 66 77}
+  # MIRRORED IN C. The graph chords the engine's own key switch hands to the
+  # graph with no row in its binding table: {keysym reduced-state}, read off
+  # the arms of handle_key_press (src/callback.c) that ask waves_selected
+  # before anything else -- `case 'm'` plain and with Control, `case 'M'`
+  # plain, `case 's'` plain (outside the Cadence profile only; key_chord
+  # carries that condition). Every other graph chord is a `graph
+  # graph.forward` row of the engine's binding table, which key_chord reads
+  # live. Row SWK21 of tests/headless/test_wave_subwindows.tcl derives the same
+  # pairs from the C source and compares.
+  variable graphguards {{109 0} {109 4} {77 0} {115 0}}
+  # The graph keysyms whose Control chord is a shortcut of the viewer's own, a
+  # default of the WaveViewer tag (install_default_binds): Ctrl-b the Signal
+  # Browser, Ctrl-d Clear All, Ctrl-Shift-M the plot mode. key_chord refuses
+  # these by name, before it reads the engine's table. With a graph row of the
+  # user's for one of them the filter would otherwise hand the key to the graph
+  # and the tag would run the shortcut too: one key press, two things. Row
+  # SWK28 of tests/headless/test_wave_subwindows.tcl derives the same list from
+  # the tag's defaults and compares.
+  variable graphown {98 100 77}
+  # MIRRORED IN C. The ui_state bits of a gesture in flight (wire, rect, line,
+  # select box, move, copy, zoom box, pan) for which the engine's graph test
+  # steps aside: the `excl` set of waves_selected (src/callback.c). Row SWK27
+  # of the same suite reads that set out of the C source and compares.
+  variable graphbusy [expr {1 | 2 | 4 | 16 | 32 | 64 | 128 | 512}]
   # Canvas sequences the strip sweep KEEPS, in the canonical spellings `bind`
   # reports (<KeyPress> -> <Key>, <ButtonPress> -> <Button>, <Key-i> -> bare
   # `i`, <Shift-Insert> -> <Shift-Key-Insert> — probe-verified): the
@@ -378,10 +411,11 @@ namespace eval wviewer {
   # trace color auto-cycle (D10): matches shipped graph usage (ne555 uses
   # 4 15 7 12 9); skips layers 0-3 (background/wire/grid/text).
   variable palette {4 5 7 8 9 12 14 15 10 11}
-  # per-window cursor/readout/shared-x MIRRORS (D8): there is no
-  # `xschem get graph_flags` getter, so the menu checkbutton vars are the
-  # authoritative Tcl-side cursor state; key_filter flips them when it
-  # forwards a/b over a graph (the only other toggle path). Residual
+  # per-window cursor/readout/shared-x MIRRORS (D8): the menu checkbutton
+  # vars are the Tcl-side cursor state; key_filter flips them when it
+  # forwards a/b over a graph (the only other toggle path). The engine's own
+  # word is `xschem get graph_flags`, which did not exist when the mirrors
+  # were written. Residual
   # desync risk (documented): a C-side refusal the mirror cannot see —
   # waves_callback gates a/b/s on access_cond, but graph_use_ctrl_key
   # defaults 0 in the shipping profile so the C toggle always runs there.
@@ -6212,6 +6246,17 @@ proc wviewer::set_plot_mode {req {token {}}} {
   return $new
 }
 
+# The Ctrl-Shift-M binding body: flip the plot mode of the TARGET subwindow
+# (SW22), what Options > Plot Mode does. The token comes from the EVENT's
+# canvas (%W), the clear_all_at shape: {} and nothing done for a canvas that
+# is no viewer's. Answers the resolved mode. It prints nothing in the command
+# window, like the menu entry: the status bar shows the mode.
+proc wviewer::plot_mode_toggle_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::set_plot_mode invert $token]
+}
+
 # --- item 7: the plot DESTINATION is the SOURCE's, never the window's ---------
 # The viewer holds NO destination of its own: user ruling 2026-10-16 retired
 # the per-window store and its accessors and the Calculator mirror that fed
@@ -7448,14 +7493,36 @@ proc wviewer::bands_px {bbs xo yo zoom} {
 # reach the schematic canvas pan instead — the exact gesture issue 0149 removed
 # from this window. 8 px covers the 5-pixel border at tk scaling 1.5.
 proc wviewer::strip_at_pixel_inset {canvas px py {inset 8}} {
+  return [wviewer::band_at_inset [wviewer::strip_bands_px $canvas] $px $py $inset]
+}
+
+# PURE: index of the band of `bands` ({px1 py1 px2 py2} each, canvas pixels)
+# that holds pixel (px,py) with `inset` pixels trimmed off every side, else -1.
+# strip_at_pixel_inset's test, split out so the key filter can ask it without
+# the context switch strip_bands_px makes (wviewer::key_at_graph).
+proc wviewer::band_at_inset {bands px py inset} {
   set gi 0
-  foreach bb [wviewer::strip_bands_px $canvas] {
+  foreach bb $bands {
     lassign $bb bx1 by1 bx2 by2
     if {$px >= $bx1 + $inset && $px <= $bx2 - $inset && \
         $py >= $by1 + $inset && $py <= $by2 - $inset} { return $gi }
     incr gi
   }
   return -1
+}
+
+# The border the engine's graph test (waves_selected, src/callback.c) leaves
+# inside every graph rect, in whole canvas pixels: 5 pixels times the Tk
+# scaling, rounded up, plus one -- so a pixel this far inside a strip is one
+# the engine takes for the graph whatever the rounding. 8 where there is no Tk.
+# MIRRORED IN C: the 5 is the factor of `border` there. Row SWK25 of
+# tests/headless/test_wave_subwindows.tcl reads it out of the C source and
+# holds this proc's answer against it at a walk of Tk scalings (the `tk`
+# command answered by a recorder, so without Tk too) and at the display's own.
+proc wviewer::graph_border_px {} {
+  if {[info commands tk] eq {}} { return 8 }
+  if {[catch {set sc [tk scaling]}]} { return 8 }
+  return [expr {int(ceil(5.0 * $sc)) + 1}]
 }
 
 proc wviewer::strip_handle_at_pixel {canvas px py} {
@@ -18013,6 +18080,11 @@ proc wviewer::install_default_binds {} {
   # limit 9), and a user who sets `graph_use_ctrl_key 1` loses their only
   # cursor-B chord (limit 8). Both are pinned by checks --
   # tests/headless/test_key_graph_context.tcl and test_wave_sigbrowser_keys.tcl.
+  # (2026-11-21: the two keysym carve-outs this text speaks of are no longer
+  # an expression in key_filter. The filter forwards a graph key only as
+  # wviewer::key_chord allows, and that proc refuses Control with b, d and M
+  # by name (`graphown`), whatever the engine's table holds: a user's own
+  # `ctrl graph` row for 98 does not bring the forward back.)
   #
   # COLLISION CHECK, RE-RUN FOR THE NEW CHORD and clean on all three of the
   # paths a key can reach this window by:
@@ -18151,6 +18223,25 @@ proc wviewer::install_default_binds {} {
   if {[bind WaveViewer <Control-Shift-Key-G>] eq {}} {
     bind WaveViewer <Control-Shift-Key-G> {wviewer::grid_toggle_subwin_at %W; break}
   }
+  # PLOT MODE (SW22, 2026-11-21): Ctrl-Shift-M flips single/multi of the TARGET
+  # subwindow -- the viewer's own key for what Options > Plot Mode does and
+  # what Ctrl-Shift-4 does from the design window. Collision check, on the
+  # three paths a key reaches this window by:
+  #   * keysym 77 IS a graph key (Shift-M is the measurement tooltip), and with
+  #     Control the engine's `case 'M'` is the schematic's move, which opens
+  #     with the read-only message box. key_filter does not forward the chord:
+  #     wviewer::key_chord refuses M under Control, so from this window the
+  #     engine never sees it and the default below is all that runs.
+  #   * no rc binds the chord on .drw (src/cadence_style_rc has the plot mode
+  #     there as Ctrl-Shift-4), and strip_bindings sweeps a clone anyway.
+  #   * the `break` keeps it from travelling further.
+  # With graph_use_ctrl_key set the chord is the plot mode here all the same
+  # (the Ctrl-B precedent above: the carve-out is not conditioned on that
+  # variable). The price, declared in doc/claude/specs/graph_markers.md: in
+  # that profile the measurement tooltip has no key in a viewer.
+  if {[bind WaveViewer <Control-Shift-Key-M>] eq {}} {
+    bind WaveViewer <Control-Shift-Key-M> {wviewer::plot_mode_toggle_at %W; break}
+  }
   # ⚠ Ctrl-W CHANGED MEANING (D9a, user ruling 2026-08-03): it closes a TAB,
   # and with only one tab it does NOTHING but say so. It never closes a window
   # any more -- that is Ctrl-Q. The hardcoded key_filter arm that used to
@@ -18191,6 +18282,9 @@ proc wviewer::install_default_binds {} {
 # it always did). E and U are listed with the bare-key bindings their Ctrl
 # chords actually reach today. z and a are not bindings: key_filter applies the
 # same rule to the keysym it acts on or forwards (wviewer::case_keysym).
+# m has no lower base: Ctrl-m is the engine's (it makes a marker) and
+# key_filter forwards it in the case as typed; only the upper case, the plot
+# mode's Ctrl-Shift-M, is a viewer shortcut.
 proc wviewer::case_pairs {} {
   return {
     d <Control-Key-d> <Control-Shift-Key-D>
@@ -18203,6 +18297,7 @@ proc wviewer::case_pairs {} {
     c <Control-Key-c> {}
     q <Control-Key-q> {}
     v <Control-Key-v> {}
+    m {}              <Control-Shift-Key-M>
   }
 }
 
@@ -20615,19 +20710,215 @@ proc wviewer::over_graph {wp} {
   return 0
 }
 
+# --- the graph keys: which CHORD goes to the engine, and at which PIXEL -------
+#
+# The engine does not decide by keysym. For a key press it reduces the modifier
+# state, looks the chord up in its binding table, falls into its key switch,
+# and asks its own graph test about the pointer -- and for every graph keysym
+# some chord, some profile or some pixel ends in an editor verb: the read-only
+# message box, a reload prompt, the Save-as-symbol form, a new schematic, the
+# hide-symbols cycle, an armed move, the make-symbol and run-simulation
+# prompts. A viewer has no use for any of them. So key_filter forwards a graph
+# key only when key_chord and key_at_graph below say the engine will hand it to
+# the graph, and a key they refuse stays in the viewer. Escape, the one other
+# key the filter forwards, is asked of key_has_row first.
+#
+# WHAT THE FILTER CANNOT SEE. It is a binding of the viewer's own canvas. A key
+# that reaches the engine through ANOTHER window's canvas while this viewer's
+# context is the current one (the keyboard focus in that window, the pointer
+# resting over this plot) is run by the engine in this context and never
+# passes through here. A limit, declared in
+# doc/claude/specs/waveform_viewer.md under "What the key filter forwards".
+# Nor does it see a key typed while the keyboard focus is on the viewer's
+# toplevel and not on this canvas, which is where wviewer::open leaves it: such
+# a key reaches neither this proc nor the WaveViewer tag, and nothing happens
+# until a click in the plot. Declared there with the limits; row G1f of
+# tests/headless/test_wave_viewer.tcl holds it.
+
+# 1 when the global Tcl variable `name` holds a true value, read the way the
+# engine reads its own flags (tclgetboolvar): a number that is not zero or one
+# of Tcl's words for true. 0 when it is unset or no boolean at all.
+proc wviewer::tcl_flag {name} {
+  upvar #0 $name v
+  if {![info exists v]} { return 0 }
+  if {[catch {expr {$v ? 1 : 0}} r]} { return 0 }
+  return $r
+}
+
+# PURE: the modifier state of a key event as the engine reduces it before it
+# decides what the key means (callback() in src/callback.c): the bits above
+# the modifier range, Num Lock (Mod2), Caps Lock, Shift and Button-1 dropped.
+# 0 is a bare key, 4 Control, 8 Alt (Mod1), 64 Super (Mod4); -1 for a state
+# that is no number. MIRRORED IN C: row SWK20 of
+# tests/headless/test_wave_subwindows.tcl reads the masks callback() strips out
+# of the C source and compares.
+proc wviewer::chord_state {s} {
+  if {![string is integer -strict $s]} { return -1 }
+  return [expr {$s & 8191 & ~(1 | 2 | 16 | 256)}]
+}
+
+# PURE: what key_filter does with graph key `N` typed with modifier state `s`.
+# Answers the state to hand the engine with the key, or {} when the key is not
+# forwarded.
+#   N     the keysym in the case wviewer::case_keysym gives it
+#   s     the event's own state
+#   cad   1 in the Cadence profile (cadence_compat)
+#   guck  1 when graph_use_ctrl_key is set
+#   rows  the engine's binding table as `xschem bindings dump` gives it
+#
+# THE TABLE, in one place. With the reduced state r = chord_state(s), the
+# FILTER forwards a graph key in exactly these cases:
+#   r == 0        every graph key -- but s only outside the Cadence profile
+#                 (there plain s is the snapped wire; see the profile rules);
+#   r == Control  a s m t A B. Never b, d or M: Control with those three is a
+#                 shortcut of the viewer's own (`graphown`: the Signal Browser,
+#                 Clear All, the plot mode) and stays in the viewer whatever
+#                 the engine's table holds. The stock table has no graph row
+#                 for them either: forwarded, Ctrl-b toggled symbol text,
+#                 Ctrl-d was the delete-files dialog and Ctrl-Shift-M the
+#                 schematic's move;
+#   anything else (Alt, Super, any mix) never.
+# Every chord of that table is one the engine hands to the graph, and the proc
+# reads that rather than listing it twice: a row `key <N> <0|ctrl> graph
+# graph.forward` of the binding table (`rows`), or, for a chord with no row at
+# all, an arm of the key switch that opens with the graph test
+# (`graphguards`). A row of the table always decides before the switch, so a
+# chord that has a row and no graph row of that action is refused: that is a
+# canvas or global row, the user's own included, and it would run from the
+# viewer.
+#
+# ONE CHORD THE ENGINE HANDS TO THE GRAPH IS NOT IN THE TABLE: t under Control
+# with a further modifier that is neither Alt nor Super (Mod3, Mod5, a held
+# middle or right button). The engine's `case 't'` asks the graph test for
+# that remainder of its Control arm. The filter refuses it with every other
+# mixed state.
+#
+# TWO PROFILE RULES on top:
+#   * graph_use_ctrl_key: the engine's graph test then wants Control, so a
+#     bare graph key is refused -- over a strip it would run the canvas arm.
+#   * the Cadence profile's plain s goes out as Control-s, which the engine
+#     hands to the graph and which swaps the cursors like plain s does in the
+#     stock profile. key_at_graph is what keeps that safe: off a graph
+#     Control-s is Save.
+proc wviewer::key_chord {N s {cad 0} {guck 0} {rows {}}} {
+  variable graphkeys
+  variable graphguards
+  variable graphown
+  if {[lsearch -exact $graphkeys $N] < 0} { return {} }
+  set r [wviewer::chord_state $s]
+  if {$r < 0} { return {} }
+  if {$guck && $r != 4} { return {} }
+  set fs $s
+  if {$r == 0 && $N == 115 && $cad} {
+    set r 4
+    set fs [expr {$s | 4}]
+  }
+  if {$r != 0 && $r != 4} { return {} }
+  if {$r == 4 && [lsearch -exact $graphown $N] >= 0} { return {} }
+  set mods [expr {$r == 4 ? {ctrl} : {0}}]
+  set graph 0
+  set other 0
+  foreach row $rows {
+    if {[lindex $row 0] ne {key} || [lindex $row 1] != $N || [lindex $row 2] ne $mods} { continue }
+    if {[lindex $row 3] eq {graph} && [lindex $row 4] eq {graph.forward}} {
+      set graph 1
+    } else {
+      set other 1
+    }
+  }
+  if {$graph} { return $fs }
+  if {$other} { return {} }
+  if {[lsearch -exact $graphguards [list $N $r]] >= 0} { return $fs }
+  return {}
+}
+
+# PURE: the modifier word of a binding-table row (`0`, or ctrl, shift, alt and
+# super joined by `+`, as `xschem bindings dump` prints it) as state bits; -1
+# for a word with a part that is none of those. An empty word and `none` are no
+# modifier, as the engine's own parser has it.
+proc wviewer::row_mods {word} {
+  if {$word eq {} || $word eq {0} || $word eq {none}} { return 0 }
+  set m 0
+  foreach part [split $word +] {
+    switch -- $part {
+      ctrl    { set m [expr {$m | 4}] }
+      shift   { set m [expr {$m | 1}] }
+      alt     { set m [expr {$m | 8}] }
+      super   { set m [expr {$m | 64}] }
+      default { return -1 }
+    }
+  }
+  return $m
+}
+
+# PURE: 1 when the engine's binding table `rows` holds a row, of any context,
+# for key `N` typed with modifier state `s`. That is the engine's own question
+# before its key switch (key_chord_has_binding, src/callback.c): with such a
+# row the row's action runs and the switch is not reached. The engine looks a
+# key up at the state callback() reduces it to: the bits above the modifier
+# range, Num Lock and Caps Lock dropped, and for a key below the named-key
+# range (a letter, a digit) Shift and Button-1 as well. 0 for a keysym or a
+# state that is no number.
+proc wviewer::key_has_row {N s rows} {
+  if {![string is integer -strict $N] || ![string is integer -strict $s]} { return 0 }
+  set m [expr {$s & 8191 & ~(2 | 16)}]
+  if {$N < 65280} { set m [expr {$m & ~(1 | 256)}] }
+  foreach row $rows {
+    if {[lindex $row 0] ne {key} || [lindex $row 1] != $N} { continue }
+    if {[wviewer::row_mods [lindex $row 2]] == $m} { return 1 }
+  }
+  return 0
+}
+
+# 1 when a key event at pixel (px,py) of viewer canvas `W` is one the engine's
+# own graph test (waves_selected, src/callback.c) takes for a graph. The engine
+# judges the EVENT's pixel, not the last motion, so this does too -- the mouse
+# mirror wviewer::over_graph reads can be stale, and it knows nothing of the
+# border. Four conditions, the engine's own:
+#   * the key's canvas is the current context (the engine runs a key in the
+#     current context, whichever window it came from);
+#   * no gesture is in flight there (`graphbusy`);
+#   * the pixel the engine will use: the event's, or the pointer's when
+#     fix_mouse_coord is on, as callback() takes it then;
+#   * that pixel lies inside a strip by at least the engine's border
+#     (wviewer::graph_border_px). A pixel in the border is the canvas to the
+#     engine: every graph key there would run its editor arm.
+# The viewer's strips never carry `lock`, the one rect token the engine's test
+# also reads, so it is not asked.
+proc wviewer::key_at_graph {W px py} {
+  variable graphbb
+  variable graphbusy
+  if {![dict exists $graphbb $W]} { return 0 }
+  if {[xschem get current_win_path] ne $W} { return 0 }
+  if {[xschem get ui_state] & $graphbusy} { return 0 }
+  if {[xschem get fix_mouse_coord]} {
+    if {[catch {set px [getmousex $W] ; set py [getmousey $W]}]} { return 0 }
+  }
+  set zoom [xschem get zoom]
+  if {$zoom == 0} { return 0 }
+  set bands [wviewer::bands_px [dict get $graphbb $W] \
+               [xschem get xorigin] [xschem get yorigin] $zoom]
+  return [expr {[wviewer::band_at_inset $bands $px $py [wviewer::graph_border_px]] >= 0}]
+}
+
 # --- binding strip (D2) ------------------------------------------------------
 
 # The viewer's generic key handler, replacing the editor <KeyPress>/
-# <KeyRelease> binds on the viewer .drw ONLY. Allowlist:
+# <KeyRelease> binds on the viewer .drw ONLY. What it does with a key:
 #   intercepted to the GRAPH (item 19, D4 — NOT forwarded to the C canvas-zoom
 #     keys): f = fit (x+y), Z = graph zoom in (X), Ctrl-z = graph zoom out (X);
 #     arrows = 4-way graph pan (issue 0149 — modified arrows swallowed);
-#   always forwarded: Escape (abort+redraw — NEVER closes, D10);
-#   over a graph only: a b s m t A B (+ctrl) — the waves_callback key set;
+#   Escape (abort+redraw — NEVER closes, D10): forwarded, unless the engine's
+#     binding table holds a row for the chord (none ships). Then the abort is
+#     done by the verb `xschem escape` and the key stays in the viewer;
+#   a graph key (a b d s m t A B M): forwarded only as a chord the engine
+#     hands to the graph (wviewer::key_chord) and only at a pixel its graph
+#     test accepts (wviewer::key_at_graph);
 #   Delete: intercepted to the SELECTION over a graph, never forwarded
 #     (issue 0176 — the marker, the traces, or both);
-#   Ctrl-W: close the viewer (handled Tcl-side, swallowed);
-#   everything else: swallowed silently (readonly backstops any miss).
+#   everything else: swallowed silently. The viewer's own shortcuts (Ctrl-D,
+#     Ctrl-W, Ctrl-Shift-M and the rest) are bindings of the WaveViewer tag,
+#     which Tk runs after this proc; nothing here stands in their way.
 proc wviewer::key_filter {W T x y N K s} {
   variable graphkeys
   # ⚠ THE Ctrl-W / Ctrl-Shift-W ARM THAT LIVED HERE IS GONE
@@ -20676,40 +20967,52 @@ proc wviewer::key_filter {W T x y N K s} {
     }
   }
   set fwd 0
+  # the state handed to the engine with a forwarded key: the event's own, except
+  # where key_chord gives another (the Cadence profile's plain s)
+  set fs $s
   if {$K eq {Escape}} {
     # abandon an in-flight strip drag BEFORE the normal forward (D10 keeps ESC
     # forwarded to C for its abort+redraw; the cancel is additive)
     if {$T == 2} { wviewer::strip_drag_cancel $W }
     catch {destroy .ctxmenu}                          ;# mirror the editor bind
-    set fwd 1
+    # The engine asks its binding table before its Escape arm. No table that
+    # ships has a row for Escape; with one of the user's own (an rc line) a
+    # forwarded Escape would run that row's action from the viewer and the
+    # abort would not happen. Then the abort is asked for by its verb, on the
+    # press, and the key is not forwarded.
+    if {[wviewer::key_has_row $N $s [xschem bindings dump]]} {
+      if {$T == 2} { xschem escape }
+    } else {
+      set fwd 1
+    }
   } elseif {$N == 102 || $N == 90 || ($N == 122 && ($s & 4))} {
     set fwd 1
-  } elseif {[lsearch -exact $graphkeys $N] >= 0 && [wviewer::over_graph $W]} {
-    # graphkeys membership is otherwise unconditional on modifiers, which is
-    # right for a/s (Ctrl+a, Ctrl+s are real ctx=graph rows in keybindings.csv).
-    # TWO of the members now have a live Ctrl collision, and BOTH are handled
-    # here as MODIFIER CARVE-OUTS — `graphkeys` keeps every keysym it had, so
-    # the BARE key of each pair still forwards exactly as before:
-    #   * `d` (100): Ctrl-D is the viewer's Clear All on the WaveViewer bindtag,
-    #     and there is NO ctx=graph row for Ctrl+d — so a forward falls through
-    #     to the schematic `case 'd'`, whose ControlMask branch is
-    #     delete_files(), a MODAL FILE DIALOG over a readonly viewer.
-    #   * `b` (98): TWO-PANE item 16 (R9) moved the Signal Browser to Ctrl-B on
-    #     the same bindtag, and DELETED the C table's
-    #     `key 98 ctrl graph graph.forward` row with it — so a forward would now
-    #     fall through to the schematic `case 'b'`, whose ControlMask branch
-    #     toggles xctx->sym_txt. One keystroke would open the browser AND flip
-    #     symbol text behind it. Refusing the forward leaves the tag binding to
-    #     toggle, and BARE `b` still reaches waves_callback for cursor B.
-    # Refusing the forward leaves the tag binding to do its job in both cases.
-    set fwd [expr {!(($N == 100 || $N == 98) && ($s & 4))}]
+  } elseif {[lsearch -exact $graphkeys $N] >= 0} {
+    # A graph key goes to the engine only when the engine will take it for the
+    # graph: as that CHORD (key_chord: modifiers, profile, the engine's live
+    # binding table) and at that PIXEL (key_at_graph: the event's own %x %y
+    # against the strips, the engine's border trimmed off). `graphkeys` itself
+    # only says the keysym has a graph meaning.
+    #
+    # A key that fails either test is not forwarded. Then nothing happens, or
+    # the WaveViewer tag runs the viewer's own shortcut for the chord: Ctrl-D
+    # (Clear All), Ctrl-B (the Signal Browser), Ctrl-Shift-M (the plot mode).
+    # key_chord refuses the Control chord of those three graph keysyms by name
+    # (`graphown`), so one key press cannot do two things whatever the engine's
+    # table holds. With the stock table a forwarded Ctrl-d was the delete-files
+    # dialog, Ctrl-b toggled symbol text behind the browser and Ctrl-Shift-M
+    # stopped at the read-only message box. The bare keys d, b and Shift-M are
+    # untouched.
+    set fs [wviewer::key_chord $N $s [wviewer::tcl_flag cadence_compat] \
+              [wviewer::tcl_flag graph_use_ctrl_key] [xschem bindings dump]]
+    if {$fs ne {} && [wviewer::key_at_graph $W $x $y]} { set fwd 1 }
   }
   # Delete deletes WHATEVER is selected — the selected marker, the selected
   # traces, or both (issue 0176, doc/claude/issues/0176-del-deletes-selection.md).
   # It is handled ENTIRELY Tcl-side and is NEVER forwarded, which is a
   # strengthening of the rule the old marker-only arm already lived by:
-  # Delete is deliberately not a `graphkeys` member (membership means
-  # UNCONDITIONAL forwarding), because a Delete that reaches C with nothing to
+  # Delete is deliberately not a `graphkeys` member (a member's bare key is
+  # forwarded over a graph), because a Delete that reaches C with nothing to
   # delete lands on the canvas delete verb — `readonly_block()` and a modal
   # dialog over a read-only viewer. The old arm forwarded when a marker was
   # selected ANYWHERE in the window and let C's own strip-scope test decide; a
@@ -20743,13 +21046,13 @@ proc wviewer::key_filter {W T x y N K s} {
     if {$T == 2 && $tokm ne {} && ($N == 109 || $N == 100)} {
       # with_edit ERRORS OUT loudly on a refused context switch; inside a Tk
       # binding that must not propagate, so it is caught and reported.
-      if {[catch {wviewer::with_edit $tokm {xschem callback $W $T $x $y $N 0 0 $s}} emk]} {
+      if {[catch {wviewer::with_edit $tokm {xschem callback $W $T $x $y $N 0 0 $fs}} emk]} {
         if {[info exists ::has_x] && [info commands ::ciw_echo] ne {}} {
           catch {ciw_echo "wviewer: marker key refused: $emk" error}
         }
       }
     } else {
-      xschem callback $W $T $x $y $N 0 0 $s
+      xschem callback $W $T $x $y $N 0 0 $fs
     }
     # item 12 (D8): a/b/s reached the C waves_callback (they are forwarded
     # only over a graph) — flip the Tcl cursor mirror + refresh the readout.
@@ -20765,10 +21068,9 @@ proc wviewer::key_filter {W T x y N K s} {
     # failure mode ("a C-side access_cond refusal the mirror cannot see"); this is
     # the first case where it is reachable in the SHIPPING profile.
     #
-    # Shaped like the `fwd` carve-outs for 98/100 above and for the same reason:
-    # `graphkeys` membership and this tail are both unconditional on modifiers,
-    # so a chord whose C meaning stops being the bare key's needs an explicit
-    # exemption at whichever of the two gates it passes. BARE `a` is untouched —
+    # This tail is unconditional on modifiers, so a chord the filter forwards
+    # whose C meaning is not the bare key's needs an explicit exemption here
+    # (the forward itself is decided by wviewer::key_chord). BARE `a` is untouched —
     # it still forwards and still flips the mirror. Ctrl+s (115) is NOT carved
     # out: it still swaps the cursors in C, and 115 reaches neither cva nor cvb
     # in the tail anyway, only the readout refresh it still needs.
@@ -22660,13 +22962,15 @@ proc wviewer::build_menubar {token top} {
     -command [list wviewer::readout_show $token]
   # Options > Plot Mode (issue 0151): ONE dynamic entry offering the OTHER
   # mode. The label is rebuilt by the submenu's -postcommand, so it stays
-  # correct however the mode last changed (this menu, the Tcl commands, the
-  # Ctrl-Shift-4 chord on the design window, or a state restore). Invoking it
-  # goes through set_plot_mode, which writes the replayable log line.
+  # correct however the mode last changed (this menu, the Tcl commands,
+  # Ctrl-Shift-M in this window, the Ctrl-Shift-4 chord on the design window,
+  # or a state restore). Invoking it goes through set_plot_mode, which writes
+  # the replayable log line. The accelerator names the viewer's own chord; the
+  # relabel leaves it in place.
   menu $mb.options.plotmode -tearoff 0 -takefocus 0 \
     -font AseLabelFont -background $panel -activebackground $header \
     -postcommand [list wviewer::plot_mode_menu_post $token $mb.options.plotmode]
-  $mb.options.plotmode add command -label {Set Multi-plot Mode} \
+  $mb.options.plotmode add command -label {Set Multi-plot Mode} -accelerator Ctrl+Shift+M \
     -command [list wviewer::set_plot_mode invert $token]
   $mb.options add cascade -label {Plot Mode} -menu $mb.options.plotmode
   # NO Options > Plot Destination: the viewer has no destination setting

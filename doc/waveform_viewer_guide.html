@@ -149,8 +149,9 @@ strip.</td></tr>
 <i>newest on top</i>.</td></tr>
 </table>
 <p>Switch modes with <span class="menu">Options &gt; Plot Mode</span> (one entry,
-which always offers the <i>other</i> mode), or with <kbd>Ctrl-Shift-4</kbd> on the
-schematic window. The mode belongs to each <b>subwindow</b>: both change only the
+which always offers the <i>other</i> mode), with <kbd>Ctrl-Shift-M</kbd> in the
+viewer, or with <kbd>Ctrl-Shift-4</kbd> on the schematic window. The mode belongs
+to each <b>subwindow</b>: all three change only the
 target subwindow, and the bottom status bar shows the target subwindow's mode
 (<code>Plot: single</code>). A new subwindow starts with the target's mode. An empty strip left behind by
 <b>Clear All</b> or <b>Add Graph</b> is reused before a new one is appended, in
@@ -460,7 +461,9 @@ height.</td></tr>
 
 <h3 id="ref-viewer-keys">9.1 Viewer keys (remappable, see <a href="#rebinding">§10</a>)</h3>
 <p>These live on the <code>WaveViewer</code> binding tag and work anywhere in the
-window.</p>
+window, once the plot has the keyboard focus. A viewer that has only just opened
+does not have it yet: click in the plot once
+(<a href="#trouble">§12</a>).</p>
 <table>
 <tr><th>Key</th><th>What it does</th><th>Where it works</th><th>Menu twin</th></tr>
 <tr data-seq="Control-Key-n" data-menu="New Tab" data-accel="Ctrl+N">
@@ -550,6 +553,15 @@ subwindow)</td></tr>
 <td>Show/hide the dashed grid of the target subwindow only.</td>
 <td class="where">target subwindow</td>
 <td><span class="menu">Graph &gt; SubWin Grid</span></td></tr>
+<tr data-seq="Control-Shift-Key-M" data-menu="Set Multi-plot Mode" data-accel="Ctrl+Shift+M">
+<td><kbd>Ctrl-Shift-M</kbd></td>
+<td>Switch the target subwindow between single-plot and multi-plot mode. The
+status bar shows the new mode. This is the viewer's own key for what
+<kbd>Ctrl-Shift-4</kbd> does from the schematic window. It goes by the target
+subwindow, not by where the pointer is.</td>
+<td class="where">target subwindow</td>
+<td><span class="menu">Options &gt; Plot Mode</span> (one entry, named after the
+mode it switches to: <i>Set Multi-plot Mode</i> while the mode is single)</td></tr>
 <tr data-seq="Control-Key-b" data-menu="Signal Browser" data-accel="Ctrl+B">
 <td><kbd>Ctrl-B</kbd></td>
 <td>Show/hide the <b>Signal Browser</b> sidebar down the left of this window. A
@@ -634,7 +646,11 @@ members of the selection instead.
 <b>Caps Lock.</b> A Ctrl shortcut goes by the case of the letter you typed. With
 Caps Lock on, <kbd>Ctrl-D</kbd> does what <kbd>Ctrl-Shift-D</kbd> does (Clear
 SubWin), and <kbd>Ctrl-Shift-D</kbd> does what <kbd>Ctrl-D</kbd> does (Clear
-All). The same goes for every Ctrl-letter pair here: G, N, W, E, U and Z. A
+All). The same goes for every Ctrl-letter pair here: G, N, W, E, U and Z, and
+for M, whose pair is <kbd>Ctrl-Shift-M</kbd> (the plot mode) and the graph's
+<kbd>Ctrl-m</kbd> (a marker, <a href="#ref-graph-keys">§9.3</a>): with Caps Lock
+on, <kbd>Ctrl-m</kbd> switches the plot mode and <kbd>Ctrl-Shift-M</kbd> makes
+the marker. A
 letter with no Shift twin (<kbd>Ctrl-B</kbd>, <kbd>Ctrl-C</kbd>,
 <kbd>Ctrl-Q</kbd>, <kbd>Ctrl-V</kbd>) does nothing with Caps Lock on unless
 you also hold Shift.
@@ -682,7 +698,21 @@ and does nothing at all when there is only one.</td>
 <h3 id="ref-graph-keys">9.3 Graph-engine keys — only while the pointer is over a strip</h3>
 <p>These are handed to the drawing engine. Off a strip they do nothing (in a
 schematic window the same letters are editing commands, which is exactly why the
-viewer refuses to pass them on).</p>
+viewer refuses to pass them on). For the same reason the viewer passes a key on
+only as the engine means it for a graph: one of these letters bare, or
+<kbd>Ctrl</kbd> with <kbd>a</kbd>, <kbd>s</kbd>, <kbd>m</kbd>, <kbd>t</kbd>,
+<kbd>A</kbd> or <kbd>B</kbd>. With <kbd>Alt</kbd> or the Super key held, or in
+the few pixels just inside a strip's edge, they do nothing either. No key typed
+into a viewer's plot reaches a schematic editing command, and none brings up the
+"View is Read Only" box.</p>
+<div class="note">One state is outside that. If the pointer rests over a viewer's
+plot while the keyboard focus is in <i>another</i> xschem window (after Alt-Tab,
+or a click on the task bar, with the pointer left where it was), a key you type
+goes to that other window, and the drawing engine runs it where the pointer is:
+in the viewer, as the schematic command the key is. An editing key then brings
+up "View is Read Only", and <kbd>Ctrl-Shift-M</kbd> typed that way does not
+change the plot mode. Move the pointer into the window you are typing in, or
+click in the plot, and the keys are right again.</div>
 <table>
 <tr><th>Key</th><th>What it does</th><th>Where it works</th></tr>
 <tr><td><kbd>a</kbd></td><td>Cursor A on/off, placed at the pointer's x.</td>
@@ -691,7 +721,9 @@ viewer refuses to pass them on).</p>
 back-annotation enabled this is also what drives the values shown on the
 schematic.</td>
 <td class="where">over a strip</td></tr>
-<tr><td><kbd>s</kbd></td><td>Swap cursors A and B (both must be on).</td>
+<tr><td><kbd>s</kbd></td><td>Swap cursors A and B (both must be on). In the
+Cadence profile too, where <kbd>s</kbd> in a schematic window starts a
+wire.</td>
 <td class="where">over a strip</td></tr>
 <tr><td><kbd>A</kbd> (Shift+a)</td><td>Horizontal cursor 1 on/off, at the
 pointer's y.</td>
@@ -699,7 +731,7 @@ pointer's y.</td>
 <tr><td><kbd>B</kbd> (Shift+b)</td><td>Horizontal cursor 2, same.</td>
 <td class="where">over a strip, that strip only</td></tr>
 <tr><td><kbd>m</kbd></td><td>Create a marker at the sample the snap diamond is
-showing.</td>
+showing. <kbd>Ctrl-m</kbd> does the same.</td>
 <td class="where">inside the plot box</td></tr>
 <tr><td><kbd>d</kbd></td><td>Create a marker carrying a delta block against the
 most recently created marker.</td>
@@ -714,7 +746,13 @@ multi-sweep DC runs; ignored on digital strips.</td>
 </table>
 <p>Every key in this table is also gated by the global option
 <code>graph_use_ctrl_key</code>. It defaults to 0, which is what the table
-describes; set to 1 it makes all of them require <kbd>Ctrl</kbd>.</p>
+describes; set to 1 it makes all of them require <kbd>Ctrl</kbd>, and a bare
+letter then does nothing in a viewer. Some of them are then out of reach in a
+viewer, because their <kbd>Ctrl</kbd> chord means something else there whatever
+that option says: cursor A (<kbd>Ctrl-a</kbd> selects all the traces), cursor B
+(<kbd>Ctrl-B</kbd> is the Signal Browser), the delta marker (<kbd>Ctrl-D</kbd>
+is Clear All) and the measurement tooltip (<kbd>Ctrl-Shift-M</kbd> is the plot
+mode).</p>
 
 <h3 id="ref-mouse">9.4 Mouse</h3>
 <p>Precedence matters when several things sit under one pixel. On a left-button
@@ -900,7 +938,7 @@ a <code>./.xschemrc</code> beside your design, or any file passed with
 example, and it carries commented-out versions of all of these).</p>
 
 <h3 id="rebind-tag">10.1 The <code>WaveViewer</code> binding tag</h3>
-<p>The nine viewer keys of <a href="#ref-viewer-keys">§9.1</a> are bound on a Tk
+<p>The viewer keys of <a href="#ref-viewer-keys">§9.1</a> are bound on a Tk
 binding tag called <code>WaveViewer</code>. The defaults are installed <b>once</b>,
 at the first viewer open, and <b>only for a sequence nothing has bound yet</b> —
 so an rc that binds first <b>wins</b>, even though it runs long before any viewer
@@ -918,6 +956,7 @@ keyboard focus disagree:</p>
 <tr><td><kbd>Ctrl-E</kbd></td><td><code>wviewer::delete_all_markers_at %W</code></td></tr>
 <tr><td><kbd>e</kbd></td><td><code>wviewer::delete_empty_strips_at %W</code></td></tr>
 <tr><td><kbd>Ctrl-G</kbd></td><td><code>wviewer::grid_toggle_at %W</code></td></tr>
+<tr><td><kbd>Ctrl-Shift-M</kbd></td><td><code>wviewer::plot_mode_toggle_at %W</code></td></tr>
 <tr><td><kbd>u</kbd></td><td><code>wviewer::undo_at %W</code></td></tr>
 <tr><td><kbd>U</kbd></td><td><code>wviewer::redo_at %W</code></td></tr>
 <tr><td><kbd>9</kbd></td><td><code>wviewer::hilight_traces_at %W</code></td></tr>
@@ -1490,10 +1529,26 @@ output, or turn on save-all-voltages, and re-run.</td></tr>
 window to belong to and you get
 <span class="msg">ase: cannot open the waveform viewer for &lt;session&gt;</span>.</td></tr>
 
+<tr><td>A key brings up "View is Read Only" although the pointer is over a
+plot</td>
+<td>The keyboard focus is in another xschem window, not in the viewer: see the
+note at the head of <a href="#ref-graph-keys">§9.3</a>. Click in the plot, or
+move the pointer into the window you mean to type in.</td></tr>
+
+<tr><td>Right after the viewer opened, a key does nothing, or brings up "View
+is Read Only"</td>
+<td>A viewer that has just opened does not have the keyboard focus on its
+plot yet, and moving the pointer over the plot does not give it. Where the
+focus is instead depends on the desktop: on the viewer window itself, and a key
+does nothing; or still in the schematic window, and a key is run as the
+schematic command it is there (the row above). Click in the plot once; from then
+on the keys work.</td></tr>
+
 <tr><td>A key "does nothing"</td>
 <td>Most likely it is one of the <a href="#ref-graph-keys">§9.3</a> keys and the
-pointer is not over a strip — those are gated on pointer position, not on
-keyboard focus. Move the pointer onto a plot and try again.</td></tr>
+pointer is not over a strip — those go by where the pointer is, on top of the
+keyboard focus being in the plot. Move the pointer onto a plot and try again; if
+the window has only just opened, see the row above.</td></tr>
 
 <tr><td>A drag reorders the stack when you meant to move a trace</td>
 <td>The press must land within about 10 pixels of the curve. Further out is

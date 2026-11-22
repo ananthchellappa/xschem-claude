@@ -884,9 +884,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the twenty documented viewer keys" \
-  [llength $gh_seqs] 20
-check "GH0 ...and fifteen documented menu accelerators" [llength $gh_menus] 15
+check "GH0 the guide's §9.1 carries the twenty-one documented viewer keys" \
+  [llength $gh_seqs] 21
+check "GH0 ...and sixteen documented menu accelerators" [llength $gh_menus] 16
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]
@@ -955,7 +955,7 @@ foreach gh_rel {waveform_viewer_guide.html ase_l_tutorial.html} {
 # the browser is ambiguous; write which plan. Both PLAN headers carry the rule.
 #
 # ⚠ THE ATTRIBUTE IS `data-bseq`, NOT `data-seq`, and the distinction is the
-# whole reason GH0's `== 20` above still holds: `data-bseq="` does not contain
+# whole reason GH0's count of key rows above still holds: `data-bseq="` does not contain
 # the substring `data-seq="`, so GH0's unanchored extractor cannot see these
 # rows. GH0 is itself the standing guard on that — pick a colliding name and
 # GH0 goes red, not silently wrong.
@@ -2374,15 +2374,24 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check_true "GH5 <$gh_s> is bound on the live WaveViewer tag" \
       [expr {[bind WaveViewer <$gh_s>] ne {}}]
   }
-  # find a labelled entry anywhere in the viewer menubar; {} = not there
+  # find a labelled entry anywhere in the viewer menubar, the submenus a
+  # cascade entry opens included; {} = not there. A menu whose entries are
+  # relabelled when it is posted (Options > Plot Mode names the mode it would
+  # switch to) is asked for its labels of the moment: its -postcommand runs
+  # first, as it does when the menu opens.
   proc gh_find_entry {mb lab} {
-    foreach sub {file view graph cursors options} {
-      set m $mb.$sub
+    set todo {}
+    foreach sub {file view graph cursors options} { lappend todo $mb.$sub }
+    while {[llength $todo]} {
+      set m [lindex $todo 0]
+      set todo [lrange $todo 1 end]
       if {![winfo exists $m]} continue
+      catch {uplevel #0 [$m cget -postcommand]}
       set last {}
       catch {set last [$m index end]}
       if {![string is integer -strict $last]} continue
       for {set i 0} {$i <= $last} {incr i} {
+        if {![catch {$m entrycget $i -menu} sm] && $sm ne {}} { lappend todo $sm }
         if {[catch {$m entrycget $i -label} l]} continue
         if {$l eq $lab} { return [list $m $i] }
       }
@@ -2390,6 +2399,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     return {}
   }
   set gh_bar $vtop.wvmenubar
+  # the guide names the Plot Mode entry by the label it shows in single mode,
+  # so the lookup runs with the target subwindow in single mode
+  set gh_mode [pcall {wviewer::plot_mode $tok}]
+  pcall {wviewer::set_plot_mode single $tok}
   if {[winfo exists $gh_bar]} {
     foreach gh_p $gh_menus {
       lassign $gh_p gh_lab gh_acc
@@ -2405,6 +2418,25 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   } else {
     puts "SKIPPED: GH6 (viewer menubar not found)"
   }
+  # The helper really descends. The Plot Mode entry sits one cascade below
+  # Options, and it is found under both of its labels: the one the guide
+  # documents in single mode, the other one after a switch to multi.
+  set gh_c1 [gh_find_entry $gh_bar {Set Multi-plot Mode}]
+  set gh_a1 [pcall {[lindex $gh_c1 0] entrycget [lindex $gh_c1 1] -accelerator}]
+  pcall {wviewer::set_plot_mode multi $tok}
+  set gh_c2 [gh_find_entry $gh_bar {Set Single-plot Mode}]
+  set gh_a2 [pcall {[lindex $gh_c2 0] entrycget [lindex $gh_c2 1] -accelerator}]
+  set gh_c3 [gh_find_entry $gh_bar {Set Multi-plot Mode}]
+  check "GH6 the lookup reaches an entry below a cascade and follows its relabel: the Plot Mode entry under its single-mode label, then under its multi-mode label only" \
+    [list [lindex $gh_c1 0] [lindex $gh_c2 0] $gh_c3] \
+    [list $gh_bar.options.plotmode $gh_bar.options.plotmode {}]
+  # the relabel keeps the accelerator: the entry reads it under the label of
+  # either mode (the loop above reads it under the single-mode label only,
+  # which is the one the guide names). Measured: with a relabel that drops the
+  # accelerator under the single-plot label this check is red, alone.
+  check "GH6 the Plot Mode entry shows the guide's accelerator under both of its labels, the single-mode one and the multi-mode one" \
+    [list $gh_a1 $gh_a2] {Ctrl+Shift+M Ctrl+Shift+M}
+  if {$gh_mode eq {single} || $gh_mode eq {multi}} { pcall {wviewer::set_plot_mode $gh_mode $tok} }
 
   rename wviewer::log_action {}
   rename wviewer::__real_log_action wviewer::log_action
