@@ -13147,8 +13147,8 @@ proc ase::ui::optsheet_netlist_read {key} {
 
 # ⚠ THE LIVE DECK PREVIEW. Four slots and a notes block, straight out of
 # `ase::opt_preview` -- which reads the body `render_deck` runs, so a line here
-# IS a line there. An empty slot prints nothing but its own heading, because
-# "there is no line for this" is the answer the pane exists to give.
+# IS a line there. An empty slot prints its heading and one `(nothing)` line under
+# it, because "there is no line for this" is the answer the pane exists to give.
 #
 # ⚠ IT IS REPAINTED BY MORE THAN ITS OWN SHEET (issue 1657). The sheet is a
 # window of its own and stays open while the bench changes behind it, and the

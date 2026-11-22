@@ -533,8 +533,10 @@ both arms; a window opened from it.
 M-mark, M-totals-only, M-plain, M-asis, M-annotate-loaded, M-select, M-reread-keeps,
 M-case, M-case-reread, M-case-plain, M-case-option, M-flag, M-equal, M-descend and
 M-newwin rows); band AT15 of `test_calc_analysis_tokens.tcl` (both arms of
-`calc::aq_run`, the restore, and on a display a draw that does not read again); R14 to R17
-of `test_annot_op_behind_tran_1242.tcl`, which is registered with this change.
+`calc::aq_run`, the restore, and on a display a draw that does not read again); R14 to R18
+of `test_annot_op_behind_tran_1242.tcl`, which is registered with this change (R18 is
+the annotate chord pressed inside an instance: the operating point stays bound to the
+top level).
 
 **Stated limits, each as the ruling leaves it.** These ask for no read, so they move to a
 marked table and show it as it stands:
