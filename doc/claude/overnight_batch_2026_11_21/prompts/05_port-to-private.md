@@ -17,10 +17,62 @@ The product commits this batch landed in the main tree, and nothing else:
 
     git -C /home/analog/dev/xschem-claude log --oneline 7c77f3594..HEAD
 
-The ledger in `PLAN.md` says which of items 02, 03 and 04 landed (`[x]` or `[E]`); their
-receipts name the commit and the files. Not carried: the commit of the batch directory, the
+The ledger in `PLAN.md` says which items landed (`[x]` or `[E]`); their receipts name the
+commit and the files, and the table below lists them. Not carried: the commit of the batch directory, the
 how-to of item 01 (the other session reads it where it is), `CLAUDE.md`, and any item marked
 `[F]` or `[D]`. If no product item landed, write a README that says so and stop.
+
+### What landed (added by the lead on 2026-11-22, when the last item landed)
+
+Every item landed. In the order they landed in the main tree (`fluid-editing`), with the
+commits to carry and one kit each, numbered in this order:
+
+| kit | item | commit in the main tree | what | C files (a build is needed) |
+|-----|------|-------------------------|------|-----------------------------|
+| 01 | 03 | `9eb647078` | Ctrl-Shift-M in the waveform viewer; the viewer's key filter decides by chord | none (Tcl) |
+| 02 | 04 | `44f2d591f` | the double-click grow takes the net-name labels; `add_pin_stubs()` and `merge_wire()` order a wire's end points | `src/select.c`, `src/actions.c`, `src/paste.c`; comments in `src/callback.c`, `src/scheduler.c` |
+| 03 | 03b | `454030f5c` | a key typed with the pointer over a viewer's plot is a viewer key | `src/callback.c` |
+| 04 | 03b follow-up | `2631c7d1a` | one check in band KM23, the comment above `viewer_takes_foreign_key`, three texts | `src/callback.c` (comment only) |
+| 05 | 02 | `dcd53b124`, plus two files of `6bd7ecfbb` | issue 1657's two open items | `src/save.c`, `src/scheduler.c`, `src/xschem.h` |
+
+- `6bd7ecfbb` is a ledger commit of this batch that also corrects two sentences of item
+  02: carry its changes to `src/ase_window.tcl` and to
+  `doc/claude/issues/1657-*.md` with kit 05, and nothing else of it.
+- Not carried, as above: everything under `doc/claude/overnight_batch_2026_11_21/`, the
+  how-to of item 01 (`d198fce04`), `CLAUDE.md` (`444126b6e`), and the other ledger commits
+  (`23c551453`, `f09888cda`, `747cc6f3f`, `c78d0f1d3`, `4f4a30057`, `7b0b601b7`,
+  `a754efdc7`, `b5f97c9c9`, and what follows `6bd7ecfbb`). Take the list from
+  `git log --oneline 7c77f3594..HEAD` and check it against this table; say so if they
+  disagree.
+- `src/Makefile.in` is untouched by every item, so no `./configure`.
+- Registrations made here, to replay in the target's lists: `test_dblclick_connected_grow`
+  (`hcases` and `dcases`), `test_select_same_net_by_label` (`dcases`),
+  `test_annot_op_behind_tran_1242` (`hcases`). The target may already have some of these
+  suites or registrations: look before you add.
+- No issue number was minted tonight. Item 02 edits `doc/claude/issues/NUMBERING.md` and
+  the file of issue 1657; the target has its own of both.
+- `doc/claude/FAQ.md`: tonight's entries are Q96 (item 04), Q97 (item 03b), Q98 and Q99
+  (item 02) HERE. The target numbers its FAQ by itself; give the entries the target's next
+  numbers and put them on top, or leave the FAQ hunks out by name and say so.
+- The receipts, with what each item changed and what it left open, are in
+  `doc/claude/overnight_batch_2026_11_21/receipts/` (`03_…`, `03b_…`, `04_…`, `02_…`).
+  The README's "what was not tested" takes from them what a user of the private tree has
+  to know (the looks owed, the limits).
+
+Read from the target on 2026-11-22 at 07:31 (read it again; another session commits there
+daily): HEAD `2e0315892`, no tracked file modified; it HAS the port of issue 1724
+(`tests/headless/test_pin_marker_1724.tcl`, `ase::opt_preview` with four arguments), which
+item 02 builds on; it has `src/wave_viewer.tcl` with `wviewer::key_filter`, `src/select.c`
+with `select_grow_connected_step`, a `tests/headless/test_dblclick_connected_grow.tcl` of
+its own, and since yesterday a startup quiz (`src/startup_quiz.tcl`,
+`src/startup_quiz_bank.tcl`). The 1724 tool assumed that tree had no quiz; that no longer
+holds. Item 03 here touched neither quiz file, but check that no proof in the target's
+quiz bank quotes a line this port changes (its suite will say).
+
+The main tree's own full regression with every item in it was running when this was
+written; `PLAN.md`'s driver log in the main tree (`/home/analog/dev/xschem-claude`, read
+only) has its trailer once it has ended. Expected: `cases=229 blocks=228
+counted_failures=0 skips=15`.
 
 ## What the user must be able to type tomorrow
 
