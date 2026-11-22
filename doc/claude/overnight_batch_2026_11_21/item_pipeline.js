@@ -20,16 +20,20 @@ export const meta = {
 // The item's detail is on disk (PLAN.md and prompts/NN_slug.md), not in these arguments.
 
 const MAIN = '/home/analog/dev/xschem-claude'
-const CLONE = '/home/analog/ob21'
+const A = (typeof args === 'string') ? JSON.parse(args) : args
+if (!A || !A.item || !A.slug || !A.kind || !A.base) throw new Error('args {item, slug, kind, base} required')
+// args.clone: the work clone of this run (default /home/analog/ob21). Two items may run side by side in two clones.
+const CLONE = (A.clone && typeof A.clone === 'string') ? A.clone : '/home/analog/ob21'
 const BATCH = CLONE + '/doc/claude/overnight_batch_2026_11_21'
 const PLAN = BATCH + '/PLAN.md'
 const PORTDIR = '/home/analog/port_ob21'
-
-const A = (typeof args === 'string') ? JSON.parse(args) : args
-if (!A || !A.item || !A.slug || !A.kind || !A.base) throw new Error('args {item, slug, kind, base} required')
 const KIND = A.kind
 if (['doc', 'code', 'port'].indexOf(KIND) < 0) throw new Error('kind must be doc, code or port')
-const NN = String(A.item).length < 2 ? '0' + String(A.item) : String(A.item)
+const NN = A.nn ? String(A.nn) : (String(A.item).length < 2 ? '0' + String(A.item) : String(A.item))
+// args.closeout: {file, wip}. An earlier run of this item ended with nothing committed and its work still in the
+// clone as work-in-progress commits. file is its result (problems left, accounts of every stage), wip the last of
+// those commits. The run then starts at the repair of what was left, checks it, gates and commits.
+const CLOSEOUT = (A.closeout && A.closeout.file) ? A.closeout : null
 const SLUG = A.slug
 const BASE = A.base
 const ORDER = BATCH + '/prompts/' + NN + '_' + SLUG + '.md'
@@ -45,13 +49,13 @@ const READ_FIRST = [
 
 const RULES = [
   'RULES OF THIS BATCH (nobody is awake; there is no one to ask):',
-  '- WHERE. Work only in ' + CLONE + ' (a clone made for this batch, branch fluid-editing; it must stand on a descendant of ' + BASE + '). Never write in ' + MAIN + ' (the driver lands commits there), in ~/private/xschem-private (read only), in /home/analog/dev/ngspice-ver_53 (never touch it; to use that ngspice, copy its binary and run the copy), in /home/analog/gcp0, /home/analog/g1724, /home/analog/pp1724, or in ~/.xschem (the user\'s live configuration: read only).',
+  '- WHERE. Work only in ' + CLONE + ' (a clone made for this batch, branch fluid-editing; it must stand on a descendant of ' + BASE + '). Never write in ' + MAIN + ' (the driver lands commits there), in ~/private/xschem-private (read only), in /home/analog/dev/ngspice-ver_53 (never touch it; to use that ngspice, copy its binary and run the copy), in any other checkout or clone (/home/analog/gcp0, /home/analog/gcq0, /home/analog/g1724, /home/analog/pp1724, a second clone of this batch), or in ~/.xschem (the user\'s live configuration: read only).',
   '- DISPLAY. DISPLAY in your shell is the user\'s real screen. Never start xschem on it. Every xschem start goes through one of these, from ' + CLONE + ':',
   '      env -u DISPLAY AUDIT_DISPLAY=private tests/headless/run_suites.sh [--nogui] <suite>      (a suite; drop --nogui for the display arm)',
   '      env -u DISPLAY AUDIT_DISPLAY=private tests/headless/gated_xschem.sh <xschem arguments>    (a probe of your own)',
   '      cd tests && env -u DISPLAY T1_DISPLAY=private tclsh run_regression.tcl                     (the full regression: the Gate stage only)',
   '  Never a bare ./src/xschem, never xschem from PATH.',
-  '- ONE RUNNER. You are the only crew allowed to start xschem while your stage runs, and you run ONE thing at a time: never two suites at once, never a suite while a full regression is live. Before a run, look for a live one by the COMMAND NAME, not by the argument text (your own shell\'s arguments contain the words, and a grep of them finds itself):  ps -eo pid,comm,args | awk \'($2=="tclsh" && /run_regression/) || $2=="run_suites.sh" || $2=="full_audit.sh"\'  . If another run is live, wait for it in bounded steps (below); do not start beside it. An xschem the user has open for their own work is not a run: leave it alone and do not wait for it.',
+  '- ONE RUNNER. In this clone and in scratch copies you make, you are the only crew that starts xschem while your stage runs, and you run ONE thing at a time: never two suites at once, never a suite while a full regression of this clone is live. Other checkouts are other people\'s: another session works in ~/private/xschem-private and gates in clones of its own (/home/analog/gcp0, /home/analog/gcq0), and this batch may have a second item running in another clone. Look once before a run (by COMMAND NAME, not by argument text: your own shell\'s arguments contain the words, and a grep of them finds itself):  ps -eo pid,comm,args | awk \'($2=="tclsh" && /run_regression/) || $2=="run_suites.sh" || $2=="full_audit.sh"\'  and  readlink /proc/<pid>/cwd  for each. A run whose directory is under this clone: wait for it in bounded steps. A run anywhere else: do NOT wait for it; write down that it was live. Several xschem processes that start in the same second can collide (issues 1706 and 1725: the same temporary names), so a red you get while another run was live is run once more, alone if you can, before you believe it or report it. An xschem the user has open for their own work is not a run: leave it alone.',
   '- TIME. Every command has a bound. run_suites.sh caps a suite at SUITE_TIMEOUT seconds (default 200; raise it by name for a suite that needs more). Put  timeout <seconds>  in front of anything else that could wait. One tool call must end within 9 minutes: start longer work detached (setsid nohup <command> > <log> 2>&1 &, and record the pid it prints) and poll it with loops that each end within 9 minutes. A stall is a result: report TIMEOUT with the last lines of output and go on; never wait without a bound.',
   '- PROCESSES. Never kill by name (no pkill, killall, pkill -f). Kill only a pid you started and wrote down.',
   '- GREP. /usr/bin/grep, never the bare grep.',
@@ -193,7 +197,9 @@ if (KIND === 'code') {
     'In wipCommit answer NONE. In filesChanged list the files you wrote under ' + PORTDIR + ' .',
   ].join('\n')
 }
-const build = await twice(buildPrompt, { label: 'build:' + NN, phase: 'Build', schema: BUILD_SCHEMA })
+const build = CLOSEOUT
+  ? { status: 'DONE', wipCommit: CLOSEOUT.wip || 'HEAD', filesChanged: [], summary: 'This run closes out an earlier run of the item that ended with nothing committed. The earlier run\'s full result (the account of its build, of every repair, the problems its last attack left open, its decisions and debts) is the JSON file ' + CLOSEOUT.file + ' ; its work is in the clone as work-in-progress commits since ' + BASE + '.' }
+  : await twice(buildPrompt, { label: 'build:' + NN, phase: 'Build', schema: BUILD_SCHEMA })
 if (!build || build.status !== 'DONE') {
   log('item ' + NN + ': build did not finish (' + (build ? build.summary : 'no answer') + ')')
   return { item: A.item, slug: SLUG, kind: KIND, verdict: 'F', stage: 'build', build: build, commit: 'NONE', gate: null, receipt: null, decisions: [], debts: [], unassertable: [], problemsLeft: [], repairRounds: 0 }
@@ -221,7 +227,7 @@ if (KIND === 'code') {
     { key: 'handover', text: 'LENS: can the user do it tomorrow with no help. Read ' + PORTDIR + '/README.md as the user: are the commands complete and in order (apply, build, restart any open xschem, commit), does each name a real file, does the text say what the commit contains and what stays uncommitted, what to do when the private tree has moved, and what was and was not tested? Check the patch against the commits it claims to carry (file list and content) by reading.' },
   ]
 }
-const reviews = (await parallel(lenses.map(function (l) {
+const reviews = CLOSEOUT ? [] : (await parallel(lenses.map(function (l) {
   return function () {
     return agent([
       HEAD_LINE + ' You are a REVIEWER.', '', READER, '', READ_FIRST, '', DIFF, '', l.text, '',
@@ -277,6 +283,21 @@ function attackPrompt(round, known, lastFix) {
       'Known so far:', JSON.stringify(known, null, 1), 'Last repair:', JSON.stringify(lastFix, null, 1),
     ].join('\n')
   }
+  if (round >= 1) {
+    return [
+      HEAD_LINE + ' You are the CHECKER of repair round ' + round + '. You are the only one who runs anything in this stage.', '', READ_FIRST, '', RULES, '',
+      DIFF + ' HEAD of the clone is where you start and where you must end: sabotage is restored with git checkout as the rules say, and git status at the end shows nothing you made.',
+      'This is a CHECK of the repair, not a new hunt. An attack before you already hunted; a hunt has no end, and the item must reach its gate.',
+      'DO:',
+      '1. Rebuild (make -C src, rc 0) and re-run every suite the item touched on both arms. A red is a blocker unless the baseline had it or it is gone when the suite is run once more alone.',
+      '2. Take the problems below one by one. For a break that no row caught: rebuild THAT break and see that a row now goes red, and that the row is green without it. For a wrong behaviour: drive it and see it right. For a sentence: read it against the code. A problem that is not fixed and not refuted with evidence stays a blocker.',
+      '3. Read the repair\'s own diff (the last work-in-progress commit) for a mistake it introduced: a wrong behaviour, a row that cannot fail, a false sentence. Those are blockers.',
+      '4. Anything ELSE you notice (a further break no row catches, a gap, an improvement) is severity should or note, never blocker, and at most five of them: they go into the receipt as known gaps. The only exceptions are a wrong behaviour the user would meet doing what the work order describes, and a suite that is red: those are blockers wherever you find them.',
+      '5. Say what no row can reach (pixels, feel, layout).',
+      'Problems to check:', JSON.stringify(known, null, 1),
+      'What the repair says it did:', JSON.stringify(lastFix, null, 1),
+    ].join('\n')
+  }
   return [
     HEAD_LINE + ' You are the ATTACKER, round ' + round + '. You are the only one who runs anything in this stage.', '', READ_FIRST, '', RULES, '',
     DIFF + ' HEAD of the clone is where you start and where you must end: sabotage is restored with git checkout as the rules say, and git status at the end shows nothing you made.',
@@ -300,6 +321,8 @@ if (KIND === 'doc') {
   attack = await twice(dryRunPrompt(0, problems, repairs[0] || null), { label: 'dryrun:' + NN, phase: 'Attack', schema: ATTACK_SCHEMA })
   if (attack) { problems = attack.problems || []; dryBlocked = blockers(problems).length > 0 }
   else { problems = [{ severity: 'blocker', where: 'dry run', what: 'the dry runner returned nothing twice, so the document was never followed by anyone' }]; dryBlocked = true }
+} else if (CLOSEOUT) {
+  problems = [{ severity: 'blocker', where: CLOSEOUT.file, what: 'The problems the earlier run\'s last attack left open are in the JSON file ' + CLOSEOUT.file + ' under the key problemsLeft, each with the break that was built, the evidence, and a line that starts "Repair:" saying which rows to write. Every one of them is a break no row catches while the product itself measured right: write those rows (red under the break, green without it), change the product only if writing a row shows it wrong. The scripts that build each break are named in the evidence; they are under the session scratchpad and may be read.' }]
 } else {
   attack = await twice(attackPrompt(0, problems, null), { label: 'attack:' + NN, phase: 'Attack', schema: ATTACK_SCHEMA })
   if (attack) problems = problems.concat(attack.problems || [])
@@ -389,6 +412,7 @@ const receipt = await agent([
   '4. How it was checked: the rows added and what each break of the product did to them, the suites and arms, the gate\'s trailer line and verdict file. Say what was NOT checked.',
   '5. Left open: problems not fixed, limits, defects seen outside the work order, debts to file (look and rule).',
   '6. Files changed.',
+  (CLOSEOUT ? 'This run closed out an earlier run of the item that ended with nothing committed. That run wrote a receipt at the same path and its full result is the JSON file ' + CLOSEOUT.file + ' (decisions, debts, what each stage measured, what it could not reach). Read both. Write ONE receipt for the item as it stands now: keep everything of the earlier one that is still true, correct the verdict, the commit and the gate, and say in section 4 that the item took a second run and why.' : ''),
   'Use only the facts below and what you can read in the clone; where the facts disagree with the tree, the tree wins and you say so.',
   JSON.stringify(facts, null, 1),
 ].join('\n'), { label: 'receipt:' + NN, phase: 'Receipt', schema: RECEIPT_SCHEMA, effort: 'medium' })

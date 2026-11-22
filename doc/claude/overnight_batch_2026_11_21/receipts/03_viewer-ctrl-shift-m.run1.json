@@ -1,0 +1,273 @@
+{
+ "item": 3,
+ "slug": "viewer-ctrl-shift-m",
+ "kind": "code",
+ "verdict": "F",
+ "commit": "NONE",
+ "gate": {
+  "verdict": "NOT_RUN",
+  "commit": "NONE",
+  "summary": "blockers left after repair; not gated, not committed"
+ },
+ "receipt": "/home/analog/ob21/doc/claude/overnight_batch_2026_11_21/receipts/03_viewer-ctrl-shift-m.md",
+ "decisions": [
+  {
+   "question": "Lead's decision 5: show Ctrl+Shift+M on the Options > Plot Mode entry, or ship a key row with no menu pair?",
+   "decision": "Shown. gh_find_entry in test_wave_grid now descends into cascades and runs each menu's -postcommand; GH6 looks the entry up with the target subwindow in single mode, the label the guide documents; one new leg proves the lookup follows the relabel. Measured: the accelerator survives plot_mode_menu_post.",
+   "rejected": "No accelerator, a guide row without a menu pair."
+  },
+  {
+   "question": "How does the filter know which chords the engine hands to the graph?",
+   "decision": "It reads the engine's live binding table on each graph key, plus a four-pair list of the key switch's own graph arms (graphguards), which row SWK21 re-derives from src/callback.c on every run. This closes the family's user-row member: a canvas or global row for a forwarded chord no longer runs from a viewer.",
+   "rejected": "A static keysym-and-state table only: it leaves a user's canvas row for bare m, s, Shift-M or Ctrl-m running from the viewer."
+  },
+  {
+   "question": "A user who rebinds a graph-context row of a graph key to another action: run it in a viewer?",
+   "decision": "No. Only graph.forward rows are forwarded; the chord then does nothing in a viewer. Declared as a limit in waveform_viewer.md.",
+   "rejected": "Forwarding any graph-context row, which would let an editor action run in a viewer."
+  },
+  {
+   "question": "graph_use_ctrl_key set: what does a bare graph key do in a viewer?",
+   "decision": "Nothing. Measured before: it ran the canvas arm (the read-only box for b and t). Control chords still go to the graph. Ctrl-Shift-M is the plot mode there too (lead's decision 6), so the measurement tooltip has no key in a viewer in that mode; graph_markers.md says so.",
+   "rejected": "Sending the bare key on as its Control chord (changes more), or leaving it forwarded."
+  },
+  {
+   "question": "Cadence profile and graph_use_ctrl_key both set: plain s?",
+   "decision": "Refused, like every bare key in that mode. Ctrl-s swaps.",
+   "rejected": "Rerouting it there too."
+  },
+  {
+   "question": "Which pixel test gates the forward?",
+   "decision": "The key event's own pixel, at least ceil(5 x Tk scaling) + 1 pixels inside a strip (8 at this display's scaling, larger at higher scaling). No context switch on a key: the band test was split out of strip_at_pixel_inset as the pure band_at_inset. The mouse-mirror test (over_graph) is dropped for graph keys and kept for Delete. The gate also mirrors the engine's gesture-in-flight set and fix_mouse_coord.",
+   "rejected": "Calling strip_at_pixel_inset directly (strip_bands_px switches context) or keeping the fixed 8 px inset (does not cover a Tk scaling above 1.6)."
+  },
+  {
+   "question": "Control with Mod3, Mod5 or a held middle or right button, plus t: the engine's Ctrl-plus-other remainder arm asks the graph test",
+   "decision": "Refused in a viewer like every other mixed state; declared as a limit.",
+   "rejected": "A special case for that remainder arm."
+  },
+  {
+   "question": "Rows BK01 and BK02 of the unregistered test_wave_sigbrowser_keys match and evaluate the old carve-out line",
+   "decision": "Restated in the same change: BK01 reads the filter's parsed body for the key_chord call and the absence of the old expression; BK02 asks key_chord with the live table.",
+   "rejected": "Keeping a dead expression line in key_filter for the rows to match."
+  },
+  {
+   "question": "Where does the Caps Lock matrix for m go?",
+   "decision": "A separate row, SWK26, with the forward to the engine, the pixel test and the wrapper as recorders. SWK8's hand-kept matrix is unchanged and its name now says m is SWK26's.",
+   "rejected": "Adding m to swk_pairs, whose legs run the real engine with no coordinates."
+  },
+  {
+   "question": "Where does the fence for embedded graphs (work order row 8) go?",
+   "decision": "KM12 in test_wave_viewer: the main window's shipped test_ne555 example, made editable for the row, each family chord sent straight to the engine at the centre of its graph rect in both profiles; the message box answers cancel for that row.",
+   "rejected": "The unregistered test_key_graph_context, which prints no completion sentinel and has no result under --nogui."
+  },
+  {
+   "question": "Register test_wave_sigbrowser_keys and test_wave_sigbrowser_i12?",
+   "decision": "No. keys has three standing reds that are not this item's; in i12 only a literal moved. Both still run under full_audit.sh.",
+   "rejected": "Registering a suite with standing reds."
+  },
+  {
+   "question": "File an issue?",
+   "decision": "None filed, no number minted. Issue 0186 got a dated note; the pre-existing reds are described under notMine.",
+   "rejected": "Minting 1727 for defects outside the work order."
+  },
+  {
+   "question": "Guide wording beyond the listed texts",
+   "decision": "Section 9.3 now says what the viewer refuses, that s swaps in the Cadence profile too, and that Ctrl-m also makes a marker (measured, row KM2). Section 10.1 lost its stale count of keys.",
+   "rejected": "Leaving 9.3 saying only that the keys do nothing off a strip."
+  },
+  {
+   "question": "How does the filter keep the viewer's own Control chords (Ctrl-b, Ctrl-d, Ctrl-Shift-M) out of the engine when the user's table holds a graph.forward row for one of them?",
+   "decision": "wviewer::key_chord refuses them by name, from a list `graphown {98 100 77}`, before it reads the table. This is what the base did for Ctrl-b and Ctrl-d. Row SWK28 derives the list from the tag's defaults, so a new viewer chord on a graph keysym that is not added to the list reddens.",
+   "rejected": "Asking Tk at run time which chords the WaveViewer tag binds: key_chord would stop being pure and runnable without Tk, and Tk's rule that a binding matches an event with more modifiers cannot be restated simply."
+  },
+  {
+   "question": "What does Escape do in a viewer when the user's rc has a row for Escape in the engine's binding table?",
+   "decision": "The viewer calls `xschem escape` (the engine's own abort verb) on the press and does not forward the key, so the row's action does not run from the viewer. Without such a row, which is every shipped configuration, Escape is forwarded exactly as before.",
+   "rejected": "Leaving the forward and only correcting the guide's sentence (exposure today is nil, but it is the family row the order lists). Forwarding Escape with a state no row can match was also rejected: it would lean on an accident of the engine's lookup."
+  },
+  {
+   "question": "The guide said one key is lost with graph_use_ctrl_key set; four graph functions are.",
+   "decision": "The paragraph names the four functions and why, with no count. Nothing in the product changed for it.",
+   "rejected": "Writing 'four': nothing would re-check the number. Making any of the four reachable would change what a key does, which the order does not ask for."
+  },
+  {
+   "question": "The comparand of row SWK21 restates wviewer::key_chord.",
+   "decision": "Kept, renamed by its method, and fed the stripped masks from the C source. The second reading of the engine is a new real-key row, KM13.",
+   "rejected": "Rewriting the comparand as an interpreter of the C control flow: larger than the item, and it would be a third copy of the same rule."
+  },
+  {
+   "question": "The KM band of test_wave_viewer disappears silently where ngspice leaves no raw.",
+   "decision": "Print a lower-case `skip:` line that names the KM rows in both branches that skip the band.",
+   "rejected": "Moving the band out of the raw gate: its fixture is built from a trace of that raw and its marker rows need it."
+  },
+  {
+   "question": "The work-in-progress commit has to exist before a sabotage is built, and the ledger of what each sabotage reddened can only be written afterwards.",
+   "decision": "Committed first, then amended the same commit three times (ledger text, one more SWK23 leg, comment and doc lines), so the repair stays one commit as the order asks.",
+   "rejected": "Stacking further commits on top, which the order's 'one more work-in-progress commit' excludes."
+  },
+  {
+   "question": "Problem 8: close the door in the engine (a guard in callback() for a viewer context) or declare it as a limit?",
+   "decision": "Declared as a limit in the spec and the guide, held by row KM14, and returned as a rule debt. callback() is unchanged.",
+   "rejected": "A guard in callback() that drops, or hands to the viewer's filter, a key whose canvas is not the current context's. It changes what every key does in that state, sits in the central dispatcher, and could not be checked against the full regression in this stage; it predates the item and its cause is not the filter's."
+  },
+  {
+   "question": "Problem 6: how does KM13 avoid sending a dangerous chord?",
+   "decision": "It asks the comparand SWK21 already uses (the live binding table, the key switch's graph arms and the masks read out of src/callback.c) before each real key. The procs moved to tests/headless/wvkey_engine.tcl so both suites source one copy; kc_expect now takes the masks as arguments.",
+   "rejected": "Stopping the walk of a profile in which an earlier row found the filter forwarding what it must refuse: it protects only against the chords those rows happen to ask about. Copying the procs into the second suite was also rejected."
+  },
+  {
+   "question": "Problem 5: one more per-chord rc-wins row, or one row over every sequence?",
+   "decision": "One walk over every sequence the WaveViewer tag holds, with a second reading that the installer's own bind statements are all on the tag. It also covers the Caps Lock dispatch sequences.",
+   "rejected": "A TG17-shaped row for Ctrl-Shift-M alone: the next default added without the guard would again be caught by nothing."
+  },
+  {
+   "question": "Should a row assert a behaviour that is a declared limit (KM14's first check expects the read-only box)?",
+   "decision": "Yes. It makes the spec's limit sentence a measurement, and the row turns red the day the engine changes, which tells whoever closes the door which texts to take out. Its second check measures the two ways out that the guide tells the user.",
+   "rejected": "Declaring the limit in prose only, from the attack crew's probe."
+  },
+  {
+   "question": "Problem 7: keep the ledger's 'only' claims, drop them, or measure?",
+   "decision": "Measured every Tcl break again on the final rows (34 breaks) and wrote the full set of red rows per line; the two engine-source lines are kept and marked as not measured again.",
+   "rejected": "Dropping the word 'only' without measuring, which would have left incomplete sets (three lines gained KM14, one gained KM6, and so on)."
+  },
+  {
+   "question": "Add a comment in src/wave_viewer.tcl about the limit?",
+   "decision": "Yes, seven comment lines above the filter's chord procs saying what the filter cannot see and where the limit is declared. No code line changed; the suites that read that file's text were run again and are as before.",
+   "rejected": "Leaving the product file's prose silent about it."
+  },
+  {
+   "question": "The corrected focus sentence in the spec would be re-checked by nothing. Leave it as text, or hold it with a row?",
+   "decision": "Added row G1f to test_wave_viewer as a declared limit, like KM14. It turns red the day wviewer::open gives the plot canvas the focus, and then the spec sentence and the guide row go.",
+   "rejected": "Text only (a sentence no instrument re-checks). Changing wviewer::open (outside the work order; the user's to rule on)."
+  },
+  {
+   "question": "How should the SWK25 leg ask graph_border_px at several scalings?",
+   "decision": "The tk command is answered by a recorder for the walk and put back, so the leg runs on both arms and the display's real scaling is never changed.",
+   "rejected": "Setting the real `tk scaling` on the display arm: it would re-scale fonts and geometry for every row after it and would not run under --nogui."
+  },
+  {
+   "question": "With an action log open the engine mirrors each action-log line into the command window through ciw_echo. Does that count as the chord echoing a line?",
+   "decision": "No. The KM1 leg counts only lines that are not the mirror of the action's own log line, for the chord and for the menu entry alike, so it holds on the plain display arm and on the --logdir arm.",
+   "rejected": "Expecting zero ciw_echo calls: red on the full regression's arm for the menu entry as well."
+  },
+  {
+   "question": "Should KM9's control for more than two strips press only in the last strip, as asked, or in every strip?",
+   "decision": "Every strip of a four-strip window, the last like the first. It also catches a gate that drops only the last strip, which I built and measured.",
+   "rejected": "The last strip only."
+  },
+  {
+   "question": "The guide's older row 'A key \"does nothing\"' said the graph keys go by pointer position, not by keyboard focus. Measured, they need both. Leave it and only add the new row?",
+   "decision": "Added the new row and corrected that clause of the old one, which now points to the new row. The head of section 9.1 also says the viewer keys need the focus in the plot.",
+   "rejected": "Leaving a sentence the measurement contradicts beside the new row."
+  },
+  {
+   "question": "btn2_filter's fixed 8-pixel inset is narrower than the engine's border above a Tk scaling of 1.6. Repair it in this round?",
+   "decision": "Not repaired; described under notFixed. It is a mouse button, not a key, it is older than the item, and nobody would review a product change made in the last repair round.",
+   "rejected": "A one-line change passing wviewer::graph_border_px as the inset, with its own row."
+  }
+ ],
+ "debts": [
+  {
+   "kind": "look",
+   "what": "On the real screen, in a waveform viewer with the plot area focused: press Ctrl-Shift-M. The status bar's Plot: single/multi flips, no 'View is Read Only' box appears, and Options > Plot Mode shows Ctrl+Shift+M beside its one entry. In the Cadence profile, with cursors A and B on, press s over a strip: the cursors swap.",
+   "why": "Rows drive synthesized key events on Xvfb. How the Windows X server delivers the physical chord (keysym M with Control and Shift, Caps Lock, Alt as Mod1) and how the accelerator looks in the nested menu are not reachable by a row."
+  },
+  {
+   "kind": "rule",
+   "what": "The Options > Plot Mode entry now shows the accelerator Ctrl+Shift+M (the lead left the choice to the crew).",
+   "why": "A user-visible menu change taken without the user; the alternative was a key with no menu hint."
+  },
+  {
+   "kind": "rule",
+   "what": "With graph_use_ctrl_key set, a bare graph key (a b d s m t A B M) now does nothing in a viewer, and the measurement tooltip has no key there, because Ctrl-Shift-M is the plot mode in every profile.",
+   "why": "Not the user's profile, but a visible change for anyone who sets that variable. Before, those keys ran editor verbs (the read-only box), so nothing that worked was lost."
+  },
+  {
+   "kind": "rule",
+   "what": "A row of the user's own in the engine's binding table no longer runs from a viewer for a graph key: a canvas or global row is refused, and a graph-context row is honoured only if its action is graph.forward.",
+   "why": "It closes the family's user-row member, but it is a decision about user configuration that nobody ruled on."
+  },
+  {
+   "kind": "rule",
+   "what": "In the Cadence profile plain s over a strip swaps the cursors in a viewer (the lead's decision 2). Over a graph embedded in a schematic it still starts a snapped wire.",
+   "why": "The lead decided it for the user; the work order says the receipt lists it. The embedded-graph half is fenced by row KM12."
+  },
+  {
+   "kind": "rule",
+   "what": "Escape in a waveform viewer when your rc binds Escape in the engine's binding table (`xschem bind key 65307 ...`)",
+   "why": "The crew decided that with such a row the viewer aborts through `xschem escape` and does not run your row's action; without a row nothing changed. No shipped configuration has such a row. The other option was to let the row run from the viewer, as it did before. Spec: doc/claude/specs/waveform_viewer.md, 'What the key filter forwards', item 3."
+  },
+  {
+   "kind": "rule",
+   "what": "A graph.forward row of your own for Ctrl-b, Ctrl-d or Ctrl-Shift-M is ignored inside a waveform viewer",
+   "why": "Those three chords are the viewer's own (Signal Browser, Clear All, plot mode) and the filter refuses them by name whatever the engine's table holds. For Ctrl-b and Ctrl-d that is what the viewer did before this item. Over a graph embedded in a schematic such a row still works. Consequence, pre-existing: with graph_use_ctrl_key set, cursor A, cursor B, the delta marker and the measurement tooltip have no key in a viewer (now stated in the guide, section 9.3)."
+  },
+  {
+   "kind": "rule",
+   "what": "Waveform viewer: a key typed while the keyboard focus is in the schematic window and the pointer rests over a viewer's plot (after Alt-Tab or a click on the task bar) is run by the engine in the viewer's context. Ctrl-Shift-M there brings up 'View is Read Only' and does not change the plot mode; the Cadence profile's s, w and bare b bring up the same box; Alt-b steps hide_symbols. Options: (1) leave it as the declared limit (guide section 9.3 note, waveform_viewer.md limits, row KM14); (2) a guard in callback() for a viewer context that drops a key whose canvas is not the current context's; (3) the same guard handing the key to the viewer's filter instead, so Ctrl-Shift-M would toggle.",
+   "why": "It is the popup the user reported, reached through a door the item's filter cannot see. It predates the item, the engine is unchanged, and closing it changes what every key does in that focus state, so it is a user-visible decision. To try it: put the pointer over a viewer's plot, Alt-Tab to the schematic window without moving the mouse, press Ctrl-Shift-M."
+  },
+  {
+   "kind": "rule",
+   "what": "Waveform viewer: a key typed with the pointer over the plot while the keyboard focus is not on the plot canvas. Two ways into the state: (1) Alt-Tab or a task-bar click back to the schematic window with the pointer left over the viewer; (2) right after a viewer opens. After an open the focus is either on the viewer's toplevel (every viewer key, Ctrl-Shift-M included, does nothing) or still in the schematic window (the key runs in the viewer as the schematic command it is: 'View is Read Only'). One click in the plot ends both. Options: (a) leave it as documented (guide troubleshooting row, spec limits, rows KM14 and G1f); (b) wviewer::open gives the focus to the plot canvas; (c) a guard in callback() for a viewer context, so a key whose canvas is not the current context's is dropped or handed to the viewer's filter; (d) set autofocus_mainwindow 1 in the rc, which changes focus in every xschem window.",
+   "why": "It is the first thing a user meets who opens a viewer, moves the pointer in and presses Ctrl-Shift-M. It predates the item and is outside the work order (lead's decision 4). This extends the rule debt of repair 2 with the open as a second way in and with option (b); the driver should merge the two rather than file a second one."
+  },
+  {
+   "kind": "look",
+   "what": "On the Windows X server, in the Cadence profile: open a waveform viewer from ASE-L, move the pointer into the plot without clicking and press Ctrl-Shift-M. Note which of three things happens: nothing, the 'View is Read Only' box, or the mode flips. Then click once in the plot and press it again: the status bar's 'Plot: single/multi' must flip with no popup, and Options > Plot Mode must show Ctrl+Shift+M.",
+   "why": "Where the keyboard focus lands after the viewer opens depends on the desktop. On the test display two probes gave two different answers, and the user's Windows desktop could not be measured here."
+  }
+ ],
+ "unassertable": [
+  "Where the keyboard focus lands on the user's Windows desktop right after a viewer opens. On the test display it is on the viewer's toplevel and Ctrl-Shift-M does nothing until one click in the plot (measured again at this HEAD, both profiles); an earlier probe saw it stay in the schematic window, where the chord still brings up 'View is Read Only'. Which of the two the user gets cannot be measured here.",
+  "How the Windows X server delivers the physical chord: keysym M with Control and Shift, what Caps Lock and Num Lock report, and whether Alt reaches the viewer as Mod1 or is taken by the window manager. Here the keys were real server-side events (XTEST) on Xvfb with openbox.",
+  "How the accelerator text Ctrl+Shift+M looks on the nested Options > Plot Mode entry; rows read the entry's option, not pixels.",
+  "The look of the status bar when the mode flips; rows read the label's text.",
+  "The feel of the ring just inside a strip's edge where a graph key now does nothing: 8 pixels at this display's scaling, wider on a display that scales more.",
+  "A display with a Tk scaling above 1.6. Rows hold the key gate's border there through a recorder; nothing presses a real key or a real middle button on such a display, and the middle-button hole of the note was measured only by setting the scaling by hand.",
+  "How the accelerator text looks on the nested Options > Plot Mode entry (the row reads the entry's option, not pixels).",
+  "Delivery of the physical chord on the user's Windows X server: keysym M with Control and Shift, Caps Lock reporting, and whether Alt reaches the viewer as Mod1 or is taken by the window manager. Rows use synthesized events on Xvfb.",
+  "The status bar's look when the mode flips (the row reads the label's text).",
+  "The feel of the one-pixel ring between the engine's border and the filter's rounded-up one, where a graph key does nothing."
+ ],
+ "problemsLeft": [
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::key_at_graph; rows KM9 and KM3 of /home/analog/ob21/tests/headless/test_wave_viewer.tcl and SWK27 of /home/analog/ob21/tests/headless/test_wave_subwindows.tcl",
+   "what": "My break W1 is caught by no row: the pixel gate keeps only the bands in the leftmost column of the subwindow grid. With two subwindows (they sit side by side) every graph key (a, b, s, m, d, t, Shift-M) is dead in the right-hand subwindow, with no box and no message. It is the sibling of last round's Z1 on another axis of the layout. Every fixture that asks the gate has one column: KM9's windows have one subwindow (two strips, then four), SWK27's five bands all span x 0 to 100, and KM3 opens a second subwindow but presses only the chord. Repair: SWK27's registry entry gains bands of a second column and its walk of every band's middle covers them (both arms); KM9 gains a control in a window of two subwindows: a real bare b in the middle of every band of wviewer::strip_bands_px is forwarded and toggles cursor B, with the number of distinct left edges asserted above one. At HEAD the product is right here (measured, below).",
+   "evidence": "Break (sab.py, W1_keys_dead_right_subwindows): in key_at_graph the bands are filtered to those whose left edge equals the first band's. Green under it: test_wave_viewer display 505 and --logdir 508, test_wave_subwindows 277 and 573, test_wave_grid display 680, test_wave_tabs display 174, and ten unregistered viewer suites (/tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/SAB2 and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/SAB4). Real pointer and keys (XTEST), the shipping workarea profile, bands {0 0 555 334} {0 334 555 668} {555 0 1110 668}: at HEAD a bare b in the middle of each of the three is handed to the engine and cursor B goes on; with the break the third (832,334) hands the engine nothing and B stays off. Lines W1 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pW_HEAD and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pW_W1."
+  },
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::key_at_graph; row KM6 of /home/analog/ob21/tests/headless/test_wave_viewer.tcl",
+   "what": "My break W2b is caught by no row: the pixel gate answers no whenever the active tab is not the first. On every other tab of a viewer all graph keys are dead (cursors, markers, tooltip). KM6 opens a second tab and presses only the chord there; no suite, registered or not, presses a graph key on a second tab. Repair: a KM6 leg on the second tab: a real bare b in the middle of a strip is forwarded and toggles cursor B, and a real m on a trace makes one marker. At HEAD the product is right here (measured).",
+   "evidence": "Break (W2b_keys_dead_other_tabs): key_at_graph returns 0 when wviewer::tab_index of the canvas's token is above 0 (written so that it cannot raise for a registry entry without a window; my first form raised there and reddened SWK27 for that reason only, which I do not count). Green under it: test_wave_viewer display 505, test_wave_subwindows 277 and 573, test_wave_tabs display 174 and ten unregistered viewer suites (file SAB4 named above). Real keys, second tab active: at HEAD b is handed to the engine ({.x1.drw 98 0}) and B goes on, m is handed on; with the break neither reaches the engine. Lines W2 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pW_HEAD and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pW_W2b."
+  },
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::key_at_graph; rows KM9 of test_wave_viewer.tcl and SWK27 of test_wave_subwindows.tcl",
+   "what": "My break W12 is caught by no row: the pixel gate remembers the strips' pixels per canvas and strip count, so after a resize of the window with the same strips it tests the old geometry. After the viewer is made taller, graph keys are dead in the lower strip and around the old seam. No row presses a graph key after the window's size changed with the strip count unchanged; SWK27 moves one condition per leg but never the bands or the zoom between two calls for the same canvas. Repair: a SWK27 leg that asks the same canvas twice with the registry entry (or the zoom) changed in between and the band count kept, and expects the second answer from the new geometry (both arms); a KM9 leg that resizes the viewer (wm geometry, the strips kept), waits for the re-tile, and presses a real bare b at a pixel that is inside a strip now and was outside every strip's trimmed band before. At HEAD the product is right here (measured).",
+   "evidence": "Break (W12_gate_stale_after_resize): key_at_graph caches the result of wviewer::bands_px in a namespace array keyed by the canvas and the number of bands. Green under it: test_wave_viewer display 505, test_wave_subwindows 277 and 573, test_wave_grid display 680, test_wave_tabs display 174 and ten unregistered viewer suites (files SAB2 and SAB4). Real keys, the viewer made taller from 900x520 to 900x960 after one b had been pressed (bands {0 0 900 444} {0 444 900 888} afterwards): at HEAD b is handed to the engine at (450,221), (450,665), (450,847) and (450,248); with the break only the first is, the other three hand the engine nothing and cursor B stays off. Lines X1 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pX_HEAD and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pX_W12."
+  },
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::key_at_graph and wviewer::plot_mode_toggle_at; row KM1 of test_wave_viewer.tcl (the two wrapper legs) and SWK19 of test_wave_subwindows.tcl",
+   "what": "Two breaks of mine with a second viewer window open are caught by no row. W7: the pixel gate answers yes only for the first viewer canvas of the session, so in a second viewer window every graph key is dead. W8: the wrapper resolves the event's canvas, then flips the mode of the first viewer in the registry, so Ctrl-Shift-M typed in the second viewer changes the first viewer's mode and status bar and leaves its own. KM1's wrapper legs ask a canvas that is no viewer's and this viewer's own canvas; no suite has two viewer windows open at once. Repair: a KM row that opens a second viewer (a second ASE session; wviewer::open with its token), sends a real Ctrl-Shift-M to each canvas in turn and expects the mode, the status bar and the one log line of that viewer only, and sends a real bare b in the middle of a strip of each and expects it forwarded there. At HEAD the product is right here (measured).",
+   "evidence": "Breaks (W7_keys_dead_second_viewer: key_at_graph returns 0 unless the canvas is the first key of graphbb; W8_chord_first_viewer: the wrapper calls set_plot_mode invert with the first key of the windows registry). Green under each: test_wave_viewer display 505, test_wave_subwindows 277 and 573, test_wave_grid display 680, test_wave_tabs display 174 and ten unregistered viewer suites (files SAB2 and SAB4). Real pointer and keys, two viewers .x1 and .x2 of two sessions: at HEAD b in the second viewer is handed to the engine through .x2.drw and Ctrl-Shift-M there gives modes (first second) single multi; with W7 b in the second viewer hands the engine nothing; with W8 Ctrl-Shift-M in the second viewer gives multi single and the first viewer's status bar reads multi. Lines V2 and V3 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pV_HEAD, /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pV_W7 and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pV_W8."
+  },
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::plot_mode_toggle_at; rows KM1, KM3, KM4, KM5, KM6 and KM10 of test_wave_viewer.tcl",
+   "what": "My break W4 is caught by no row: the wrapper does nothing while a cursor is showing (graph_flags bit 2 or 4 set in the current context). Ctrl-Shift-M is then dead in the state a user who is measuring is usually in: no flip, no log line, no message. Every row that presses the chord does it with both cursors off (the KM0 fixture turns them off, and each later band turns them off again before it ends); KM7 turns them on and presses only s. Repair: a KM1 or KM7 leg with cursors A and B on: a real Ctrl-Shift-M flips the mode, the status bar follows, one log line, nothing forwarded, and the two cursor x and the readout bar are as they were. At HEAD the product is right here (measured).",
+   "evidence": "Break (W4_chord_dead_with_cursors): the wrapper returns {} when `xschem get graph_flags` has bit 2 or 4. Green under it: test_wave_viewer display 505, test_wave_subwindows 277 and 573, test_wave_grid display 680, test_wave_tabs display 174 and ten unregistered viewer suites (files SAB2 and SAB4). Real keys, the shipping Cadence profile, both cursors showing: at HEAD the chord gives multi with one log line and the next press single; with the break the mode stays single and no line is written. Lines C2 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pC_HEAD and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pC_W4."
+  },
+  {
+   "severity": "blocker",
+   "where": "/home/analog/ob21/src/wave_viewer.tcl, wviewer::key_filter: the edit bracket around a forwarded m or d, and the cursor tail after a forwarded a or b; rows KM2, KM7 and KM13 of test_wave_viewer.tcl",
+   "what": "Two breaks of mine that act in the Cadence profile only, the user's own, are caught by no row. W16: there m, Ctrl-m and d are forwarded without the edit bracket, so the engine refuses them: no marker, and the command window says the view is read-only. W19: there the cursor tail is skipped for a and b, so the cursors appear in the plot while the Cursor A and Cursor B mirrors stay off and the readout bar never comes up. KM2 (m, Ctrl-m, d) and the a and b presses of KM7 run in the stock profile. KM13 sends every forwarded chord as a real key in the Cadence profile too, but asks only that nothing outside the graph moved; it does not ask that a marker was made or that the mirrors and the readout followed. Repair: KM2's marker legs and a mirror-and-readout leg for a and b run in both profiles (cadence_compat and autotrim_wires put back), or KM13 gains, per profile, the marker count after m and d and the mirrors and readout after a and b. At HEAD the product is right here (measured).",
+   "evidence": "Breaks (W16_cadence_markers_refused: the bracket's condition gains `&& ![wviewer::tcl_flag cadence_compat]`; W19_cadence_tail_skips_a_b: the tail's condition gains `!($N != 115 && [wviewer::tcl_flag cadence_compat])`). Green under each: test_wave_viewer display 505, test_wave_subwindows 277 and 573, test_wave_tabs display 174 and ten unregistered viewer suites (file SAB4). Real keys, the shipping Cadence profile: at HEAD m, d and Ctrl-m on a trace take the marker count 0, 1, 2 to 1, 2, 3, and a then b give mirror-A=1 mirror-B=1 with the readout bar shown and reading both cursors; with W16 the count stays 0 three times and the command window gets `xschem: read-only, markers cannot be edited`; with W19 the engine's flags read 2 then 6 while both mirrors stay 0 and the readout bar is not shown. Lines C1, C3 and C4 of /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pC_HEAD, /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pC_W16 and /tmp/claude-1000/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/scratchpad/ovb03_att3/P_pC_W19."
+  }
+ ],
+ "repairRounds": 3
+}

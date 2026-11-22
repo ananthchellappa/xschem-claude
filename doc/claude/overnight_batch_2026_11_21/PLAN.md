@@ -26,6 +26,7 @@ gesture items, so those land first.
 |------|------|------|------|--------------------|
 | `[E]` | 01 | `quiz-howto` | doc | a how-to another session can follow to build a tip-of-the-day quiz in `~/private/xschem-private` |
 | `[ ]` | 03 | `viewer-ctrl-shift-m` | code | Ctrl-Shift-M in the waveform viewer toggles single/multi plot mode; no "View is Read Only" popup from a key in the viewer |
+| `[ ]` | 03b | `viewer-keys-with-focus-elsewhere` | code | a key typed with the pointer over the viewer's plot acts as a viewer key whichever window has the keyboard, and right after a viewer opens; added by the lead after item 03's first run (see its detail) |
 | `[ ]` | 04 | `dblclick-grow-takes-labels` | code | the double-click grow takes the net-name labels on the wires it selects |
 | `[ ]` | 02 | `issue-1657-open-items` | code | the Options preview shows the deck's order with labelled groups; a request for `op` reads again when an untyped read stored the noise totals |
 | `[ ]` | 05 | `port-to-private` | port | patch, proof and the commands to apply, build, restart and commit items 02 to 04 in `~/private/xschem-private` |
@@ -87,10 +88,21 @@ The user's own words for the two gesture items are quoted at the head of their w
 
 The pipeline gives every crew these rules in full. The ones that shape the batch:
 
-- **One item at a time, and one runner at a time.** Several xschem processes that start in
-  the same second can collide (issues 1706 and 1725: the same temporary names). So items run
-  in sequence, and inside an item only one stage at a time starts xschem. The two readers of
-  the Review stage run side by side because they run nothing.
+- **One runner per clone.** Inside an item only one stage at a time starts xschem, and it
+  runs one thing at a time. The two readers of the Review stage run side by side because
+  they run nothing. (Until 2026-11-21 23:00 the rule was one item at a time on the whole
+  machine, and a crew waited for ANY live run. Item 03 then lost hours waiting for the
+  full regressions another session runs in its own clones. Since then: two items may run
+  side by side in two clones, `/home/analog/ob21` and `/home/analog/ob22`; a crew waits
+  only for a run in its own clone; a run elsewhere is noted, and a red taken while one
+  was live is run once more before it is believed. Several xschem processes that start
+  in the same second can collide: issues 1706 and 1725, the same temporary names.)
+- **An attack hunts once.** The first attack of an item builds breaks of its own, and one
+  that no row catches is a blocker. Every later round CHECKS the repair: a wrong
+  behaviour, a red, an unfixed problem and a mistake of the repair are blockers; a
+  further break that no row catches is recorded as a known gap. (Until the same hour
+  every round hunted again. Item 03's product measured right through three rounds, and
+  each round still found new hypothetical breaks, so the item never reached its gate.)
 - **Private display only.** `DISPLAY` in a tool shell is the user's Windows X server. Every
   xschem start goes through `run_suites.sh`, `gated_xschem.sh` or the regression driver with
   `AUDIT_DISPLAY=private` / `T1_DISPLAY=private` and `env -u DISPLAY`.
@@ -212,6 +224,15 @@ and removed by that stage) and runs the quiz suite there on both arms.
 The user's report names one key. The work order's family table is the scope: every key the
 viewer lets through that can reach an editor verb or the read-only popup.
 
+### 03b viewer-keys-with-focus-elsewhere
+
+Not one of the user's four items: the lead added it. Item 03's first run found that the
+popup the user reported is also reached when the keyboard focus is in a schematic window
+and the pointer rests over the viewer's plot, and right after a viewer opens: the user's
+own likely gesture. Work order 03 had told its crews the chord need only work with the
+focus on the plot; that point is withdrawn. It runs right after item 03, in the same
+clone, and changes `callback()`.
+
 ### 04 dblclick-grow-takes-labels
 
 Ruling 3 above. `tests/headless/test_dblclick_connected_grow.tcl` is in no list of
@@ -252,4 +273,9 @@ Times are local, 2026-11-21 unless a date is given.
 - 09:26 the user said "resume". 09:28 item 01 resumed from its journal: task `wbo3506uj`, run `wf_b9029379-036` (same run, same transcript directory), base `23c551453`. The how-to and both readers' answers were reused; the repair runs again, told about the interrupted writer's uncommitted edits in the clone and about the condensed `CLAUDE.md`. The pipeline gained an optional driver note for its repair stages for this. New check-in job (minutes 7, 27, 47).
 - Because the main tree moved, item 01 lands by cherry-pick, not fast-forward. Then: the clone is put on the main tree's head, the revised work orders and this file are committed and pulled, and item 03 starts from there.
 - 10:08 item 01: the repair done; the dry run started in `/home/analog/pq21`. 10:37 the pipeline returned: verdict E, no blocker left, no repair round after the dry run, commit `462c192b4` in the clone.
-- 10:40 item 01 landed in the main tree by cherry-pick as `d198fce04` (the branch had moved, see 09:23). Receipt copied to `receipts/01_quiz-howto.md` with a driver's note. Rule debt filed from the main tree: `startup_quiz_shared_conf`. Marked `[E]`: the census and the gate in the other tree were written from reading and run by nobody, and the window there has to be looked at once it exists.
+- 10:38 item 01 landed in the main tree by cherry-pick as `d198fce04` (the branch had moved, see 09:23). Receipt copied to `receipts/01_quiz-howto.md` with a driver's note. Rule debt filed from the main tree: `startup_quiz_shared_conf`. Marked `[E]`: the census and the gate in the other tree were written from reading and run by nobody, and the window there has to be looked at once it exists.
+- 10:38 revised work orders, baseline, pipeline note and item 01's receipt committed in the main tree as `f09888cda`. Clone put on it (`git fetch`, `git reset --hard origin/fluid-editing`, in the clone only); its build is current, no run is live.
+- 10:39 item 03 launched: task `wzze7glcr`, run `wf_d0770c87-61d`, base `f09888cda`, transcripts `/home/analog/.claude-taiga/projects/-home-analog-dev-xschem-claude/478872cd-9a2b-4322-b146-d62b97914d06/subagents/workflows/wf_d0770c87-61d`.
+- 17:29 check-in: item 03 is in its second attack (since 15:08). Its runner spent part of that time waiting for a full regression that ANOTHER session was running in another clone, because the batch's one-runner rule says to wait for any live run. To do between items, not now (changing the rules text while an item is in flight would make a resume of it start over): narrow the rule so a run in another session's checkout is noted and not waited for, and a red taken while one was live is run once more before it is believed.
+- 22:50 item 03's pipeline returned F: "blockers left after repair; not gated, not committed". Read why: three repair rounds, and after each the attack measured the product right and built NEW breaks that no row caught (the last six: a second column of subwindows, a second tab, a resize, a second viewer, cursors showing, markers and the cursor readout in the Cadence profile). Not the item's failure: the pipeline's rule that every round hunts again. The work (four work-in-progress commits, last `e19d5293b`, Tcl only) stays in the clone.
+- 23:00 decided, as driver: (1) the pipeline is changed (clone as an argument; wait only for runs in one's own clone; later rounds check instead of hunting; a close-out mode that starts at the repair of what an earlier run left). (2) Item 03 is closed out, not discarded: its six open problems are rows to write, then a check, the gate and the commit. Its first run's result is `receipts/03_viewer-ctrl-shift-m.run1.json`. (3) Item 03b is added (see the ledger and its detail). (4) Item 04 runs at the same time in a second clone, `/home/analog/ob22`.
