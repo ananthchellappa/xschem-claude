@@ -10398,14 +10398,31 @@ static int handle_window_switching(int event, int tabbed_interface, const char *
  * after the call. The keysym goes over as number and as name; the name is the one
  * Tk gives a binding as %K.
  *
- * THIS IS ONE OF TWO DOORS. A schematic canvas also has key bindings of its own that
- * never come here (the Cadence profile binds several dozen), and they act on the
- * current context as well. A binding tag that set_bindings puts first on every
- * schematic canvas asks the same Tcl proc before any of them runs
- * (wviewer::key_door); a key Tk delivers is settled there, and this function
- * answers for whatever reaches callback() some other way.
+ * THIS IS ONE OF THREE DOORS, and wviewer::foreign_key stands behind each of them.
+ *  - This one, the engine's.
+ *  - The canvas door. A schematic canvas also has key bindings of its own that
+ *    never come here (the Cadence profile binds several dozen), and they act on the
+ *    current context as well. A binding tag that set_bindings puts first on every
+ *    schematic canvas asks the same Tcl proc before any of them runs
+ *    (wviewer::key_door); a key Tk delivers to a schematic canvas is settled there,
+ *    and this function answers for whatever reaches callback() some other way (a
+ *    script that calls the engine's event entry itself, a binding that forwards).
+ *  - The viewer window's own door. wviewer::open leaves the keyboard focus inside
+ *    a viewer on the viewer's toplevel. A binding tag on that toplevel
+ *    (wviewer::top_key) hands a key typed there to the same Tcl proc while the
+ *    pointer is over that viewer's plot. Of such a key this function sees only
+ *    what the viewer's filter forwards to the engine (a graph key, Escape), with
+ *    the viewer's own canvas as win_path, and that is not a key from another
+ *    window: it runs below as it does when Tk delivers the key to the viewer's
+ *    canvas.
  * Rows: SWK34 of tests/headless/test_wave_subwindows.tcl (both arms, the proc a
- * recorder) and KM14 of tests/headless/test_wave_viewer.tcl (the real proc).
+ * recorder); and with the real proc, on a display, the rows of
+ * tests/headless/test_wave_viewer.tcl that call callback() with a schematic canvas
+ * as win_path while a viewer's context is current and the pointer is in its plot:
+ * KM14 (Ctrl-Shift-M, press and release, reaches the viewer's filter and flips the
+ * plot mode), KM16 (editor chords with Alt do nothing) and KM17 (a bare b comes
+ * back through the viewer's canvas and toggles cursor B, which is what the place of
+ * the call above the semaphore increment is for).
  * Spec: doc/claude/specs/waveform_viewer.md, "A key that came through another
  * window". */
 static int viewer_takes_foreign_key(const char *win_path, int event, KeySym key, int state)

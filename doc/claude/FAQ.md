@@ -56,7 +56,15 @@ that has just opened needs no click.
   viewer to the front; the repair of the same day took it back.)
 - **What did not change.** (1) A key typed into a window that is no drawing
   window (ASE-L, the Calculator, the Signal Browser's search box) belongs to
-  that window. (2) With the keyboard focus on a viewer's plot, the key stays
+  that window, for as long as that window holds the keyboard. One case here
+  DID change. A viewer that opens or is raised (auto-plot after a run) takes
+  the keyboard to its own toplevel, as it always did, away from a field the
+  user was typing in. The characters typed next were dropped before the
+  item. Now they run viewer shortcuts when the pointer rests over the plot
+  (measured by the item's checker: `e` removed an empty strip); with the
+  pointer anywhere else, over the search box included, they are still
+  dropped (row KM23). Click in the field to go on typing. (2) With the
+  keyboard focus on a viewer's plot, the key stays
   with that viewer wherever the pointer is: over a schematic, or over another
   viewer. (3) xschem changes its working window only when the pointer ENTERS
   a drawing area. So a viewer stays the working window while the pointer

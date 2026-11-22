@@ -931,8 +931,20 @@ repair):
   door declines does nothing, where one the canvas door declines runs as an
   editor key, so there is no reason to be wide; and the raise at the end of
   an open takes the keyboard from whatever widget of this application had
-  it, the Signal Browser's search box included, where the next character
-  typed must not run a viewer shortcut.
+  it, the Signal Browser's search box included, where the next character,
+  typed with the pointer still in the box, must not run a viewer shortcut
+  (row KM23, its check for the Signal Browser: the keyboard on the viewer's
+  toplevel, the pointer on the search entry, `e` is declined by the door and
+  removes no strip).
+  **The promise goes no further than its condition.** The door asks where
+  the pointer is, not which widget had the keyboard before the raise. When
+  the raise takes the keyboard from the search box, or from any other window
+  of this application that held it (an ASE-L field, say), while the pointer
+  rests over the plot, the characters typed next run viewer shortcuts.
+  Measured by the item's checker: `e` removed an empty strip. Before the
+  item those characters were dropped, as they still are with the pointer
+  anywhere but over the plot. Not ruled on by the user; returned with the
+  ruling on where an open or a raise leaves the keyboard.
 - A viewer's own canvas does not carry the canvas door's tag: with the focus
   on one viewer's plot and the pointer in another viewer, the key stays with
   the first. Rejected: routing between viewers, which the mirror-state
@@ -977,7 +989,10 @@ repair):
   pointer over a schematic the keys typed then do nothing (rows KM18 and
   KM23), until a click in the schematic gives its canvas the keyboard. If
   the viewer's context is still the current one then, the second limit
-  applies.
+  applies. With the pointer over the plot the keys typed then are the
+  viewer's, also when the raise took the keyboard from a text field the
+  user was typing in (the Signal Browser's search box, an ASE-L field): the
+  crews' decision on the viewer window's own door, above, has the case.
 - `mouse_follows_focus` off was not measured. There the engine switches the
   context on FocusIn and not on Enter (read from
   `handle_window_switching()`), so a pointer coming into a plot does not make
@@ -1021,8 +1036,9 @@ without a click; KM19 parity with Tk on the live tag and for the order of
 binding; KM20 the control and two viewers; KM21 an ordinary second schematic
 window, expected values taken before the change, and a key typed in it with
 the pointer in the plot; KM22 the Signal Browser's search box; KM23 the
-viewer window's own door; G1f the focus after an open and the tag on the
-toplevel.
+viewer window's own door, with the pointer over the plot, on the status bar,
+over the main canvas and on the Signal Browser's search box; G1f the focus
+after an open and the tag on the toplevel.
 `test_wave_subwindows` (both arms): SWK30 `key_seq_event`, SWK31
 `tag_key_seq` against the answers measured on the day, SWK32 the installer's
 own table, SWK33 `key_subst`, SWK34 the engine's question with the proc a

@@ -143,7 +143,9 @@
 #              typed on the main canvas and handed to the engine's event entry
 #         KM23 a key typed while the viewer's own toplevel holds the keyboard
 #              (where an open leaves it) is the viewer's with the pointer over
-#              the plot and nobody's otherwise
+#              the plot and nobody's otherwise: on the status bar, over the
+#              main canvas, and (a check of its own, added by the follow-up)
+#              on the Signal Browser's search box
 #         KM18 a viewer that has just opened, and one that an open only
 #              raises: where the focus is left and by what calls, the keys
 #              typed over the schematic after it, and the chord without a
@@ -314,7 +316,8 @@
 #       (made the same as this tree before and after every break), run on the
 #       display arm, and EVERY row that went red is named. All were built by
 #       the repair, with the rows as they stand, except the two under "THE
-#       BUILD'S MEASUREMENT" and the paragraph after them.
+#       BUILD'S MEASUREMENT" and the paragraph after them, and the one under
+#       "THE FOLLOW-UP", which says how it was built.
 #       The rows of test_wave_subwindows that go red with the breaks of the
 #       pure procs are in that suite's header.
 #         src/wave_viewer.tcl:
@@ -401,6 +404,16 @@
 #           window inside it, not on a tag of its own -> G1f, KM22, and with
 #           them CA5, KM2, KM4 to KM7, KM9 to KM11 and KM15: every key
 #           typed on the plot canvas then reaches the filter twice
+#         THE FOLLOW-UP (2026-11-22). The item's checker built this break
+#         and every suite stayed green; KM23's check for the Signal Browser
+#         was written for it, against a product that was right. Built again
+#         in this tree itself with that check in place, run on the display
+#         arm, and the product file put back as committed:
+#         top_key takes the key with the pointer over the plot or over any
+#           window of the Signal Browser, and nowhere else
+#                                            -> KM23 (the check for the
+#                                               Signal Browser, and no other
+#                                               check of this suite)
 #         src/callback.c, rebuilt:
 #         no guard                           -> KM14 (the engine's entry),
 #                                               KM16, KM17
@@ -5195,6 +5208,100 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
                       [list [list $vtop $vdrw $vdrw] 1 1] \
                       [list [list $vtop $vdrw $vtop.wvstatus.l] 0 single {} {}] \
                       [list [list $vtop .drw .drw] 0 {} {} 0 1]]
+
+        # --- KM23, over the Signal Browser (2026-11-22, the follow-up) -----------
+        # The door asks for the pointer over the PLOT, and the status-bar leg
+        # above holds that for one place outside the plot. The Signal Browser
+        # is the place the rule was written for: the raise at the end of an
+        # open takes the keyboard from its search box, and a character typed
+        # on with the pointer still in the box must not run a viewer shortcut.
+        # A door that took the key over the plot and over the browser, and
+        # nowhere else, passed every row until this one.
+        # THE STATE. The browser is shown and a strip without a trace is put
+        # into the layout, for e (Delete Empty Strips) to have something to
+        # remove. The pointer is brought into the plot as in the legs above,
+        # then moved onto the search entry, and the keyboard is forced onto
+        # the viewer's toplevel. An e and its release are generated there.
+        # WHAT IS CHECKED.
+        #   * The fixture: the product's own rule names the added strip as the
+        #     one e would remove, so the legs below are not about a key that
+        #     had nothing to do.
+        #   * The state the key was sent in: the focus window, the context,
+        #     the window under the pointer.
+        #   * The door was asked for the press and for the release, and
+        #     declined both. A recorder stands around wviewer::top_key for the
+        #     two events and is taken off again; without this leg a key lost
+        #     on its way to the door would read the same as one it declined.
+        #   * The filter was not called, no action-log line, the engine was
+        #     handed nothing, no box, the layout as before the key, the
+        #     entry's text as before it.
+        # PUT BACK: the added strip is taken out, the browser hidden if it was.
+        # The check holds that there are the strips there were, each with as
+        # many traces as before the leg, and that the middle of strip 0, the
+        # pixel this band's rows send their keys at, is where the leg found
+        # it.
+        wviewer::set_plot_mode single $tok
+        set km23e {}
+        set km_be23 $vtop.wvbrowser.wvsearch.pat
+        set km_bw23 [wviewer::browser_shown $tok]
+        set km_mid23 [km_mid $vdrw 0]
+        set km_tr23 {}
+        foreach km_g [dict get [wviewer::layout_for $tok] graphs] { lappend km_tr23 [llength [wviewer::dget $km_g traces {}]] }
+        catch {wviewer::browser_toggle 1 $tok}
+        km_pump 10
+        if {![winfo exists $km_be23] || ![winfo ismapped $km_be23]} {
+          set km23e no-search-entry
+        } else {
+          set km_gs23 [dict get [wviewer::layout_for $tok] graphs]
+          wviewer::set_graphs $tok [linsert $km_gs23 end [wviewer::empty_graph]]
+          wviewer::regenerate $tok
+          km_pump 10
+          set km_kill23 no-answer
+          catch {set km_kill23 [wviewer::empty_strips_to_delete \
+                                  [dict get [wviewer::layout_for $tok] graphs] [wviewer::auto_graph_index $tok]]}
+          lassign [km_mid $vdrw 0] km_x23 km_y23
+          km_far $vtop $vdrw $km_x23 $km_y23
+          km_warp $km_be23 5 5
+          for {set i 0} {$i < 100} {incr i} {
+            focus -force $vtop ; update
+            if {[focus -displayof $vtop] eq $vtop} { break }
+            after 50
+          }
+          km_pump 2
+          set km23s [list [focus -displayof $vtop] [::km_real_xschem get current_win_path] \
+                          [winfo containing -displayof $vdrw {*}[winfo pointerxy $vdrw]]]
+          set km_t23 [$km_be23 get]
+          set km_l23 [wviewer::layout_for $tok]
+          set ::km_door {}
+          set km_rec23 [expr {[info commands ::wviewer::top_key] ne {}}]
+          if {$km_rec23} {
+            rename ::wviewer::top_key ::wviewer::__km_real_top_key
+            proc ::wviewer::top_key {args} {
+              set r [uplevel 1 [list ::wviewer::__km_real_top_key {*}$args]]
+              lappend ::km_door [list [lindex $args 0] [lindex $args 1] $r]
+              return $r
+            }
+          }
+          set ::km_via {} ; set ::km_log {} ; set km_k23 $::kf_calls ; set km_mb23 $::mb_hits
+          km_type $vtop e 0 ; km_type $vtop e 0 KeyRelease
+          if {$km_rec23} {
+            rename ::wviewer::top_key {}
+            rename ::wviewer::__km_real_top_key ::wviewer::top_key
+          }
+          set km23e [list $km_kill23 $km23s $::km_door [expr {$::kf_calls - $km_k23}] $::km_log $::km_via \
+                          [expr {$::mb_hits - $km_mb23}] [expr {[wviewer::layout_for $tok] eq $km_l23}] \
+                          [expr {[$km_be23 get] eq $km_t23}]]
+          wviewer::set_graphs $tok $km_gs23
+          wviewer::regenerate $tok
+        }
+        if {!$km_bw23} { catch {wviewer::browser_toggle 0 $tok} }
+        km_pump 10
+        set km_now23 {}
+        foreach km_g [dict get [wviewer::layout_for $tok] graphs] { lappend km_now23 [llength [wviewer::dget $km_g traces {}]] }
+        check "KM23 ...and with the pointer over the Signal Browser's search box, which is where a raise takes the keyboard from, the key is nobody's as well: the browser shown, a strip without a trace put in for the key to remove, the keyboard on the viewer's toplevel and the pointer on the search entry, a typed e and its release are asked of the toplevel's door, which declines both; the viewer's key filter is not called, no action-log line is written, the engine is handed nothing, no box comes up, the strips stay and the entry's text stays (the strips the product's own rule would have e remove: the added one; the state: focus window, context and window under the pointer; per call of the door its window, the event and the answer; calls of the filter; the log lines; what the engine was handed; boxes; the layout as before the key; the entry's text as before it); afterwards there are the strips there were before the leg, each with as many traces, the middle of strip 0 is where it was and the browser is hidden again as it was" \
+          [list $km23e [expr {$km_now23 eq $km_tr23}] [expr {[km_mid $vdrw 0] eq $km_mid23}] [wviewer::browser_shown $tok]] \
+          [list [list [list [llength $km_tr23]] [list $vtop $vdrw $km_be23] [list [list $vtop 2 0] [list $vtop 3 0]] \
+                      0 {} {} 0 1 1] 1 1 $km_bw23]
         # back to the state the rows below start from
         raise $vtop ; update
         km_warp $vdrw $kmx $kmy

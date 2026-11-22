@@ -717,7 +717,10 @@ is in a <i>schematic</i> window (after Alt-Tab, or a click on the task bar, with
 the pointer left where it was; or right after the viewer opened, on a desktop
 that leaves the keyboard where it was): <kbd>Ctrl-Shift-M</kbd> flips the plot
 mode, <kbd>a</kbd> and <kbd>b</kbd> place the cursors, and a schematic editing
-key does nothing. The keyboard focus stays where it is, so the schematic's keys
+key does nothing. <kbd>Ctrl-Shift-4</kbd>, the schematic window's own key for
+the plot mode, does nothing then either: with the pointer in the viewer the key
+for it is <kbd>Ctrl-Shift-M</kbd>. The keyboard focus stays where it is, so the
+schematic's keys
 work again as soon as the pointer is back in the schematic's drawing area.
 Three things to know:
 <ul>
@@ -730,7 +733,13 @@ wherever the pointer is: over a schematic window, or over another viewer
 (<a href="#trouble">§12</a>).</li>
 <li>A key typed into a window that is not a drawing window (ASE-L, the
 Calculator, the Signal Browser's search box) belongs to that window, wherever
-the pointer is.</li>
+the pointer is, for as long as that window has the keyboard. A viewer that
+comes to the front (a run that finished) takes the keyboard to its own window,
+away from a field you were typing in; so may one that opens, depending on the
+desktop. What you type next is the viewer's while the pointer is over the
+viewer's plot (<kbd>e</kbd> removes the empty strips) and is dropped with the
+pointer anywhere else, the field included. Click in the field to go on typing
+(<a href="#trouble">§12</a>).</li>
 </ul></div>
 <table>
 <tr><th>Key</th><th>What it does</th><th>Where it works</th></tr>
@@ -1571,6 +1580,17 @@ that finished), keys typed over the schematic do nothing</td>
 over the viewer's plot, so the keys belong to nobody. To use the viewer, move
 the pointer over its plot. To go on in the schematic, click in its drawing
 area; if a key then brings up "View is Read Only", see the row above.</td></tr>
+
+<tr><td>A viewer came to the front (a run that finished) while you were typing
+in the Signal Browser's search box or in an ASE-L field, and the next letters
+did something in the viewer (<kbd>e</kbd> removed its empty strips) or went
+nowhere</td>
+<td>The viewer took the keyboard to its own window, away from the field. A key
+typed there is the viewer's while the pointer is over the viewer's plot, and
+nobody's with the pointer anywhere else, over the field included. Click in the
+field to go on typing. With the pointer over the plot, <kbd>u</kbd> takes back
+a structural edit a letter made, the removed strips among
+them.</td></tr>
 
 <tr><td>A key typed over the schematic acts on the viewer (<kbd>u</kbd> undoes
 there, <kbd>e</kbd> removes its empty strips)</td>
