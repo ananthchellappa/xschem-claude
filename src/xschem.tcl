@@ -18484,15 +18484,24 @@ if {[catch {source $XSCHEM_SHAREDIR/ciw.tcl} ciw_source_err]} {
 # latch is one-shot (issue 0664), so spending it here would leave the session's
 # first real channel fault (a ciw_create failure, a raise in notify_safe) with
 # nothing said at all. The same two sinks, stderr and the durable log, without a
-# latch: this line runs once per session. Then the two src/actions.csv rows that
-# name engine procs leave the action table, or the command palette (which lists
-# every command row) would offer two entries that do nothing when picked.
-# tests/headless/test_startup_quiz.tcl band M starts a session without the file.
+# latch: this line runs once per session.
+#
+# Then the engine's namespace goes. A file that fails PARTWAY (cut short, or a
+# slip in an edit) has already defined every proc above the failing command,
+# because `source` runs it one command at a time; each later guard tests one proc
+# (`info commands`: the Help entries, load_conf's call, Tcl_AppInit's launch
+# hook), so without this the session would announce no quiz and then show one,
+# in a window whose buttons call procs that were never defined. Then the two
+# src/actions.csv rows that name engine procs leave the action table, or the
+# command palette (which lists every command row) would offer two entries that
+# do nothing when picked. tests/headless/test_startup_quiz.tcl band M starts
+# sessions without the file and with one that fails partway.
 if {[catch {source $XSCHEM_SHAREDIR/startup_quiz.tcl} startup_quiz_source_err]} {
   set startup_quiz_l "the tip of the day is not available in this session:\
  src/startup_quiz.tcl failed to source: $startup_quiz_source_err"
   catch {puts stderr "xschem: $startup_quiz_l" ; flush stderr}
   catch {xschem::notify_log $startup_quiz_l error}
+  catch {namespace delete ::startup_quiz}
   set startup_quiz_keep {}
   foreach row $action_table {
     if {[string match {startup_quiz::*} [dict get $row command]]} continue
@@ -21160,7 +21169,7 @@ ase::sim_load_conf
 wviewer::rawhist_load
 # Tip-of-the-day quiz: the saved on/off choice and the answered list
 # (USER_CONF_DIR/startup_quiz, USER_CONF_DIR/startup_quiz_done). Guarded because
-# the `source` of startup_quiz.tcl is caught: without the file there is no proc.
+# the `source` of startup_quiz.tcl is caught: after a failed one there is no proc.
 if {[info commands ::startup_quiz::load_conf] ne {}} { startup_quiz::load_conf }
 # schematic to preload in new windows 20090708
 set_ne XSCHEM_START_WINDOW {}

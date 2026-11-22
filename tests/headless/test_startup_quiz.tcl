@@ -19,10 +19,12 @@
 #   F*  the wiring: the two actions.csv rows, the Help-menu entries, the caught
 #       `source`, the install list, and where Tcl_AppInit calls the launch hook.
 #   L*  real launches, each a CHILD process: which command lines get asked.
-#   M*  a CHILD whose share dir has no engine: it says so once, in a line
-#       that is not a notice channel announcement, so it spends neither
-#       notice-channel latch and a later channel fault is still announced; and
-#       its table, palette and menus are the control's less the engine's entries.
+#   M*  a CHILD whose share dir has no engine, or one that fails partway: it
+#       says so once, in a line that is not a notice channel announcement, so
+#       it spends neither notice-channel latch and a later channel fault is
+#       still announced; it keeps no engine proc, and its table, palette and
+#       menus are the control's less the engine's entries; a plain launch on
+#       the partway one is not asked.
 #   D*  the dialog itself, driven through its widgets (display arm only).
 #
 # THE PROOFS (band A). Every bank entry carries a `proof`: an expression over the
@@ -725,7 +727,10 @@ check "F14 the rc template (src/xschemrc) shows the switch, commented out" \
 # =====================================================================
 # The child is launched the way the row says, with a HOME of its own, and runs a
 # --script that waits for the launch hook's decision (and, when the decision is
-# to ask, for the window), then writes what it saw and exits.
+# to ask, for the window), then writes what it saw and exits. In a session with
+# no engine namespace at all (band M's farms) there is no decision to wait for:
+# it watches for a window for a while past the launch delay, then writes
+# `no-engine`.
 set childscript [file join $work child.tcl]
 spit $childscript {
   set ::W_out $::env(QUIZ_WITNESS)
@@ -736,9 +741,13 @@ spit $childscript {
     catch { set win [winfo exists .startup_quiz] }
     set grab {}
     catch { set grab [grab current] }
+    set loaded NO-ENGINE
+    catch { set loaded $::startup_quiz::loaded }
+    set cur NO-ENGINE
+    catch { set cur $::startup_quiz::cur }
     set f [open $::W_out w]
     puts $f [list when $when launch $launch win $win grab $grab switch $::startup_quiz \
-                  loaded $::startup_quiz::loaded cur $::startup_quiz::cur]
+                  loaded $loaded cur $cur]
     close $f
   }
   rename exit w_real_exit
@@ -749,12 +758,14 @@ spit $childscript {
     set win 0
     catch { set win [winfo exists .startup_quiz] }
     if {$l ne {} && (![lindex $l 0] || $win)} { w_write settled ; w_real_exit 0 }
+    if {![namespace exists ::startup_quiz] && ($win || $n >= 15)} { w_write no-engine ; w_real_exit 0 }
     if {$n >= 100} { w_write deadline ; w_real_exit 0 }
     after 100 [list w_poll [expr {$n + 1}]]
   }
   after 100 {w_poll 0}
 }
-proc launch {tag flags {conf_lines {}}} {
+## $farm, when given, is the child's XSCHEM_SHAREDIR (band M)
+proc launch {tag flags {conf_lines {}} {farm {}}} {
   global work bin childscript
   set home [file join $work home_$tag]
   file mkdir [file join $home .xschem]
@@ -765,7 +776,9 @@ proc launch {tag flags {conf_lines {}}} {
   ## -- except with --nolog, which refuses to start beside --logdir
   set logdir [list --logdir [file join $work log_$tag]]
   if {[lsearch -exact $flags --nolog] >= 0} { set logdir {} }
-  catch {exec env HOME=$home QUIZ_WITNESS=$wf GUI_GATE=0 timeout 90 $bin {*}$flags \
+  set share {}
+  if {$farm ne {}} { set share [list XSCHEM_SHAREDIR=$farm] }
+  catch {exec env HOME=$home QUIZ_WITNESS=$wf GUI_GATE=0 {*}$share timeout 90 $bin {*}$flags \
            {*}$logdir --script $childscript < /dev/null 2>@1} out
   set w [string trim [slurp $wf]]
   if {$w eq {}} { return [dict create launch NO-WITNESS win {} out [string range $out end-300 end]] }
@@ -811,7 +824,7 @@ if {$have_tk} {
 }
 
 # =====================================================================
-# M* -- a session whose share dir has no engine
+# M* -- a session whose share dir has no engine, or a broken one
 # =====================================================================
 # An installed copy built from a src/Makefile that ./configure did not write
 # again after src/Makefile.in gained the two files has neither (issues 0423 and
@@ -830,6 +843,7 @@ set farm_whole [share_farm $root [file join $work farm_whole]]
 set mprobe {
   set r [dict create]
   dict set r procs [llength [info commands ::startup_quiz::*]]
+  dict set r ns [namespace exists ::startup_quiz]
   dict set r latches [list [set ::xschem::notify_fault] [set ::xschem::notify_degraded]]
   set n 0
   set ids {}
@@ -1006,6 +1020,88 @@ if {$have_tk} {
   puts "SKIPPED: M8, M11, M12 the live command palette and menus (no Tk on this arm)"
   flush stdout
 }
+
+# An engine that FAILS PARTWAY: an installed copy cut short, or a slip in an
+# edit. Tcl's `source` runs a file one command at a time, so every proc above the
+# failing command is already defined when the error is raised. The session must
+# still be one without the quiz: no proc left behind for a guard to find (the
+# Help entries test one proc, load_conf's call another, Tcl_AppInit's launch hook
+# a third), and so no window whose buttons call procs that were never defined.
+set sq_real [slurp [file join $root src startup_quiz.tcl]]
+set M_slip_at "proc startup_quiz::answer \{pos\} \{"
+set sq_part [string map [list "$M_slip_at\n" "$M_slip_at \{\n"] $sq_real]
+set farm_part [share_farm $root [file join $work farm_part] [list startup_quiz.tcl $sq_part]]
+set mi [interp create]
+$mi eval [list set XSCHEM_SHAREDIR $farm_part]
+set mi_rc [catch {$mi eval [list source [file join $farm_part startup_quiz.tcl]]} mi_err]
+set mi_left [$mi eval {list [llength [info commands ::startup_quiz::at_launch]] \
+                            [llength [info commands ::startup_quiz::show]] \
+                            [llength [info commands ::startup_quiz::answer]] [namespace exists ::startup_quiz]}]
+interp delete $mi
+check "M13 the fixture: a farm whose engine has one extra brace at startup_quiz::answer; sourced alone it raises and leaves at_launch and show defined, answer not, the namespace there" \
+  [list [expr {[string length $sq_part] == [string length $sq_real] + 2}] $mi_rc \
+        [string match {*missing close-brace*} $mi_err] $mi_left] {1 1 1 {1 1 0 1}}
+## What M14, M18 and M19 ask of a session, as procs, so that M20 can put the same
+## questions to a session built on a wrong repair.
+proc m_part_said {r} {
+  list [dict get $r status] [mw $r procs] [mw $r ns] [mnamed [dict get $r out]] [mnamed [dict get $r log]]
+}
+proc m_quiet {r} {
+  list [mchannel [dict get $r out]] [mchannel [dict get $r log]] [mw $r latches]
+}
+proc m_later {r} {
+  list [mw $r later] [share_farm_count [dict get $r out] {NOTICE CHANNEL FAULT: M-probe}]
+}
+set mp [mlaunch part $farm_part {--nogui --pipe -q}]
+set mp_n $mp
+check "M14 that session exits 0 with no startup_quiz:: proc and no namespace left, and says so once on its output and once in its action log" \
+  [m_part_said $mp] {0 0 0 1 1}
+check "M15 ... and its table is the control's less exactly the engine rows" [m_table_ok $mp $mc_n] 1
+if {$have_tk} {
+  set mp [mlaunch part_x $farm_part {--pipe -q}]
+  check "M16 with a display, it offers no tip entry: palette, File and Help are the control's less the engine's entries" \
+    [m_menus_ok $mp $mc_x] {1 1 1}
+  set w [launch part_plain {} {} $farm_part]
+  check "M17 ... and a plain launch (nothing but a --script file, asked in L2) is not asked: no engine, no decision, no window" \
+    [list [q {dict get $w when}] [q {dict get $w launch}] [q {dict get $w win}]] {no-engine HOOK-NOT-RUN 0}
+} else {
+  puts "SKIPPED: M16, M17 the half-sourced engine's menus and launch (no Tk on this arm)"
+  flush stdout
+}
+# A broken tip file is no more a fault of the notice channel than a missing one,
+# so the partway session must leave that channel's one-shot latches unspent too.
+# M5 and M6 ask that of the missing-engine session only, and M14 counts the
+# announcement by its text, which a notice channel FAULT line also carries. So
+# a repair that announces a partway file through xschem::notify_degraded_once
+# (a broken install looks like a fault) and a missing one as before passes M5,
+# M6 and M14. M18 and M19 ask the partway session; M20 builds that repair and
+# wants a no from each, and shows that M14, and M5 on a farm without the
+# engine, stay green on it.
+check "M18 ... in a line that is not a notice channel announcement, so neither of that channel's one-shot latches is spent (fault, degraded)" \
+  [m_quiet $mp_n] {0 0 {0 0}}
+check "M19 ... and a real channel fault later in that session is still announced" \
+  [m_later $mp_n] {1 1}
+set M_latch_old "  catch {puts stderr \"xschem: \$startup_quiz_l\" ; flush stderr}
+  catch {xschem::notify_log \$startup_quiz_l error}
+"
+set M_latch_new "  if {!\[string match {couldn't read file*} \$startup_quiz_source_err\]} {
+    xschem::notify_degraded_once \$startup_quiz_l
+  } else {
+    catch {puts stderr \"xschem: \$startup_quiz_l\" ; flush stderr}
+    catch {xschem::notify_log \$startup_quiz_l error}
+  }
+"
+set xs_latch [string map [list $M_latch_old $M_latch_new] $xs_real]
+set f [share_farm $root [file join $work farm_latch_part] \
+         [list xschem.tcl $xs_latch startup_quiz.tcl $sq_part]]
+set wp [mlaunch latch_part $f {--nogui --pipe -q}]
+lassign [m_wrong_farm latch_gone [list $M_latch_old $M_latch_new]] differs_g f
+set wg [mlaunch latch_gone $f {--nogui --pipe -q}]
+check "M20 ... and M18 and M19 say no to a repair that spends the FAULT latch for a partway file only (the edit applies, the session exits 0, M14 stays green; without the engine M5's pair stays {0 0})" \
+  [list [expr {$xs_latch ne $xs_real}] $differs_g [dict get $wp status] \
+        [expr {[m_part_said $wp] eq {0 0 0 1 1}}] \
+        [expr {[m_quiet $wp] eq {0 0 {0 0}}}] [expr {[m_later $wp] eq {1 1}}] \
+        [dict get $wg status] [mw $wg latches]] {1 1 0 1 0 0 0 {0 0}}
 
 # =====================================================================
 # D* -- the dialog, through its widgets

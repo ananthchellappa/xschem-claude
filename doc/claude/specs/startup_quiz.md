@@ -194,15 +194,21 @@ colleague, and give it a proof that would fail if the feature were removed.
 | `~/.xschem/startup_quiz_done` | ids already answered; delete it to start the round again |
 
 The `source` in `xschem.tcl` is caught, like `ciw.tcl`'s: nothing depends on this
-file, so a session without it is a session without the quiz, announced once. The
+file, so a session without it is a session without the quiz, announced once. A
+file that fails partway (cut short, or a slip in an edit) has already defined the
+procs above the failing command, and every later guard tests one proc (the Help
+entries, `load_conf`'s call, the launch hook), so the failure branch deletes the
+`startup_quiz` namespace: otherwise the session would announce no quiz and then
+show one whose buttons call procs that were never defined. The
 announcement is a line of its own on stderr and in the action log (`the tip of the
 day is not available in this session: ...`), not `xschem::notify_degraded_once`:
 a missing tip file is not a fault of the notice channel, and that proc's one-shot
 FAULT latch must stay unspent for the session's first real channel fault (issue
 0664). The two `src/actions.csv` rows leave the action table in the same branch,
 so the command palette offers neither, and every other row stays. Band M of the
-suite starts sessions on a share dir without the file, and compares each
-session's table, palette and menus with a control's.
+suite starts sessions on a share dir without the file and on one whose file
+fails partway, and compares each session's table, palette and menus with a
+control's.
 
 ## 9. Not built
 

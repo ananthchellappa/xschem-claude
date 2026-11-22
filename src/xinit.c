@@ -4470,7 +4470,8 @@ int Tcl_AppInit(Tcl_Interp *inter)
   * them decides for this launch; and after the -q exit above, so only a session that stays
   * open gets this far. The Tcl side decides the rest (a --pipe or --nolog launch, the saved
   * on/off choice) and only schedules the window, it never waits on it. Guarded because
-  * xschem.tcl's `source` of startup_quiz.tcl is caught: without the file there is no proc. */
+  * xschem.tcl's `source` of startup_quiz.tcl is caught: after a failed one (no file, or one
+  * that fails partway) the failure branch deletes the namespace, so there is no proc. */
  if(has_x) {
    tcleval("if {[info commands ::startup_quiz::at_launch] ne {}} {catch {startup_quiz::at_launch}}");
  }
