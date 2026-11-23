@@ -1558,7 +1558,15 @@ strip "should retain zoom".
     even when the hand load ended on that same file. Every other proc that
     reads, clears or switches a database either puts the current one back as it
     found it or leaves another one current, which `attach_is_same`'s check of
-    the current database catches. The record goes with the window
+    the current database catches, with one exception that reads the current
+    one again in place. `calc::aq_run`, given an `op` expression while the
+    current table is a file's noise totals stored as `op` (issue 1657's arm;
+    only a read that named no type stores them so), reads that file
+    again as the operating point into the same slot. The slot keeps its name,
+    the file and `op`, so the `cur` check cannot see the change. The view is not
+    hurt by it: the next attach clears that file and reads it again itself
+    (`ase::attach_dbs`), so it draws what the previous attach drew, and a
+    totals table is one point, with nothing to zoom. The record goes with the window
     (`wviewer::forget`). Row `GZP33` derives the population of loaders from the
     source and requires each to be classified: the loader verbs from the C side
     (every top-level verb of `src/scheduler.c`, and every sub-verb of its `raw`

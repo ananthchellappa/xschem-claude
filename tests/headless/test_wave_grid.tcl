@@ -1377,7 +1377,13 @@ set gzr_drop {wviewer::rawbar_load wviewer::display_raw wviewer::restore ase::ui
 set gzr_attach {wviewer::attach_raw ase::attach_dbs results::select}
 # borrow a database and put the current one back as they found it (the Graph
 # dialog's signal list reads the strip's file, by a verb held in a variable,
-# then switches back; raw_prev_idx switches back and back again)
+# then switches back; raw_prev_idx switches back and back again). One member
+# also has a third arm: calc::aq_run, for an op expression over noise totals
+# stored as op (issue 1657), reads the current file again as the operating
+# point INTO THE SAME SLOT and puts nothing back. The slot keeps its path and
+# type, so attach_is_same's cur leg does not see it; it is harmless to the
+# view because the next attach clears that file and reads it again itself
+# (ase::attach_dbs). Spec R4 says the same.
 set gzr_borrow {wviewer::signal_list_all wviewer::trace_cursor_value wviewer::raw_cursor_restore
                 wviewer::raw_prev_idx graph_fill_listbox
                 ase::cosim_db_inventory ase::optexport_datasets
