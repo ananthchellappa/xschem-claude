@@ -1312,11 +1312,18 @@ difference of two nets, the Calculator's Plot, Graph > Add Trace with an express
   (undo history is kept per tab), so the two traces would share the one vector and one
   of them would draw the other's numbers, at every load after it too. The trace that is
   back is first given a vector name of its own (`wviewer::expr_unshare`, as a pasted
-  trace is whose vector's name is taken where it lands); the label it is shown under
-  stays, and so does the analysis on record for it. Only a name of the viewer's own
+  trace is whose vector's name is taken where it lands). A label of its own (a
+  difference's two nets) stays, a trace shown by its vector's name is shown by the new
+  one, and the analysis on record for it goes with it. Only a name of the viewer's own
   making (`expr<N>`) is changed: a name the user gave to two expressions is one vector
   by the user's choice, and two traces of one postfix keep their one vector. Row GG17
   of the difference's suite; rows RS6 and RS7.
+- **A paste into the window the trace was copied from** computes into the trace's own
+  vector name, which is the right one while that name is still the trace's. When the
+  trace has left since, a load made no vector for it and a later expression was computed
+  into the name, the pasted trace takes a vector name of its own by the same rule
+  (`wviewer::paste_traces`, `wviewer::expr_name_taken`), so the later trace keeps
+  drawing its own expression. Row RP3.
 - **A Calculator wave is kept.** A load is told which databases to keep
   (`ase::attach_dbs`' last argument): the ones this window's traces draw from that the
   Calculator made in memory (`wviewer::mem_dbs`: a database a trace of any tab names that

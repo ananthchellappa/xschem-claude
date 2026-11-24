@@ -131,9 +131,17 @@ over a viewer that computed the same text on another analysis.
 undo history is kept per tab, so after the undo both traces are in the model, with one vector
 between them, and the record matches the later one. The trace that was back read the other
 tab's numbers under its own label, and a load did not put it right. Undo and redo now first
-give the trace that is back a vector name of its own (`wviewer::expr_unshare`); its label and
-the analysis on record for it stay. Only a name of the viewer's own making is changed. Rows
-GG17 (real keys, two tabs, a Direct Plot after it), RS6 and RS7 (both arms).
+give the trace that is back a vector name of its own (`wviewer::expr_unshare`). A label of its
+own stays, a trace shown by its vector's name is shown by the new one, and the analysis on
+record goes with it. Only a name of the viewer's own making is changed. Rows GG17 (real keys,
+two tabs, a Direct Plot after it), RS6 and RS7 (both arms).
+
+**The same reuse of a name through a paste**, which the second review measured and left: a
+trace copied and deleted, the results loaded, a later expression computed into the name its
+vector left free, and a paste into that same window. The paste computed into the name as it
+stood, so the later trace drew the pasted expression under its own label until the next load.
+`wviewer::paste_traces` now gives the pasted trace a vector name of its own in that case too
+(`wviewer::expr_name_taken`), as it always did in another window. Row RP3.
 
 **Rows.** `tests/headless/test_wave_expr_reattach_1734.tcl`, on a results file a real ngspice
 wrote, with real keys and clicks: a difference, the Calculator's Plot button, the Add Trace door,
@@ -147,12 +155,4 @@ bands are GA, GB, GJ, GS, GU, GV, GY, GG and GYA of
 evaluates it in the result selected. A Calculator wave is not saved with a state, and one whose
 trace was deleted and brought back by undo after a load has nothing to draw. A restored trace of
 the transient or the DC sweep is evaluated on whichever analysis the restore shows. The replay
-form of a paste (`wviewer::paste_payload`) computes no vector; the next load does. A paste into
-the window a trace was copied from computes into the trace's vector name as it stands
-(`wviewer::paste_traces` gives a pasted vector a new name only in another window): with the
-trace deleted, the results loaded and a later expression computed into that name, the paste
-makes the later trace draw the pasted expression under its own label until the next load.
-Measured 2026-11-24 on the real results file, a difference copied and deleted, a Direct Plot, a
-second difference and a paste: the second difference then read the first one's two nets. The
-lines of `wviewer::paste_traces` that compute the vector are as they were before this work, which
-added only the record of the analysis after them. Not changed here.
+form of a paste (`wviewer::paste_payload`) computes no vector; the next load does.

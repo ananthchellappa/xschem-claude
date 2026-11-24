@@ -5504,6 +5504,22 @@ proc wviewer::expr_remake {token {leave {}} {absent 0} {quiet 0}} {
   return [dict create said $said made $made]
 }
 
+# Is the vector name `vec` ANOTHER expression's in `token`'s model: does a trace
+# of any tab hold it with a postfix other than `ex`? For a trace about to be
+# computed into `vec` (wviewer::paste_traces): computing would put its
+# expression under that other trace's label.
+proc wviewer::expr_name_taken {token vec ex} {
+  foreach G [wviewer::all_graphs $token] {
+    foreach tr [wviewer::dget $G traces {}] {
+      if {[wviewer::dget $tr vec {}] ne $vec} { continue }
+      if {[wviewer::db_suffix $tr] ne {}} { continue }
+      set e [wviewer::dget $tr expr {}]
+      if {[llength [regexp -all -inline {\S+} $e]] > 1 && $e ne $ex} { return 1 }
+    }
+  }
+  return 0
+}
+
 # ONE NAME, TWO TABS: what undo and redo do before they evaluate
 # (wviewer::state_apply). Undo history is kept per tab. A trace leaves the tab
 # shown (a plot under Replace, a delete), a trace of ANOTHER tab is computed
@@ -5514,9 +5530,10 @@ proc wviewer::expr_remake {token {leave {}} {absent 0} {quiet 0}} {
 # after it would make the vector from the other tab's postfix again. Evaluating
 # cannot serve both, so the trace that is back is given a vector name of its
 # own, as a pasted trace is whose vector's name is taken where it lands
-# (wviewer::paste_traces). Its `name`, which is what it is shown under, stays
-# as it is, and the analysis on record for its own postfix goes with it, so it
-# is still held to the analysis it was computed on (wviewer::expr_remake).
+# (wviewer::paste_traces). A label of its own (a difference's two nets) stays;
+# a trace shown by its vector's name is shown by the new one. The analysis on
+# record for its own postfix goes with it, so it is still held to the analysis
+# it was computed on (wviewer::expr_remake).
 #
 # Only a name of the viewer's own making (expr<N>) is changed. A name the user
 # gave to two expressions is one vector by the user's choice ("TWO TRACES, ONE
@@ -5574,9 +5591,10 @@ proc wviewer::expr_unshare {token} {
             dict set exprseen($token) $nv $ex $was
           }
         }
-        # the label it was shown under stays: a trace named by its vector
-        # (name blank or the vector's) keeps showing that name
-        if {[wviewer::dget $tr name {}] eq {}} { dict set tr name $vec }
+        # a label of its own stays; a trace named by its vector is shown by
+        # the vector's new name, so no two legends of one name stand over
+        # two vectors
+        if {[wviewer::dget $tr name {}] eq $vec} { dict set tr name [dict get $moved $k] }
         dict set tr vec [dict get $moved $k]
         set hit 1
         incr n
@@ -24226,6 +24244,20 @@ proc wviewer::paste_traces {{token {}}} {
             set grp [lreplace $grp $t $t $tr]
             set groups [lreplace $groups $g $g $grp]
           }
+        } elseif {[regexp {^expr[0-9]+$} $vec] && [wviewer::expr_name_taken $token $vec $ex]} {
+          # issue 1734: the window the trace was copied from, after the trace
+          # left it, a load made no vector for it and a later expression was
+          # computed into the name its vector left free. Computing into that
+          # name would put the pasted expression under the later trace's
+          # label, so the pasted trace takes a vector name of its own, as in
+          # another window; one that was shown by its vector's name is shown
+          # by the new one. A name the user gave stays one vector.
+          set old $vec
+          set vec [wviewer::auto_expr_name $token]
+          if {[wviewer::dget $tr name {}] eq $old} { dict set tr name $vec }
+          dict set tr vec $vec
+          set grp [lreplace $grp $t $t $tr]
+          set groups [lreplace $groups $g $g $grp]
         }
         catch {xschem raw add $vec $ex}
         # issue 1734: computed here, on the analysis this window shows, so a

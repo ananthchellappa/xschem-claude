@@ -97,6 +97,11 @@
 #   ...renaming nothing                                            RS6, RS7
 #   ...renaming a name the user gave, or a trace of one postfix    RS7
 #   ...not taking the analysis on record to the new vector         RS7
+#   ...leaving a trace named by its vector under the old name      RS8
+# AND of a paste into the window the trace was copied from, after its vector's
+# name was taken (wviewer::paste_traces), display arm:
+#   computing into the name as it stands                           RP3
+#   ...leaving the pasted trace under the old name                 RP3
 #
 # Run it (never a bare ./src/xschem, which would use your screen and HOME):
 #   tests/headless/run_suites.sh [--nogui] test_wave_expr_reattach_1734
@@ -506,6 +511,16 @@ group RS {
     check "RS7 a vector the user named, held by a trace of each tab with two expressions, and a trace of the same expression as the other tab's, keep the vector they share; and a trace on record as computed on the AC analysis takes that record to its new vector: the pass does not evaluate it from transient columns, and one sentence says which analysis it was computed on" \
         [list $kept $n [expr {$nv2 ne {expr1}}] [dg $a made] $::RSADD [pcall xschem raw index $nv2] [near [rs_at expr1] $d5] [dg $a said]] \
         [list {0 {nm expr1}} 1 1 0 {} -1 ok [list "wviewer: trace 'first' is empty: it was computed on the AC analysis and the viewer now shows the transient analysis of [file tail $::RAWFIX]; it draws again when the viewer shows the AC analysis"]]
+    # a trace that is shown by its vector's name
+    catch {wviewer::expr_forget __rs}
+    rs_add expr1 {v(div) 5 *}
+    set other [dict create layout [dict create sharedx 0 graphs [list [dict create traces [list [rs_tr expr1 {v(div) 5 *}]]]]]]
+    set ::wviewer::tabstash(__rs) [list {} $other]
+    rs_model [rs_tr expr1 {v(ramp) 2 *}]
+    set n [pcall wviewer::expr_unshare __rs]
+    set tr [lindex [dict get [lindex [dict get [wviewer::layout_for __rs] graphs] 0] traces] 0]
+    check "RS8 a trace that is shown by its vector's name, given a vector of its own, is shown by the new name: no two legends of one name stand over two vectors" \
+        [list $n [expr {[dict get $tr vec] ne {expr1}}] [expr {[dict get $tr name] eq [dict get $tr vec]}]] {1 1 1}
     catch {unset ::wviewer::tabstash(__rs)}
     catch {unset ::wviewer::curtab(__rs)}
     catch {dict unset ::wviewer::layouts __rs}
@@ -1208,6 +1223,27 @@ proc as_key {k script} {
     if {$code} { return "ERR:$r" }
     return $r
 }
+# the vector of the shown tab's trace of postfix `ex` ({}: none), and where a
+# vector's trace stands: `{strip trace node}`
+proc rp_vec {ex} {
+    foreach t [traces] { if {[lindex $t 1] eq $ex} { return [lindex $t 0] } }
+    return {}
+}
+proc rp_where {vec} {
+    set out {-1 -1 -1}
+    catch {
+        set g 0
+        foreach G [dict get [wviewer::layout_for $::key] graphs] {
+            set t 0
+            foreach tr [dict get $G traces] {
+                if {[dict get $tr vec] eq $vec} { set out [list $g $t [wviewer::node_index_of_trace $G $t]] }
+                incr t
+            }
+            incr g
+        }
+    }
+    return $out
+}
 group RP {
     to_design
     clean_viewer
@@ -1260,6 +1296,40 @@ group RP {
     catch {wviewer::close $k2}
     pcall ase::session_close $k2
     update
+    to_design
+    # THE WINDOW THE TRACE WAS COPIED FROM, after the name of its vector was
+    # taken. An expression the viewer names is copied and deleted; a real
+    # Direct Plot loads the results, which makes no vector for a trace that is
+    # gone, so the name is free; a second expression is computed into it; the
+    # paste then has to compute into a name of its own, or the second trace
+    # would draw the pasted expression under its own label.
+    clean_viewer
+    dplot div
+    set e1 [pcall wviewer::add_trace $::key 0 {v(ramp) v(div) +}]
+    update
+    set v1 [rp_vec {v(ramp) v(div) +}]
+    lassign [rp_where $v1] gi ti ni
+    pcall wviewer::regenerate $::key
+    in_viewer [list apply {{key gi ni} {
+        wviewer::with_edit $key [list xschem setprop -fast rect 2 $gi sel_waves [list $ni]]
+    }} $::key $gi $ni]
+    set nc [pcall wviewer::copy_traces $::key]
+    set nd [pcall wviewer::delete_items {} [list [list $gi $ti]] {} $::key]
+    update
+    to_design
+    set m [dplot ramp]
+    set e2 [pcall wviewer::add_trace $::key 0 {v(ramp) v(div) -}]
+    update
+    set v2 [rp_vec {v(ramp) v(div) -}]
+    set np [pcall wviewer::paste_traces $::key]
+    update
+    set v3 [rp_vec {v(ramp) v(div) +}]
+    check "RP3 an expression the viewer named, copied and deleted, a real Direct Plot, a second expression computed into the name the first one's vector left free, and the paste into that same window: the pasted trace is computed into a vector of its own and shown by that name, it reads the sum of the file's two columns, and the second expression still reads their difference" \
+        [list $e1 $nc $nd $m $e2 [expr {$v1 ne {} && $v1 eq $v2}] $np [expr {$v3 ne {} && $v3 ne $v2}] [label_of $v3] [label_of $v2] \
+              [near [lmap k $::KS {smp $v3 $k}] [at_ks {expr {[smp v(ramp) $k] + [smp v(div) $k]}}] 2e-3] \
+              [near [lmap k $::KS {smp $v2 $k}] [at_ks {expr {[smp v(ramp) $k] - [smp v(div) $k]}}] 2e-3]] \
+        [list {} 1 1 plot {} 1 1 1 $v3 $v2 ok ok]
+    clean_viewer
     to_design
 }
 
