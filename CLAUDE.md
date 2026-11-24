@@ -519,6 +519,11 @@ none, delete the sentence rather than correct it.
 (never put a comment between two `switch` patterns; `info complete` cannot see it), Tk
 event traps, `xschem` command traps, registration and flakes. Keep it updated.
 
+**A user-facing feature ships with a tip-of-the-day question** in
+`src/startup_quiz_bank.tcl` (its header; `doc/claude/specs/startup_quiz.md` §7.3), in the
+same commit. No gate asks for it: `test_startup_quiz` fails only when a change makes an
+existing question wrong.
+
 **Receipts and analyses go in `doc/claude/code_analysis/` or a batch's own `receipts/`,
 never in `doc/claude/issues/`**: an `NNNN-*.md` there with no stamp reddens T1 (below).
 
