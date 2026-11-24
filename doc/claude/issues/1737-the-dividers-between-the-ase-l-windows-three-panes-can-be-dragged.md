@@ -1,10 +1,11 @@
 # 1737 — The dividers between the ASE-L window's three panes can be dragged
 
-**STAMP:** `v1 claim=fixed tree=4fba0839e stamped=2026-11-24 fix=taken open=3 by=driver-1737`
+**STAMP:** `v1 claim=fixed tree=4fba0839e stamped=2026-11-24 fix=taken open=2 by=driver-1737`
 
 Asked for by the user on 2026-11-24 and built the same day, on a private Xvfb with
-openbox. Three things are open, all listed under "Open" below: the user's own look at
-it, a ruling on the choices, and what was not built.
+openbox. The user tried it on their own screen the same day and found it well. Two
+things are open, both listed under "Open" below: a ruling on the choices, and what was
+not built.
 
 ## What the user asked
 
@@ -81,11 +82,15 @@ both arms against the product without the change.
 
 ## Open
 
-1. **The user's own look.** Everything ran on a hidden display with generated events.
-   Not done: a real mouse on the user's screen, how easy the gap is to hit at their
-   font size and scaling, the tutorial's wording.
-2. **The six choices above** wait for a ruling.
-3. **Not built:** a split that survives a restart of xschem; dividers in the other
+1. **The six choices above** wait for a ruling.
+2. **Not built:** a split that survives a restart of xschem; dividers in the other
    ASE-L windows that hold two or more lists with a fixed split (the Results > Select
    window's lists, the campaign result window's table and plots); an action-log line
    for a drag.
+
+## The user's look (2026-11-24)
+
+Everything above ran on a hidden display with generated events. The user then used the
+dividers with a real mouse on their own screen and wrote: *"I checked out the new ASE-L
+and all is well."* The look is paid on those words. They say nothing about the six
+choices, which stay open, nor about the tutorial's wording.

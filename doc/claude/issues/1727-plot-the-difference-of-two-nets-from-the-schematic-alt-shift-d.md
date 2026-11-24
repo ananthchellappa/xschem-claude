@@ -1,6 +1,6 @@
 # 1727 — Plot the difference of two nets from the schematic (Alt-Shift-D)
 
-**STAMP:** `v1 claim=fixed tree=6e16cf473 stamped=2026-11-23 fix=taken open=3 by=crew-pdfix`
+**STAMP:** `v1 claim=fixed tree=6e16cf473 stamped=2026-11-23 fix=taken open=2 by=crew-pdfix`
 
 **AMENDED 2026-11-23, after the user's first use on a real bench** (section "After the
 first use" at the foot). Two things this file says below are no longer so: a difference
@@ -384,15 +384,16 @@ build had not run that suite.
 - Voltages of nets only: no current, no device pin, no bus difference bit by bit.
 - A net the run did not save is refused; nothing is added to the session's outputs.
 
-## Outstanding: 3
+## Outstanding: 2
 
 1. The user's rulings on C1 to C10 and on the decisions listed above.
-2. A look on the user's own screen: the physical chord (with and without Caps Lock), the
-   prompts on the status line at the user's window width and in the user's font (the
-   second prompt and a refusal, with the CIW closed: are the request and "second minus
-   first" on the line?), and the trace in the viewer. No row can see pixels, and every key
-   here was a generated key on a hidden display.
-3. One run of the suite on `:0` (Xwayland).
+2. One run of the suite on `:0` (Xwayland).
+
+Paid on 2026-11-24: the look on the user's own screen (the physical chord, the prompts
+on the status line, the trace in the viewer; no row can see pixels, and every key in the
+rows was a generated key on a hidden display). After the repairs of "After the first
+use" below the user used the command again and wrote: *"plot-difference works fine."*
+Those words name no single part of the look.
 
 ## After the first use (2026-11-23)
 

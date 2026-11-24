@@ -192,6 +192,14 @@ used (the `f` key with the pointer over the viewer, or the menu entry) before th
 Direct Plot? In the viewer Ctrl-z zooms OUT, one step a press; over the schematic the
 same key zooms the schematic out.
 
+**The user's answer, 2026-11-24:** *"I did zoom in the viewer before first screenshot,
+but I don't remember much."* That is the first part: the viewer's own zoom was used
+before the first screenshot, which is the door the repair is about. The second and third
+parts (`~` or a run after the zoom, View > Fit between the screenshots) are not
+remembered, so the session is still not shown to have gone this way, and the user said
+to leave the question open. It need not be put again in these words; what would settle
+it is the next occurrence, read as below.
+
 If a strip comes up on another X window again, what tells which door it was is the
 stored window of every strip, taken before anything else is pressed. Either of:
 
