@@ -781,13 +781,20 @@ field by field — and does two things beyond the list move:
   and instead clears the source marker and re-bolds the trace at its new node
   index in the destination; a bold trace *above* the moved one shifts down by
   one; an unrelated destination highlight is preserved.
-- **An empty destination's ranges are blanked** (`x1/x2/y1/y2` → `{}` = auto).
-  `capture_live_graph_state` has just frozen the live rect, so an empty strip's
-  stored window is whatever the last fit left it; a µA trace dropped into a
-  0–2 V window would be drawn off-screen and the drop would look like it failed.
-  `regenerate` re-autozooms blank ranges — the same treatment a trace landing in
-  a fresh strip gets from `add_trace`/`plot_signals`. A destination that already
-  holds traces keeps the window the user is looking at.
+- **An empty destination's Y range is blanked** (`y1/y2` → `{}` = auto), **and
+  its X range becomes the source's** (amended 2026-11-24, issue 1736; it used to
+  be blanked too). `capture_live_graph_state` has just frozen the live rect, so
+  an empty strip's stored window is whatever the last fit left it; a µA trace
+  dropped into a 0–2 V window would be drawn off-screen and the drop would look
+  like it failed. `regenerate` re-autozooms a blank range — the same treatment
+  a trace landing in a fresh strip gets from `add_trace`/`plot_signals`. X is
+  another matter: the strips of a subwindow are zoomed and panned in X
+  together, so the strip the trace lands on shows the X window of the strip it
+  left when the two are in one subwindow (`sw_range`) on one X scale. Blanked,
+  a strip split off a zoomed one came up on the whole sweep beside it, and the
+  next strip plotted joined the zoomed one. In another subwindow, or on another
+  X scale, X is blanked as before. A destination that already holds traces
+  keeps the window the user is looking at.
 
 ### 13.3 The one mutation
 

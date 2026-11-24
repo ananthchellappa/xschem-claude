@@ -226,6 +226,11 @@ namespace eval calc {
     # came back after a close would freeze the point count at the first call and
     # serve stale data.  calc::wave_dest says what that costs.
     variable wdestn 0
+    # The registry names calc::wave_dest has made in this session, for
+    # calc::wave_dest_made: a destination is a table that exists in memory
+    # only, and a reader that must tell one from a database read from a file
+    # asks its producer instead of guessing from the name or from the disk.
+    variable wdests {}
     # Phase 2 (2.2).  THE CHARACTERS THE NETLIST ENGINE SPLITS AN EXPRESSION ON,
     # and the whole of them: plot_raw_custom_data() in src/save.c tokenises with
     # my_strtok_r(ntok_ptr, " \t\n", "", 0, &ntok_save).  calc::engine_space is
@@ -4216,8 +4221,10 @@ proc calc::eval_click {} {
 # WARN DECLARED LIMIT, AND IT IS THE VIEWER'S BEHAVIOUR RATHER THAN THIS FILE'S:
 # NOTHING EVER UN-MATERIALISES ONE.  `wviewer::clear_graph_traces` drops the
 # MODEL entry and leaves the column in the in-memory raw, so every Plot press of
-# an expression leaves an `expr<N>` behind for the rest of the session --
-# including a press whose trace a later Replace has just thrown away.  MEASURED,
+# an expression leaves an `expr<N>` behind until the viewer's results are loaded
+# again -- including a press whose trace a later Replace has just thrown away.
+# (A load reads the data anew, and the viewer then makes again only the vectors
+# its traces still draw from: `wviewer::expr_remake`, issue 1734.)  MEASURED,
 # and pinned by band PL4b of tests/headless/test_calc_plot.tcl: after a Replace
 # the trace is gone from the model and `xschem raw index` still resolves its
 # column.  R402's delete is NOT the fix (sabotage P14 applies it here and
@@ -9453,7 +9460,21 @@ proc calc::wave_dest {xs ys {xname calcx} {yname calcy}} {
     # `results::current` would then answer `{}` for as long as the destination
     # lives.
     calc::wave_dest_restore $uname $utype
+    variable wdests
+    lappend wdests $db
     return [calc::wave_dest_answer 1 {} $db table $xname $yname $n $uname $utype]
+}
+
+# Is the database registered as `name` with sim_type `type` one calc::wave_dest
+# made in this session? 1 or 0. Asked by the waveform viewer when it loads
+# results again (wviewer::mem_dbs): a destination was never read from a file,
+# so a load cannot read it again and has to be told to keep it, while a
+# database that WAS read from a file must not be kept, whether its file is
+# still on disk or not (issue 1734). A name is made once and never again (the
+# serial only grows), so a name on the list is that destination or nothing.
+proc calc::wave_dest_made {name {type table}} {
+    variable wdests
+    return [expr {$type eq {table} && [lsearch -exact $wdests $name] >= 0 ? 1 : 0}]
 }
 
 # Remove a destination `calc::wave_dest` built, and put the user's slot back.

@@ -299,7 +299,7 @@ rename wviewer::plot_signals wviewer::plot_signals_real
 rename ase::last_rawfile ase::last_rawfile_real
 rename ase::last_vcdfiles ase::last_vcdfiles_real
 proc wviewer::open {token args} { return 1 }
-proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
+proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}} {leave {}} {quiet 0}} {
   incr ::nattach ; set ::attached 1 ; return 1
 }
 proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {

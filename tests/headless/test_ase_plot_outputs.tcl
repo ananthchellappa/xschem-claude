@@ -133,7 +133,19 @@
 #   PV6  R3 with nothing ticked: `~` under Replace empties the target
 #        subwindow (auto_plot's zero-rows branch, no attach) and the other
 #        subwindow shows exactly what it showed, both axes
-#        (PV is not under the ngspice gate: its raws are written by the suite)
+#   PV7  issue 1736, a view STORED IN THE MODEL: the viewer's own zoom (real
+#        Ctrl-z presses on the canvas) and View > Fit (a real f) store a
+#        window on every strip; `~` and the run-end plot under Replace in
+#        multi-plot then give every row the window its own strip had (one X
+#        window, each strip holding its own trace), by traces when the rows
+#        change order, and a new row's strip joins the X window and is fitted
+#        in Y; single-plot is the control. On a copy of the committed file a
+#        real ngspice wrote, three rows whose scales differ
+#   PV8  issue 1736: a transient zoomed by the viewer's own zoom, then run as
+#        a DC sweep of the same vectors under Replace: no stored window of the
+#        transient is given to a strip
+#        (PV is not under the ngspice gate: PV1-PV6 and PV8 write their raws,
+#        PV7 reads the committed fixture)
 #   PF1  the SHIPPED bench and Monte Carlo draw (seed 35) with `reltol=1e-12`,
 #        which stops the transient ("Timestep too small", rc 1) after the op
 #        point was written: the user is told the run failed and
@@ -154,6 +166,22 @@
 #   V16 clear_subwin pushes no undo point -> PO16d undo row ONLY
 #   V18 zero rows: Replace empties a subwindow with no auto strip -> PO16i ONLY
 #   V19 auto_plot ignores the destination (display arm) -> PO16 (x8), PR12 (x5)
+#
+# RED PROOFS for PV7 / PV8 (issue 1736), measured 2026-11-24, each reverted to
+# green. Every PV7 row but its fixtures and its single-plot control, and PV8's
+# row, were red on the product before the repair.
+#   W1  sw_clear_graphs: the strip a clear leaves keeps its whole view again
+#         -> PV7 new-row row, PV8
+#   W2  sw_stored_apply: `drop` ignored -> PV8 ONLY
+#   W3  sw_stored_apply: no x_same test -> PV8 ONLY
+#   W4  sw_stored_apply: views given by place, not by traces
+#         -> PV7 rows-changed row and new-row row
+#   W8  auto_plot: no sw_stored_give -> PV7's one-X-window row, its
+#         shows-what-it-showed row, its re-run row, both rows-changed rows and
+#         the single-plot control; PV8
+#   PV7's row on the first row's strip holding its own trace and its
+#   View > Fit row are red only with W1 and W8 together, which is the product
+#   before the repair: either half alone repairs those two.
 #
 # REGISTERED IN `hcases` AND `dcases`.
 #
@@ -1943,9 +1971,9 @@ proc pv_spy_attach {script} {
     set ::pv_attached {}
     if {[info commands ::wviewer::pv_attach_real] ne {}} { return ERR:spy_nested }
     rename ::wviewer::attach_raw ::wviewer::pv_attach_real
-    proc ::wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
+    proc ::wviewer::attach_raw {token rawfile sim_type {vcdfiles {}} {leave {}} {quiet 0}} {
         lappend ::pv_attached [list $token $rawfile $sim_type $vcdfiles]
-        return [::wviewer::pv_attach_real $token $rawfile $sim_type $vcdfiles]
+        return [::wviewer::pv_attach_real $token $rawfile $sim_type $vcdfiles $leave $quiet]
     }
     set rc [catch {uplevel 1 $script} r]
     rename ::wviewer::attach_raw {}
@@ -2000,6 +2028,210 @@ group PV6 {
         [list $att [expr {[pv_record $key] eq $rec0}]] {{} 1}
     check "PV6 Replace with nothing ticked: the subwindow it did not touch shows EXACTLY what it showed, strip by strip" \
         [pv_at $a 2] [pv_at $z 2]
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (g) THE VIEWER'S OWN ZOOM, THEN `~` UNDER REPLACE. User report 2026-11-23, on
+## the bundled bench in a multi-plot viewer: a strip plotted after `~` came up
+## on an X window unlike the others', and the bottom strip was drawn at the Y
+## scale of the top one. Every band above puts its zoom on the RECTS ONLY and
+## leaves the model auto. The viewer's own zoom (Ctrl-z, the wheel), View > Fit
+## and a marker write each strip's window INTO THE MODEL, and that stored
+## window is what this band is about: a row that `~` or a re-run brings back
+## takes the stored view of the strip that held it.
+## The doors are real: Ctrl-z and f as key events on the viewer canvas, the
+## real ase::ui::plot_outputs and the run-end entry ase::ui::auto_plot_idle.
+## PV7's results are a copy of the committed file a real ngspice wrote; PV8
+## needs a transient and then a DC sweep of the same vectors, which that file
+## has not, so its two files are written here.
+## `n` real Ctrl-z presses on the viewer canvas, the pointer in the middle of
+## strip gi; {} or an ERR: value
+proc pv_keys {key gi n ks st} {
+    if {[catch {
+        set w [pv_drw $key]
+        lassign [lindex [wviewer::strip_bands_px $w] $gi] x1 y1 x2 y2
+        set px [expr {int(($x1 + $x2) / 2)}]
+        set py [expr {int(($y1 + $y2) / 2)}]
+        update
+        for {set i 0} {$i < 40} {incr i} {
+            focus -force $w ; update
+            if {[focus -displayof $w] eq $w} break
+            after 25
+        }
+        event generate $w <Motion> -x $px -y $py -when now
+        for {set i 0} {$i < $n} {incr i} {
+            event generate $w <KeyPress> -keysym $ks -state $st -x $px -y $py -when now
+            event generate $w <KeyRelease> -keysym $ks -state $st -x $px -y $py -when now
+        }
+        update
+    } e]} { return [pv_err $e] }
+    return {}
+}
+proc pv_ctrlz {key gi n} { pv_keys $key $gi $n z 4 }
+## every strip's {x1 x2 y1 y2} as the MODEL stores them ({} = not stored)
+proc pv_stored {key} {
+    set gs [pv_gs $key]
+    if {[string match ERR:* $gs]} { return $gs }
+    if {[catch {lmap G $gs { lmap t {x1 x2 y1 y2} {
+            set v [wviewer::dget $G $t {}] ; expr {[string is double -strict $v] ? double($v) : $v} } }} v]} {
+        return [pv_err $v]
+    }
+    return $v
+}
+## the smallest and the largest value of vector `var` in the first plot of a
+## binary raw file, read here sample by sample
+proc pv_minmax {file var} {
+    if {[catch {
+        set f [open $file rb] ; set d [read $f] ; close $f
+        set i [string first "Binary:\n" $d]
+        set hdr [string range $d 0 [expr {$i - 1}]]
+        regexp {No\. Variables:\s*(\d+)} $hdr -> nv
+        regexp {No\. Points:\s*(\d+)} $hdr -> np
+        set names {}
+        foreach ln [split $hdr "\n"] { if {[regexp {^\t\d+\t(\S+)\t} $ln -> nm]} { lappend names $nm } }
+        set col [lsearch -exact $names $var]
+        if {$i < 0 || $col < 0 || $np < 2} { error "no $var in $file" }
+        binary scan [string range $d [expr {$i + 8}] [expr {$i + 7 + $nv * $np * 8}]] q* vals
+        set lo [lindex $vals $col] ; set hi $lo
+        for {set p 1} {$p < $np} {incr p} {
+            set v [lindex $vals [expr {$p * $nv + $col}]]
+            if {$v < $lo} { set lo $v }
+            if {$v > $hi} { set hi $v }
+        }
+        set r [list $lo $hi]
+    } e]} { return [pv_err $e] }
+    return $r
+}
+## does the Y window of axes `ax` hold the smallest and the largest value `mm`
+proc pv_holds {ax mm} {
+    if {[catch {expr {[lindex $ax 2] <= [lindex $mm 0] && [lindex $mm 1] <= [lindex $ax 3]}} r]} { return [pv_err $r] }
+    return $r
+}
+## the distinct X windows of a pv_byvecs answer
+proc pv_xs {d} {
+    if {[catch {lsort -unique [lmap r [dict values $d] {lrange $r 0 1}]} v]} { return [pv_err $v] }
+    return $v
+}
+group PV7 {
+    set outs {{name R expr v(ramp) save 1 plot 1} {name D expr v(div) save 1 plot 1} {name L expr v(lp) save 1 plot 1}}
+    set key [po_session pv7 tbpv7 $outs 1]
+    set rf [pcall ase::last_rawfile $key]
+    set fh [open $::fixture] ; set head [read $fh 300] ; close $fh
+    foreach v {ramp div lp dcmid} { set mm($v) [pv_minmax $::fixture v($v)] }
+    check "PV7 fixture: the session's results are a copy of the committed file, whose own header says an ngspice wrote it, shown as its transient" \
+        [list [file tail $rf] [regexp {Command: ngspice-[0-9]} $head] [pcall ase::plot_sim_type [ase::session_state $key]]] \
+        {tbpv7_ase.raw 1 tran}
+    check "PV7 fixture: the rows differ in scale: the last row's largest value is under a fifth of the first row's, and the row added later lies above the last row's" \
+        [list [pcall expr {[lindex $mm(lp) 1] < 0.2 * [lindex $mm(ramp) 1]}] \
+              [pcall expr {[lindex $mm(dcmid) 0] > 2 * [lindex $mm(lp) 1]}]] {1 1}
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    update
+    set fit [pv_byvecs $key]
+    check "PV7 fixture: multi-plot ~ gives each row a strip of its own, the last row on top, each holding its own trace" \
+        [list [pv_vecs $key] [lmap v {lp div ramp} {pv_holds [pv_at $fit v($v)] $mm($v)}]] \
+        {{v(lp) v(div) v(ramp)} {1 1 1}}
+    pv_ctrlz $key 0 4
+    set z [pv_byvecs $key]
+    set zx [pv_xs $z]
+    check "PV7 fixture: four real Ctrl-z presses on the viewer canvas leave every strip on one X window, wider than the sweep, and the viewer stored it on every strip" \
+        [list [llength $zx] \
+              [pcall expr {[lindex $zx 0 1] - [lindex $zx 0 0] > 1.5 * ([lindex [pv_at $fit v(lp)] 1] - [lindex [pv_at $fit v(lp)] 0])}] \
+              [expr {[lsort -unique [lmap r [pv_stored $key] {lrange $r 0 1}]] eq $zx}]] {1 1 1}
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_byvecs $key]
+    check "PV7 ~ under Replace after the viewer's own zoom, the same data: the rows come back a strip each, and every strip is on the zoomed X window" \
+        [list [pv_same $key] [pv_vecs $key] [pv_xs $a]] [list 1 {v(lp) v(div) v(ramp)} $zx]
+    check "PV7 ...each strip showing exactly what it showed, X and Y" $a $z
+    check "PV7 ...so the first row's strip, the one the clear left in place, holds its own trace's smallest and largest value" \
+        [pv_holds [pv_at $a v(ramp)] $mm(ramp)] 1
+    ## the bench run again: the same bytes, a later time
+    file stat $rf pv7s
+    file copy -force $::fixture $rf
+    file mtime $rf [expr {$pv7s(mtime) + 7}]
+    pcall ase::ui::auto_plot_idle $key
+    update
+    check "PV7 the bench run again (the results file written again, a later time) and the plot a finished run makes: new data, and every strip shows what it showed" \
+        [list [pv_same $key] [expr {[pv_byvecs $key] eq $z}]] {0 1}
+    ## the rows changed: a new first row, the other two in another order
+    pv_outs $key {{name C expr v(dcmid) save 1 plot 1} {name L expr v(lp) save 1 plot 1} {name D expr v(div) save 1 plot 1}}
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_byvecs $key]
+    check "PV7 the rows changed (a new first row, the two others in another order): the two that return show what they showed, taken by their traces and not by their place" \
+        [list [pv_vecs $key] [expr {[pv_at $a v(lp)] eq [pv_at $z v(lp)]}] [expr {[pv_at $a v(div)] eq [pv_at $z v(div)]}]] \
+        {{v(div) v(lp) v(dcmid)} 1 1}
+    check "PV7 ...and the new row's strip joins their X window and is fitted in Y: its Y is the engine's fit and holds its trace" \
+        [list [expr {[lrange [pv_at $a v(dcmid)] 0 1] eq [lindex $zx 0]}] \
+              [expr {[lrange [pv_at $a v(dcmid)] 2 3] eq [pv_yfit $key 2]}] [pv_holds [pv_at $a v(dcmid)] $mm(dcmid)]] {1 1 1}
+    ## View > Fit stores a window on every strip too, with no zoom at all
+    pv_outs $key $outs
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    update
+    pv_keys $key 0 1 f 0
+    set z [pv_byvecs $key]
+    check "PV7 fixture: a real f on the viewer canvas (View > Fit) leaves every strip on the sweep, each holding its trace, with its window stored" \
+        [list [llength [pv_xs $z]] [lmap v {lp div ramp} {pv_holds [pv_at $z v($v)] $mm($v)}] \
+              [expr {[lsort -unique [lmap r [pv_stored $key] {expr {[lsearch -exact $r {}] < 0}}]] eq {1}}]] {1 {1 1 1} 1}
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_byvecs $key]
+    check "PV7 View > Fit, then ~: every strip shows what it showed, and the first row's strip holds its own trace" \
+        [list [expr {$a eq $z}] [pv_holds [pv_at $a v(ramp)] $mm(ramp)]] {1 1}
+    ## single-plot: one strip takes every row, as it always did
+    pcall wviewer::set_plot_mode single $key
+    pcall ase::ui::plot_outputs $key
+    update
+    pv_ctrlz $key 0 2
+    set z [pv_axes $key]
+    pcall ase::ui::plot_outputs $key
+    update
+    check "PV7 control: single-plot, the viewer's own zoom, then ~: the one strip takes the rows again and shows what it showed, X and Y, as it did before this rule" \
+        [list [pv_vecs $key] [expr {[pv_axes $key] eq $z}] [expr {[lrange [lindex $z 0] 2 3] ne [pv_yfit $key 0]}]] \
+        {{{v(ramp) v(div) v(lp)}} 1 1}
+    catch {wviewer::close $key}
+    catch {ase::session_close $key}
+}
+
+## (h) A STORED WINDOW IS NOT CARRIED ONTO ANOTHER ANALYSIS. The transient's rows
+## zoomed by the viewer's own zoom, then the bench run as a DC sweep of the same
+## vectors: a window in seconds says nothing about a sweep in volts.
+group PV8 {
+    set outs {{name A expr v(a) save 1 plot 1} {name B expr v(b) save 1 plot 1}}
+    set key [pv_session pv8 tbpv8 $outs 10e-9 1.0]
+    pcall wviewer::open $key
+    pv_ready $key
+    pcall wviewer::set_plot_mode multi $key
+    pcall wviewer::clear_all $key
+    pcall ase::ui::plot_outputs $key
+    update
+    pv_ctrlz $key 0 2
+    set z [pv_byvecs $key]
+    check "PV8 fixture: a transient's two rows, a strip each, zoomed out by two real Ctrl-z presses: one X window, stored on both strips" \
+        [list [pv_vecs $key] [llength [pv_xs $z]] \
+              [expr {[lsort -unique [lmap r [pv_stored $key] {lrange $r 0 1}]] eq [pv_xs $z]}]] {{v(b) v(a)} 1 1}
+    set st [ase::session_state $key]
+    dict set st analyses {{type op enabled 1} {type dc enabled 1 source V1 start 0 stop 5 step 0.125} {type ac enabled 0} {type tran enabled 0 stop 10m step 100u}}
+    ase::session_update $key $st
+    file stat $::pv_raw pv8s
+    pv_dc $::pv_raw 0 5
+    file mtime $::pv_raw [expr {$pv8s(mtime) + 9}]
+    check "PV8 fixture: the re-run is a DC sweep, written where the transient was, over numbers the zoomed window does not reach" \
+        [list [pcall ase::plot_sim_type [ase::session_state $key]] [pcall ase::last_rawfile $key] \
+              [pcall expr {[lindex [pv_xs $z] 0 1] < 1.0}]] [list dc $::pv_raw 1]
+    pcall ase::ui::plot_outputs $key
+    update
+    set a [pv_axes $key]
+    check "PV8 another analysis under Replace after the viewer's own zoom: the transient's stored windows are given to no strip: each is the engine's fit of the sweep, X and Y" \
+        [list [pv_same $key] [pv_vecs $key] \
+              [lmap gi {0 1} {expr {[lrange [lindex $a $gi] 0 1] eq [pv_xfit $key $gi] && [lrange [lindex $a $gi] 2 3] eq [pv_yfit $key $gi]}}] \
+              [expr {[lrange [lindex $a 1] 0 1] eq [pv_n 0 5]}]] {0 {v(b) v(a)} {1 1} 1}
     catch {wviewer::close $key}
     catch {ase::session_close $key}
 }

@@ -610,12 +610,23 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "P4 auto graph untouched (still 2 traces)" [gtr_n $gs4 $agi4] 2
       check "P4 outputs unchanged (D2: traces queued, no output rows)" \
         [ase::state_get [ase::session_state $key] outputs] $outs_snap
-      # D9 stale-but-clean: the dp_finish re-attach (raw clear + re-read)
-      # killed the runtime `raw add` vector id — P6's rebuild must bring it
-      # back (the honest REBUILT witness)
+      # issue 1734 (was D9, "stale-but-clean": this row asserted that the
+      # vector was GONE after the re-attach, which is the empty strip the user
+      # reported on 2026-11-23). The dp_finish re-attach reads the results anew,
+      # which drops the runtime `raw add` vector id, and the viewer makes it
+      # again from the trace's postfix: it is in the data, and it is -i(v1).
       xschem new_schematic switch $vdrw
-      check "P4 re-attach cleared the raw-add vector id (D9)" \
-        [rawq {xschem raw index id}] -1
+      set p4id {}
+      set p4iv {}
+      catch {set p4id [string trim [xschem raw values id]]}
+      catch {set p4iv [string trim [xschem raw values i(v1)]]}
+      set p4bad [expr {[llength $p4id] == 0 || [llength $p4id] != [llength $p4iv]}]
+      foreach a_ $p4id b_ $p4iv {
+        if {$p4bad || ![string is double -strict $a_] || ![string is double -strict $b_]
+            || abs($a_ + $b_) > 1e-9 * (1.0 + abs($b_))} { set p4bad 1 ; break }
+      }
+      check "P4 after the re-attach the raw-add vector id is in the viewer's data again, with the values of -i(v1) (issue 1734)" \
+        [list [expr {[string is integer -strict [rawq {xschem raw index id}]] && [rawq {xschem raw index id}] >= 0}] $p4bad] {1 0}
 
       # --- P5: `~` raises the SAME viewer, adds nothing ----------------------
       check_true "P5 ~ strip button not disabled" \

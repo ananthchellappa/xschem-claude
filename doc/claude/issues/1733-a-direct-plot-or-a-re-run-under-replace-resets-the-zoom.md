@@ -171,7 +171,8 @@ Four findings, each measured first, on the base `e0c68fc79` with this fix on it:
    rebuild's order, and "no plain rebuild left in auto_plot").
 
 Found while measuring this: issue 1734 (a Direct Plot makes an expression trace and a Calculator
-wave stop drawing). It is older than this fix and not changed by it.
+wave stop drawing). It is older than this fix and not changed by it. (Fixed 2026-11-23; that
+issue's file says how.)
 
 ## Third review round (2026-11-22)
 

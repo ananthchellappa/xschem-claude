@@ -1,6 +1,13 @@
 # 1727 — Plot the difference of two nets from the schematic (Alt-Shift-D)
 
-**STAMP:** `v1 claim=fixed tree=73f73e686 stamped=2026-11-23 fix=taken open=3 by=crew-plotdiff`
+**STAMP:** `v1 claim=fixed tree=6e16cf473 stamped=2026-11-23 fix=taken open=3 by=crew-pdfix`
+
+**AMENDED 2026-11-23, after the user's first use on a real bench** (section "After the
+first use" at the foot). Two things this file says below are no longer so: a difference
+is no longer blanked by a Direct Plot, a re-run or a later difference (issue 1734, fixed),
+and its legend is no longer the viewer's name for an expression but the difference
+written out with its two nets. Where the text below says otherwise it is the record of
+the first build.
 
 A feature request, built. Measured on the tree above and with the build on it, on a private
 Xvfb with openbox. Built by the commit that adds this file. Spec:
@@ -61,10 +68,12 @@ for the user's word.
   which, at entry.
 - **C3** (driver's choice, not yet ruled by the user). One shot: the second net plots at
   once and ends the mode, with no ESC. ESC before that cancels, says so, plots nothing.
-- **C4** (driver's choice, not yet ruled by the user). The trace is the one the Calculator
-  plots for the difference text, through its translator and its plot, so the legend, a
-  saved session, a reload and a re-run treat it as any Calculator expression trace. The
-  destination is Direct Plot's, not the Calculator's own setting.
+- **C4** (driver's choice, not yet ruled by the user; its legend half overruled by the user
+  on 2026-11-23). The trace is the one the Calculator plots for the difference text,
+  through its translator and its plot, so a saved session, a reload and a re-run treat it
+  as any Calculator expression trace. Its legend is not the Calculator's: the user ruled
+  that it names the two nets (R-PD6, `ase::diff_label`). The destination is Direct Plot's,
+  not the Calculator's own setting.
 - **C5** (driver's choice, not yet ruled by the user). A click that is not one named net
   gets a sentence saying what was clicked and what to click instead, and the mode stays on
   the same step.
@@ -137,15 +146,15 @@ commented example lines.
   field holding a line, for the transient and for the DC sweep, whose name is the longest.
   The first build's rows compared the whole sentence with the mode's record, which no
   window cuts.
-- **A second load of the same data would blank the first difference.** Direct Plot loads
-  the results again at every plot, and a load drops every vector an expression trace was
-  computed into (issue 1734, open). A difference is an expression trace, so plotting it
-  Direct Plot's way would have made each difference blank the one before. `pd_finish`
-  loads only when the viewer does not already draw from that very result read as that
-  analysis (`ase::ui::pd_shown`); row GS2. **That covers one case only**: a difference
-  that reads another analysis than the viewer shows, or the same analysis after the
-  results file changed, does load, and the differences plotted before it then have no
-  data (rows GU4 and GS3 read their values).
+- **A second load of the same data would have blanked the first difference** when this
+  was built: Direct Plot loads the results again at every plot, and a load dropped every
+  vector an expression trace was computed into (issue 1734, fixed 2026-11-23: the viewer
+  now makes the vectors again after a load). `pd_finish` loads only when the viewer does
+  not already draw from that very result read as that analysis (`ase::ui::pd_shown`); row
+  GS2. Since the fix that spares a read of the file and nothing more: a difference that
+  loads (another analysis than the viewer shows, or the same one after the results file
+  changed) leaves the earlier differences drawing, on the new numbers after a run (row
+  GS3), except while the viewer shows another analysis than theirs (rows GU4, GU5, GV2).
 - **The results file can change between the two clicks.** The analysis is chosen when the
   key is pressed. Written again without that analysis before the second click (a run that
   ends while the mode is up), the file was handed to the viewer all the same: its load
@@ -357,17 +366,21 @@ build had not run that suite.
   (`wviewer::attach_raw`), which results_selection.md §20 records as clearing the other
   results loaded in the viewer (its SVR48, not built). No row of either suite plots a
   difference under a saved view; what is held is the classification above.
-- **A Direct Plot, a re-run, or a difference read from another analysis blanks the
-  difference traces already plotted** (issue 1734, older than this, not repaired here).
-  Each stays in its strip with nothing drawn. A second difference leaves the first one
-  drawing only when it reads the same analysis of the same, unchanged results file (row
-  GS2). The AC or DC-sweep key after Alt-Shift-D, Alt-Shift-D after one of them, a
-  fall-back to another analysis, and Alt-Shift-D after the results changed all load the
-  results and blank the earlier differences (rows GU4 and GS3).
+- **A difference is empty while the viewer shows another analysis than its own.** The AC
+  or DC-sweep key after Alt-Shift-D, Alt-Shift-D after one of them, and a fall-back to
+  another analysis switch the viewer; a difference computed on the analysis it showed
+  stays in its strip with nothing drawn, one sentence says so, and it draws again when
+  the viewer is back (rows GU4, GU5, GV2). A Direct Plot, a re-run and a later difference
+  of the same analysis no longer blank it (issue 1734, fixed 2026-11-23; rows GA2, GJ1,
+  GS3). Under the destination Replace the plot a finished run makes empties the target
+  subwindow, a difference in it included; nothing is said of a trace that plot removes,
+  and one `u` in the viewer brings it back drawing (rows GG1 to GG5).
 - The status line shows the beginning of a sentence where it has no room for all of it.
   In a window narrower than the one nobody sized, or with a wider font, the cut can fall
   inside the request itself; the CIW has every sentence whole.
-- The trace's legend entry is the viewer's name for an expression, not the two nets.
+- The vector a difference is computed into has the viewer's name for an expression; the
+  trace's legend entry, since 2026-11-23, is the difference written out with its two nets
+  (R-PD6).
 - Voltages of nets only: no current, no device pin, no bus difference bit by bit.
 - A net the run did not save is refused; nothing is added to the session's outputs.
 
@@ -380,3 +393,27 @@ build had not run that suite.
    first" on the line?), and the trace in the viewer. No row can see pixels, and every key
    here was a generated key on a hidden display.
 3. One run of the suite on `:0` (Xwayland).
+
+## After the first use (2026-11-23)
+
+The user, the same day, on `sky130_tests_ase/tb_bandgap`: *"the waveform name needs to be
+v(x1.PLUS)-v(x1.MINUS) and not expr1. expr1 is meaningless to the user"*, and: *"Most
+serious - after plotting a difference waveform, if one plots a regular waveform using
+Ctrl-4, then this recently plotted waveform's strip becomes empty."* (A third report, the
+new strip's X axis, is issue 1736: its cause was in the viewer's Replace, not in this
+command. R-PD12, rows GZ2 to GZ4 and GZ6 to GZ8.)
+
+- **The label.** The trace is shown under `v(<second>)-v(<first>)`, each net as Direct Plot
+  names it in that result; AC's is that inside `mag()` (`ase::diff_label`, R-PD6). In that
+  session the first click was x1.PLUS and the second x1.MINUS, so the trace plotted was
+  MINUS minus PLUS and its label is `v(x1.MINUS)-v(x1.PLUS)`. The name was this build's
+  choice and nobody had ruled it; the rows asserted the viewer's name for the trace, so a
+  name nobody would read stayed green. Rows PT6, GI1 to GI6, GI8, GB1.
+- **The empty strip** was issue 1734, which this file recorded as a limit and its rows
+  asserted as behaviour (GS3 and GU4 read the blanked values and passed on them). It is
+  fixed: a difference keeps reading second minus first after a Direct Plot, a second
+  difference and a re-run. Rows GA1 to GA4, GS3, GJ1 to GJ5, GY1 to GY4. What is left of
+  the old behaviour is one case, now said in a sentence: while the viewer shows another
+  analysis than the one a difference was computed on, the difference is empty, and it
+  draws again when the viewer is back (rows GU4, GU5, GV2).
+- **Why the rows missed both** is in `doc/claude/TEST_LESSONS.md` section 1.

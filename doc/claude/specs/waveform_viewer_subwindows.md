@@ -441,11 +441,37 @@ fall-through, like `newtab`.
   subwindow to ONE strip holding no trace, which becomes the target. One undo
   step, not logged (half of a plot gesture). A subwindow that is already one
   empty plain strip is left alone. The pure half is `wviewer::sw_clear_graphs`.
-- **Departure: the survivor keeps a view.** It is made from the subwindow's
-  first AUTO strip (else the named strip) minus traces, markers, highlights and
-  the `auto` marker, so its X/Y range and log axes survive — what
-  `clear_graph_traces` always kept, and what keeps a user's zoom on the run's
-  plot across a Replace re-run.
+- **Departure: the survivor keeps the X half of a view** (amended 2026-11-24,
+  issue 1736). It is made from the subwindow's first AUTO strip (else the named
+  strip) minus traces, markers, highlights and the `auto` marker, and minus its
+  Y window, Y scale and Y unit: its X window and X scale stay, so what is
+  plotted there next comes up in the window the subwindow was showing, fitted
+  in Y. As first built it kept the whole view, "what keeps a user's zoom on the
+  run's plot across a Replace re-run". That was written for a run's plot of
+  one strip. In multi-plot the plot that follows puts its first row into the
+  survivor and the other rows into fresh strips above it, so the first row was
+  drawn in the X and Y window stored for the strip that had held the last row,
+  the other rows were fitted, and the next strip plotted joined the one stored
+  X window (the user's report of 2026-11-23). A Y window belongs to the traces
+  it was set for.
+- **The stored view goes back by traces** (issue 1736). A strip's stored view
+  is what the model holds: the windows the viewer's own zoom and pan, View >
+  Fit, a marker, a split or a trace move wrote there, and its Y scale. The
+  door that refills the subwindow reads them before the clear
+  (`wviewer::sw_stored`) and hands them back once its traces are in
+  (`wviewer::sw_stored_give`, pure half `wviewer::sw_stored_apply`): each strip
+  takes the stored view of the old strip that held its traces, matched as a
+  carried view is (`view_map`), and only while its X is the same thing on the
+  data shown now (`x_same` over `x_resolve`), so a transient's window is never
+  put on another analysis. `ase::ui::auto_plot` does it for `~` and the run-end
+  plot, and there a strip of several that took none carries no stored X: it
+  joins its subwindow's X window (`view_align`). `wviewer::plot_signals` and
+  the Add Trace dialog do it through `wviewer::sw_stored_settle`, which rebuilds
+  when the model changed; there a strip that took none keeps the X the clear
+  left it. So the same signal plotted again with Replace shows what it showed,
+  another signal is fitted in Y in the X window on screen, and a re-run in
+  multi-plot gives every row its own strip's window. Graph > Clear SubWin
+  leaves the one strip with its X window and no Y window.
 - **An empty batch is a no-op for every destination** in `plot_signals`, now
   checked BEFORE `dest_prepare` (it used to make a tab under New Tab).
 - **`wviewer::plot_sites token n dest ?autook?`** is the landing half factored

@@ -78,6 +78,113 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   (`ERR:invalid command name "x"` is four words): test the elements' type before
   unpacking, or a row written to fail on the unchanged product throws there instead.
 
+- **A limitation written into a row is a defect with a fence around it** (issue 1734,
+  found by the user on the first use of Plot Difference). A Direct Plot emptied a
+  difference trace. The documents recorded that as a limit, and rows `GS3` and `GU4` of
+  `test_ase_plot_difference_1727` asserted the empty vector as the expected answer, so
+  the suite was green because the trace was blank. The row that came closest, `GS2`,
+  read a difference after a second difference and passed because that one door had been
+  taught not to load the results: it fenced the work-around, on the only door that had
+  it. No row pressed Ctrl-4 after a difference. When a document says "X stops working
+  after Y", ask whose behaviour that is before a row asserts it. After a plot, drive the
+  other doors a user reaches for next (band `GA`: the real key, its clicks, its ESC), and
+  read the value where the user reads it (the readout bar): "the trace is still in the
+  model" was true while the strip was empty.
+- **A comparand read back from the product agrees with whatever the product chose** (the
+  difference's name, same report). Row `GK7` compared the CIW's *as trace '…'* with the
+  vector name read out of the viewer's own model, so any name passed, `expr1` included,
+  and no row said what a user reads on the legend. The name was a build's choice nobody
+  had ruled. A string a user reads is asserted as a literal the row builds from its own
+  inputs (band `GI`: `v(<second>)-v(<first>)`), on the surface that shows it (the strip's
+  node token, the readout bar), for a name with a hierarchy path and capitals.
+- **No row reads what no row was asked about, and a fresh window is one layout of many**
+  (the new strip's X axis, same report; issue 1736). No row of that suite read an axis of
+  any strip, and every plot landed in the layout a new viewer has: one subwindow,
+  single-plot, nothing split, no strip made by a run's own plot, on a results file of a
+  few points that the suite writes. The user's window, on the `tb_bandgap` bench, had
+  strips from a run's plot in multi-plot. The closest row, `GK9`, asked which analysis
+  the viewer shows. A plot gesture's rows compare the new strip's axes with its
+  neighbours' in at least one layout a user makes (band `GZ`), and at least one band runs
+  on a file a simulator wrote (`test_wave_expr_reattach_1734`, group `PV7` of
+  `test_ase_plot_outputs`).
+- **A zoom has two homes, and the view fixtures knew one** (same defect: its cause was
+  not in Plot Difference but in the viewer's Replace). The engine's zoom lives on the
+  rect; the viewer's own zoom, View > Fit and a marker write the window into the model.
+  The bands that own the kept view (`PV` of `test_ase_plot_outputs`, `GZ` and `GV` of
+  `test_wave_grid`) put their zoom on the rects only, by a fixture rule that says so
+  ("the model is left auto"), so a stored window never met `~` or a run in multi-plot.
+  The one row where a stored zoom met a Replace, `GV14` of `test_wave_grid`, had one
+  strip in its subwindow and read its X only. Drive a zoom through each door that makes
+  one, and read every strip, X and Y.
+- **A rule written for one member is read again when a later feature gives it several**
+  (same defect). "The strip a Replace leaves keeps the view" was written when a run's
+  plot was one strip, and rows `SWD4` and `PO16d` asserted it on a fixture where that
+  strip was the only one that came back. Multi-plot gave a run one strip per row, and
+  its rows (`PO14`, `PR11`) read which trace lands in which strip and never a window: so
+  the first row sat in the window stored for the last row's strip under two green
+  suites. When a feature multiplies what a rule speaks of, the rule's rows are run on
+  the new shape.
+- **Traces of one scale cannot show a strip drawn in another's window** (same defect).
+  The view fixtures' vectors all run over one range, so a strip in another strip's Y
+  window still held its trace, and "the Y is some strip's fit" passed. Give the rows
+  traces whose ranges differ by a large factor and assert that each strip's Y window
+  holds its own trace's smallest and largest value, computed from the file's numbers
+  (`PV7`, `GZ3`), not only that windows are equal to one another.
+- **A screenshot is evidence about the door.** The session could not be replayed: the
+  doors that made the picture write no action-log line. The picture named one all the
+  same: the sweep took 0.8^4 of the X axis, which is four steps of the viewer's
+  zoom-out, and the bottom strip's Y scale was the top strip's. Measure the picture
+  before guessing a sequence from the log. And reconcile every picture of a report, not
+  the first: the recipe that gave the first screenshot did not give the second without
+  one more unlogged door (View > Fit), and the order of the strips in both said which
+  door had been pressed before either (issue 1736).
+- **A sentence about a thing is checked after the gesture that said it has finished**
+  (the review of issue 1734's repair). "Trace '…' is empty … it draws again when …" was
+  asserted after a Direct Plot and after a run's plot under Append, where the trace
+  stays. Under Replace, the session's default, the same plot removes the trace a moment
+  after the load has said the sentence, and no row pressed `~` with a trace that could
+  not be evaluated. A row for a message drives every door that can say it, under the
+  default settings first, and asserts with the sentence that its subject is still there
+  (band `GG` of `test_ase_plot_difference_1727`: the sentence count and the traces left,
+  per destination, per subwindow, per tab).
+- **A predicate that asks the disk answers for the disk as it is now.** "A database whose
+  path is no file exists in memory only" kept a Calculator table, and equally a
+  file-read database whose file a run had deleted. Its rows handed the load their own
+  keep list or held tables only, so the predicate never met the member it had to refuse.
+  This is the "fixture of one kind" entry above again: row `RK6` of
+  `test_wave_expr_reattach_1734` gives the predicate one database of each kind in one
+  model, and `RV1` deletes the file under a live trace.
+- **Every part of a repair has a break that turns a row red, or it has no row.** The
+  review removed one line of the repair at a time and two came out with every suite
+  green: the records dropped before a restore, and the walk over every tab where the
+  shown tab would do. Both were decisions the crew had written down. After a repair,
+  list each line that changes behaviour and build the break for each; a sabotage list
+  that covers the bands and not the parts leaves this open. The fixtures said why: every
+  restore row closed the window first, which drops the records anyway, and every
+  Calculator-wave row had one tab.
+- **Two orders that agree on the fixture do not say which one the product follows.** Two
+  traces computed into one vector draw the expression computed last. A load that took
+  "the first in the strips" was wrong, and "the last in the strips" passes a row whose
+  later trace also stands later. Give the pair both arrangements (rows `RC4` and `RC5`).
+- **A row that fences an economy needs the row where the cheap test and the thing it
+  stands for part ways** (the second review of issue 1734's repair). Undo evaluated "the
+  vectors the data lacks", and row `RU3` fenced exactly that: nothing else is computed.
+  "The data lists the name" stood for "the data holds this trace's vector", and the two
+  part ways once a name is handed out again: the trace leaves, a load makes no vector
+  for it, a later trace is computed into the free name, undo brings the first one back.
+  Its label then stood over the later trace's numbers. `RU3`'s fixture could not show
+  it, because every vector there had one owner from start to end. For a skip of the form
+  "it is already there", write three more rows beside the fence: the same name with
+  other content (`RS1`, `RU5`, `GG14`), what was computed from it (`RS3`, `RU7`), and
+  the case where it cannot be rebuilt and must not be left standing (`RS4`, `GG15`). And
+  ask of every per-name record what it says once the name has had two owners: the
+  analysis on record for the vector was the later trace's (`RS5`, `GG16`).
+- **A row added to hold a second direction is red on the unchanged product only if it
+  holds the first too.** "After redo the later trace reads its own nets" is green on the
+  product that never evaluated at undo, because the vector was never touched. Put the
+  undo reading and the redo reading in one row (`GG14`, `GG15`), or the redo row passes
+  red-first's test of nothing.
+
 ## 2. Text scans, names and Tcl parse traps
 
 - **Never put a comment between two `switch` patterns.** The trailing argument is parsed
@@ -204,6 +311,12 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   key, and should read the path back.
 - **`update idletasks` runs no timers**, so the suite watchdog cannot fire inside a loop
   of it.
+- **A generated key with a capital keysym and no Shift in `-state` ran the small
+  letter's binding** (measured 2026-11-24 on the viewer canvas): `event generate $w
+  <KeyPress> -keysym U` ran the viewer's undo, which is bound to `u`, and with `-state 1`
+  it ran the redo, bound to `U`. Pass the Shift state with a capital keysym, and have a
+  row that presses a shifted key read something only that key changes (row `RU2` of
+  `test_wave_expr_reattach_1734` reads which side of the history a step moved to).
 - **A synthetic double click with a second press (`4, 5, 4, -3, 5`) on a free device PIN
   poisons every later row** under `persistent_command`: the abort drops the armed
   wire-draw but the wire command stays remembered, and the next press anywhere starts a

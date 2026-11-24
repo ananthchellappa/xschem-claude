@@ -1204,9 +1204,14 @@ They should not influence the input to the simulator."* ADE-L is the floor
     to that default is stored as `{}` too, so choosing it back leaves a saved session clean.
     Any other value is `append`, `replace`, `newsubwin` or `newtab` (`ase::plot_dest_of`;
     anything unknown reads the default). No committed `.state` file changes.
-  - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step; the
-    survivor keeps the run's strip view, so a zoom survives a re-run), then R-OUT14's auto
-    strips. A strip that comes back with the traces it had takes the view it showed (issue
+  - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step),
+    then R-OUT14's auto strips. A window the viewer's own zoom, View > Fit or a marker stored
+    on a strip goes back to the rows that strip held, by traces (`wviewer::sw_stored`,
+    `wviewer::sw_stored_give`; issue 1736): in multi-plot each row finds its own strip's
+    window, never the window of the strip the clear left in place, and a row that is new is
+    fitted in Y and joins the subwindow's X window
+    (`doc/claude/specs/waveform_viewer_subwindows.md` section 15).
+    A strip that comes back with the traces it had takes the view it showed (issue
     1733, user ruling 2026-11-22: *"yes, re-run which then plots in Replace mode should retain
     zoom level, not reset it"*): as shown for the same data, the axes the user moved for new
     data (`doc/claude/specs/waveform_viewer.md`, "Keeping the view across a rebuild", R1-R3),
@@ -3268,20 +3273,54 @@ its rows.
 - **R-PD6 — the trace.** The text `ase::diff_text` writes goes through the Calculator's
   translator (`calc::ix_route`) and the Calculator's plot (`calc::plot_in_token`): for the
   transient and the DC sweep it is the second net's voltage function minus the first's
-  (`vt`, `vs`). So the trace is an expression trace like any the Calculator plots: named by
-  the viewer, kept in a saved session, and re-read as those are. Exactly one trace is
+  (`vt`, `vs`). So the trace is an expression trace like any the Calculator plots: kept
+  in a saved session, and evaluated again as those are. Exactly one trace is
   added, at Direct Plot's destination (`ase::ui::dp_dest`: appended, whatever the session's
   or the Calculator's destination setting says). Before the plot the viewer is opened or
   raised and made to show the analysis that was read (`wviewer::attach_raw`) — unless it
   already draws from that very result read as that analysis (`ase::ui::pd_shown`), in which
-  case nothing is loaded again and the traces already there keep their data. That is the
-  only case in which a second difference leaves the first one drawing. A difference that
-  reads another analysis than the viewer shows (the AC or DC-sweep key after Alt-Shift-D,
-  Alt-Shift-D after one of them, a fall-back), or the same analysis after the results file
-  changed, loads the results, and every expression trace plotted before it, an earlier
-  difference among them, then has no data and stays in its strip with nothing drawn
-  (issue 1734). Rows PT1,
-  PT3, PT4, GK4 to GK7, GK9, GK10, GS1 to GS3, GU4, GV1.
+  case the file is not read again.
+  **The label** (the user, 2026-11-23: *"the waveform name needs to be
+  v(x1.PLUS)-v(x1.MINUS) and not expr1. expr1 is meaningless to the user"*). The trace is
+  shown under the difference written out with its two nets, `ase::diff_label`:
+  `v(<second>)-v(<first>)`, each net spelled exactly as Direct Plot names that net in that
+  result (the hierarchy path, and the session's letter case: `v(x1.MINUS)`), with no
+  space. The DC sweep takes the same form; AC, whose trace is the magnitude of the complex
+  difference (R-PD7), is `mag(v(<second>)-v(<first>))`. It is what the viewer's model
+  holds as the trace's name, what the strip's legend, the readout bar, the trace menu, the
+  delete dialog and the signal browser's lower pane show, and what the CIW line *plotted
+  … as trace '…'* says. The vector the trace is computed into keeps the viewer's own legal
+  name; the label is display text (waveform_viewer.md, the Alt-Shift-D section, has the
+  mechanism). The same difference plotted twice is two traces under one label.
+  **After a load of results** (waveform_viewer.md, "Expression traces and Calculator waves
+  across a load of results", issue 1734) a difference keeps drawing: a Direct Plot, a
+  second difference and a re-run each leave it reading second minus first on the data the
+  viewer then shows, the new run's numbers after a run. When the new result lacks one of
+  its two nets the trace stays in its strip, empty, and one sentence names the trace, the
+  net and what to do; it draws again when the net is back. While the viewer shows another
+  analysis than the one a difference was computed on (the AC or DC-sweep key after
+  Alt-Shift-D, Alt-Shift-D after one of them, a fall-back) that difference is empty, one
+  sentence says so, and it draws again when the viewer is back on its analysis: the
+  transient's difference is never drawn from AC columns. A viewer state that holds a
+  difference, saved and restored, or a session closed and opened again, draws it again
+  under its label, in every tab; a state loaded over an open viewer does too, whatever
+  that viewer had computed under the same vector name; and a restored difference of the
+  AC analysis in a viewer that shows the transient is empty with the sentence for
+  another analysis, never the one that says to save a net.
+  **The plot a run makes under Replace** removes a difference that stands in the target
+  subwindow, as it removes every trace there (R-OUT15). Nothing is said of a trace that
+  plot removes, nor of a row's earlier trace that the plot draws again: the sentences
+  above are said once the rows are in, of a trace that stays and is still empty, so a
+  difference in another subwindow, or in a tab that is not shown, is told of, and so is
+  one under Append. One `u` in the viewer brings the removed traces back, and a difference among
+  them is evaluated on the data the viewer then has; if it cannot be, it is told of
+  then. That holds when a later difference was computed into the name of its vector in
+  the meantime, which the plot's load had left free: the difference that is back reads
+  its own two nets under its own label, or is empty and told of, and never shows the
+  later one's numbers; `U` puts the later one back the same way (waveform_viewer.md,
+  "Undo and redo evaluate again"). Rows PT1,
+  PT3, PT4, PT6, GK4 to GK7, GK9, GK10, GS1 to GS3, GA1 to GA4, GB1, GB2, GJ1 to GJ5, GJ7,
+  GI1 to GI6, GI8, GY1 to GY4, GU4, GU5, GV1, GV2, GT10, GG1 to GG10, GG12 to GG16, GYA1 to GYA4.
 - **R-PD7 — AC is the complex difference.** An AC database holds a node as a magnitude
   column and a phase column, and the expression language has no complex type: the
   Calculator's translation of `vf(b) - vf(a)` is the difference of the two magnitudes.
@@ -3332,10 +3371,26 @@ its rows.
   reading raises is said and leaves the mode on its step. And before anything is armed:
   an xschem whose Calculator did not load says which part is missing and where its file
   is looked for. Rows PE6, GT1 to GT8.
-- **Limits.** The trace is an expression, and an expression trace stops drawing when a
-  Direct Plot, a re-run, or a difference read from another analysis than the viewer shows
-  loads the results again (issue 1734, older than this and not repaired here; R-PD6).
-  Nothing is coloured on the schematic for the two nets. Nothing is added
+- **R-PD12 — the strip's X axis** (the user, 2026-11-23: *"the x-axis extent for this new
+  strip … is wrong - it's from something negative to more than 400 us while the rest of the
+  strips are using 0 to 200 us"*). The difference's strip has the X extent the other strips
+  of its subwindow have. A new strip joins the X window its subwindow shows
+  (`wviewer::view_align`, the rule Direct Plot's strip follows), and that is unchanged. The
+  report's picture is a subwindow whose strips did not agree, and one sequence gives that
+  picture on the product before the repair: after the viewer's own zoom, `~` or a run
+  under Replace in multi-plot drew the first Outputs row in the window stored for the
+  last row's strip and fitted the other rows, and the difference's strip joined the one
+  stored window (issue 1736; R-OUT15's Replace, above). Whether the user's session went
+  that way is not shown: the doors of that sequence write no line in the action log, and
+  issue 1736 keeps the question open. After the viewer's own zoom or View > Fit, `~` and
+  a run now leave every strip on one X window and each on its own Y window, and a
+  difference plotted next is on that X window.
+  Rows GZ2 to GZ4, GZ6 to GZ8.
+- **Limits.** Under the destination Replace the plot a finished run makes empties the
+  target subwindow, a difference in it included, as it empties every trace there
+  (R-OUT15); one `u` in the viewer brings it back (R-PD6). A difference is empty while
+  the viewer shows another analysis than its own
+  (R-PD6). Nothing is coloured on the schematic for the two nets. Nothing is added
   to the session's outputs, so a net the run did not save is refused, not saved.
 
 ### Menu tree (v2)

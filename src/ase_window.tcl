@@ -6094,9 +6094,11 @@ proc ase::ui::direct_plot {key {do_raise 1}} {
 # (calc::pick_classify, calc::pick_what) and of Direct Plot's own net rule
 # (sod_net_at, sod_bits), and the name is Direct Plot's (sod_qualify, sod_expr).
 # The trace is the Calculator's: its translator (calc::ix_route) and its plot
-# (calc::plot_in_token), so the legend, a saved session and a re-run treat it
-# as any expression the Calculator plotted. The destination is Direct Plot's
-# (dp_dest).
+# (calc::plot_in_token), so a saved session and a re-run treat it as any
+# expression the Calculator plotted. Its name alone is this gesture's: the
+# difference written out with its two nets (ase::diff_label), where the
+# Calculator's own plot is named by the viewer. The destination is Direct
+# Plot's (dp_dest).
 #
 # THE ANALYSIS IS DECIDED AT ENTRY, FROM THE SESSION'S RESULTS FILE, and what
 # the waveform viewer shows plays no part (the user's ruling): pd_finish makes
@@ -6333,9 +6335,9 @@ proc ase::ui::pd_end {key diff} {
 # record and rule answer (wviewer::attach_record, wviewer::attach_is_same).
 #
 # It is asked so that a difference is not plotted through a second load of the
-# data the viewer already has: a load drops every vector an expression trace
-# was computed into (issue 1734), so each difference would blank the one
-# before it.
+# data the viewer already has. A load is no longer what it cost when this was
+# written (issue 1734: the viewer makes its expression vectors again after
+# one); what is spared is reading the results file once more per difference.
 proc ase::ui::pd_shown {key rf an vcds} {
   if {[catch {wviewer::enter_ctx $key} t] || ![lindex $t 0]} { return 0 }
   set cur {}
@@ -6358,7 +6360,11 @@ proc ase::ui::pd_shown {key rf an vcds} {
 #      (pd_shown). What it showed before plays no part in what is read;
 #   4. the text (ase::diff_text) goes through the Calculator's translator and
 #      the Calculator's plot, with Direct Plot's destination. Whatever those
-#      refuse is said with their own sentence.
+#      refuse is said with their own sentence;
+#   5. the trace is shown under the difference written out with its two nets
+#      (ase::diff_label), which is armed for the viewer before the plot and
+#      taken back after it (wviewer::expr_label_arm), and the CIW says what
+#      was plotted under that label.
 # Every refusal names the two nets, says what stopped the plot and what to do,
 # and plots nothing.
 proc ase::ui::pd_finish {key an first second} {
@@ -6395,12 +6401,16 @@ proc ase::ui::pd_finish {key an first second} {
     catch {::ase::echo "$h — $what not plotted: [dict get $r msg]" error}
     return 0
   }
-  set d [calc::plot_in_token $key [dict get $r rpn] [ase::ui::dp_dest]]
+  set label [ase::diff_label $an $first $second]
+  wviewer::expr_label_arm $key $label
+  set code [catch {calc::plot_in_token $key [dict get $r rpn] [ase::ui::dp_dest]} d]
+  wviewer::expr_label_take $key
+  if {$code} { return -code error $d }
   if {![dict get $d ok]} {
     catch {::ase::echo "$h — $what not plotted: [dict get $d msg]" error}
     return 0
   }
-  catch {::ase::echo "$h — plotted $what as trace '[dict get $d name]'"}
+  catch {::ase::echo "$h — plotted $what as trace '$label'"}
   return 1
 }
 
@@ -17296,9 +17306,37 @@ proc ase::ui::auto_plot {key} {
     catch {::ase::echo "ase: no raw file from the run — nothing to auto-plot"}
     return
   }
+  # THE STORED VIEWS OF THE STRIPS REPLACE IS ABOUT TO EMPTY (user report
+  # 2026-11-23: after `~` in a multi-plot viewer the first row was drawn in the
+  # window stored for the last row's strip, and a strip plotted next joined
+  # that window). The viewer's own zoom, View > Fit and a marker store a
+  # window on every strip, in the model; here they are read with the data they
+  # were stored on, before the load below, and handed back by traces once the
+  # rows are in (wviewer::sw_stored, wviewer::sw_stored_give). The view on the
+  # rects is `view`, further down, as before.
+  set had {}
+  if {$dest eq {replace}} { set had [wviewer::sw_stored $key] }
+  # issue 1734: THE LOAD BELOW IS QUIET, AND LEAVES OUT THE STRIPS REPLACE IS
+  # ABOUT TO EMPTY. A load makes the viewer's expression traces again and says
+  # so when one cannot be evaluated ("is empty ... draws again when ..."). Said
+  # by this load, that sentence was false of a trace this same press removes
+  # (Replace) and of a trace whose vector this press computes again (a named
+  # row plotted under Append into the vector of the trace it left last time).
+  # So the load says nothing, and what is still empty once the rows are in is
+  # told of then (wviewer::expr_settle, after the rows). The traces of the
+  # strips about to be emptied are not evaluated at all: their vectors would
+  # be thrown away with their names left taken, and a row with no name of its
+  # own would be named one further at every run. The strips are the target
+  # subwindow's, which is what the clear below empties.
+  set leave {}
+  if {$dest eq {replace}} {
+    lassign [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] \
+               [wviewer::target_index $key]] lf ll
+    for {set li $lf} {$li <= $ll} {incr li} { lappend leave $li }
+  }
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
-  wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]
+  wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key] $leave 1
   # ISSUE 1733 (user ruling 2026-11-22: "yes, re-run which then plots in
   # Replace mode should retain zoom level, not reset it"). attach_raw has just
   # kept each strip's view by the same-data or the new-data rule; this is that
@@ -17362,12 +17400,20 @@ proc ase::ui::auto_plot {key} {
       catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
     }
   }
+  # issue 1734: the rows are in. The expression traces the quiet load above
+  # could not evaluate and that are still there, still empty, are told of now;
+  # one that names a vector a row has just made is evaluated, and the strips
+  # are rebuilt as they show to draw it.
+  if {[wviewer::expr_settle $key]} { wviewer::regenerate $key [wviewer::live_axes $key] }
   # issue 1733: the rows are in, so the target subwindow's strips take the view
   # read above, from that subwindow's old strips only; every other strip keeps
-  # what it shows
-  if {[llength $view]} {
-    set gi0 [lindex $gis 0]
-    if {![string is integer -strict $gi0]} { set gi0 [wviewer::target_index $key] }
+  # what it shows. Before that rebuild the model's half: each strip that got
+  # back rows it held takes the stored view it had, and a strip of several
+  # that took none carries no stored X (it joins its subwindow's window).
+  set gi0 [lindex $gis 0]
+  if {![string is integer -strict $gi0]} { set gi0 [wviewer::target_index $key] }
+  set gave [wviewer::sw_stored_give $key $had $gi0 1]
+  if {[llength $view] || $gave} {
     set nsw [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] $gi0]
     wviewer::regenerate $key [wviewer::view_keep_subwin $key $view $vsw $nsw]
   }

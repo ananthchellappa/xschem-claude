@@ -134,8 +134,10 @@ check "SP18 the marker migrated with node 1, remapped to 0" \
   [wviewer::dget [lindex $gs 2] markers {}] {9 0 0 3 0.5 0.25 0 0 0}
 check "SP19 the source has no marker left" \
   [dict exists [lindex $gs 1] markers] 0
-check "SP20 every new strip's ranges are blank (regenerate re-autozooms)" \
-  [list [wviewer::dget [lindex $gs 2] x1 {}] [wviewer::dget [lindex $gs 3] y2 {}]] {{} {}}
+check "SP20 every new strip takes the X window of the strip that was split, and its Y range is blank (regenerate fits it)" \
+  [list [wviewer::dget [lindex $gs 2] x1 {}] [wviewer::dget [lindex $gs 2] x2 {}] \
+        [wviewer::dget [lindex $gs 3] x1 {}] [wviewer::dget [lindex $gs 3] x2 {}] \
+        [wviewer::dget [lindex $gs 2] y1 {}] [wviewer::dget [lindex $gs 3] y2 {}]] {0 1 0 1 {} {}}
 check "SP21 the SOURCE keeps its own ranges" \
   [list [wviewer::dget [lindex $gs 1] x1 {}] [wviewer::dget [lindex $gs 1] x2 {}]] {0 1}
 

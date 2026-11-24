@@ -25973,7 +25973,18 @@ proc ase::raw_content_verdict {path} {
   return $v
 }
 
-proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
+# `keep` (issue 1734) is the databases a load must NOT drop, as `{path type}`
+# pairs spelled as `xschem raw info` spells them. A load reads the result anew
+# and drops every other database, because a database read from a file would
+# otherwise go on showing an earlier run. A database that was never read from a
+# file cannot be read again: a Calculator wave is a table made in memory
+# (calc::wave_dest), and dropping it left its trace with nothing to draw. The
+# viewer names the Calculator's tables its traces still draw from, and never a
+# database that was read from a file (wviewer::mem_dbs). A pair
+# that names no database changes nothing. With something kept the result just
+# read is no longer the only slot, so it is made current by its own slot, and
+# `current` in the answer is that slot (0 when nothing is kept, as before).
+proc ase::attach_dbs {rawfile sim_type {vcdfiles {}} {keep {}}} {
   if {$rawfile eq {} || ![file isfile $rawfile]} {
     return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
   }
@@ -26019,14 +26030,25 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
   if {!$ok} {
     return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
   }
-  # drop everything that is not the DB just read, HIGHEST INDEX FIRST: `raw
-  # clear <n>` compacts the array, so removing a larger index never disturbs a
-  # smaller one.
+  # drop everything that is not the DB just read and is not to be kept,
+  # HIGHEST INDEX FIRST: `raw clear <n>` compacts the array, so removing a
+  # larger index never disturbs a smaller one. `acur` is the slot the DB just
+  # read ends in: its own, less one for every slot dropped below it.
   set cur [ase::raw_current]
+  set acur $cur
+  set named [dict create]
+  if {[llength $keep]} {
+    foreach s [ase::raw_slots] { dict set named [lindex $s 0] [lrange $s 1 2] }
+  }
   foreach i [lsort -integer -decreasing [ase::raw_indices]] {
     if {$i == $cur} { continue }
+    if {[dict exists $named $i] && [lsearch -exact $keep [dict get $named $i]] >= 0} { continue }
     catch {xschem raw clear $i}
+    if {$i < $cur} { incr acur -1 }
   }
+  # `raw clear <n>` leaves the FIRST slot current, which is the DB just read
+  # only when nothing below it was kept
+  if {$acur != [ase::raw_current]} { catch {xschem raw switch $acur} }
   ## --- 1465 (Stage 12): THE RUN END, HANDED TO EVERY DIGITAL DATABASE ------
   ## A VCD's traces stop at its last `#t` (vcd_read() DECISION 2), and ngspice's
   ## `eprvcd` ends its file on the LAST VALUE CHANGE -- so `dout`, which goes to 1
@@ -26061,12 +26083,28 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}}} {
     }
     lappend got $v
   }
-  # the analog DB is slot 0: it is the only survivor of the loop above, and
-  # `raw clear <n>` leaves extra_idx at 0 (extra_rawfile()'s what == 3 arm).
+  # the analog DB is slot `acur`: slot 0 when it is the only survivor of the
+  # loop above (`raw clear <n>` leaves extra_idx at 0, extra_rawfile()'s
+  # what == 3 arm), and behind the kept databases that stood below it otherwise.
+  # Every VCD read made itself current, so the analog DB is made current again.
   # ⚠ RE-RESOLVED BY SYMBOL 2026-10-04: the line range that stood here had
   # rotted onto raw_restamp_design(), a different function entirely.
-  if {[llength $got]} { catch {xschem raw switch 0} }
-  return [dict create n [expr {1 + [llength $got]}] current 0 vcds $got skipped $skipped]
+  if {[llength $got]} { catch {xschem raw switch $acur} }
+  return [dict create n [expr {1 + [llength $got]}] current $acur vcds $got skipped $skipped]
+}
+
+# The registry's slots as `{index path type}`, in slot order, read off one
+# `xschem raw info` (the type is the last word of a line and a path may hold
+# spaces); {} when nothing is loaded.
+proc ase::raw_slots {} {
+  if {[catch {xschem raw info} txt] || $txt eq {}} { return {} }
+  set out {}
+  foreach line [split [string trimright $txt "\n"] "\n"] {
+    if {[regexp {^[ \t]*([0-9]+)[ \t]+(.+)[ \t]+(\S+)[ \t]*$} $line -> i nm ty]} {
+      lappend out [list $i [string trim $nm] $ty]
+    }
+  }
+  return $out
 }
 
 # The registry slot indices, and the current one; {} / -1 when nothing is
@@ -27591,6 +27629,22 @@ proc ase::diff_text {an first second} {
   set pa "ph([ase::diff_net $first])"
   set pb "ph([ase::diff_net $second])"
   return "$b $pb re() $a $pa re() - dup() * $b $pb im() $a $pa im() - dup() * + sqrt()"
+}
+
+# THE LABEL A DIFFERENCE IS SHOWN UNDER (the user, 2026-11-23: "the waveform
+# name needs to be v(x1.PLUS)-v(x1.MINUS) and not expr1. expr1 is meaningless
+# to the user"). PURE. The second pick, a minus sign, the first pick, with no
+# space: each pick is `v(<net>)` exactly as Direct Plot spells that net (the
+# hierarchy path and the session's letter case), so the label reads as the two
+# traces a Direct Plot of the same nets would show. The transient and the DC
+# sweep take that form. AC, whose trace is the magnitude of the complex
+# difference (ase::diff_text), wraps it in mag(). The label is display text:
+# the vector the trace is computed into keeps the viewer's own legal name
+# (wviewer::add_trace).
+proc ase::diff_label {an first second} {
+  set d "$second-$first"
+  if {$an eq {ac}} { return "mag($d)" }
+  return $d
 }
 
 # Alt-Shift-D in the Cadence profile (src/cadence_style_rc): plot the

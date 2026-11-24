@@ -4917,7 +4917,9 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   checks (pointer + bands, then every `NUMBERING.md` and issues directory under `~/dev/*`, every
   other clone's, their worktrees and `~/gc*`); no clone held 1733 or 1734 as an issue.
 - **1734**: A Direct Plot makes an expression trace and a Calculator wave stop drawing (found while
-  measuring 1733; older than it; not fixed). Minted with 1733, same checks.
+  measuring 1733; older than it; not fixed then). Minted with 1733, same checks. Fixed
+  2026-11-23 by the change that amends its issue file, after the user met it with the
+  difference of two nets (1727).
 - **1735** — skipped here for the reason 1728–1732 are: the same other clone used it the same day.
   Do not "reclaim" it.
 - 1727 is still free here; after it, take 1736 (1728 to 1735 are taken).
@@ -4935,7 +4937,18 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   filed under it: whichever clone mints next takes it, and the minting check's grep of
   every clone is what tells the other to skip it.
 
-**The next free number is 1736.**
+~~**The next free number is 1736.**~~
+- **1736**: after the viewer's own zoom, a Replace in multi-plot draws the first Outputs
+  row in the window stored for another strip, and the next strip plotted joins it (the
+  user's report of 2026-11-23 on the X axis of a difference's strip). Fixed by the change
+  that adds its issue file. Minted 2026-11-24 by crew xaxis in the clone `~/ob22` after
+  both checks (pointer + bands, then every `NUMBERING.md` and issues directory under
+  `~/dev/*` and `~/private/*`, and the clones `~/g*`, `~/ob*` and `~/pp21`). No clone held
+  1736 as an issue: every other `NUMBERING.md` that contains the number names it as its
+  own next free number, `~/private/xschem-private`'s among them, so that clone's next
+  mint has to skip it.
+
+**The next free number is 1737.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

@@ -125,7 +125,9 @@ DC sweep, it reads that one and says so. A click that is not one net of the
 results &#8212; empty space, a device, a bus, the first net again, a net the run
 did not save &#8212; plots nothing and says what to click instead. The two nets
 may be on different levels of the hierarchy. For AC the trace is the magnitude
-of the difference of the two (complex) voltages. The trace is appended to the
+of the difference of the two (complex) voltages. The legend names the trace by
+its two nets, <code>v(&lt;second&gt;)-v(&lt;first&gt;)</code>, inside
+<code>mag()</code> for AC. The trace is appended to the
 target subwindow, per its plot mode, as a Direct Plot pick is: neither ASE-L's
 destination drop-down nor the Calculator's is read
 (<a href="#browser-menu">§11.3</a>). Opens the viewer if it is not
@@ -142,14 +144,21 @@ word after the command (<code>tran</code>, <code>ac</code>, <code>dc</code>) is
 the analysis the key reads.</p>
 
 <div class="note">
-The difference is an <i>expression</i> trace, and an expression trace stops
-drawing when the results are loaded again: by a Direct Plot, by a re-run, or
-by a Plot Difference that reads another analysis than this window is showing
-(for example the AC or DC-sweep key after <kbd>Alt-Shift-D</kbd>, or
-<kbd>Alt-Shift-D</kbd> after one of them). The window is switched to that
-analysis, and the earlier trace stays in its strip with nothing drawn; plot
-that difference again. A second Plot Difference leaves the first one drawing
-only when it reads the same analysis of the same, unchanged results.
+The difference is an <i>expression</i> trace, and it keeps drawing when the
+results are loaded again: after a Direct Plot, after another Plot Difference,
+and after a re-run, when it shows the new run's numbers
+(<a href="#traces">&sect;3</a>). Two things leave it in its strip with nothing
+drawn, and the CIW then names the trace and says what to do. A Plot Difference
+that reads another analysis than this window is showing (the AC or DC-sweep
+key after <kbd>Alt-Shift-D</kbd>, or <kbd>Alt-Shift-D</kbd> after one of them)
+switches the window to that analysis; the earlier difference draws again when
+the window is back on its own analysis. A run that no longer saves one of the
+two nets leaves it empty until the net is saved again. The plot that
+<kbd>~</kbd> or a finished run makes is another matter: under ASE-L's default
+destination, <b>Replace</b>, it empties the target subwindow, and a difference
+standing there goes with the other traces
+(<a href="#browser-menu">&sect;11.3</a>). One <kbd>u</kbd> in this window brings
+them back; choose <b>Append</b> to keep them across runs.
 </div>
 
 <div class="note">
@@ -236,12 +245,19 @@ is materialised as a <b>new raw vector</b> named after your <b>Name</b> (or
 <code>expr&lt;N&gt;</code>) and then plots like any other variable.</p>
 
 <div class="note">
-<b>The re-run caveat.</b> Each run overwrites the session's <code>.raw</code> file
-and the viewer re-attaches it. Ordinary traces simply show fresh data. An
-<b>RPN expression trace</b> loses its computed vector on the re-attach and draws
-<b>empty</b> after the next run — the vector it referred to no longer exists.
-Re-add the trace, or save the state and load it again (the reload
-re-materialises every expression trace).
+<b>After a re-run or a Direct Plot.</b> Each run overwrites the session's
+<code>.raw</code> file and the viewer re-attaches it; a Direct Plot re-attaches
+it too. Ordinary traces simply show fresh data, and so does an <b>RPN expression
+trace</b>: the viewer evaluates it again on the data it has just read, in every
+tab. An expression that names a signal the new result does not hold, or that was
+computed on another analysis than the window now shows, stays in its strip and
+draws <b>nothing</b>, and one line in the CIW names the trace and says what to
+do; it draws again when the data can answer it. A wave the Calculator plotted
+against its own X stays as it was made. A trace that <kbd>u</kbd> brings back
+after a re-run or a Direct Plot is evaluated on the data the window then has.
+The plot ASE-L makes under its <b>Replace</b> destination empties the target
+subwindow, expression traces included
+(<a href="#browser-menu">&sect;11.3</a>).
 </div>
 
 <h2 id="reading">4. Reading values off the plot</h2>
@@ -467,9 +483,9 @@ own. <b>Save State</b> in the ASE window stores, per session: whether the viewer
 was open, the strips and their traces (expressions, names, colours, axis ranges,
 log flags and markers), the Shared-X flag, the plot mode and the target strip.</p>
 <p>Loading a state whose viewer was open brings the window back, re-attaches the
-raw file if it is still on disk, and <b>re-materialises the RPN expression
-traces</b> — which is why a save/load cycle is a working repair for the empty
-expression traces described in <a href="#traces">§3</a>.</p>
+raw file if it is still on disk, and <b>evaluates the RPN expression traces
+again</b>, in every tab, as a re-run does (<a href="#traces">§3</a>). One that
+the data cannot answer stays in its strip, empty, and the CIW says why.</p>
 <p>Not saved: the cursors, the grid on/off state, the undo history, and the raw
 samples themselves (only the path to the <code>.raw</code> file is kept).</p>
 
@@ -560,7 +576,7 @@ Shared X, cursors and the loaded raw are kept.</td>
 <td><span class="menu">Graph &gt; Clear All</span></td></tr>
 <tr data-seq="Control-Shift-Key-D" data-menu="Clear SubWin" data-accel="Ctrl+Shift+D">
 <td><kbd>Ctrl-Shift-D</kbd></td>
-<td>Clear SubWin — empty the target subwindow to one strip, keeping its zoom.
+<td>Clear SubWin — empty the target subwindow to one strip, keeping its X zoom.
 The other subwindows are untouched. One <kbd>u</kbd> brings the plots back.</td>
 <td class="where">target subwindow</td>
 <td><span class="menu">Graph &gt; Clear SubWin</span></td></tr>
@@ -1578,10 +1594,18 @@ auto-plot</span></td>
 Enable a <code>dc</code>, <code>ac</code> or <code>tran</code> analysis; op values
 are read in the Outputs table's <b>Value</b> column instead.</td></tr>
 
-<tr><td>The traces went empty after a re-run</td>
-<td>Those are RPN <b>expression</b> traces. Their computed vector does not survive
-the re-attach of the new <code>.raw</code>. Re-add the trace, or save the state
-and load it back — the reload re-materialises them (<a href="#traces">§3</a>).</td></tr>
+<tr><td><span class="msg">wviewer: trace '…' is empty: … is not in the results
+the viewer now shows …</span><br>
+(an expression trace went empty after a re-run or a Direct Plot)</td>
+<td>An RPN <b>expression</b> trace is evaluated again whenever the results are
+re-attached, so it normally shows the new data. This one names a signal the new
+result does not hold: save that signal (ASE-L Outputs &gt; To Be Saved) and run
+again, and the trace draws again. Other forms of the line say what else stopped
+it: the trace was computed on another analysis than the window now shows (it
+draws again when the window shows that analysis); it is computed from another
+trace that is itself empty; or a name in it is neither a signal of the result
+nor a trace of the window, as after that trace was deleted
+(<a href="#traces">§3</a>).</td></tr>
 
 <tr><td>A Direct Plot pick produced no trace</td>
 <td>The node was not in the raw file. Direct Plot writes no <code>.save</code>

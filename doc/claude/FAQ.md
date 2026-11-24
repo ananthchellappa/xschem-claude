@@ -46,15 +46,25 @@ PT5 of `tests/headless/test_ase_plot_difference_1727.tcl` holds both numbers sid
 side.
 
 **What to expect afterwards.** The trace is an expression trace, like one plotted from
-the Calculator: the legend shows the viewer's name for an expression, and the trace stops
-drawing when the results are loaded again (issue 1734, open). Three things load them
-again: a Direct Plot, a re-run, and a difference that reads another analysis than the
-viewer shows, which is what the AC or DC-sweep key does after Alt-Shift-D, and what
-Alt-Shift-D does after one of them or when it falls back to another analysis. The viewer
-is then switched to that analysis and the earlier difference stays in its strip with
-nothing drawn (rows GU4 and GS3 of the suite read its values). A second difference leaves
-the first one drawing only when it reads the same analysis of the same, unchanged results
-file (row GS2).
+the Calculator, with one difference: its legend shows the difference written out with its
+two nets, `v(<second>)-v(<first>)` (for AC, inside `mag()`), each net spelled as a Direct
+Plot of it is; the vector behind it keeps the viewer's own name (row GI1 to GI6). It
+keeps drawing when the results are loaded again (issue 1734, fixed 2026-11-23): a Direct
+Plot, a second difference and a re-run each leave it reading second minus first, on the
+new run's numbers after a run (rows GA2, GS3, GJ1 of the suite read its values off the
+readout bar). Two things leave it empty, each with one sentence in the CIW that names the
+trace and says what to do. A run whose result lacks one of the two nets: save the net and
+run again, and the trace draws again (rows GJ3, GJ5). And a viewer switched to another
+analysis than the one the difference was computed on, which is what the AC or DC-sweep
+key does after Alt-Shift-D, and what Alt-Shift-D does after one of them or when it falls
+back: the transient's difference is not drawn from AC columns, and draws again when the
+viewer is back on the transient (rows GU4, GU5, GV2). Under the destination Replace, the
+plot a finished run makes empties the target subwindow, a difference in it included:
+nothing is said of a trace that plot removes, and one `u` in the viewer brings it back,
+drawing on the data the viewer then has (rows GG1 to GG5, GG10), also when a second
+difference was plotted in between and computed into the same vector name (rows GG14 to
+GG16). Under Append, or in
+another subwindow or tab, the difference stays (rows GG6, GG7).
 
 ---
 

@@ -118,8 +118,10 @@ session (raise-or-open; N sessions → N viewers).
   exists (file existence == "has results"; also the saved-results seam for a
   fresh session). `wviewer::attach_raw` = switch ctx + `raw clear` + `raw
   read` + regenerate — the SAME helper implements re-run replace; cleared
-  `raw add` vectors are re-added by auto-plot, other stale expression traces
-  draw as nothing (redraw rc 0). `-<token>` output exprs (e.g. `-i(v1)`)
+  `raw add` vectors are re-added by auto-plot, and since issue 1734 (2026-11-23)
+  every other expression trace's vector is made again by the load itself
+  ("Expression traces and Calculator waves across a load of results" below; one
+  that cannot be evaluated draws as nothing, redraw rc 0). `-<token>` output exprs (e.g. `-i(v1)`)
   map to RPN `<token> -1 *` via `ase::ui::plot_map_expr`, materialized
   through `raw add`.
 - **Lifecycle**: `ase::ui::close` now closes the session's viewer
@@ -166,8 +168,9 @@ session (raise-or-open; N sessions → N viewers).
   raw clear + `raw read` (type word omitted when sim_type is {}) and
   RE-MATERIALIZE every multi-token RPN expression trace via `xschem raw
   add <vec> <expr>` (the clear killed those vectors; without the re-add
-  restored traces draw empty and the readout interp throws — RPNs were
-  validated at trace creation, so a bare catch suffices), ONE regenerate
+  restored traces draw empty and the readout interp throws; since issue 1734
+  through `wviewer::expr_remake`, which a load uses too, checks each
+  expression against the data first and reaches every tab), ONE regenerate
   at the end (attach_raw is NOT reused: it regenerates internally and
   would double-regenerate before the re-materialize).
 - **Raw resolution** (in `ase::ui::viewer_restore`): dict `rawfile`
@@ -1172,16 +1175,191 @@ window is asked to do for it:
 - **It is opened or raised** exactly as for Direct Plot (`wviewer::open`).
 - **It is made to show the analysis that was read**, which need not be the one it showed:
   `wviewer::attach_raw` with that analysis. Not when it already draws from that very result
-  read as that analysis (`wviewer::attach_record`, `wviewer::attach_is_same`): a second
-  load would drop the vector every expression trace was computed into (issue 1734), and
-  each difference would blank the one before it. A difference that reads another analysis,
-  or the same one after the results file changed, does load, and does blank the
-  differences plotted before it.
+  read as that analysis (`wviewer::attach_record`, `wviewer::attach_is_same`): the file is
+  not read a second time for nothing. A difference that reads another analysis, or the
+  same one after the results file changed, does load; what a load does to the traces
+  already there is the next section's.
 - **The trace arrives through the Calculator's plot** (`calc::plot_in_token`, hence
   `wviewer::plot_signals`), with Direct Plot's destination: appended to the target
   subwindow, per its plot mode.
+- **The trace is shown under a label of the gesture's own**, the difference written out
+  with its two nets (`ase::diff_label`: `v(<second>)-v(<first>)`, inside `mag()` for AC;
+  ase_l.md R-PD6). An expression's vector needs a legal vector name, so the label cannot
+  be the vector's: it is armed for this window before the plot (`wviewer::expr_label_arm`),
+  taken by the next `wviewer::add_trace` on its first line, and taken back by the armer
+  after its call. The model's trace then holds `name` = the label and `vec` = the viewer's
+  own name for the vector (`wviewer::auto_expr_name`), the shape a plain trace with a
+  display name has: `wviewer::graph_props` writes `label;vector` on the strip, so the
+  legend, the readout bar, the trace menu and the delete dialog name the trace by the
+  label. The signal browser's lower pane lists the data's vectors by name, and lists such
+  a vector under its trace's label too (`wviewer::expr_labels`); the full name beside it,
+  which every gesture of the pane goes by, stays the vector's. Two differences of the same
+  two nets are two traces under one label: nothing in the viewer needs a label to be
+  unique, and each trace has a vector of its own. Other expression traces keep the names
+  they had: the Calculator's Plot and an unnamed Add Trace expression are named by the
+  viewer, a named one by the user.
 
-Nothing in this window's own code changed for it.
+### Expression traces and Calculator waves across a load of results (issue 1734, 2026-11-23)
+
+The user, 2026-11-23: *"Most serious - after plotting a difference waveform, if one plots
+a regular waveform using Ctrl-4, then this recently plotted waveform's strip becomes
+empty."*
+
+**What a load is.** The doors that load the session's results into the viewer again are
+the callers of `wviewer::attach_raw`, which calls `ase::attach_dbs`: a Direct Plot
+(`ase::ui::dp_finish`, at every press), the difference of two nets when the viewer does
+not already show that result as that analysis (`ase::ui::pd_finish`), and the plot a
+finished run or the `~` button makes (`ase::ui::auto_plot`). A load reads the file anew
+and drops every other database, so that nothing goes on showing an earlier run. Two
+things used to go with the old read: the vector every expression trace was computed into
+(`xschem raw add`), and the database of every Calculator wave (a table made in memory by
+`calc::wave_dest`). Both traces stayed in the model and on their strips with nothing
+drawn. The rules below are for every expression trace, whichever door plotted it: the
+difference of two nets, the Calculator's Plot, Graph > Add Trace with an expression
+(`wviewer::add_trace`), an ASE-L Outputs row holding an expression.
+
+- **An expression trace is evaluated again after every load.** The model keeps each
+  trace's postfix (`expr`), so `wviewer::attach_raw` makes the vector again from the model
+  once the load has read something: `wviewer::expr_remake`, the one place that does it,
+  over every tab of the window and not only the tab shown, each vector once. A trace
+  therefore reads the same after a Direct Plot of another signal, after a second
+  difference, and after any other load of the same result. An expression that names
+  another expression's vector is evaluated after the one it names. Rows RA1 to RA4, RB1,
+  RB2, RC1 to RC3, RD1, RD2.
+- **Two traces computed into one vector read the expression computed last**, before a
+  load and after it. `wviewer::add_trace` computes a name again in place (an Outputs row
+  whose expression was edited and that is plotted again under Append; two Add Trace
+  expressions given one name), so both traces draw the later expression. The window
+  records the postfix each vector was last computed from (`wviewer::expr_note`), and a
+  load makes the vector from that one, whichever strip its trace stands in. A restored
+  window has no such record and takes the last such trace in the strips, which is what
+  the restore's own loop over the traces left. Rows RC4, RC5.
+- **On a new result it follows the new numbers**, as a plain trace does: after a run, the
+  load reads the new file and the expression is evaluated on it. Never the old run's
+  numbers: nothing of the old read is kept for it. (The bands on a file the suite writes,
+  with a second run's numbers, are GS and GJ of
+  `tests/headless/test_ase_plot_difference_1727.tcl`.)
+- **A trace that cannot be evaluated stays in its strip, empty, and one sentence says
+  why.** Two things stop an evaluation. *A missing vector*: the expression names a vector
+  the data lacks, by `wviewer::add_trace`'s own check (`wviewer::validate_rpn`).
+  Evaluating it all the same would make a vector of zeros, a flat line where there is no
+  data. *Another analysis*: the vector was computed on one analysis and the viewer now
+  shows another. The same postfix over the other analysis's columns is another quantity
+  (an AC column is a magnitude), and the Calculator refuses to plot a text of one analysis
+  from another's data (calculator.md R208c), so the trace waits and is evaluated again by
+  the load that shows its analysis. The analysis a vector was computed on is the viewer's
+  own record of the session (`wviewer::expr_note`, written where a vector is computed:
+  `wviewer::add_trace`, a paste, an evaluation after a load); it is not saved with a
+  state. The sentence (`wviewer::expr_lost_msg`) names the trace by its label, what stops
+  it and what to do; it is said when the trace stops drawing and not at every load after
+  that, and a trace that is evaluated again loses the record. Rows RM1 to RM4, RL1, RL2.
+- **What is missing decides the sentence** (`wviewer::expr_lost_why`, one kind per trace).
+  The cure "save it in ASE-L (Outputs > To Be Saved) and run again" is said only of a name
+  of the form a run saves: a node voltage, a current, a device parameter. A phase column
+  (`ph(<net>)`), which only an AC analysis holds, is an AC text over the wrong data while
+  the viewer shows another analysis: the sentence is the analysis one, for AC, also in a
+  restored window that has no record of the analysis. A name that is the vector of
+  another expression trace, which is then empty itself, gets *it is computed from trace
+  '…', which is empty*. A bare name that is neither in the results nor a trace's vector (a
+  net written without `v()`, or the vector of a trace that was deleted) gets both cures.
+  A name two vectors answer to, differing only in letter case, is said as that. An
+  expression whose every name the data answers and which is still not evaluated says so.
+  Rows RM5 to RM15.
+- **The plot of a run says only what is true once it is in.** The plot that `~` or a
+  finished run makes loads the results and then plots the Outputs rows; under the
+  destination Replace it empties the target subwindow in between (ase_l.md R-OUT15). A
+  sentence that a trace "is empty" and when it "draws again", said by that load, was
+  false of a trace the same press then removed, and of a trace whose vector the same
+  press then computed (a named row plotted again under Append draws into the vector of
+  the trace it left at the run before). So that load is quiet
+  (`wviewer::attach_raw`'s last argument, `wviewer::expr_remake`'s `quiet`), and once the
+  rows are in `ase::ui::auto_plot` has the viewer say what is still empty
+  (`wviewer::expr_settle`): by then a removed trace is not among the traces and a
+  computed one has its vector. A trace in another subwindow or in a tab that is not
+  shown stays and is told of as above; under Append nothing is emptied and a trace that
+  stays empty is told of, once. So "stays in its strip" in the rule above is about a
+  trace no plot removes. An expression that names a vector a row has just made is
+  evaluated by that same pass, and the strips are rebuilt to draw it.
+  The traces of the subwindow Replace is about to empty are not evaluated at all
+  (`ase::ui::auto_plot` hands the load those strips, `wviewer::attach_raw`'s `leave`):
+  their vectors would be thrown away, their names left taken, and an Outputs row with no
+  name of its own would be named one further at every run. (Band GG of the difference's
+  suite has the sentences.) Rows RD3, RK8.
+- **Undo and redo evaluate again.** A trace that `u` or `U` puts back may have no vector
+  in the data any more: a load since it left made none for it (a plot under Replace
+  emptied its strip, or the trace was deleted, and then a Direct Plot or a run).
+  `wviewer::state_apply` evaluates the expression traces whose vector the data lacks,
+  before the rebuild that fits and draws them; one that cannot be evaluated is told of
+  then, as after a load, also when it had been told of before it left: what the window
+  had on record about a trace goes when the trace leaves the strips. So one `u` after
+  `~` under Replace brings a difference back drawing, on the data the viewer then has.
+  A vector the data holds is left as it is, with one exception: **a vector that is
+  another trace's.** After the load that made no vector for the trace that left, the
+  name of its vector is free, and a later trace is computed into it (the viewer hands a
+  free `expr<N>` out again, `wviewer::auto_expr_name`; a user gives one name twice).
+  Undo then brings the first trace back while the data holds, under that name, what
+  the later one was computed from. The pass knows it by the window's record of the
+  postfix each vector was computed from last (`wviewer::expr_note`): it is the postfix
+  of none of the traces the model has for that vector. Such a vector is taken out of
+  the data and evaluated from the trace that is back, so the trace reads its own
+  expression under its own label, and one that cannot be evaluated draws nothing and
+  is told of, where it would have drawn the later trace's numbers. A vector the data
+  holds whose expression names such a vector was computed from the later trace too,
+  and is evaluated after it. The trace that is back is held to the analysis its own
+  postfix was computed on, whatever was computed into the name since. Redo is the same
+  the other way. Rows RU1 to RU7, RS1 to RS5.
+- **A Calculator wave is kept.** A load is told which databases to keep
+  (`ase::attach_dbs`' last argument): the ones this window's traces draw from that the
+  Calculator made in memory (`wviewer::mem_dbs`: a database a trace of any tab names that
+  `calc::wave_dest_made` answers for, the Calculator's own list of the tables
+  `calc::wave_dest` registered). They could not be read again. What decides is what the
+  database is and never whether a file of that name is on disk: a database read from a
+  file is not kept, because the copy in memory would be an earlier run's, and that holds
+  when the file is gone too. A run deletes the digital results of the run before it
+  (`ase::cosim_clear_artifacts`) exactly so that no trace goes on showing them beside the
+  new analog result. A table no trace draws from is dropped as before. With something
+  kept the result just read is not the only slot, so it is made current by its own slot
+  and the answer's `current` is that slot. No spec rule said what a Calculator wave is
+  after a run, so it stays as the user made it: the same samples, against its own X.
+  Rows RK1 to RK7, RW1 to RW5, RV1.
+- **A restore evaluates every tab's expression traces**, through the same proc. It used
+  to walk the tab shown only, so a trace in another tab of a restored window drew nothing.
+  The window's records are dropped first (`wviewer::expr_forget`): a state loaded over an
+  open viewer replaces the model wholesale, and a record made for a trace the window
+  drew before would be read as the restored trace's when the two share a vector name
+  and a text (the two nets' difference of the DC sweep and of the transient are one
+  text; row GYA4 of the difference's suite). A
+  state holds no record of the analysis a vector was computed on, so each trace is
+  evaluated on the analysis the restore shows, as before; one whose text only an AC
+  analysis can answer waits and says so. (Bands GY and GYA of the difference's suite.)
+- **A paste into another window is on record there.** An expression trace pasted into a
+  second viewer is computed in that window's data (waveform_viewer_tabs.md D16), and the
+  window records the analysis it was computed on as it does for a trace added there, so
+  a later load that shows another analysis leaves it waiting. Rows RP1, RP2.
+- **The viewer's name for an expression vector is free in every tab**
+  (`wviewer::auto_expr_name` reads every tab's model): a trace left with no vector has
+  nothing in the data to hold its name, and a second trace must not be handed it (row GJ7
+  of the difference's suite).
+
+**Which of issue 1734's three ways, and why.** The third, with a narrow form of the
+second. *Not loading the same data again* (the first) cannot serve a run, where the data
+is new, so evaluating again was needed whatever else was done; and its test of "the same
+data" is a file's time and size (`wviewer::attach_stamp`), blind to a file written again
+at the same size within the same second, which is harmless for a zoom that is kept and
+is not for a load that is skipped. *Keeping every database a load did not read* (the
+second, in full) would keep copies of files, which is how an earlier run stays on screen;
+only what cannot be read again is kept.
+
+**Limits.** Under the destination Replace, the plot a finished run makes empties the
+target subwindow, expression traces included (ase_l.md R-OUT15, unchanged); `u` brings
+them back. The Location bar and Results > Select load another result through
+`results::select`, not through `wviewer::attach_raw`, and an expression vector lives in
+the database it was computed in: nothing evaluates it in the result selected. A
+Calculator wave is not saved with a state: a restore says its database was not
+re-attached, as before. A wave whose trace was deleted loses its table at the next load,
+so an undo of that deletion after a load brings back a trace with nothing to draw: its
+samples exist nowhere else. A restored trace that was computed on the transient or the
+DC sweep is evaluated on whichever analysis the restore shows, as before.
 
 ## Clear All (issue 0171, 2026-07-27)
 
@@ -1613,19 +1791,49 @@ strip "should retain zoom".
     as the attach before it is taken for the same data (R1), and its strips
     keep both axes as shown. A real re-run takes longer than that between two
     attaches.
+  - **R6, the stored view across a Replace** (issue 1736; the user's report of
+    2026-11-23: a strip plotted after `~` in a multi-plot viewer came up on an
+    X window unlike the other strips', and the bottom strip was drawn at the
+    top strip's Y scale). R1 to R5 are about the view on the RECTS. The
+    viewer's own zoom and pan, View > Fit, a marker, a split and a trace move
+    write a strip's window into the MODEL, and a Replace used to leave the one
+    strip it keeps with the whole stored view of the strip it was made from
+    (`sw_clear_graphs`). In multi-plot the first row then landed in the window
+    stored for the last row's strip, the other rows were fitted, and the next
+    strip plotted joined that one stored X window by `view_align`. Now a
+    stored view belongs to the traces it was set for: the strip a clear leaves
+    keeps the X window and X scale and nothing of the Y, and the door that
+    refills the subwindow hands each strip the stored view of the old strip
+    that held its traces (`wviewer::sw_stored`, `wviewer::sw_stored_give`),
+    matched by `view_map` and given only while the strip's X is the same thing
+    on the data shown now (`x_same`). `ase::ui::auto_plot` does it before its
+    last rebuild, so that rebuild's view (R3) is judged against the model the
+    strips had; a strip of several that took no stored view carries no stored
+    X there and joins its subwindow's window. The viewer's doors
+    (`plot_signals`, the Add Trace dialog) do it through
+    `wviewer::sw_stored_settle`. `view_align` is unchanged: it was right, and
+    was handed strips that did not agree.
+    `doc/claude/specs/waveform_viewer_subwindows.md` section 15 has the rule
+    in full.
 - **Rebuilds that do not carry**, each for its own reason; row `GZP20` of
   `tests/headless/test_wave_grid.tcl` holds the list against every call site:
   - new data loaded by hand (`display_raw`, `rawbar_load`): the windows on
     screen fitted the old data. A wheel zoom (stored in the model) is kept and
     a box zoom is not. `attach_raw` left this list with issue 1733 (above).
-    Replace keeps the emptied strip's STORED window by `sw_clear_graphs`' rule
-    as well.
+    Replace keeps the emptied strip's STORED X window by `sw_clear_graphs`'
+    rule as well, and gives a strip that takes its traces again the stored
+    view it had (R6).
   - the layout replaced or emptied (`restore`, `clear_all`);
   - another tab's strips (`select_tab`, `new_tab`, `close_tab`): the tab stash
     holds each tab's own view;
   - the strip and trace moves, the split and the deletions freeze the view into
     the model first (`capture_live_graph_state` with ranges), so their plain
     rebuild shows it. That turns auto axes into stored ones, as it always did.
+    An empty strip a trace lands on (the split's new strips, Move to Separate
+    Strip, a drop on an empty strip) takes the X window of the strip the trace
+    left when both are in one subwindow on one X scale, and is fitted in Y
+    (`move_trace_in_graphs`, issue 1736): it used to be fitted in X as well, so
+    a strip split off a zoomed one came up on the whole sweep beside it.
 - **Tests:** `tests/headless/test_wave_grid.tcl` rows `GZP*` (counted arm),
   `GZ*` and `GV*` (display arm, including a real Ctrl-G, a real window resize
   and the real Axes dialog). Issue 1733: rows `GZP27`-`GZP34` there (the pure
@@ -1636,7 +1844,18 @@ strip "should retain zoom".
   rewritten raw whose mtime the band moves, a Location-bar load in between,
   every strip read back off its rect; its group `PV5` (review round) puts the
   same rows in two subwindows and plots under Replace and New SubWin, and
-  re-runs a tran as an ac.
+  re-runs a tran as an ac. Issue 1736 (R6): groups `PV7` (on the committed
+  file a real ngspice wrote: the viewer's own zoom by real Ctrl-z presses,
+  View > Fit by a real `f`, then `~` and the run-end plot under Replace, the
+  rows changed, single-plot as the control) and `PV8` (a transient zoomed,
+  then run as a DC sweep) of the same suite; band `GZ` of
+  `tests/headless/test_ase_plot_difference_1727.tcl` (the `~` button by a real
+  click, then the difference by its real chord and clicks);
+  `tests/headless/test_wave_subwindows.tcl` rows `SWD4` and `SWW1`-`SWW9`
+  (the pure rules, both arms) and `SWW10`-`SWW18` (display: the split by the
+  Graph menu's entry, a trace moved to a strip of its own, the viewer's
+  Replace, Clear SubWin, the Add Trace dialog). Those fixtures store the zoom
+  in the model, where the bands before them put it on the rects only.
 
 ## Graph grid density (viewer plan item 2, 2026-07-29)
 
@@ -1989,8 +2208,10 @@ error on a refusal.
     parked there is silently destroyed at the next run. The exclusion is
     `empty_graph_indices`' `auto` argument, fed from `wviewer::auto_graph_index`.
   - **Autozoom comes for free**: `move_trace_in_graphs` blanks an empty
-    destination's `x1/x2/y1/y2` back to `auto`, so a *reused* strip's stale
-    ranges go too and `regenerate` re-fits it exactly as it does a fresh one.
+    destination's `y1/y2` back to `auto` and gives it the X window of the strip
+    the trace left (issue 1736; another subwindow or X scale: `auto` too), so a
+    *reused* strip's stale ranges go too and `regenerate` fits its Y exactly as
+    it does a fresh one's.
   - **Boundary, recorded not closed:** a traceless strip *should* hold no
     markers, but the model is not its only writer — a stale `markers`/
     `hilight_wave` key on a reused strip would now annotate whatever lands there.
@@ -2112,8 +2333,9 @@ with reuse may be **0**, still a success — `{}` plus a CIW error on a refusal.
   the `hilight_wave` hand-off and the empty-destination range blanking for free,
   so `graph_markers.md` §9's obligations are discharged **by construction**.
   Nothing in `split_graph_in_graphs` touches a marker record. (That blanking is
-  also what makes reuse free: a consumed strip's stale ranges go back to `auto`,
-  so `regenerate` re-autozooms it like a fresh one.)
+  also what makes reuse free: a consumed strip's stale ranges go, its Y back to
+  `auto` and its X to the window of the strip that is split, so `regenerate`
+  fits its Y like a fresh one's and the subwindow stays on one X window.)
   Two ordering rules make that safe: **every destination strip is in place
   first** — created, or relocated from elsewhere in the stack — so node *k*'s
   destination is `src + k` and never moves under the loop (`src` is the split

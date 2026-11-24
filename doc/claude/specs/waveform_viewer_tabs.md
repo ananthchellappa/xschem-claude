@@ -462,12 +462,18 @@ A viewer trace carries only a NAME. `graph_props` emits **no** `rawfile=` or
 - a cross-window paste is allowed, but it **rebinds names**. It owes a
   destination-side existence check (`xschem raw index` / `raw list`) and one
   CIW line naming the vectors that do not resolve; the paste proceeds, because
-  a missing vector simply draws empty, which is the shipped behaviour for a
-  stale expression trace after a re-run;
+  a missing vector simply draws empty (a plain trace whose vector the data
+  lacks draws nothing; since issue 1734 an expression trace is evaluated again
+  after a re-run, waveform_viewer.md, "Expression traces and Calculator waves
+  across a load of results");
 - an expression trace (a `vec` plus a multi-token `expr`) must be
   RE-MATERIALISED in the destination with `xschem raw add $vec $expr` before
   the regenerate — the `wviewer::restore` precedent (~2095-2104), same `catch`
-  discipline (the RPN was validated when the trace was created);
+  discipline (the RPN was validated when the trace was created); the window
+  records the analysis it was computed on there (`wviewer::expr_note`), so a
+  later load that shows another analysis leaves it waiting instead of drawing
+  it from that analysis's columns (band RP of
+  `tests/headless/test_wave_expr_reattach_1734.tcl`);
 - ⚠ **and it must be RENAMED first when that vector name already exists in the
   destination raw** (`auto_expr_name`), or `raw_add_vector` recomputes the
   destination's OWN vector in place and silently changes an unrelated trace

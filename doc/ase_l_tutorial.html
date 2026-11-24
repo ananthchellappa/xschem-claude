@@ -659,18 +659,35 @@ key of its own, uncomment one of the two example lines under the
 <kbd>Alt-Shift-D</kbd> line of <code>cadence_style_rc</code>: the word after
 the command (<code>tran</code>, <code>ac</code>, <code>dc</code>) is the
 analysis. For AC the trace is the magnitude of the difference of the two
-complex voltages. Nothing is added to the session outputs, and the trace is an
-expression trace like one plotted from the Calculator: it stops drawing when
-the results are loaded again (a Direct Plot, a re-run, a Plot Difference that
-reads another analysis than the viewer shows) and has to be plotted
-again.</li>
+complex voltages. The trace's legend is the difference written out with its
+two nets, <code>v(&lt;second&gt;)-v(&lt;first&gt;)</code> (for AC inside
+<code>mag()</code>), each net spelled as a Direct Plot of it is. Nothing is
+added to the session outputs. The trace is an expression trace like one plotted
+from the Calculator, and it keeps drawing when the results are loaded again by a
+Direct Plot or another Plot Difference. Across a re-run it depends on the plot
+destination (the drop-down at the right end of the ASE-L status bar), because a
+finished run plots the ticked Outputs rows, as <kbd>~</kbd> does. Under
+<b>Replace</b>, the default, that plot empties the target subwindow first, and
+a difference standing there goes with the other traces; one <kbd>u</kbd> in
+the viewer brings them back, on the new run's numbers. Under <b>Append</b>, or
+with the difference in another subwindow or tab, it stays and shows the new
+run's numbers. If the new result lacks one of
+the two nets, or the viewer is
+switched to another analysis than the one the difference was read from, the
+trace stays in its strip, empty, and the CIW says which trace and what to do
+(<span class="msg">wviewer: trace 'v(b)-v(a)' is empty: v(b) is not in the
+results the viewer now shows (the transient analysis of top_ase.raw); save it
+in ASE-L (Outputs &gt; To Be Saved) and run again, and the trace draws
+again</span>).</li>
 </ul>
 <p>Each run overwrites <code>&lt;cell&gt;_ase.raw</code> in place and
 re-attaches it, so auto-plot and Direct&nbsp;Plot graphs simply show fresh
-data. One exception: expression traces you added manually through
-<b>Graph &gt; Add Trace…</b> (multi-token RPN expressions) lose their
-computed vector on the re-attach and draw empty after the next run —
-re-add the trace, or save and reload the state, to re-materialize them.</p>
+data. So do expression traces (a Plot Difference, a Calculator plot, a
+multi-token RPN expression added through <b>Graph &gt; Add Trace…</b>): the
+viewer evaluates each again on the new data. One that names a signal the new
+result does not hold stays in its strip, empty, and the CIW says which signal
+to save. Under the <b>Replace</b> destination the run's own plot empties the
+target subwindow first, as it always did, whatever kind of trace stands there.</p>
 
 <h3>Viewer menus, at a glance</h3>
 <ul>

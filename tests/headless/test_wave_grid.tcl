@@ -268,11 +268,16 @@ proc wvproc_body {src name} {
 # selection must be folded first -- grid_apply's issue-0194 case exactly.
 # ⚠ `set_axis_scale` ADDED BY THE AXIS CONTEXT MENU (2026-11-09): the RMB
 # Linear/Log menu's act, axes_ok's write path for one axis, so gx_must like it.
+# ⚠ `sw_stored_settle` ADDED WITH ISSUE 1736 (2026-11-24): the rebuild after a
+# viewer door's Replace handed stored views back to the strips that took their
+# traces again. It writes windows into the model and carries every other strip
+# forward, so gx_must.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok set_axis_scale
              select_tab new_tab close_tab paste_traces paste_payload
-             rawbar_load new_subwin close_subwin clear_subwin set_text_size}
+             rawbar_load new_subwin close_subwin clear_subwin set_text_size
+             sw_stored_settle}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -956,7 +961,7 @@ check "GZP32 the signatures of the new-data procs" \
         [gzn_args wviewer::attach_forget] [gzn_args wviewer::attach_record] \
         [gzn_args wviewer::x_overlaps] [gzn_args wviewer::attach_raw]] \
   [list {view was now} {s db} {sa sb} {prev rec cur} {rawfile sim_type vcdfiles} {} token token \
-        {a1 a2 b1 b2} {token rawfile sim_type vcdfiles}]
+        {a1 a2 b1 b2} {token rawfile sim_type vcdfiles leave quiet}]
 check "GZP32 attach_forget / attach_record on a window with no record: nothing, no throw" \
   [list [pcall {wviewer::attach_forget no_such_viewer}] [pcall {wviewer::attach_record no_such_viewer}]] {0 {}}
 
@@ -1544,8 +1549,15 @@ set fp [open $aw r]; set asrc [read $fp]; close $fp
 # half was already counted; it now carries the live view (its own leg below).
 # Nor in the second review round: the zero-rows branch's site was counted from
 # the start; it now carries the live view too (its own leg below).
-check "GX9 ase_window.tcl has exactly the four known regenerate sites" \
-  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 4
+# ⚠ RESTATED 2026-11-24 (issue 1734's review), from FOUR to FIVE, by the same
+# rule: after its rows are in, auto_plot says which expression traces are still
+# empty and evaluates one that names a vector a row has just made
+# (wviewer::expr_settle); when that computed a vector the strips are rebuilt as
+# they show, to draw it. Like the last site it needs no fold of its own (it
+# follows the add_trace loop, whose every call folds), carries the live view,
+# and has its own order leg below.
+check "GX9 ase_window.tcl has exactly the five known regenerate sites" \
+  [pcall {count_emitters $aw {wviewer::regenerate \$key}}] 5
 # auto_plot's no-plottable-rows branch clears the AUTO strip's traces and
 # regenerates — every other strip carries forward, so it owes the fold, and it
 # must take it BEFORE the model mutation. Since ase_l.md R-OUT14 that mutation is
@@ -1616,7 +1628,14 @@ check_true "GX9 auto_plot's zero-rows rebuild, after the clear and the empty aut
 # hands regenerate a view
 check "GX9 auto_plot has no plain rebuild left (every site it has carries a view)" \
   [list [regexp -all -line {wviewer::regenerate \$key\s*(;.*)?$} $gx_ap] \
-        [regexp -all {wviewer::regenerate \$key \[} $gx_ap]] {0 3}
+        [regexp -all {wviewer::regenerate \$key \[} $gx_ap]] {0 4}
+# the rebuild after the settling of the expression traces (issue 1734's
+# review): only when that computed a vector, carrying the live view, after the
+# add_trace loop and before the last rebuild, which stays the last
+set gx_st [string first {if {[wviewer::expr_settle $key]} { wviewer::regenerate $key [wviewer::live_axes $key] }} $gx_ap]
+check_true "GX9 auto_plot's rebuild after it settles the expression traces is conditional on a vector computed, carries the live view, and stands between the add_trace loop and the last rebuild" \
+  [expr {$gx_st > [string last {wviewer::add_trace $key} $gx_ap]
+         && $gx_st < [string last {wviewer::regenerate $key [wviewer::view_keep_subwin } $gx_ap]}]
 # THE THIRD SITE (results batch item 7): the Select dialog's commit replaces the
 # viewer's data, so it takes the fold BEFORE the door (`results::select`) and
 # regenerates AFTER it -- same order, same reason, and additionally inside the
@@ -3075,7 +3094,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "GV14 a Fit in the new subwindow, then Ctrl-G: the first one's zoom is still kept" \
     [lrange [gz_axes $vdrw] 0 1] [list $gv_s0 $gv_s1]
   pcall {wviewer::grid_toggle 1 $tok}
-  # Replace keeps the emptied strip's STORED window (sw_clear_graphs' rule, and
+  # Replace keeps the emptied strip's STORED X window (sw_clear_graphs' rule, and
   # the wheel zoom above stored one); the other subwindow is not its business
   set gv_sw2 [lrange [lindex [gz_axes $vdrw] 2] 0 1]
   check "GV14 a signal plotted with Replace empties that subwindow only" \

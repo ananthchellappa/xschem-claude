@@ -826,6 +826,25 @@ namespace eval wviewer {
   # new data (wviewer::attach_is_same). Dropped by every hand load and on forget
   # (wviewer::attach_forget).
   variable attached; array set attached {}
+  # issue 1734: what the viewer knows of its expression traces beside the model,
+  # per window. exprtype = the analysis each expression's vector was last
+  # computed on, `{vec type ...}` (wviewer::expr_note): a trace is not computed
+  # from another analysis's columns. exprtext = the postfix each vector was
+  # last computed from, `{vec postfix ...}`: of two traces computed into one
+  # vector, the one computed last is what both draw. exprlost = why a trace was
+  # last left with no vector, `{vec cause ...}`, so the sentence about it is
+  # said when that begins and not on every load after it (wviewer::expr_remake).
+  # exprseen = the analysis each postfix was last computed on into each vector,
+  # `{vec {postfix type ...} ...}`: a trace whose vector's name a later trace
+  # has taken is still held to its own analysis when undo brings it back.
+  # exprlabel = the display name armed for the next expression trace
+  # (wviewer::expr_label_arm). None is saved with a state; all are dropped on
+  # forget.
+  variable exprtype; array set exprtype {}
+  variable exprlost; array set exprlost {}
+  variable exprlabel; array set exprlabel {}
+  variable exprtext; array set exprtext {}
+  variable exprseen; array set exprseen {}
   # issue 0173: how many times wviewer::leave_ctx could NOT put the xschem
   # context back where enter_ctx found it (a `new_schematic switch` refused
   # under a raised semaphore — landmine 17). Diagnostic only: a refused restore
@@ -1041,6 +1060,9 @@ proc wviewer::forget {token} {
   variable drawn
   # issue 1733: the last attach's record, same rule as `drawn`
   variable attached
+  # issue 1734: the expression traces' records, same rule
+  variable exprtype; variable exprlost; variable exprlabel; variable exprtext
+  variable exprseen
   variable b3x0; variable b3y0; variable b3mk
   # RESULTS BATCH item 6: the recorded selection, same rule as every array
   # above -- an undeclared `variable` would make the `unset` below address a
@@ -1126,6 +1148,11 @@ proc wviewer::forget {token} {
   catch {unset sayquiet($token)}
   catch {unset plotdbs($token)}
   catch {unset plotsweeps($token)}
+  catch {unset exprtype($token)}
+  catch {unset exprlost($token)}
+  catch {unset exprlabel($token)}
+  catch {unset exprtext($token)}
+  catch {unset exprseen($token)}
   catch {unset atddb($token)}
   catch {unset drag_from($token)}
   catch {unset drag_to($token)}
@@ -4326,14 +4353,21 @@ proc wviewer::sw_close_indices {gs gi} {
 # survivor's index (the subwindow's old first index), `last` the old range end,
 # so strips after it moved up by last-first. {gs -1 -1} for an empty list.
 #
-# The survivor KEEPS the view of the strip it is made from (X/Y range, log
-# axes -- everything but its traces, markers, highlights and the `auto`
-# marker), exactly what clear_graph_traces always kept: a user who zoomed into
-# the run's plot and re-runs under Replace keeps the zoom, as before
-# subwindows. It is made from the subwindow's first AUTO strip when there is
-# one (the run's own plot), else from `gi` itself. The `auto` marker is dropped
-# so a viewer Replace can land in it; ASE-L's auto-plot re-claims the lone
-# empty strip (wviewer::auto_plot_strips).
+# The survivor KEEPS THE X HALF of the view of the strip it is made from: its X
+# window and X scale, so whatever is plotted there next comes up in the window
+# the subwindow was showing. It keeps NOTHING OF ITS Y -- window, scale, unit --
+# nor its traces, markers, highlights or the `auto` marker: a Y window belongs
+# to the traces it was set for, and those have left. (It used to keep the whole
+# view. In multi-plot the plot that follows puts its first row here and the
+# other rows in fresh strips, so the first row was drawn in the window stored
+# for the strip that had held the last one: user report 2026-11-23.) The door
+# that refills the subwindow hands each strip back the stored view of the strip
+# that held its traces (wviewer::sw_stored, wviewer::sw_stored_give), which is
+# how a zoom on the run's plot is still there after a re-run under Replace.
+# The survivor is made from the subwindow's first AUTO strip when there is one
+# (the run's own plot), else from `gi` itself. The `auto` marker is dropped so
+# a viewer Replace can land in it; ASE-L's auto-plot re-claims the lone empty
+# strip (wviewer::auto_plot_strips).
 proc wviewer::sw_clear_graphs {gs gi} {
   if {![llength $gs]} { return [list $gs -1 -1] }
   set gi [wviewer::target_clamp $gi [llength $gs]]
@@ -4344,7 +4378,8 @@ proc wviewer::sw_clear_graphs {gs gi} {
   }
   set g [lindex $gs $p]
   if {[catch {dict size $g}]} { set g [wviewer::empty_graph] }
-  set g [dict remove [dict replace $g traces {}] markers hilight_wave sel_waves auto]
+  set g [dict remove [dict replace $g traces {} y1 {} y2 {} logy 0] \
+           markers hilight_wave sel_waves auto yunit]
   set id [wviewer::gsw [lindex $gs $f]]
   if {$id ne {}} { dict set g sw $id }
   set out [concat [lrange $gs 0 [expr {$f - 1}]] [list $g] [lrange $gs [expr {$l + 1}] end]]
@@ -5044,11 +5079,15 @@ proc wviewer::validate_rpn {rpn varlist {fuzzy {}}} {
 }
 
 # Auto name for an expression trace: the first expr<N> unused both as a
-# model vec and as a raw vector name (current ctx must be the viewer's).
+# model vec and as a raw vector name (current ctx must be the viewer's). The
+# model is every tab's (wviewer::all_graphs): the tabs of a window draw from
+# one set of data, and a trace that could not be evaluated has no vector there
+# to hold its name (wviewer::expr_remake), so the data alone would hand a
+# second trace the name of one in a tab that is not shown.
 proc wviewer::auto_expr_name {token} {
   set used {}
-  foreach G [dict get [wviewer::layout_for $token] graphs] {
-    foreach tr [dict get $G traces] {
+  foreach G [wviewer::all_graphs $token] {
+    foreach tr [wviewer::dget $G traces {}] {
       lappend used [wviewer::dget $tr vec {}]
     }
   }
@@ -5060,6 +5099,468 @@ proc wviewer::auto_expr_name {token} {
     if {$idx < 0} { return $nm }
   }
   return expr$n
+}
+
+# --- expression traces and the data they are computed on (issue 1734) --------
+#
+# An expression trace is a vector `xschem raw add` computed into the viewer's
+# data (add_trace), and a load of results reads the data anew: the vector goes
+# with the old read. The user, 2026-11-23: "after plotting a difference
+# waveform, if one plots a regular waveform using Ctrl-4, then this recently
+# plotted waveform's strip becomes empty". The model keeps each trace's postfix
+# (`expr`), so the vector is made again from the model after every load
+# (wviewer::attach_raw), on a restore (wviewer::restore) and when undo or redo
+# puts strips back (wviewer::state_apply): wviewer::expr_remake, the one place
+# that does it. Spec: doc/claude/specs/waveform_viewer.md, "Expression traces
+# and Calculator waves across a load of results"; rows:
+# tests/headless/test_wave_expr_reattach_1734.tcl and bands GA, GJ, GS, GU, GV,
+# GY, GG and GYA of tests/headless/test_ase_plot_difference_1727.tcl.
+
+# The strips of EVERY tab of `token`: the tab shown (the live layout) and each
+# tab that is not (its frozen record). One window's tabs draw from one set of
+# data, so what is made in that data is made for all of them. `leave` names
+# strips of the tab shown, by index, to leave out: the ones a plot is about to
+# empty (ase::ui::auto_plot under Replace).
+proc wviewer::all_graphs {token {leave {}}} {
+  set out {}
+  set gi 0
+  foreach G [wviewer::dget [wviewer::layout_for $token] graphs {}] {
+    if {[lsearch -exact $leave $gi] < 0} { lappend out $G }
+    incr gi
+  }
+  set cur [wviewer::tab_index $token]
+  set i 0
+  foreach rec [wviewer::tab_records $token] {
+    if {$i != $cur} {
+      foreach G [wviewer::dget [wviewer::dget $rec layout {}] graphs {}] { lappend out $G }
+    }
+    incr i
+  }
+  return $out
+}
+
+# The databases `token`'s traces draw from that a load has to keep: `{path
+# type}` of every database a trace of any tab names (wviewer::trace_dbs) that
+# the Calculator made in memory, by the Calculator's own answer
+# (calc::wave_dest_made; a Calculator wave's table, calc::wave_dest). A load of
+# results is told to keep them (ase::attach_dbs' `keep`): it could not read
+# them again. A database read from a file is never kept, whether its file is
+# still on disk or not: the copy in memory is an earlier run's, and a run
+# deletes the digital results of the run before it so that no trace goes on
+# showing them beside the new analog result (ase::cosim_clear_artifacts).
+proc wviewer::mem_dbs {token} {
+  set out {}
+  foreach e [wviewer::trace_dbs [wviewer::all_graphs $token]] {
+    set p [wviewer::dget $e path {}]
+    set t [wviewer::dget $e type {}]
+    set made 0
+    catch {set made [calc::wave_dest_made $p $t]}
+    if {$made eq {1}} { lappend out [list $p $t] }
+  }
+  return $out
+}
+
+# Record that the vector `vec` of `token` was computed on analysis `type` (the
+# viewer's context holds that data now) and, when the caller has it, from which
+# postfix (`ex`): two traces can be computed into one vector, and the vector
+# holds what was computed last. The analysis is kept per postfix as well
+# (exprseen), for the trace whose vector's name another trace takes later. A
+# vector that was just computed is not lost, so what was recorded about a
+# trace of that name being empty is dropped.
+proc wviewer::expr_note {token vec type {ex {}}} {
+  variable exprtype
+  variable exprlost
+  variable exprtext
+  variable exprseen
+  if {![info exists exprtype($token)]} { set exprtype($token) [dict create] }
+  dict set exprtype($token) $vec $type
+  if {$ex ne {}} {
+    if {![info exists exprtext($token)]} { set exprtext($token) [dict create] }
+    dict set exprtext($token) $vec $ex
+    if {![info exists exprseen($token)]} { set exprseen($token) [dict create] }
+    dict set exprseen($token) $vec $ex $type
+  }
+  if {[info exists exprlost($token)] && [dict exists $exprlost($token) $vec]} {
+    dict unset exprlost($token) $vec
+  }
+  return $type
+}
+
+# Drop what `token` has on record about its expression vectors: for a model
+# that was replaced wholesale (a restore), whose vectors are other traces'.
+proc wviewer::expr_forget {token} {
+  variable exprtype
+  variable exprlost
+  variable exprtext
+  variable exprseen
+  catch {unset exprtype($token)}
+  catch {unset exprlost($token)}
+  catch {unset exprtext($token)}
+  catch {unset exprseen($token)}
+  return {}
+}
+
+# An analysis in the words a sentence uses for it (the Calculator's map:
+# transient, AC, DC sweep, operating point); a type that map does not hold is
+# said as it is.
+proc wviewer::expr_an_word {type} {
+  set w $type
+  catch {set w [calc::analysis_word $type]}
+  return $w
+}
+
+# The sentence for a trace that was left with no vector. `label` is the name
+# the trace is shown under, `b` the analysis the viewer shows and `c` its
+# file. One `kind { return ... }` per line; `a` is, by kind:
+#   missing    the names of the form a run saves that the results lack
+#   analysis   the analysis the trace was computed on
+#   trace      the labels of the traces it is computed from, themselves empty
+#   unknown    the names that are neither in the results nor a trace's vector
+#   ambiguous  the names two vectors answer to, differing only in letter case
+#   failed     nothing: every name was answered and it was still not evaluated
+# Only `missing` tells the user to save something and run again: that cure is
+# for a net or a current a run can save, and for nothing else.
+proc wviewer::expr_lost_msg {kind label a b c} {
+  set n [llength $a]
+  set many [expr {$n > 1}]
+  set names [lindex $a 0]
+  if {$many} { set names "[join [lrange $a 0 end-1] {, }] and [lindex $a end]" }
+  set q {}
+  foreach x $a { lappend q "'$x'" }
+  set quoted [lindex $q 0]
+  if {$many} { set quoted "[join [lrange $q 0 end-1] {, }] and [lindex $q end]" }
+  set shows "the results the viewer now shows (the [wviewer::expr_an_word $b] analysis of [file tail $c])"
+  switch -exact -- $kind {
+    missing { return "wviewer: trace '$label' is empty: $names [expr {$many ? {are} : {is}}] not in $shows; save [expr {$many ? {them} : {it}}] in ASE-L (Outputs > To Be Saved) and run again, and the trace draws again" }
+    analysis { return "wviewer: trace '$label' is empty: it was computed on the [wviewer::expr_an_word $a] analysis and the viewer now shows the [wviewer::expr_an_word $b] analysis of [file tail $c]; it draws again when the viewer shows the [wviewer::expr_an_word $a] analysis" }
+    trace { return "wviewer: trace '$label' is empty: it is computed from [expr {$many ? {traces} : {trace}}] $quoted, which [expr {$many ? {are} : {is}}] empty; it draws again when [expr {$many ? {those traces do} : {that trace does}}]" }
+    unknown { return "wviewer: trace '$label' is empty: $names [expr {$many ? {are} : {is}}] neither in $shows nor [expr {$many ? {traces} : {a trace}}] of this viewer; if [expr {$many ? {they are nets, save them} : {it is a net, save it}}] in ASE-L (Outputs > To Be Saved) and run again, and if [expr {$many ? {they were traces, plot those traces} : {it was a trace, plot that trace}}] again" }
+    ambiguous { return "wviewer: trace '$label' is empty: $names [expr {$many ? {each answer} : {answers}}] to two vectors of $shows that differ only in letter case; plot the trace again with the exact spelling of one" }
+    failed { return "wviewer: trace '$label' is empty: it could not be evaluated on $shows; plot the trace again" }
+  }
+  return {}
+}
+
+# WHY AN EXPRESSION CANNOT BE EVALUATED, as `{kind names}` for expr_lost_msg.
+# `ex` is the postfix, `varlist` the names the data holds, `now` the analysis
+# the viewer shows, `vecs` the window's expression traces as `{vector label
+# ...}`, `fuzzy` validate_rpn's (left out, the data's own case rule is asked).
+# Each name of the expression that the data does not answer
+# (wviewer::validate_rpn, token by token) is one of:
+#   a phase column    `ph(<net>)`, which only an AC analysis holds. While the
+#                     viewer shows another analysis the expression is an AC
+#                     text over the wrong data: `analysis ac`, whatever else it
+#                     lacks. While the viewer shows AC the column is its net's,
+#                     and the net is what a run saves.
+#   answered twice    by two vectors that differ only in letter case: `ambiguous`
+#   a trace's vector  the vector of another expression trace of the window,
+#                     which is then empty itself: `trace`, by that trace's label
+#   a saved form      `v(...)`, `i(...)`, `@device[parameter]`, `...#branch`:
+#                     `missing`, the one kind whose cure is to save and run again
+#   anything else     a bare name, which is a net written without `v()` or the
+#                     vector of a trace that was deleted: `unknown`
+# One kind is answered, by that order of precedence; when its cause is cured
+# the next load says the next. No such name at all: `failed`.
+proc wviewer::expr_lost_why {ex varlist now vecs {fuzzy {}}} {
+  set ac 0
+  set amb {}
+  set trs {}
+  set sav {}
+  set unk {}
+  foreach tok [regexp -all -inline {\S+} $ex] {
+    set why [wviewer::validate_rpn $tok $varlist $fuzzy]
+    if {$why eq {}} { continue }
+    if {[string match {ambiguous *} $why]} {
+      if {[lsearch -exact $amb $tok] < 0} { lappend amb $tok }
+      continue
+    }
+    if {[regexp -nocase {^ph\((.+)\)$} $tok -> net]} {
+      if {$now ne {ac}} { set ac 1 ; continue }
+      if {[wviewer::validate_rpn "v($net)" $varlist $fuzzy] ne {}} { set tok "v($net)" }
+    }
+    if {[dict exists $vecs $tok]} {
+      set l [dict get $vecs $tok]
+      if {[lsearch -exact $trs $l] < 0} { lappend trs $l }
+    } elseif {[regexp -nocase {^(v|i|ph)\(.+\)$|^@.+\[.+\]$|#branch$} $tok]} {
+      if {[lsearch -exact $sav $tok] < 0} { lappend sav $tok }
+    } else {
+      if {[lsearch -exact $unk $tok] < 0} { lappend unk $tok }
+    }
+  }
+  if {$ac} { return [list analysis ac] }
+  if {[llength $amb]} { return [list ambiguous $amb] }
+  if {[llength $trs]} { return [list trace $trs] }
+  if {[llength $sav]} { return [list missing $sav] }
+  if {[llength $unk]} { return [list unknown $unk] }
+  return [list failed {}]
+}
+
+# EVALUATE THE EXPRESSION TRACES OF `token` AGAIN on the data its context holds
+# now (the current context must be the viewer's). Every tab's traces, each
+# vector once. Answers `{said <the sentences it said> made <how many vectors
+# it computed>}`.
+#
+# `leave` (wviewer::all_graphs') names strips of the tab shown whose traces are
+# left out altogether: the subwindow a plot under Replace is about to empty
+# (ase::ui::auto_plot). Their vectors would be computed to be thrown away, and
+# a vector left behind keeps its name taken, so a row the viewer names would be
+# named one further at every run. `absent` 1 is for where no data was read:
+# undo and redo (wviewer::state_apply) and the pass after a plot
+# (wviewer::expr_settle). It evaluates the vectors the data does not hold and
+# leaves a vector the data holds as it is, unless that vector is ANOTHER
+# TRACE'S (below). `quiet` 1 evaluates and says
+# nothing, and records nothing about a trace it could not evaluate: for a load
+# that a plot follows (ase::ui::auto_plot), because a sentence that a trace is
+# empty and when it draws again is false of a trace the plot then removes, and
+# of one whose vector the plot then computes. The caller says what is still
+# empty once its plot is in (wviewer::expr_settle).
+#
+# TWO TRACES, ONE VECTOR. add_trace computes a name again in place, so the
+# vector holds the expression computed last and both traces draw it. A load
+# leaves them so: the vector is made from the postfix on record as computed
+# last (wviewer::expr_note), whichever strip that trace stands in. With no
+# record (a restored window) it is the last such trace in the strips, which is
+# what the restore's own loop over the traces left.
+#
+# ANOTHER TRACE'S VECTOR (the pass with `absent`). A trace leaves the strips
+# (a plot under Replace, a delete), a load makes no vector for it, and a later
+# trace is computed into the name that is then free (wviewer::auto_expr_name
+# hands it out again; a user gives one name twice). Undo then brings the first
+# trace back while the data holds, under its vector's name, what the later one
+# was computed from. The pass knows it by the record: the postfix the vector
+# was computed from last (exprtext) is the postfix of none of the traces
+# walked for that vector. Such a vector is taken out of the data (`xschem raw
+# del`) and evaluated from the trace that is there, as one the data lacks is;
+# a trace that cannot be evaluated then draws nothing, where it would have
+# drawn the other trace's numbers under its own label. A vector the data holds
+# whose expression names a vector this pass computes was computed from the
+# other trace too: it is taken out and evaluated after the one it names, and
+# so on down. A vector with no record is left as it is.
+#
+# A trace is evaluated when the data can answer it, and is otherwise left with
+# no vector: its strip keeps it, draws nothing for it, and the readout has no
+# entry for it. Two things stop an evaluation:
+#   another analysis   the vector was computed on one analysis (exprtype) and
+#                      the viewer now shows another. The same postfix over the
+#                      other analysis's columns is another quantity (an AC
+#                      column is a magnitude), and the Calculator refuses to
+#                      plot a text of one analysis from another's data
+#                      (calculator.md R208c), so the trace waits: it is
+#                      evaluated again by the load that shows its analysis.
+#                      When the vector was computed last from another trace's
+#                      postfix, the analysis is the one on record for this
+#                      trace's own postfix (exprseen); with none on record
+#                      the trace is evaluated on what the viewer shows.
+#   a missing vector   its expression names a vector the data lacks, by
+#                      add_trace's own check (wviewer::validate_rpn).
+#                      Evaluating it all the same would make a vector of zeros
+#                      (raw_add_vector), a flat line where there is no data.
+#                      What kind of name is missing decides the sentence
+#                      (wviewer::expr_lost_why).
+# An expression may name another expression's vector, so the traces are taken
+# in rounds until a round evaluates none.
+#
+# ONE SENTENCE PER TRACE, WHEN IT STOPS DRAWING (wviewer::expr_lost_msg): the
+# cause is recorded (exprlost), and a later call that finds the same cause says
+# nothing. A trace that is evaluated again drops its record, and so does one
+# that is no longer among the traces walked: brought back by undo, still
+# empty, it is told of again.
+proc wviewer::expr_remake {token {leave {}} {absent 0} {quiet 0}} {
+  variable exprtype
+  variable exprlost
+  variable exprtext
+  variable exprseen
+  set said {}
+  set made 0
+  set l -1
+  catch {set l [xschem raw loaded]}
+  if {![string is integer -strict $l] || $l < 0} { return [dict create said $said made $made] }
+  set now [wviewer::trace_simtype {}]
+  set file {}
+  catch {set file [lindex [wviewer::dget [wviewer::attach_db] cur {}] 0]}
+  if {![info exists exprtype($token)]} { set exprtype($token) [dict create] }
+  if {![info exists exprlost($token)]} { set exprlost($token) [dict create] }
+  if {![info exists exprtext($token)]} { set exprtext($token) [dict create] }
+  if {![info exists exprseen($token)]} { set exprseen($token) [dict create] }
+  # every expression trace by its vector, `{postfix label}` each, in the order
+  # of the strips; and each vector's label, for a sentence that names a trace
+  set byvec [dict create]
+  set vecs [dict create]
+  foreach G [wviewer::all_graphs $token $leave] {
+    foreach tr [wviewer::dget $G traces {}] {
+      set ex  [wviewer::dget $tr expr {}]
+      set vec [wviewer::dget $tr vec {}]
+      if {$vec eq {} || [llength [regexp -all -inline {\S+} $ex]] < 2} { continue }
+      if {[wviewer::db_suffix $tr] ne {}} { continue }
+      dict lappend byvec $vec [list $ex [wviewer::trace_label $tr]]
+      dict set vecs $vec [wviewer::trace_label $tr]
+    }
+  }
+  dict for {vec cause} $exprlost($token) {
+    if {![dict exists $byvec $vec]} { dict unset exprlost($token) $vec }
+  }
+  set have {}
+  if {$absent} { catch {set have [split [xschem raw list] "\n"]} }
+  # the trace each vector is made from, `{postfix label}`: the one on record as
+  # computed last, else the last in the strips. `anew` = the vectors this pass
+  # computes: all of them, or with `absent` the ones the data lacks and the
+  # ones it holds as another trace's (`stale`)
+  set picks [dict create]
+  set anew {}
+  set stale {}
+  dict for {vec cands} $byvec {
+    set pick [lindex $cands end]
+    set last [wviewer::dget $exprtext($token) $vec {}]
+    set own 0
+    if {$last ne {}} {
+      foreach c $cands { if {[lindex $c 0] eq $last} { set pick $c ; set own 1 } }
+    }
+    dict set picks $vec $pick
+    if {!$absent || [lsearch -exact $have $vec] < 0} {
+      lappend anew $vec
+    } elseif {$last ne {} && !$own} {
+      lappend anew $vec
+      lappend stale $vec
+    }
+  }
+  if {$absent} {
+    # ...and every vector the data holds that is computed from one of those
+    set grew 1
+    while {$grew} {
+      set grew 0
+      dict for {vec pick} $picks {
+        if {[lsearch -exact $anew $vec] >= 0} { continue }
+        foreach tok [regexp -all -inline {\S+} [lindex $pick 0]] {
+          if {[lsearch -exact -nocase $anew $tok] < 0} { continue }
+          lappend anew $vec
+          lappend stale $vec
+          set grew 1
+          break
+        }
+      }
+    }
+    foreach vec $stale { catch {xschem raw del $vec} }
+  }
+  set todo {}
+  dict for {vec pick} $picks {
+    if {[lsearch -exact $anew $vec] < 0} { continue }
+    lappend todo [list $vec [lindex $pick 0] [lindex $pick 1]]
+  }
+  set lost {}
+  set wait {}
+  foreach t $todo {
+    lassign $t vec ex label
+    set was [wviewer::dget $exprtype($token) $vec {}]
+    set last [wviewer::dget $exprtext($token) $vec {}]
+    if {$last ne {} && $last ne $ex} {
+      set was [wviewer::dget [wviewer::dget $exprseen($token) $vec {}] $ex {}]
+    }
+    if {$was ne {} && $now ne {} && $was ne $now} {
+      lappend lost [list $vec "analysis $was" [wviewer::expr_lost_msg analysis $label $was $now $file]]
+    } else {
+      lappend wait $t
+    }
+  }
+  set progress 1
+  while {$progress && [llength $wait]} {
+    set progress 0
+    set varlist {}
+    catch {set varlist [split [xschem raw list] "\n"]}
+    set next {}
+    foreach t $wait {
+      lassign $t vec ex label
+      if {[wviewer::validate_rpn $ex $varlist] ne {}} { lappend next $t ; continue }
+      if {![catch {xschem raw add $vec $ex}]} {
+        wviewer::expr_note $token $vec $now $ex
+        set progress 1
+        incr made
+      } else {
+        lappend next $t
+      }
+    }
+    set wait $next
+  }
+  if {[llength $wait]} {
+    set varlist {}
+    catch {set varlist [split [xschem raw list] "\n"]}
+    foreach t $wait {
+      lassign $t vec ex label
+      lassign [wviewer::expr_lost_why $ex $varlist $now $vecs] kind names
+      lappend lost [list $vec "$kind $names" [wviewer::expr_lost_msg $kind $label $names $now $file]]
+    }
+  }
+  if {$quiet} { return [dict create said $said made $made] }
+  foreach e $lost {
+    lassign $e vec cause msg
+    if {[wviewer::dget $exprlost($token) $vec {}] eq $cause} { continue }
+    dict set exprlost($token) $vec $cause
+    if {$msg ne {}} {
+      wviewer::echo $msg error
+      lappend said $msg
+    }
+  }
+  return [dict create said $said made $made]
+}
+
+# AFTER A PLOT THAT LOADED QUIETLY (ase::ui::auto_plot, whose load is
+# wviewer::attach_raw with `quiet`): what is still empty now that the plot's
+# traces are in is told of, by the rule of every load (one sentence per trace,
+# when it stops drawing). A trace the plot removed is not among the traces any
+# more, and one whose vector the plot computed has a vector: neither is spoken
+# of. An expression that names a vector the plot has just made is evaluated
+# here. Answers how many vectors it computed; the caller owes the rebuild that
+# draws them. The viewer's context is borrowed and given back.
+proc wviewer::expr_settle {token} {
+  variable windows
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  set made 0
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return 0 }
+  catch {set made [dict get [wviewer::expr_remake $token {} 1] made]}
+  wviewer::leave_ctx $token $ticket
+  return $made
+}
+
+# The expression vectors of `token` that are shown under a label of their own,
+# `{vec label ...}` over every tab: for a place that lists the data's vectors
+# by name and has to show such a vector as its trace is shown (the signal
+# browser's lower pane, wviewer::browser_sea_refresh).
+proc wviewer::expr_labels {token} {
+  set out [dict create]
+  foreach G [wviewer::all_graphs $token] {
+    foreach tr [wviewer::dget $G traces {}] {
+      set vec [wviewer::dget $tr vec {}]
+      if {$vec eq {} || [wviewer::db_suffix $tr] ne {}} { continue }
+      if {[llength [regexp -all -inline {\S+} [wviewer::dget $tr expr {}]]] < 2} { continue }
+      set l [wviewer::trace_label $tr]
+      if {$l ne $vec && ![dict exists $out $vec]} { dict set out $vec $l }
+    }
+  }
+  return $out
+}
+
+# THE DISPLAY NAME OF THE NEXT EXPRESSION TRACE (the difference of two nets,
+# ase::ui::pd_finish: "v(x1.MINUS)-v(x1.PLUS)" where the viewer's own name
+# would be expr<N>). An expression's `name` argument to add_trace is the name
+# of the vector it is computed into and has to be a legal vector name, so a
+# label that is not one cannot travel there, and add_trace's formals are pinned
+# (row WD4 of tests/headless/test_calc_wave_dest.tcl). It travels as the
+# per-signal database and X column do (plot_dbs_arm): armed for the window,
+# taken by the next add_trace there on its first line, whatever that call then
+# does, and taken back by the armer after its call, so an arm whose plot was
+# refused before any trace was added cannot name a later trace. A plain trace
+# and a named expression do not use it.
+proc wviewer::expr_label_arm {token label} {
+  variable exprlabel
+  set exprlabel($token) $label
+  return {}
+}
+proc wviewer::expr_label_take {token} {
+  variable exprlabel
+  if {![info exists exprlabel($token)]} { return {} }
+  set v $exprlabel($token)
+  unset exprlabel($token)
+  return $v
 }
 
 # Regenerate the viewer canvas of `token` FROM the model (the one honest
@@ -5279,11 +5780,21 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
 # `sim_type` ({} = let the engine pick the first analysis in the file),
 # regenerate. Returns 1; 0 on an unknown token or a missing file (then NO
 # clear happens — a stale-but-loaded raw beats an empty viewer). Re-run
-# replace goes through this same helper. NOTE: the clear also kills every
-# `xschem raw add` vector — ase::ui::auto_plot re-adds its own on rebuild
-# (`raw add` of an existing name recalculates it); user-dialog expression
-# traces (item 12) go stale-but-CLEAN: the engine draws nothing for an
-# unresolved node and redraw keeps rc 0 (test-asserted).
+# replace goes through this same helper. NOTE: the load also drops every
+# `xschem raw add` vector, and since issue 1734 this proc makes them again
+# from the model (wviewer::expr_remake), whichever door plotted them: the
+# difference of two nets, the Calculator's Plot, the Add Trace dialog, an
+# ASE-L Outputs row. A trace that cannot be evaluated on the new data stays
+# in its strip with nothing drawn (the engine draws nothing for an unresolved
+# node and redraw keeps rc 0) and one sentence says why.
+#
+# `leave` and `quiet` (the last two arguments; {} and 0 for every caller but
+# one) are for a load that a plot follows, ase::ui::auto_plot. `leave` names
+# strips of the tab shown, by index, whose expression traces this load does not
+# evaluate: the caller is about to empty them (the destination Replace).
+# `quiet` 1 keeps the load from saying anything about a trace it could not
+# evaluate: the caller says what is still empty once its plot is in
+# (wviewer::expr_settle). Both are wviewer::expr_remake's.
 #
 # `vcdfiles` (spec section E, E3) are the run's DIGITAL databases — one VCD per
 # d_cosim code block, from ase::last_vcdfiles. They are read AFTER the analog
@@ -5314,7 +5825,7 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
 # A failed attach is NEW DATA too: the registry may have lost the stale copy.
 # The record (`attached`) is written here and dropped by the hand loads and by
 # wviewer::forget (wviewer::attach_forget).
-proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
+proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}} {leave {}} {quiet 0}} {
   variable windows
   variable attached
   if {![dict exists $windows $token]} { return 0 }
@@ -5333,13 +5844,20 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}}} {
   set prev {}
   if {[info exists attached($token)]} { set prev $attached($token) }
   set same [wviewer::attach_is_same $prev $rec [wviewer::dget $was cur {}]]
-  set att [ase::attach_dbs $rawfile $sim_type $vcdfiles]
+  # issue 1734: the load keeps the databases this window's traces draw from
+  # that the Calculator made in memory (a Calculator wave's table), and after
+  # it every expression trace is evaluated again on what was read, those of
+  # the strips in `leave` excepted, and one that cannot be evaluated is told
+  # of unless the caller will say it (`quiet`). A load that read nothing left
+  # the data, and the vectors in it, as they were.
+  set att [ase::attach_dbs $rawfile $sim_type $vcdfiles [wviewer::mem_dbs $token]]
   foreach v [dict get $att skipped] {
     catch {::ase::echo "ase: digital database not attached (missing or unreadable): $v" error}
   }
   set now [wviewer::attach_db]
   if {[wviewer::dget $att n 0] > 0} {
     set attached($token) [dict replace $rec cur [wviewer::dget $now cur {}] same $same]
+    catch {wviewer::expr_remake $token $leave 0 $quiet}
   } else {
     set same 0
     catch {unset attached($token)}
@@ -5638,8 +6156,9 @@ proc wviewer::state_grid {vdict} {
 # re-materialize below; R605 moved the READ half onto R303's one door and left
 # the clear where it was, see the block itself) and RE-MATERIALIZE every multi-token RPN expression
 # trace via `xschem raw add` (the raw clear killed those vectors; without the
-# re-add restored traces draw empty and the readout interp throws — the RPNs
-# were validated when the traces were created, so the catch is enough); ONE
+# re-add restored traces draw empty and the readout interp throws), in every
+# tab and not only the one shown, through wviewer::expr_remake, which a load
+# of results uses too and which says so when a trace cannot be evaluated; ONE
 # regenerate at the end. No usable rawfile -> regenerate alone (safe:
 # autozoom only runs when `raw loaded >= 0`, redraw rc 0 on unresolved
 # nodes). `sim_type` {} omits the `raw read` type word entirely (absent arg
@@ -5733,16 +6252,18 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
     # stored `sim_type` propagated out of a session restore; the door returns a
     # dict and this catch is belt-and-braces on top of it.
     catch {results::select $rawfile $sim_type [list host none]}
-    foreach G [dict get [wviewer::layout_for $token] graphs] {
-      foreach tr [wviewer::dget $G traces {}] {
-        set ex  [wviewer::dget $tr expr {}]
-        set vec [wviewer::dget $tr vec {}]
-        if {$vec ne {} \
-            && [llength [regexp -all -inline {\S+} $ex]] > 1} {
-          catch {xschem raw add $vec $ex}
-        }
-      }
-    }
+    # every expression trace, of every tab, made again on what was read: the
+    # one path a load takes too (wviewer::expr_remake, issue 1734). The window's
+    # records go first: the model was replaced wholesale, and a record made for
+    # a trace this window drew before the restore (the analysis its vector was
+    # computed on) would be read as the restored trace's when the two share a
+    # vector name, which leaves a transient trace waiting for an analysis it
+    # was never computed on. A state holds no such record, so each restored
+    # trace is evaluated on the analysis the restore shows, as it always was
+    # here; one whose text only an AC analysis can answer says so
+    # (wviewer::expr_lost_why).
+    wviewer::expr_forget $token
+    catch {wviewer::expr_remake $token}
     # --- spec §D1 / DEFECT 1: RE-ATTACH THE DATABASES THE TRACES NAME ---------
     #
     # ⚠⚠ WITHOUT THIS, A SAVED CROSS-DB TRACE COMES BACK SILENTLY BLANK. The
@@ -5857,6 +6378,11 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
 # like any var). Returns {} on success or a user-displayable error message
 # (never throws): D4 pre-validation, invalid names, missing raw data.
 #
+# An expression trace is shown under the name of its vector, unless a display
+# name was armed for it (wviewer::expr_label_arm, issue 1734): then the model's
+# `name` is that label and `vec` the vector, the shape a plain trace with a
+# display name has, and graph_props writes `label;vector` on the strip.
+#
 # `color` (issue 0153) pins the trace color instead of auto-cycling it. The
 # Direct Plot picker uses it so the trace lands in exactly the color it already
 # painted the schematic net with — the prediction and the plot then cannot
@@ -5882,6 +6408,9 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
 # site is unchanged. Row WD4 of tests/headless/test_calc_wave_dest.tcl asserts
 # the position as well as the name.
 proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}} {sweep {}}} {
+  # issue 1734: the armed display name, taken FIRST, before any return, so an
+  # arm is spent by the one call it was made for (wviewer::expr_label_arm)
+  set label [wviewer::expr_label_take $token]
   variable windows
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
@@ -5923,6 +6452,14 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}} {sweep {}}} {
     }
     xschem raw add $name $rpn
     set vec $name
+    # issue 1734: the analysis this vector was computed on and the postfix it
+    # was computed from, for the loads that come after (wviewer::expr_remake).
+    # And the display name: the armed label
+    # when there is one and the strip's node token can carry it (the rule a
+    # plain trace's display name is held to, below), else the vector's name as
+    # always. The vector keeps its legal name either way.
+    wviewer::expr_note $token $vec [wviewer::trace_simtype {}] $rpn
+    if {$label ne {} && ![regexp {[";\\]} $label]} { set name $label }
   } else {
     # plain vector reference; validated only when raw data is present (a
     # trace may be recorded before the first run — item 13 wires raws)
@@ -6230,7 +6767,7 @@ proc wviewer::close_subwin_at {W} {
 
 # Graph > Clear SubWin (Ctrl-Shift-D, SW22): empty the TARGET subwindow only,
 # the gesture twin of Clear All (Ctrl-D). The work is clear_subwin's (one undo
-# point, the survivor keeps the view, other subwindows untouched); this is the
+# point, the survivor keeps the X window, other subwindows untouched); this is the
 # LOGGED door, on every successful call like clear_all -- a clear is
 # destructive, and a replay that skipped a "redundant" one would rebuild a
 # different window. With one subwindow it clears the tab to one empty strip.
@@ -7311,6 +7848,151 @@ proc wviewer::view_drop {e axes} {
   if {[string first x $axes] >= 0} { set e [dict remove $e x1 x2] }
   if {[string first y $axes] >= 0} { set e [dict remove $e y1 y2 ypos1 ypos2] }
   return $e
+}
+
+# --- THE STORED VIEW ACROSS A REPLACE ----------------------------------------
+# User report 2026-11-23, on the bundled bandgap bench in a multi-plot viewer:
+# a strip plotted after `~` came up on an X window unlike the other strips',
+# and the bottom strip was drawn at the Y scale of the top strip's signal.
+#
+# A strip's STORED view is what the MODEL holds for it: the X and Y windows
+# that a zoom or pan of the viewer's own (wheel_zoom, pan_x, apply_range),
+# View > Fit, a marker, a split or a trace move wrote there, and its Y scale.
+# A Replace empties the subwindow to one strip (clear_subwin), and that strip
+# used to keep the whole stored view of the strip it was made from. In
+# multi-plot the plot that follows puts its FIRST row into that strip and the
+# other rows into fresh strips above it. So the first row was drawn in the
+# window stored for the old top strip, which had held the last row, and the
+# other rows were fitted; a strip plotted next then joined the one stored X
+# window (view_align).
+#
+# The rule now: a stored view belongs to the traces it was set for.
+#   * The strip a clear leaves keeps the X window and X scale of the strip it
+#     is made from and nothing of its Y (wviewer::sw_clear_graphs).
+#   * The door that refills the subwindow reads the stored views before the
+#     clear (sw_stored) and hands them back once its traces are in
+#     (sw_stored_give): each strip takes the stored view of the old strip that
+#     held its traces, chosen as a carried view is (wviewer::view_map), and
+#     only while its X is the same thing on the data shown now (x_same over
+#     x_resolve: the analysis, the X column, the X scale).
+#   * A strip that takes from no old strip keeps what the clear left it at a
+#     viewer door, where the traces are mostly new ones and the plot is meant
+#     to come up in the window on screen. After ASE-L's plot (`drop`) it
+#     carries no stored X when the subwindow has other strips: it then joins
+#     their X window as any new strip does (view_align), where a stored one
+#     would have been another strip's.
+# The view on the RECTS (a box zoom, an axis drag) is carried by view_keep and
+# view_keep_subwin as before; this is the model's half.
+
+# The data `token`'s viewer draws from now (wviewer::attach_db), read on a loan
+# of its context (enter_ctx / leave_ctx); {} when the context cannot be had.
+proc wviewer::attach_db_of {token} {
+  set db {}
+  catch {
+    set t [wviewer::enter_ctx $token]
+    if {[lindex $t 0]} {
+      catch {set db [wviewer::attach_db]}
+      wviewer::leave_ctx $token $t
+    }
+  }
+  return $db
+}
+
+# The stored views of the strips of the subwindow holding strip `gi` (default:
+# the TARGET subwindow), for sw_stored_give: `strips`, one wviewer::axis_sigs
+# entry per strip, top first, and `db`, the data they are drawn on
+# (attach_db_of). {} when no viewer resolves or it has no strip.
+proc wviewer::sw_stored {token {gi {}}} {
+  variable windows
+  if {$token eq {} || ![dict exists $windows $token]} { return {} }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {![llength $gs]} { return {} }
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  lassign [wviewer::sw_range $gs $gi] f l
+  return [dict create db [wviewer::attach_db_of $token] \
+            strips [wviewer::axis_sigs [lrange $gs $f $l]]]
+}
+
+# PURE: `gs` with the strips `f`..`l` given the stored views `strips`
+# (wviewer::axis_sigs entries of the strips that were there before) by the rule
+# in the header above. A strip that takes one gets its X window, its Y window
+# and its Y scale. `was` and `now` are wviewer::attach_db answers: the data the
+# views were stored on and the data shown now. `drop` 1 blanks the stored X of
+# a strip that takes none when `f`..`l` is more than one strip. A range that
+# is not two integers in order inside the list changes nothing.
+proc wviewer::sw_stored_apply {gs f l strips {drop 0} {was {}} {now {}}} {
+  foreach v [list $f $l] { if {![string is integer -strict $v]} { return $gs } }
+  if {$f < 0 || $l < $f || $l >= [llength $gs]} { return $gs }
+  set olds {}
+  foreach r $strips {
+    if {[catch {dict size $r}]} { lappend olds {} } else { lappend olds [wviewer::dget $r tr {}] }
+  }
+  set sigs [wviewer::axis_sigs [lrange $gs $f $l]]
+  set news {}
+  foreach s $sigs {
+    if {[catch {dict size $s}]} { lappend news {} } else { lappend news [wviewer::dget $s tr {}] }
+  }
+  set j $f
+  foreach m [wviewer::view_map $olds $news] s $sigs {
+    set G [lindex $gs $j]
+    if {![catch {dict size $G}]} {
+      set r {}
+      set i [lindex $m 0]
+      if {$i >= 0} {
+        set r [lindex $strips $i]
+        if {![wviewer::x_same [wviewer::x_resolve $r $was] [wviewer::x_resolve $s $now]]} { set r {} }
+      }
+      if {$r ne {}} {
+        lassign [wviewer::dget $r x {}] x1 x2
+        lassign [wviewer::dget $r y {}] y1 y2 ly
+        if {$ly eq {}} { set ly 0 }
+        set G [dict replace $G x1 $x1 x2 $x2 y1 $y1 y2 $y2 logy $ly]
+      } elseif {$drop && $l > $f} {
+        set G [dict replace $G x1 {} x2 {}]
+      }
+      lset gs $j $G
+    }
+    incr j
+  }
+  return $gs
+}
+
+# Hand the stored views `had` (a wviewer::sw_stored answer, read before the
+# subwindow was emptied) back to the strips of the subwindow holding strip
+# `gi` (default: the TARGET subwindow), now that its traces are in. `drop` is
+# sw_stored_apply's. Writes the model only: answers 1 when it changed, and the
+# caller then owes the rebuild.
+proc wviewer::sw_stored_give {token had {gi {}} {drop 0}} {
+  variable windows
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  if {[catch {dict get $had strips} strips] || ![llength $strips]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  if {![llength $gs]} { return 0 }
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  lassign [wviewer::sw_range $gs $gi] f l
+  set new [wviewer::sw_stored_apply $gs $f $l $strips $drop \
+             [wviewer::dget $had db {}] [wviewer::attach_db_of $token]]
+  if {$new eq $gs} { return 0 }
+  wviewer::set_graphs $token $new
+  return 1
+}
+
+# A VIEWER DOOR'S REPLACE, SETTLED (plot_signals, the Add Trace dialog): the
+# stored views `had` handed back to the subwindow holding strip `gi`
+# (sw_stored_give), and, when that changed the model, the one rebuild that
+# puts the model's windows on screen. Every other strip keeps the view it
+# shows (wviewer::live_axes); the strips given a window show it, because an
+# axis whose range the model changed is the model's (view_entries). The fold
+# comes first, as before every rebuild that carries strips forward (issue
+# 0194), and before the model is written. Answers 1 when it rebuilt.
+proc wviewer::sw_stored_settle {token had {gi {}}} {
+  variable windows
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  if {[catch {dict get $had strips} strips] || ![llength $strips]} { return 0 }
+  wviewer::capture_live_view_state $token
+  if {![wviewer::sw_stored_give $token $had $gi]} { return 0 }
+  wviewer::regenerate $token [wviewer::live_axes $token]
+  return 1
 }
 
 # --- NEW DATA UNDER A KEPT VIEW (issue 1733) ---------------------------------
@@ -8542,15 +9224,32 @@ proc wviewer::move_trace_in_graphs {graphs from_gi from_ti to_gi} {
   # shifts its remaining indices past the hole.
   set moved_was_bold [expr {$moved_ni >= 0 && [lsearch -exact $src_sel $moved_ni] >= 0}]
   set S [dict replace $S traces [lreplace $strs $from_ti $from_ti]]
-  # a destination that was EMPTY gets its ranges blanked, i.e. put back to
+  # a destination that was EMPTY gets its Y range blanked, i.e. put back to
   # `auto`: an empty strip's stored x1/x2/y1/y2 are whatever the last fit left
   # (capture_live_graph_state freezes the live rect, so they are never blank by
   # the time we get here), and a µA trace dropped into a 0..2 V window is drawn
   # off-screen — the user sees an empty strip and thinks the drop failed.
   # regenerate re-autozooms every blank range, which is exactly what a trace
   # landing in a fresh strip gets from add_trace/plot_signals.
+  #
+  # Its X range becomes THE SOURCE'S when the two strips share their X: the
+  # same subwindow (wviewer::sw_range, by which a strip just inserted below the
+  # source is in the source's) and the same X scale. The strips of a subwindow
+  # are zoomed and panned in X together, and the source's stored X is what it
+  # shows (the callers freeze the live rects first). Blanked, the strip came up
+  # on the whole sweep beside a zoomed source, and the next strip plotted joined
+  # the one stored window (user report 2026-11-23). Another subwindow or
+  # another X scale is another axis: blank, fitted.
   if {![llength [wviewer::dget $D traces {}]]} {
-    set D [dict replace $D x1 {} x2 {} y1 {} y2 {}]
+    set dx1 {}
+    set dx2 {}
+    lassign [wviewer::sw_range $graphs $from_gi] swf_ swl_
+    if {$to_gi >= $swf_ && $to_gi <= $swl_
+        && [wviewer::dget $S logx 0] eq [wviewer::dget $D logx 0]} {
+      set dx1 [wviewer::dget $S x1 {}]
+      set dx2 [wviewer::dget $S x2 {}]
+    }
+    set D [dict replace $D x1 $dx1 x2 $dx2 y1 {} y2 {}]
   }
   set D [dict replace $D traces [linsert [wviewer::dget $D traces {}] end $tr]]
   set S [wviewer::model_sel_set $S [wviewer::remap_sel_after_trace_move $src_sel $moved_ni]]
@@ -9382,6 +10081,7 @@ proc wviewer::state_snapshot {token} {
 }
 
 # Put a snapshot back and redraw. One regenerate, like every other model write.
+# The current context is the viewer's (history_step switched to it).
 #
 # `view` is a wviewer::view_take answer taken before the snapshot went in ({}:
 # none). An axis the snapshot PINS shows the snapshot's window, as it always
@@ -9395,6 +10095,15 @@ proc wviewer::state_apply {token snap {view {}}} {
   wviewer::set_graphs $token \
     [wviewer::sw_props_carry [dict get [wviewer::layout_for $token] graphs] $gs]
   if {[string is integer -strict $tgt]} { set target($token) $tgt }
+  # issue 1734: a trace the snapshot puts back may have no vector in the data
+  # any more. A load of results since the trace left made none for it (a plot
+  # under Replace emptied its strip, or the trace was deleted, and then a
+  # Direct Plot or a run). Or the data holds a vector of that name which a
+  # later trace was computed into. The expression traces whose vector the
+  # data lacks, or holds as another trace's, are evaluated again here, before
+  # the rebuild that fits and draws them; one that cannot be is told of, as
+  # after a load.
+  catch {wviewer::expr_remake $token {} 1}
   wviewer::regenerate $token [wviewer::view_keep $token $view \
     [wviewer::pinned_axes [wviewer::shared_graphs [wviewer::layout_for $token]]]]
   return 1
@@ -10265,6 +10974,10 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   # an EMPTY batch is a no-op for every destination (plan_plot's first rule):
   # it must not make a tab or a subwindow, nor clear one under Replace
   if {![llength $exprs]} { return {} }
+  # Replace: the stored views of the strips about to be emptied, for the traces
+  # that come back (wviewer::sw_stored, handed back at the end)
+  set had {}
+  if {$dest eq {replace}} { set had [wviewer::sw_stored $token] }
   if {![wviewer::dest_prepare $token $dest]} {
     return [list [list {} "cannot open a new tab or subwindow for this plot"]]
   }
@@ -10313,6 +11026,9 @@ proc wviewer::plot_signals {token exprs {colors {}} {destover {}}} {
   if {$nnew > 0 && [llength $errs] == [llength $exprs]} {
     wviewer::regenerate $token [wviewer::live_axes $token]
   }
+  # Replace: a strip that got back traces it held takes the stored view it had
+  # (the same signal plotted again shows what it showed)
+  wviewer::sw_stored_settle $token $had [lindex [dict get $plan targets] 0]
   return $errs
 }
 
@@ -12997,11 +13713,21 @@ proc wviewer::browser_sea_refresh {token {keepnote 0}} {
     # current kind would declass a foreign VCD's `m.sub.sig` down to `sub` with
     # an analog raw current — the very defect RULING F4 removed one surface over.
     set seatype [wviewer::browser_id_type $token $id]
+    # issue 1734: a vector an expression trace was computed into is listed
+    # under the label its trace is shown under (a difference of two nets:
+    # `v(b)-v(a)`, where the vector is expr<N>). In the database the traces
+    # are computed in, which is the current one; the full name beside it stays
+    # the vector's, and every gesture of the pane goes by that.
+    set xlabs [dict create]
+    if {[wviewer::browser_row_foreign $token $id] eq {}} {
+      catch {set xlabs [wviewer::expr_labels $token]}
+    }
     foreach nm $nms {
       set e {}
       if {[catch {wviewer::signal_entry $nm $seatype} e]} { continue }
-      lappend pairs [list [wviewer::browser_label $e] \
-                          [wviewer::browser_label_full $e]]
+      set lab [wviewer::browser_label $e]
+      if {[dict exists $xlabs $nm]} { set lab [dict get $xlabs $nm] }
+      lappend pairs [list $lab [wviewer::browser_label_full $e]]
     }
     set own [wviewer::browser_sea_own $token $path $id]
   }
@@ -20711,6 +21437,10 @@ proc wviewer::add_trace_ok {token} {
   # SUBWINDOWS: Replace empties the NAMED graph's subwindow (the dialog names
   # its graph), New SubWin adds one; either way the batch then lands in the
   # strip dest_prepare made the target.
+  # Replace: the stored views of the strips about to be emptied, for the traces
+  # that come back (wviewer::sw_stored, handed back after the adds)
+  set had {}
+  if {$dest eq {replace}} { set had [wviewer::sw_stored $token $gi] }
   if {![wviewer::dest_prepare $token $dest $gi]} {
     wviewer::atok_report $w "cannot open a new tab or subwindow for this plot"
     return
@@ -20806,6 +21536,9 @@ proc wviewer::add_trace_ok {token} {
     }
     incr added
   }
+  # Replace: a strip that got back traces it held takes the stored view it had,
+  # as plot_signals' Replace does
+  wviewer::sw_stored_settle $token $had [lindex [dict get $plan targets] 0]
   # `catch` so a destination that already took the dialog down (New Tab) does
   # not throw here — and an EXPLICIT empty return, because `catch`'s own 0 would
   # otherwise become this proc's result and break every caller that asserts a
@@ -23405,6 +24138,9 @@ proc wviewer::paste_traces {{token {}}} {
           }
         }
         catch {xschem raw add $vec $ex}
+        # issue 1734: computed here, on the analysis this window shows, so a
+        # load that shows another does not draw it from that one's columns
+        catch {wviewer::expr_note $token $vec [wviewer::trace_simtype {}] $ex}
       } elseif {$vec ne {} && !$same_win} {
         set idx -1
         catch {set idx [xschem raw index $vec]}

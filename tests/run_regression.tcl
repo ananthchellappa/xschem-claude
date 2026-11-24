@@ -185,7 +185,16 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_ase_terminal_pick_1724" \
                   "headless/test_pin_marker_1724" \
                   "headless/test_cmdmode_0201" \
-                  "headless/test_ase_plot_difference_1727"]
+                  "headless/test_ase_plot_difference_1727" \
+                  "headless/test_wave_expr_reattach_1734"]
+## `headless/test_wave_expr_reattach_1734` IS IN BOTH LISTS, registered in the change
+## that creates it (issue 1734: an expression trace and a Calculator wave keep drawing
+## when the viewer's results are loaded again). This arm runs what needs no window, on
+## the committed results file a real ngspice wrote: ase::attach_dbs keeping a table the
+## Calculator's own producer made, leaving the result it read current and answering its
+## slot; the two sentences for a trace that cannot be evaluated; and the spec's rows
+## being rows of the file. The bands that need a viewer window and press real keys print
+## one LOWERCASE `skip:` line each, the spelling summarize_all counts.
 ## `headless/test_ase_plot_difference_1727` IS IN BOTH LISTS, registered in the
 ## commit that creates it (issue 1727: the Cadence profile's Alt-Shift-D plots the
 ## difference of two nets picked on the schematic, second minus first). This arm
@@ -1139,7 +1148,15 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_ase_plot" \
                   "headless/test_rdw_keys_1245" \
                   "headless/test_ase_terminal_pick_1724" \
-                  "headless/test_ase_plot_difference_1727"]
+                  "headless/test_ase_plot_difference_1727" \
+                  "headless/test_wave_expr_reattach_1734"]
+## `headless/test_wave_expr_reattach_1734` IS ALSO IN `hcases` (see the note there): this
+## entry is its display arm, with src/cadence_style_rc sourced. On a sheet whose nets
+## carry the names of the committed real results file, it plots a difference by the real
+## chord and clicks, an expression by the Calculator's Plot button, by the Add Trace door
+## and by an ASE-L Outputs row, and a Calculator wave, each followed by a real Direct
+## Plot (Ctrl-4, a click, ESC), and reads every trace off the viewer's readout bar
+## against arithmetic done in the suite on the file's own columns.
 ## `headless/test_dblclick_connected_grow` IS ALSO IN `hcases` (see the note above
 ## that list): this entry is its display arm, where the double click is driven as
 ## the streams of canvas events a pointer makes, under the switches the Cadence-style

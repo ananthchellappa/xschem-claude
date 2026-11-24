@@ -55,6 +55,22 @@
 #         change is no undo step. The flat state's `grid` key (written only
 #         off the rc default) and its reader. Ctrl-Shift-4's echo names the
 #         target subwindow with two or more.
+#   SWW*  THE STORED VIEW (issue 1736: after the viewer's own zoom, a Replace in
+#         multi-plot drew the first row in the window stored for another strip
+#         and the next strip plotted joined it). SWD4's Y row and SWW1-SWW9,
+#         both arms, pure: the strip a clear leaves keeps the X half of a view
+#         only; wviewer::sw_stored_apply gives a strip the stored view of the
+#         old strip that held its traces (by traces, not by place; a strip
+#         that takes none; the only strip; some traces shared; another
+#         analysis; the named range only); wviewer::move_trace_in_graphs gives
+#         an empty strip the source's X window in one subwindow on one X scale.
+#         SWW10-SWW18 display, on a transient whose vectors differ in scale by
+#         orders of magnitude, the zoom made by real Ctrl-z presses on the
+#         canvas: the split by the Graph menu's own entry and a signal plotted
+#         after it, a trace moved to a strip of its own, the viewer's Replace
+#         of another signal and of the same one, Clear SubWin then a plot, the
+#         Add Trace dialog's Replace. Every strip's window is read off its
+#         rect; "fitted in Y" is the engine asked to fit that rect again.
 #   SWK*  DISPLAY -- the same in the real window: Options > Plot Mode and the
 #         status bar following real clicks, real Ctrl-Shift-G / Ctrl-G on the
 #         rect `grid` tokens, the Grid checkbutton, Graph > SubWin Grid and
@@ -227,6 +243,22 @@
 #   F4 unlogged: the pre-fix `if {$rc} { return -code error $res }`
 #        -> SWU1 errorcode leg (NONE), SWU2 (the continue raised an empty
 #           error and the suite died at that row)
+#
+# The stored view (issue 1736), measured 2026-11-24, each reverted to green:
+#   W1 sw_clear_graphs: the strip a clear leaves keeps its whole view again
+#        -> SWD4 Y row (both arms); display SWW14, SWW16, SWW18
+#   W2 sw_stored_apply: `drop` ignored (a strip that takes no view keeps the
+#        stored X) -> SWW2 drop row, SWW5
+#   W3 sw_stored_apply: no x_same test -> SWW5 ONLY
+#   W4 sw_stored_apply: views given by place, not by traces
+#        -> SWW1 (both rows), SWW2 (both rows), SWW3, SWW5, SWW6
+#   W5 move_trace_in_graphs: an empty destination's X blanked, as it was
+#        -> SWW7 (both arms); display SWW11, SWW12, SWW13 X row; and TP18,
+#           MM11 of test_wave_trace_menu, SP20 of test_wave_split_strip
+#   W6 plot_signals: no sw_stored_settle -> display SWW15 ONLY
+#   W7 add_trace_ok: no sw_stored_settle -> display SWW17 ONLY
+#   SWW15 and SWW17 are controls: green before the repair too. They fence the
+#   half of it that keeps what a viewer door's Replace of the same signal did.
 #
 # Per-subwindow settings, measured 2026-10-15, each reverted to green:
 #   Sa plot_mode answers the window's value (no swmode read)
@@ -749,10 +781,94 @@ set ga [dict replace [G a 1] x1 0.1 x2 0.2]
 set gb [dict replace [G b 1] auto 1 x1 0.3 x2 0.4 markers {1 0 0 0 0 0 0 0 0}]
 lassign [pcall {wviewer::sw_clear_graphs [list $ga $gb [G c 2]] 0}] gc
 set s0 [lindex $gc 0]
-check "SWD4 the survivor keeps the view of the subwindow's first AUTO strip, minus traces, markers and the marker" \
+check "SWD4 the survivor keeps the X window of the subwindow's first AUTO strip, minus traces, markers and the marker" \
   [list [wviewer::dget $s0 x1 -] [wviewer::dget $s0 x2 -] [dict exists $s0 auto] \
         [dict exists $s0 markers] [wviewer::dget $s0 traces -]] {0.3 0.4 0 0 {}}
 check "SWD4 the empty list" [pcall {wviewer::sw_clear_graphs {} 0}] {{} -1 -1}
+# the Y half goes with the traces (user report 2026-11-23: a strip drawn at
+# another strip's Y scale after `~` in multi-plot)
+set gy [dict replace [G b 1] auto 1 x1 0.3 x2 0.4 y1 -1 y2 5 logx 1 logy 1 yunit dB]
+lassign [pcall {wviewer::sw_clear_graphs [list [G a 1] $gy [G c 2]] 0}] gc
+set s0 [lindex $gc 0]
+check "SWD4 the strip a clear leaves keeps the X window and X scale of the strip it is made from, and no Y window, Y scale or Y unit: those belong to the traces that left" \
+  [list [wviewer::dget $s0 x1 -] [wviewer::dget $s0 x2 -] [wviewer::dget $s0 logx -] \
+        [wviewer::dget $s0 y1 -] [wviewer::dget $s0 y2 -] [wviewer::dget $s0 logy -] [dict exists $s0 yunit]] \
+  {0.3 0.4 1 {} {} 0 0}
+
+# ============================================================================
+# SWW* -- THE STORED VIEW ACROSS A REPLACE, AND ACROSS A TRACE MOVE (pure).
+# User report 2026-11-23: after `~` in a multi-plot viewer the bottom strip was
+# drawn in the X and Y window stored on the old top strip, and the next strip
+# plotted joined that X window, unlike the strips between them.
+# wviewer::sw_stored_apply gives each strip of the refilled subwindow the stored
+# view of the old strip that held its traces. Every strip below has ranges of
+# its own, so a view taken by index instead of by traces reads another's.
+# ============================================================================
+proc GV {nm x1 x2 y1 y2 {logy 0} {sw {}}} {
+  return [dict replace [G $nm $sw] x1 $x1 x2 $x2 y1 $y1 y2 $y2 logy $logy]
+}
+# a strip's stored view as {x1 x2 y1 y2 logy}
+proc sv {g} { lmap k {x1 x2 y1 y2 logy} {wviewer::dget $g $k -} }
+proc svs {gs} { if {[string match ERR:* $gs]} { return $gs } ; lmap g $gs {sv $g} }
+set sww_old [list [GV c 1 2 10 20] [GV b 3 4 30 40 1] [GV a 5 6 50 60]]
+set sww_had [wviewer::axis_sigs $sww_old]
+# after a Replace in multi-plot: fresh strips above the one the clear left,
+# which carries the old first strip's X; the rows are back, in another order
+set sww_new [list [G a] [G b] [dict replace [G c] x1 1 x2 2]]
+check "SWW1 rows that return take the stored view of the strip that held them, by traces and not by place: X window, Y window and Y scale" \
+  [svs [pcall {wviewer::sw_stored_apply $sww_new 0 2 $sww_had}]] {{5 6 50 60 0} {3 4 30 40 1} {1 2 10 20 0}}
+check "SWW1 fixture: read by place instead, every strip would show another's" \
+  [expr {[svs $sww_old] ne [svs [pcall {wviewer::sw_stored_apply $sww_new 0 2 $sww_had}]]}] 1
+# a row that is new: nothing to take
+set sww_z [list [G b] [dict replace [G z] x1 1 x2 2]]
+check "SWW2 ASE-L's plot (drop 1): a strip that takes from no old strip carries no stored view, so it is fitted in Y and joins its subwindow's X window" \
+  [svs [pcall {wviewer::sw_stored_apply $sww_z 0 1 $sww_had 1}]] {{3 4 30 40 1} {{} {} {} {} 0}}
+check "SWW2 a viewer door (drop 0): that strip keeps the X window the clear left it" \
+  [svs [pcall {wviewer::sw_stored_apply $sww_z 0 1 $sww_had}]] {{3 4 30 40 1} {1 2 {} {} 0}}
+check "SWW3 the only strip of its subwindow keeps the X window the clear left it under either" \
+  [list [svs [pcall {wviewer::sw_stored_apply [list [dict replace [G z] x1 1 x2 2]] 0 0 $sww_had 1}]] \
+        [svs [pcall {wviewer::sw_stored_apply [list [dict replace [G z] x1 1 x2 2]] 0 0 $sww_had}]]] \
+  {{{1 2 {} {} 0}} {{1 2 {} {} 0}}}
+# one strip of three traces replotted with one of them gone: the strip that
+# shares the most traces
+set sww_3 [dict replace [GV a 7 8 70 80] traces [list \
+  [dict create expr a name a vec a color 4] [dict create expr b name b vec b color 5] \
+  [dict create expr c name c vec c color 6]]]
+set sww_2 [dict replace [G a] traces [list \
+  [dict create expr a name a vec a color 4] [dict create expr c name c vec c color 6]]]
+check "SWW4 a strip that comes back with some of its traces takes the stored view of the strip it shares the most with" \
+  [svs [pcall {wviewer::sw_stored_apply [list $sww_2] 0 0 [wviewer::axis_sigs [list $sww_3]] 1}]] {{7 8 70 80 0}}
+# the data changed under it to another analysis: the windows were another axis
+set sww_tran [dict create type tran x0 time cur {/r/a.raw tran}]
+set sww_ac   [dict create type ac x0 frequency cur {/r/a.raw ac}]
+check "SWW5 a stored view is given only while the strip's X is the same thing on the data shown now: after a load of another analysis nothing is given (ASE-L's plot then leaves the strips to be fitted)" \
+  [list [svs [pcall {wviewer::sw_stored_apply $sww_new 0 2 $sww_had 1 $sww_tran $sww_ac}]] \
+        [svs [pcall {wviewer::sw_stored_apply $sww_new 0 2 $sww_had 1 $sww_tran $sww_tran}]]] \
+  {{{{} {} {} {} 0} {{} {} {} {} 0} {{} {} {} {} 0}} {{5 6 50 60 0} {3 4 30 40 1} {1 2 10 20 0}}}
+# only the named range is touched
+set sww_two [list [GV q 0.1 0.2 0.3 0.4 0 1] [G a 2] [G b 2]]
+check "SWW6 only the strips of the named range are touched, and a range that is not inside the list changes nothing" \
+  [list [svs [pcall {wviewer::sw_stored_apply $sww_two 1 2 $sww_had 1}]] \
+        [expr {[pcall {wviewer::sw_stored_apply $sww_two 2 5 $sww_had 1}] eq $sww_two}] \
+        [expr {[pcall {wviewer::sw_stored_apply $sww_two x 2 $sww_had 1}] eq $sww_two}]] \
+  {{{0.1 0.2 0.3 0.4 0} {5 6 50 60 0} {3 4 30 40 1}} 1 1}
+
+# a trace moved to an empty strip (a split, Move to New Strip, a drop on an
+# empty strip): the strip it lands on shows the X window of the strip it left
+# when the two share their X, and is fitted in Y
+set sww_src [dict replace [GV a 2 3 -1 5] traces [list \
+  [dict create expr a name a vec a color 4] [dict create expr b name b vec b color 5]]]
+set sww_dst [dict replace [E] x1 0 x2 9 y1 0 y2 9]
+check "SWW7 a trace moved to an empty strip of its own subwindow: the strip takes the X window of the strip the trace left, and no Y window" \
+  [sv [lindex [pcall {wviewer::move_trace_in_graphs [list $sww_src $sww_dst] 0 1 1}] 1]] {2 3 {} {} 0}
+check "SWW7 ...the strip it left keeps its own" \
+  [sv [lindex [pcall {wviewer::move_trace_in_graphs [list $sww_src $sww_dst] 0 1 1}] 0]] {2 3 -1 5 0}
+check "SWW8 moved to an empty strip of ANOTHER subwindow, or of another X scale, the strip is fitted in X as well" \
+  [list [sv [lindex [pcall {wviewer::move_trace_in_graphs [list [dict replace $sww_src sw 1] [dict replace $sww_dst sw 2]] 0 1 1}] 1]] \
+        [sv [lindex [pcall {wviewer::move_trace_in_graphs [list $sww_src [dict replace $sww_dst logx 1]] 0 1 1}] 1]]] \
+  {{{} {} {} {} 0} {{} {} {} {} 0}}
+check "SWW9 a strip that already holds a trace keeps its own windows when another lands on it" \
+  [sv [lindex [pcall {wviewer::move_trace_in_graphs [list $sww_src [GV k 0 9 0 9]] 0 1 1}] 1]] {0 9 0 9 0}
 
 # a model-only viewer window
 proc swd_open {gs tgt mode} {
@@ -5659,6 +5775,135 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   catch {wm geometry $vtop $sws_geo}
   update
 
+  # ---- SWW10-SWW18: THE STORED VIEW IN THE REAL VIEWER -----------------------
+  # The viewer's own zoom stores every strip's window in the model. Here it is
+  # made by real Ctrl-z presses on the canvas, the split by the Graph menu's
+  # own entry, and the plots by the viewer's plot door; every strip's window is
+  # read off its rect. The data is the transient the band above loaded, whose
+  # vectors differ in scale by orders of magnitude, so a strip drawn in
+  # another's Y window does not hold its own trace. A Y that is "the fit" is
+  # measured: the engine is asked to fit that rect again and must answer what
+  # the rect shows.
+  if {[catch {
+  proc sww_ax {gi} {
+    lmap k {x1 x2 y1 y2} { set v [rprop $gi $k] ; expr {[string is double -strict $v] ? double($v) : $v} }
+  }
+  proc sww_xs {} { lsort -unique [lmap gi [lsearch -all [lay] *] {lrange [sww_ax $gi] 0 1}] }
+  proc sww_yfit {gi} {
+    xschem new_schematic switch $::vdrw
+    set o1 [xschem getprop rect 2 $gi y1] ; set o2 [xschem getprop rect 2 $gi y2]
+    wviewer::with_edit $::tok [list xschem setprop -fast rect 2 $gi fullyzoom]
+    xschem new_schematic switch $::vdrw
+    set f [list [expr {double([xschem getprop rect 2 $gi y1])}] [expr {double([xschem getprop rect 2 $gi y2])}]]
+    wviewer::with_edit $::tok [list xschem setprop -fast rect 2 $gi y1 $o1]
+    wviewer::with_edit $::tok [list xschem setprop -fast rect 2 $gi y2 $o2]
+    return $f
+  }
+  # `n` real Ctrl-z presses on the viewer canvas with the pointer over strip
+  # gi: the viewer's zoom-out, X on every strip of the subwindow and Y on that one
+  proc sww_zoomout {gi n} {
+    lassign [mid $gi] px py
+    update
+    for {set i 0} {$i < 40} {incr i} {
+      focus -force $::vdrw ; update
+      if {[focus -displayof $::vdrw] eq $::vdrw} break
+      after 25
+    }
+    ev <Motion> -x $px -y $py
+    for {set i 0} {$i < $n} {incr i} {
+      ev <KeyPress> -keysym z -state 4 -x $px -y $py
+      ev <KeyRelease> -keysym z -state 4 -x $px -y $py
+    }
+    update
+  }
+  # a fresh tab holding `sigs` in one strip, zoomed out; answers its window
+  proc sww_fresh {sigs} {
+    pcall {wviewer::close_tab {} $::tok}
+    pcall {wviewer::new_tab $::tok}
+    wviewer::set_plot_mode single $::tok
+    pcall {wviewer::plot_signals $::tok $sigs}
+    update
+    sww_zoomout 0 2
+    return [sww_ax 0]
+  }
+  pcall {wviewer::new_tab $tok}
+  wviewer::set_plot_mode single $tok
+  pcall {wviewer::plot_signals $tok {VBG ENN Icc}}
+  update
+  set sww_fx [lrange [sww_ax 0] 0 1]
+  sww_zoomout 0 2
+  set sww_w [lrange [sww_ax 0] 0 1]
+  check "SWW10 fixture: one strip of three traces, and two real Ctrl-z presses on the canvas leave it on an X window wider than the sweep" \
+    [list [llength [lay]] [trx 0] \
+          [pcall {expr {[lindex $sww_w 1] - [lindex $sww_w 0] > 1.2 * ([lindex $sww_fx 1] - [lindex $sww_fx 0])}}]] \
+    {1 {VBG ENN Icc} 1}
+  set gm $vtop.wvmenubar.graph
+  wviewer::set_target_strip 0 $tok
+  pcall {$gm invoke [$gm index {Split Strip}]}
+  update
+  check "SWW11 Graph > Split Strip on the zoomed strip: every strip of the subwindow shows the X window the strip showed" \
+    [list [lmap gi {0 1 2} {trx $gi}] [sww_xs]] [list {VBG ENN Icc} [list $sww_w]]
+  wviewer::set_plot_mode multi $tok
+  pcall {wviewer::plot_signals $tok {START}}
+  update
+  check "SWW12 a signal plotted after the split, in multi-plot: its new strip and every strip already there show one X window, the zoomed one" \
+    [list [llength [lay]] [sww_xs]] [list 4 [list $sww_w]]
+  # Move to New Strip
+  set sww_a [sww_fresh {VBG Icc}]
+  pcall {wviewer::move_trace_to_new_strip 0 1 $tok}
+  update
+  check "SWW13 a trace moved to a strip of its own out of a zoomed strip: both strips show the X window the strip showed" \
+    [list [lmap gi {0 1} {trx $gi}] [sww_xs]] [list {VBG Icc} [list [lrange $sww_a 0 1]]]
+  check "SWW13 ...and the strip it landed on holds its trace: its Y is the engine's fit of it" \
+    [expr {[lrange [sww_ax 1] 2 3] eq [sww_yfit 1]}] 1
+  # the viewer's own Replace
+  set sww_a [sww_fresh {VBG}]
+  check "SWW14 fixture: the zoom left the strip a stored Y window that is not the fit" \
+    [expr {[lrange $sww_a 2 3] ne [sww_yfit 0]}] 1
+  pcall {wviewer::plot_signals $tok {Icc} {} replace}
+  update
+  check "SWW14 another signal plotted with Replace into the zoomed strip: the strip keeps the X window and is fitted in Y, not drawn in the Y window of the trace that left" \
+    [list [trx 0] [lrange [sww_ax 0] 0 1] [expr {[lrange [sww_ax 0] 2 3] eq [sww_yfit 0]}]] \
+    [list Icc [lrange $sww_a 0 1] 1]
+  sww_zoomout 0 1
+  set sww_b [sww_ax 0]
+  pcall {wviewer::plot_signals $tok {Icc} {} replace}
+  update
+  check "SWW15 control: the same signal plotted again with Replace shows what the strip showed, X and Y, as it did before this rule" \
+    [list [trx 0] [sww_ax 0] [expr {[lrange $sww_b 2 3] ne [sww_yfit 0]}]] [list Icc $sww_b 1]
+  # Graph > Clear SubWin, then a plot
+  pcall {wviewer::clear_target_subwin $tok}
+  pcall {wviewer::plot_signals $tok {VBG}}
+  update
+  check "SWW16 Clear SubWin, then a signal plotted: the strip keeps the X window it had and is fitted in Y" \
+    [list [trx 0] [lrange [sww_ax 0] 0 1] [expr {[lrange [sww_ax 0] 2 3] eq [sww_yfit 0]}]] \
+    [list VBG [lrange $sww_b 0 1] 1]
+  # the Add Trace dialog's Replace
+  sww_zoomout 0 1
+  set sww_c [sww_ax 0]
+  foreach {sig row} {VBG SWW17 Icc SWW18} {
+    set w [pcall {wviewer::add_trace_dialog $tok}]
+    if {[winfo exists $w]} {
+      $w.graph set 0
+      $w.dest set Replace
+      $w.expr delete 0 end
+      $w.expr insert 0 $sig
+      pcall {wviewer::add_trace_ok $tok}
+    }
+    catch {destroy $w}
+    update
+    if {$row eq {SWW17}} {
+      check "SWW17 control: the Add Trace dialog with Replace, the same signal: the strip shows what it showed, X and Y" \
+        [list [trx 0] [sww_ax 0]] [list VBG $sww_c]
+    } else {
+      check "SWW18 the Add Trace dialog with Replace, another signal: the strip keeps the X window and is fitted in Y" \
+        [list [trx 0] [lrange [sww_ax 0] 0 1] [expr {[lrange [sww_ax 0] 2 3] eq [sww_yfit 0]}]] \
+        [list Icc [lrange $sww_c 0 1] 1]
+    }
+  }
+  pcall {wviewer::close_tab {} $tok}
+  } swwerr]} { check "SWW* band ran to its end" "ERR:$swwerr" ok }
+
   set ::wviewer_aa_reveal_ms $swa_reveal_saved
   catch {unset ::wviewer::textlast($tok)}
 
@@ -5678,7 +5923,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   incr fail
 }
 
-if {$::arm eq {nogui}} { set expect 289 } else { set expect 585 }
+if {$::arm eq {nogui}} { set expect 302 } else { set expect 609 }
 if {$fail == 0 && $expect > 0 && $npass != $expect} {
   puts "FAIL: SWCNT expected $expect checks on the $::arm arm, ran $npass : FAIL"
   incr fail

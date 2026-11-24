@@ -175,11 +175,12 @@ check "TP16 a bold trace ABOVE the moved one shifts down by one" \
   [wviewer::dget [lindex $gs3 0] hilight_wave {}] 1
 check "TP17 and the destination does NOT inherit it" \
   [dict exists [lindex $gs3 1] hilight_wave] 0
-# the fresh strip's ranges stay blank, which is what makes regenerate autozoom
-# it around whatever landed there
-check "TP18 the new strip's ranges are blank (regenerate re-autozooms them)" \
+# the fresh strip's Y range stays blank, which is what makes regenerate fit it
+# around whatever landed there; its X window is the one of the strip the trace
+# left, so the two strips of the subwindow stay on one X window (issue 1736)
+check "TP18 the new strip takes the X window of the strip its trace left, and its Y range is blank (regenerate fits it)" \
   [list [wviewer::dget [lindex $gs2 1] x1 {}] [wviewer::dget [lindex $gs2 1] x2 {}] \
-        [wviewer::dget [lindex $gs2 1] y1 {}] [wviewer::dget [lindex $gs2 1] y2 {}]] {{} {} {} {}}
+        [wviewer::dget [lindex $gs2 1] y1 {}] [wviewer::dget [lindex $gs2 1] y2 {}]] {0 1 {} {}}
 check "TP19 the SOURCE keeps its own ranges" \
   [list [wviewer::dget [lindex $gs2 0] x1 {}] [wviewer::dget [lindex $gs2 0] x2 {}]] {0 1}
 # teeth: without the insert the pure move is a no-op (from_gi == to_gi), so the
@@ -2569,7 +2570,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     tm_ev $vdrw <ButtonRelease-1> -x $mmDX -y $mmDY2 -state 0x100
     update
 
-    # --- MM11: an EMPTY destination is put back to AUTO ranges (D-55) -----
+    # --- MM11: an EMPTY destination loses its stale window (D-55): its Y goes
+    # back to auto, its X becomes the window of the strip the traces left
+    # (issue 1736: the strips of a subwindow stay on one X window) ----------
     mm_fill $tok {{vec_a - vec_b vec_c} {vec_d} {}}
     # give the empty strip a deliberately WRONG stored window, the state
     # capture_live_graph_state would have frozen onto it
@@ -2592,8 +2595,9 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     mm_click $vdrw $mmx2 $mmy2 0x4
     mm_drag $vdrw $mmx0 $mmy0 $mmDX $mmDY2
     check "MM11 both traces landed on the empty strip" [vecs_at $tok 2] {vec_a vec_c}
-    check "MM11 the destination's model ranges went back to auto" \
-      [mm_mranges $tok 2] {{} {} {} {}}
+    check "MM11 the destination's stale window is gone from the model: its X is the window of the strip the traces left, its Y is auto" \
+      [list [mm_mranges $tok 2] [expr {[lrange [mm_mranges $tok 0] 0 1] ne {-5 -4}}]] \
+      [list [list {*}[lrange [mm_mranges $tok 0] 0 1] {} {}] 1]
     check_true "MM11 ... and regenerate re-fitted the rect away from the stale window" \
       [expr {[mm_ranges $vdrw 2] ne $mmfroz}]
 
