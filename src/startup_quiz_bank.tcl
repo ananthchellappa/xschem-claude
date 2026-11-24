@@ -694,6 +694,21 @@ startup_quiz::add direct-plot {
          && [P_body ::ase::ui::sod_source_standin_notes {is the negative of that trace}]
          && [P_sub pin_marker] && [P_body ::ase::ui::dp_hilight {xschem pin_marker add}]}
 }
+startup_quiz::add viewer-plot-mode-key {
+  type tf  kind shipped  topic {Plotting}
+  q   {In a waveform viewer window, Ctrl+Shift+M switches the plot between single-plot and
+       multi-plot mode.}
+  ok  true
+  why {The same as Options > Plot Mode in the viewer. The pointer only has to be over the
+       plot: a viewer takes its keys without a click in it first, and a schematic editing
+       key typed there does nothing. In the Cadence profile, Ctrl+Shift+4 switches the
+       mode from the schematic window.}
+  proof {[P_has src/wave_viewer.tcl {bind WaveViewer <Control-Shift-Key-M> {wviewer::plot_mode_toggle_at %W; break}}]
+         && [P_has src/wave_viewer.tcl {proc wviewer::plot_mode_toggle_at }]
+         && [P_has src/wave_viewer.tcl {-accelerator Ctrl+Shift+M}]
+         && [P_has src/wave_viewer.tcl {add cascade -label {Plot Mode}}]
+         && [P_hasre src/cadence_style_rc {bind \.drw <Control-Shift-Key-4>\s+\{ase::plot_mode_for_current invert;\s+break\}}]}
+}
 
 # ---------------------------------------------------------------- Waveform viewer
 startup_quiz::add wv-open {
@@ -1020,6 +1035,60 @@ startup_quiz::add cad-find {
   only  {[llength [info commands ::cadence::q_key]] > 0}
   proof {[P_has utils/find_helper.tcl {bind .drw <Control-Shift-Key-G> {find_helper::show; break}}]
          && [P_has src/cadence_style_rc find_helper.tcl]}
+}
+startup_quiz::add plot-difference {
+  type mc  kind howto  topic {Cadence profile}
+  q   {In the Cadence profile, Alt+Shift+D on the schematic asks you to click one net and
+       then another. What is plotted in the waveform viewer?}
+  a   {{The second net's voltage minus the first's} {The first net's voltage minus the second's}
+       {The two nets, as two traces} {The sum of the two voltages}}
+  ok  0
+  why {Second minus first, as one trace, read from the transient analysis of the result;
+       Esc before the second click cancels. For an AC or a DC sweep result, copy the
+       Alt-Key-D bind line of cadence_style_rc to a key of your own and change the word
+       tran to ac or dc. Ctrl+4 is Direct Plot, which plots each net you click.}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
+  proof {[P_hasre src/cadence_style_rc {bind \.drw <Alt-Key-D>\s+\{ase::plot_difference_for_current tran;\s+break\}}]
+         && [P_hasre src/cadence_style_rc {# bind \.drw <Alt-Key-A>\s+\{ase::plot_difference_for_current ac;\s+break\}}]
+         && [P_hasre src/cadence_style_rc {# bind \.drw <Alt-Key-S>\s+\{ase::plot_difference_for_current dc;\s+break\}}]
+         && [P_proc ::ase::plot_difference_for_current]
+         && [P_body ::ase::diff_text {return "$b - $a"}]
+         && [P_body ::ase::ui::pd_msg {click second net (second minus first)}]
+         && [P_hasre src/cadence_style_rc {bind \.drw <Control-Key-4>\s+\{ase::direct_plot_for_current;\s+break\}}]}
+}
+# The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
+# so this one is asked where the others above are.
+startup_quiz::add dblclick-labels {
+  type tf  kind myth  topic {Selection}
+  q   {In the Cadence profile, double-clicking a wire to grow the selection along the net
+       takes wires only: the net-name labels sitting on them are left out.}
+  ok  false
+  why {Each double click selects one more ring of connected wires, the third reaching the
+       whole net, and with them the net-name labels on those wires. So Delete after the
+       third removes the net with its labels. Ports, probes, devices and the global power
+       symbols (vdd, gnd) are left.}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
+  proof {[P_has src/cadence_style_rc {set cadence_compat 1}] && [P_sub select_grow_connected]
+         && [P_has src/select.c {static int dblgrow_select_labels(void)}]
+         && [P_has src/select.c {static int dblgrow_is_netname_label(int i)}]
+         && [P_has src/callback.c {select_grow_connected_step(xctx->mousex, xctx->mousey, 1);}]}
+}
+
+# ---------------------------------------------------------------- ASE-L run checks
+startup_quiz::add rename-correction {
+  type tf  kind shipped  topic {ASE-L run checks}
+  q   {After you rename an instance, ASE-L can rewrite the outputs that still name the old
+       instance path, so you do not have to edit them one by one.}
+  ok  true
+  why {Run stops before the simulator and lists each stale name with its correction, such
+       as v(x1.a1) -> v(xdut.a1); Apply Corrections rewrites them. It is offered when
+       exactly one instance makes every refused name resolve. .nodeset and .ic names in the
+       session's include files are checked the same way and rewritten after asking; Setup >
+       Include Files lists those files.}
+  proof {[P_proc ::ase::preflight_rename_solve] && [P_proc ::ase::preflight_fix_session]
+         && [P_body ::ase::preflight_apply_label {Apply Corrections}]
+         && [P_proc ::ase::include_card_idents]
+         && [P_proc ::ase::ui::lbl_include_files_menu] && [P_proc ::ase::ui::include_files_dialog]}
 }
 
 # ------------------------------------------------------------------ sky130 symbols
