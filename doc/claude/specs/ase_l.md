@@ -2181,7 +2181,8 @@ The user, 2026-11-24: *"The dividers ... between the various panes - variables,
 analyses, outputs, are not moveable as they are in Cadence ADE-L. We'd like to be
 able to adjust - sometimes, you'd like to trade size of the analyses pane
 (vertically) to see more outputs (measures), etc."* P stands for what those words
-settle; the rest are the builder's choices, recorded for a ruling in the issue file.
+settle; the rest are the builder's choices, which the user kept on 2026-11-24 (the
+issue file, "The user's rulings").
 
 - **R-PANE1 — two dividers (P).** The gap between Design Variables and the two panes
   at its right is a divider that is dragged left and right. The gap between Analyses

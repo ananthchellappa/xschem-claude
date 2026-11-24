@@ -1,11 +1,11 @@
 # 1737 — The dividers between the ASE-L window's three panes can be dragged
 
-**STAMP:** `v1 claim=fixed tree=4fba0839e stamped=2026-11-24 fix=taken open=2 by=driver-1737`
+**STAMP:** `v1 claim=fixed tree=4fba0839e stamped=2026-11-24 fix=taken open=1 by=driver-1737`
 
 Asked for by the user on 2026-11-24 and built the same day, on a private Xvfb with
-openbox. The user tried it on their own screen the same day and found it well. Two
-things are open, both listed under "Open" below: a ruling on the choices, and what was
-not built.
+openbox. The user tried it on their own screen the same day and found it well, and
+ruled on the builder's choices: all six are kept. One thing is open, listed under "Open"
+below: what was not built.
 
 ## What the user asked
 
@@ -59,9 +59,10 @@ scrollbars appeared. No existing row caught it; `test_ase_window` stayed green. 
 seen in a probe that compared the base and the change side by side, and is why
 `ase::ui::pane_reseed` exists. Band PD10 holds it.
 
-## The builder's choices, for a ruling
+## The builder's choices, ruled on 2026-11-24: all six kept
 
-The user's words settle that both dividers can be dragged. These are not the user's:
+The user's words settle that both dividers can be dragged. These were not the user's;
+the user kept every one of them on 2026-11-24 ("The user's rulings" at the foot):
 
 1. The panes follow the pointer during the drag (not a ghost line placed at release).
 2. The gap is as thin as it was and draws no line or grip: the only sign of a divider
@@ -82,15 +83,24 @@ both arms against the product without the change.
 
 ## Open
 
-1. **The six choices above** wait for a ruling.
-2. **Not built:** a split that survives a restart of xschem; dividers in the other
-   ASE-L windows that hold two or more lists with a fixed split (the Results > Select
-   window's lists, the campaign result window's table and plots); an action-log line
-   for a drag.
+1. **Not built:** a split that survives a restart of xschem; an action-log line for a
+   drag.
+
+Not open any more: the six choices (kept, 2026-11-24), and dividers in the other ASE-L
+windows that hold two or more lists with a fixed split (the Results > Select window's
+lists, the campaign result window's table and plots). The user ruled to leave those
+windows as they are, and nothing is filed for them.
 
 ## The user's look (2026-11-24)
 
 Everything above ran on a hidden display with generated events. The user then used the
 dividers with a real mouse on their own screen and wrote: *"I checked out the new ASE-L
 and all is well."* The look is paid on those words. They say nothing about the six
-choices, which stay open, nor about the tutorial's wording.
+choices (ruled later the same day, below), nor about the tutorial's wording.
+
+## The user's rulings (2026-11-24)
+
+The user answered this issue's entry in the owed ledger on a sign-off sheet in the
+private tree's session, which cleared it and relayed the answer here in its own words:
+all six choices are kept as built, and the other ASE-L windows with a fixed split are
+left as they are, with nothing filed.

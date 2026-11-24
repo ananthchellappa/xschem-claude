@@ -200,6 +200,12 @@ remembered, so the session is still not shown to have gone this way, and the use
 to leave the question open. It need not be put again in these words; what would settle
 it is the next occurrence, read as below.
 
+**Taken off the user's list, 2026-11-24.** On the sign-off sheet of that day (private
+tree's session, relayed here) the user had the question's entry removed from the owed
+ledger and said that this issue stays open. Nothing is owed to the user on it and it is
+not to be put to them again; this item stays, because the session is still not shown to
+have gone this way.
+
 If a strip comes up on another X window again, what tells which door it was is the
 stored window of every strip, taken before anything else is pressed. Either of:
 
@@ -219,3 +225,18 @@ stored window of every strip, taken before anything else is pressed. Either of:
 - Graph > Clear SubWin, a viewer door's Replace of other signals, and a single strip
   whose rows are all new keep the stored X window, as before. Only the Y is fitted.
 - A lone strip keeps its stored X window across a re-run of another analysis, as before.
+
+## The user's rulings (2026-11-24)
+
+From the same sign-off sheet, relayed by the private tree's session in its own words.
+Both choices stay as built:
+
+- **What the repair changed for a user.** After a zoom made in the viewer, `~` and a
+  re-run under Replace keep that zoom on every strip, in X and in Y, and the stored Y
+  stays until View > Fit. A strip split off, or a trace moved to a strip of its own, out
+  of a zoomed strip comes up on that strip's X window. A Replace from the Calculator, the
+  signal browser or Add Trace is fitted in Y.
+- **The port to the private tree** (`/home/analog/port_pdfix`), in code only that tree
+  has: in `wviewer::move_trace_in_graphs` a histogram trace keeps that tree's own rule
+  (its strip is fitted in X and Y), and every other trace moved to an empty strip keeps
+  the X window of the strip it left.

@@ -1,6 +1,6 @@
 # 1727 — Plot the difference of two nets from the schematic (Alt-Shift-D)
 
-**STAMP:** `v1 claim=fixed tree=6e16cf473 stamped=2026-11-23 fix=taken open=2 by=crew-pdfix`
+**STAMP:** `v1 claim=fixed tree=6e16cf473 stamped=2026-11-23 fix=taken open=3 by=crew-pdfix`
 
 **AMENDED 2026-11-23, after the user's first use on a real bench** (section "After the
 first use" at the foot). Two things this file says below are no longer so: a difference
@@ -48,12 +48,13 @@ The user, 2026-11-23, three messages, verbatim:
   their own for AC or for the DC sweep. That must be possible from the line and the comment
   above it alone.
 
-## The driver's choices — not yet ruled by the user
+## The driver's choices — kept by the user on 2026-11-24
 
-Each of these was chosen by the driver of the build, was built as written, and is waiting
-for the user's word.
+Each of these was chosen by the driver of the build and was built as written. The user
+ruled on them on 2026-11-24 (section "The user's rulings" at the foot): every one stays as
+built. C4's legend half had been overruled on 2026-11-23, as it says.
 
-- **C1** (driver's choice, not yet ruled by the user). The command is
+- **C1** (driver's choice, kept by the user on 2026-11-24). The command is
   `ase::plot_difference_for_current ?analysis?`, beside `ase::direct_plot_for_current`. The
   word is ASE-L's own for the analysis: `tran`, `ac`, `dc`; with none, the transient. The
   word's analysis is read when the loaded result has it. When it has not and the result
@@ -61,33 +62,33 @@ for the user's word.
   refuses in one sentence naming the analyses the result holds, and plots nothing. The
   Alt-Shift-D line carries the transient's word; two commented example lines under it carry
   AC and the DC sweep on chords the profile does not use.
-- **C2** (driver's choice, not yet ruled by the user). The prompts are on the status line
+- **C2** (driver's choice, kept by the user on 2026-11-24). The prompts are on the status line
   Direct Plot's prompt uses and name the analysis read: first the request for the first
   net; then the first net's name, the request for the second, and that the plot is the
   second minus the first. When another analysis is read than the word's, the user is told
   which, at entry.
-- **C3** (driver's choice, not yet ruled by the user). One shot: the second net plots at
+- **C3** (driver's choice, kept by the user on 2026-11-24). One shot: the second net plots at
   once and ends the mode, with no ESC. ESC before that cancels, says so, plots nothing.
-- **C4** (driver's choice, not yet ruled by the user; its legend half overruled by the user
+- **C4** (driver's choice, kept by the user on 2026-11-24; its legend half overruled by the user
   on 2026-11-23). The trace is the one the Calculator plots for the difference text,
   through its translator and its plot, so a saved session, a reload and a re-run treat it
   as any Calculator expression trace. Its legend is not the Calculator's: the user ruled
   that it names the two nets (R-PD6, `ase::diff_label`). The destination is Direct Plot's,
   not the Calculator's own setting.
-- **C5** (driver's choice, not yet ruled by the user). A click that is not one named net
+- **C5** (driver's choice, kept by the user on 2026-11-24). A click that is not one named net
   gets a sentence saying what was clicked and what to click instead, and the mode stays on
   the same step.
-- **C6** (driver's choice, not yet ruled by the user). A pick is hierarchy-qualified as
+- **C6** (driver's choice, kept by the user on 2026-11-24). A pick is hierarchy-qualified as
   Direct Plot's, the session is found as Direct Plot finds it, and the two nets may be
   picked at different depths.
-- **C7** (driver's choice, not yet ruled by the user). No session, no loaded result, or a
+- **C7** (driver's choice, kept by the user on 2026-11-24). No session, no loaded result, or a
   net the loaded result does not hold: a sentence naming the cure. A net that is not in
   the result is refused at its own click.
-- **C8** (driver's choice, not yet ruled by the user). AC is correct or refused.
-- **C9** (driver's choice, not yet ruled by the user). No menu entry, dialog, toolbar
+- **C8** (driver's choice, kept by the user on 2026-11-24). AC is correct or refused.
+- **C9** (driver's choice, kept by the user on 2026-11-24). No menu entry, dialog, toolbar
   button, or key outside the Cadence profile; nothing changed in Direct Plot, the
   Calculator window or the viewer; voltages of nets only.
-- **C10** (driver's choice, not yet ruled by the user). The key works in the windows and
+- **C10** (driver's choice, kept by the user on 2026-11-24). The key works in the windows and
   tabs Ctrl-4 works in, by the same mechanism.
 
 ## What was built
@@ -384,10 +385,17 @@ build had not run that suite.
 - Voltages of nets only: no current, no device pin, no bus difference bit by bit.
 - A net the run did not save is refused; nothing is added to the session's outputs.
 
-## Outstanding: 2
+## Outstanding: 3
 
-1. The user's rulings on C1 to C10 and on the decisions listed above.
-2. One run of the suite on `:0` (Xwayland).
+1. One run of the suite on `:0` (Xwayland).
+2. Ruled by the user on 2026-11-24 and not built: a Calculator Plot, and an Add Trace
+   expression given no Name, labelled by the expression it plotted (section "The user's
+   rulings" at the foot, change 1).
+3. Ruled by the user on 2026-11-24 and not built: after a re-run, the CIW naming every
+   Calculator wave kept from the earlier run (same section, change 2).
+
+Paid on 2026-11-24: the user's rulings on C1 to C10 and on the decisions listed above.
+Every one is kept as built (same section).
 
 Paid on 2026-11-24: the look on the user's own screen (the physical chord, the prompts
 on the status line, the trace in the viewer; no row can see pixels, and every key in the
@@ -418,3 +426,31 @@ command. R-PD12, rows GZ2 to GZ4 and GZ6 to GZ8.)
   analysis than the one a difference was computed on, the difference is empty, and it
   draws again when the viewer is back (rows GU4, GU5, GV2).
 - **Why the rows missed both** is in `doc/claude/TEST_LESSONS.md` section 1.
+
+## The user's rulings (2026-11-24)
+
+The user answered this issue's two entries in the owed ledger (`1727` and
+`1727_label_and_family_choices`) on a sign-off sheet in the private tree's session. That
+session cleared the entries and relayed the answers here in its own words; the user's own
+sentences are not in this file.
+
+- **C1 to C10, and the decisions the work order did not cover: every one stays as built.**
+- **The choices of the repair after the first use** (the label `v(<second>)-v(<first>)`
+  with each net as Direct Plot spells it, `mag(...)` around it for AC, the same difference
+  plotted twice shown as two traces under one label, every expression trace computed
+  again on the new data after a re-run): **kept as built, except two.** Both are ruled,
+  and the user said that neither is to be built now.
+
+  1. **A Calculator Plot, and an Add Trace expression given no Name, is labelled by the
+     expression it plotted. An ASE-L Outputs row keeps its Name.** As built, all three
+     kept the names they had before the repair; for a Calculator Plot that is the
+     viewer's own name for an expression (`expr1` and so on), the name the user called
+     meaningless on the difference. The ruling asks for the other two doors what R-PD6
+     gives the difference.
+  2. **After a re-run the CIW names every Calculator wave kept from the earlier run, and
+     says that it is from that run.** As built, a Calculator wave stays as the user made
+     it across a run and nothing is said (issue 1734, "What a load now leaves"), so a
+     wave of the earlier run stands beside the new run's traces unannounced.
+
+Neither change has a row, a rule in a spec or a line of code yet. They are items 2 and 3
+of "Outstanding" above.

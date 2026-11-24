@@ -156,3 +156,22 @@ evaluates it in the result selected. A Calculator wave is not saved with a state
 trace was deleted and brought back by undo after a load has nothing to draw. A restored trace of
 the transient or the DC sweep is evaluated on whichever analysis the restore shows. The replay
 form of a paste (`wviewer::paste_payload`) computes no vector; the next load does.
+
+## The user's rulings (2026-11-24)
+
+The user answered this issue's three entries in the owed ledger on a sign-off sheet in
+the private tree's session, which cleared them and relayed the answers here in its own
+words. Every choice stays as built:
+
+- the wording and the timing of the CIW sentences for an expression trace that cannot be
+  drawn (the kinds of `wviewer::expr_lost_why`; each said once, when the trace stops
+  drawing; only a net a run can save is told to save it in ASE-L and run again);
+- a trace computed on one analysis stays in its strip, empty, with one sentence, while
+  the viewer shows another analysis, and is not drawn from that analysis's columns;
+- undo, redo and a paste: expression traces are evaluated again and an empty one is told
+  of at that moment; a trace brought back while a later trace has its vector's name gets
+  a vector name of its own; two traces the user gave one name stay one vector.
+
+One ruling made on issue 1727's sheet changes what this file says of a Calculator wave:
+after a re-run the CIW is to name each wave kept from the earlier run. It is ruled and
+not to be built now; the record is in issue 1727, "The user's rulings", change 2.
