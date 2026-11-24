@@ -184,6 +184,12 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   product that never evaluated at undo, because the vector was never touched. Put the
   undo reading and the redo reading in one row (`GG14`, `GG15`), or the redo row passes
   red-first's test of nothing.
+- **Two mechanisms that each give a behaviour hide the removal of either.** The
+  tip-of-the-day window kept its size both by a remembered largest size and by keeping
+  the size it has; with either taken out every row stayed green (issue 1739). When a
+  deliberate break stays green, look for the second mechanism before adding a row, and
+  then remove one of the two or break both at once (the suite header's "the size left to
+  Tk and no minimum size").
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -359,6 +365,22 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   that printed the window's and the panes' sizes at the base and with the change, side
   by side, through the same steps, showed it. Before replacing a geometry manager, run
   such a pair for every door that changes what the content asks for.
+- **A widget the packer finds no room for is unmapped, and keeps the place it had.**
+  `winfo y` and `winfo height` of it read as if it were still on screen. A row about
+  what a short window still shows asks `winfo ismapped` first (`w_foot_in` of
+  `test_startup_quiz`; its first form passed row `D51` with the buttons gone).
+- **Tk makes a toplevel follow its widgets only until the toplevel gets a size from
+  outside** (`wm geometry` with a size, a drag of the border, a window manager's own
+  size). After that, taller content is cut. A row about a window growing with its
+  content runs after such a size (row `D49`), or it tests Tk and passes on a product
+  that does nothing.
+- **openbox moves a window that grows by Tk's own following back onto the screen, and
+  leaves one alone whose size was set with `wm geometry`.** A keep-on-screen row can be
+  green for the window manager's reason (row `D54` on the window as it was before issue
+  1739). Take the product's own move out and see the row go red.
+- **`font actual` reports the size of a font created in pixels (`-size -12`) in
+  points.** Code that branches on a size below zero is not reached through it (row
+  `D59`).
 - **Never `font configure` a `Tk*Font`**: it resizes every other dialog (row `CF18`; row
   `FZ5` of `test_rdw_window_1245`).
 

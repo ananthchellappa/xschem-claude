@@ -26,6 +26,30 @@
 #       menus are the control's less the engine's entries; a plain launch on
 #       the partway one is not asked.
 #   D*  the dialog itself, driven through its widgets (display arm only).
+#       D44 to D59 are the window's size and its faces (issue 1739): an answer
+#       makes the window taller, it does not get smaller while it is open, a
+#       size from outside does not stop it growing, the button row is the last
+#       thing a short window cuts, all of it stays on the screen, and its text
+#       is set in one family taken from a list.
+#
+# THE SIZE AND FACE ROWS, MEASURED (2026-11-24, openbox on a private Xvfb).
+# Against the window as it was before issue 1739, D47 D48 D49 D50b D50c D51 D52
+# and D55 to D59 are red. D46 and D54 are green there, for reasons that are not
+# the product's: Tk follows its widgets in a window nobody has sized, and openbox
+# moves a window that grows that way back onto the screen. With one thing taken
+# out of src/startup_quiz.tcl at a time, the rows that go red:
+#   no fit after an answer ......................... D46 D49 D50b D50c D54
+#   the button row packed after the text ........... D51
+#   the size the window has is not kept ............ D47 D48 D50
+#   no move back onto the screen ................... D54
+#   the family never taken from the list ........... D55 D56
+#   the size left to Tk (never set) ................ D47 D48 D50
+#   the size left to Tk and no minimum size ........ D47 D48 D49 D50b D50c D52
+#   no minimum size ................................ D50b D50c
+#   no fit when a question is put up ............... D52
+#   the first place not held on the screen ......... D54b
+# The size "from outside" in D49 is a `wm geometry` with a size: it leaves Tk in
+# the state a drag of the window's border does. No row drags a border.
 #
 # THE PROOFS (band A). Every bank entry carries a `proof`: an expression over the
 # P_* helpers below that is true while the entry's claim is still right. A
@@ -1228,6 +1252,11 @@ check "M20 ... and M18 and M19 say no to a repair that spends the FAULT latch fo
 # =====================================================================
 if {$have_tk} {
   set W .startup_quiz
+  ## the Tk fonts as they are before any quiz window (row D56)
+  set tkfonts_before {}
+  foreach tf {TkDefaultFont TkTextFont TkFixedFont TkMenuFont TkHeadingFont} {
+    lappend tkfonts_before [font configure $tf]
+  }
   proc pump {ms} {
     set ::pump_done 0
     after $ms {set ::pump_done 1}
@@ -1457,9 +1486,12 @@ if {$have_tk} {
   set maxh [expr {int([winfo screenheight .] * 0.7)}]
   foreach id $::startup_quiz::order {
     startup_quiz::show $id
+    update idletasks
+    set qh($id) [winfo reqheight $W]
     set right [lsearch -exact $::startup_quiz::perm [dict get [startup_quiz::get $id] ok]]
     startup_quiz::answer $right
     update idletasks
+    set ah($id) [winfo reqheight $W]
     if {[winfo reqheight $W] > $maxh} { lappend tall "$id=[winfo reqheight $W]" }
     if {[winfo reqwidth $W] > 760} { lappend wide "$id=[winfo reqwidth $W]" }
     if {![string match {*(correct)} [$W.opts.o$right cget -text]] || ![dict get $::startup_quiz::last correct]} {
@@ -1472,8 +1504,207 @@ if {$have_tk} {
   check "D43 ... and none makes the window taller than 70% of the screen or wider than 760 px" \
     [list $tall $wide] {{} {}}
   catch {destroy $W}
+
+  # ---- the window's size and its faces (issue 1739) -----------------------
+  # Three questions of the shipped bank, picked by what they ask of the window
+  # and not by id: the one whose answer adds the most height, the one that is
+  # tallest once answered, the one that is shortest once answered.
+  set q_grow {}; set q_tall {}; set q_short {}
+  foreach id $::startup_quiz::order {
+    if {$q_grow eq {} || $ah($id) - $qh($id) > $ah($q_grow) - $qh($q_grow)} { set q_grow $id }
+    if {$q_tall eq {} || $ah($id) > $ah($q_tall)} { set q_tall $id }
+    if {$q_short eq {} || $ah($id) < $ah($q_short)} { set q_short $id }
+  }
+  proc wsettle {} { update ; pump 80 ; update }
+  # the content has the room it asks for
+  proc w_room {} {
+    set w .startup_quiz
+    expr {[winfo height $w] >= [winfo reqheight $w] && [winfo width $w] >= [winfo reqwidth $w]}
+  }
+  # The row of buttons and the hint line under it are on screen, whole, inside
+  # the window. A widget the packer found no room for is unmapped and keeps the
+  # place it had, so its place is read only once it is known to be mapped.
+  proc w_foot_in {} {
+    set w .startup_quiz
+    foreach c [list $w.foot $w.foot.next $w.foot.close $w.foot.dont $w.hint] {
+      if {![winfo ismapped $c]} { return 0 }
+    }
+    expr {[winfo y $w.foot] >= 0 && [winfo height $w.foot] >= [winfo reqheight $w.foot]
+          && [winfo height $w.hint] >= [winfo reqheight $w.hint]
+          && [winfo y $w.foot] + [winfo height $w.foot] <= [winfo height $w]
+          && [winfo y $w.hint] + [winfo height $w.hint] <= [winfo height $w]}
+  }
+  proc w_right {} {
+    lsearch -exact $::startup_quiz::perm [dict get [startup_quiz::get $::startup_quiz::cur] ok]
+  }
+  proc w_size {} { list [winfo width .startup_quiz] [winfo height .startup_quiz] }
+
+  check_true "D44 the bank has a question whose answer needs more height than the question did ($q_grow: [expr {$ah($q_grow) - $qh($q_grow)}] px), and a taller and a shorter one once answered" \
+    [expr {$ah($q_grow) - $qh($q_grow) >= 20 && $ah($q_tall) - $ah($q_short) >= 40}]
+
+  # the first answer in a window nobody touched
+  startup_quiz::show $q_grow
+  wsettle
+  set h0 [winfo height $W]
+  check "D45 a question comes up with room for all of it, and all of it on the screen" \
+    [list [w_room] [w_foot_in] [expr {[winfo rootx $W] >= 0 && [winfo rooty $W] >= 0}] \
+          [expr {[winfo rootx $W] + [winfo width $W] <= [winfo screenwidth .]}] \
+          [expr {[winfo rooty $W] + [winfo height $W] <= [winfo screenheight .]}]] {1 1 1 1 1}
+  startup_quiz::answer [w_right]
+  wsettle
+  check "D46 the answer makes the window taller: the explanation and the button row are inside it" \
+    [list [expr {[winfo height $W] > $h0}] [w_room] [w_foot_in]] {1 1 1}
+
+  # a shorter question after it
+  startup_quiz::show $q_tall
+  startup_quiz::answer [w_right]
+  wsettle
+  set size_tall [w_size]
+  set next_y [winfo rooty $W.foot.next]
+  startup_quiz::show $q_short
+  wsettle
+  check "D47 a shorter question leaves the window the size it was, and Next question where it was" \
+    [list [w_size] [winfo rooty $W.foot.next]] [list $size_tall $next_y]
+  startup_quiz::answer [w_right]
+  wsettle
+  check "D48 ... and so does its answer" \
+    [list [w_size] [winfo rooty $W.foot.next]] [list $size_tall $next_y]
+  catch {destroy $W}
+
+  # A size from outside. `wm geometry` with a size leaves Tk where a drag of the
+  # window's border does: the size is no longer the widgets' to ask for.
+  startup_quiz::show $q_short
+  wsettle
+  wm geometry $W [winfo width $W]x[expr {[winfo height $W] + 10}]
+  wsettle
+  set cut {}
+  foreach id $::startup_quiz::order {
+    startup_quiz::show $id
+    startup_quiz::answer [w_right]
+    update ; pump 20 ; update
+    if {![w_room] || ![w_foot_in]} { lappend cut $id }
+  }
+  check "D49 after the window was given a size from outside, every question of the bank, shown and answered, has its explanation and its buttons inside the window" \
+    $cut {}
+  set size_now [w_size]
+  wm geometry $W [expr {[lindex $size_now 0] + 40}]x[expr {[lindex $size_now 1] + 60}]
+  wsettle
+  set size_big [w_size]
+  startup_quiz::show $q_grow
+  startup_quiz::answer [w_right]
+  wsettle
+  check "D50 a window made larger than it needs stays that large" \
+    [list [expr {[lindex $size_big 1] > [lindex $size_now 1]}] [w_size]] [list 1 $size_big]
+  catch {destroy $W}
+
+  # a size below what the content asks for
+  startup_quiz::show $q_tall
+  startup_quiz::answer [w_right]
+  wsettle
+  check "D50b the window's minimum size is what its content asks for" \
+    [wm minsize $W] [list [winfo reqwidth $W] [winfo reqheight $W]]
+  wm geometry $W [winfo width $W]x[expr {[winfo reqheight $W] - 60}]
+  wsettle
+  check "D50c ... so a size 60 px below that is not taken" [list [w_room] [w_foot_in]] {1 1}
+
+  # too short for everything (the minimum taken away by hand, and a height
+  # below what the question alone asks for): what is cut
+  wm minsize $W 1 1
+  wm geometry $W [winfo width $W]x[expr {$qh($q_tall) - 40}]
+  wsettle
+  check "D51 in a window too short for everything the explanation is what is cut; the button row and the hint are whole" \
+    [list [expr {[winfo height $W] < [winfo reqheight $W]}] [w_foot_in]] {1 1}
+  startup_quiz::show $q_tall
+  wsettle
+  check "D52 ... and the next question put up gives the window its room back" [list [w_room] [w_foot_in]] {1 1}
+  catch {destroy $W}
+
+  # at the bottom of the screen
+  startup_quiz::show $q_grow
+  wsettle
+  wm geometry $W +100+[expr {[winfo screenheight .] - [winfo height $W] - 40}]
+  wsettle
+  set top_before [winfo rooty $W]
+  check_true "D53 fixture: the question's window stands 40 px above the bottom edge or less, and its answer needs more than that" \
+    [expr {[winfo screenheight .] - ($top_before + [winfo height $W]) <= 40 && $ah($q_grow) - $qh($q_grow) > 40
+           && $top_before + [winfo height $W] <= [winfo screenheight .]}]
+  startup_quiz::answer [w_right]
+  wsettle
+  check "D54 an answer that grows the window past the bottom edge moves it up: all of it is on the screen, with its room" \
+    [list [expr {[winfo rooty $W] < $top_before}] \
+          [expr {[winfo rooty $W] >= 0 && [winfo rooty $W] + [winfo height $W] <= [winfo screenheight .]}] \
+          [w_room] [w_foot_in]] {1 1 1 1}
+  catch {destroy $W}
+
+  # the main window low on the screen: a third of the way down it is past the bottom edge
+  set keep_main [wm geometry .]
+  wm geometry . +60+[expr {[winfo screenheight .] - 140}]
+  wsettle
+  set low [expr {[winfo rooty .] + ([winfo height .] - $qh($q_grow)) / 3}]
+  startup_quiz::show $q_grow
+  wsettle
+  check "D54b over a main window low on the screen (a third of the way down it would start at y=$low of [winfo screenheight .]) the question still comes up with all of it on the screen" \
+    [list [expr {$low + $qh($q_grow) > [winfo screenheight .]}] \
+          [expr {[winfo rooty $W] >= 0 && [winfo rooty $W] + [winfo height $W] <= [winfo screenheight .]}] \
+          [w_room] [w_foot_in]] {1 1 1 1}
+  catch {destroy $W}
+  wm geometry . $keep_main
+  wsettle
+
+  # the faces
+  set fixedfam [font actual TkFixedFont -family]
+  set keep_prefs {}
+  catch { set keep_prefs $::startup_quiz::font_prefs }
+  set ::startup_quiz::font_prefs [list {No Such Family 1739} [string toupper $fixedfam] {Another One 1739}]
+  check "D55 the family is the first on the list that the display has, in the display's own spelling" \
+    [q {startup_quiz::family TkDefaultFont}] $fixedfam
+  set ::startup_quiz::font_prefs [list {No Such Family 1739}]
+  check "D55b with none of the list on the display it is the family the labels have anyway" \
+    [q {startup_quiz::family TkDefaultFont}] [font actual TkDefaultFont -family]
+  set ::startup_quiz::font_prefs [list {No Such Family 1739} $fixedfam]
+  startup_quiz::show $q_short
+  update
+  set faces {}
+  foreach face {body bold head small} {
+    ## a name that is no font of Tk's would be read as a family and answered with a fallback
+    if {[lsearch -exact [font names] startup_quiz_$face] < 0} { lappend faces {} ; continue }
+    lappend faces [font actual startup_quiz_$face -family]
+  }
+  set tkfonts_after {}
+  foreach tf {TkDefaultFont TkTextFont TkFixedFont TkMenuFont TkHeadingFont} {
+    lappend tkfonts_after [font configure $tf]
+  }
+  check "D56 the window's four faces are private named fonts of that one family, and no Tk font was changed" \
+    [list $faces [q {set ::startup_quiz::font_family}] [expr {$tkfonts_after eq $tkfonts_before}]] \
+    [list [list $fixedfam $fixedfam $fixedfam $fixedfam] $fixedfam 1]
+  check "D57 the question is in the head face, the options and the explanation in the body face, the title and the verdict in bold, the topic and the hint in the small one" \
+    [q {list [$W.q cget -font] [$W.opts.o0 cget -font] [$W.why cget -font] [$W.head.title cget -font] \
+          [$W.verdict cget -font] [$W.head.topic cget -font] [$W.hint cget -font]}] \
+    {startup_quiz_head startup_quiz_body startup_quiz_body startup_quiz_bold startup_quiz_bold startup_quiz_small startup_quiz_small}
+  catch {destroy $W}
+  catch {font delete quiz_probe_pt quiz_probe_px}
+  font create quiz_probe_pt -family [font actual TkDefaultFont -family] -size 10
+  font create quiz_probe_px -family [font actual TkDefaultFont -family] -size -12
+  proc face_sizes {} {
+    set out {}
+    foreach face {small body bold head} { lappend out [font configure startup_quiz_$face -size] }
+    lappend out [font configure startup_quiz_bold -weight] [font configure startup_quiz_head -weight]
+    return $out
+  }
+  q {startup_quiz::fonts quiz_probe_pt}
+  check "D58 from labels of 10 points: small 10, body and bold 11, head 13; only bold is bold" \
+    [q {face_sizes}] {10 11 11 13 bold normal}
+  q {startup_quiz::fonts quiz_probe_px}
+  ## Tk may report a pixel size in points or as a number below zero; the steps
+  ## are counted from what it reports, away from zero
+  set pxb [font actual quiz_probe_px -size]
+  set pxs [expr {$pxb < 0 ? -1 : 1}]
+  check "D59 from labels sized in pixels (-12) the faces step the same way, from the size Tk reports for them ($pxb)" \
+    [q {face_sizes}] [list $pxb [expr {$pxb + $pxs}] [expr {$pxb + $pxs}] [expr {$pxb + 3 * $pxs}] bold normal]
+  font delete quiz_probe_pt quiz_probe_px
+  set ::startup_quiz::font_prefs $keep_prefs
 } else {
-  puts "SKIPPED: D1-D43 the dialog (no Tk on this arm)"
+  puts "SKIPPED: D1-D59 the dialog (no Tk on this arm)"
   flush stdout
 }
 

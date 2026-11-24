@@ -28,6 +28,9 @@ the editor underneath stays usable and the window can simply be ignored.
 - `Don't show anymore`, `Next question`, `Close`. Escape closes too;
 - a last line saying where the switch can be found again.
 
+The window is as large as what it holds, and grows when an answer brings more (2.1).
+Its text is set in one family in four faces (2.2).
+
 The verdict line is one of:
 
 | situation | line |
@@ -38,6 +41,62 @@ The verdict line is one of:
 | "which of these is not built yet", wrong pick | `Not quite: that one already works.` |
 | true/false, wrong | `Not quite: this one is true.` / `Not quite: this one is false.` |
 | multiple choice, wrong | `Not quite.` |
+
+### 2.1 The window's size (issue 1739)
+
+The user, 2026-11-24: *"when user responds to the question by choosing an answer, and
+you then respond to that response, ensure that the window grows appropriately so that
+the Next Question and Close buttons are visible!! Current look is very amateurish - user
+has to resize window so often."* P stands for what those words settle; the rest are the
+builder's choices, recorded for a ruling in the issue file.
+
+- **R-QW1 — an answer makes room for itself (P).** After every change of what the window
+  holds (a question put up, an answer given) `startup_quiz::fit` gives the window the
+  size its widgets ask for. The explanation and the row with `Next question` and `Close`
+  are inside it without anybody resizing anything.
+- **R-QW2 — the size is set, not left to Tk.** Tk makes a toplevel follow its widgets
+  only until the toplevel gets a size from outside: a person's drag of its border, or a
+  window manager's own idea of the size. From then on it never follows again, and that
+  is how the buttons came to be pushed out of the window (the measurement is in the issue
+  file). So `fit` sets the size with `wm geometry` every time.
+- **R-QW3 — it only grows.** The size the window has is kept when the content asks for
+  less. A question shorter than the one before leaves the window as it is, so the
+  buttons stay where the pointer left them, and a size a person dragged it to stays
+  while it is large enough.
+- **R-QW4 — the minimum size** (`wm minsize`) is what the content asks for, so a drag
+  cannot take the window below it.
+- **R-QW5 — the buttons are the last thing a short window cuts (P).** The hint line and
+  the button row are packed before the text. The packer gives room in packing order, so
+  in a window that is too short for everything, whatever made it so, the explanation
+  loses its last lines and the buttons stay whole.
+- **R-QW6 — all of it on the screen.** A window that would grow past the right or the
+  bottom edge of the screen is moved back by that much, and never past the top or the
+  left. `startup_quiz::screen_margin` pixels are kept free at those two edges, for a
+  panel or a task bar the X screen does not know about.
+- **R-QW7 — where it comes up.** Centred on the main window, a third of the way down,
+  with its full size known before it is mapped, and held on the screen by R-QW6.
+
+### 2.2 The typeface (issue 1739)
+
+The user, the same message: *"Also, can you choose a nicer font for the quiz? What would
+Apple do?"* Apple sets its own dialogs in one sans-serif family, in few sizes, with the
+weight and the size saying what is a heading and what is a remark, and with room around
+the text. That is what is built; which family and which sizes are the builder's choices.
+
+- **R-QF1 — one family, taken from a list.** `startup_quiz::font_prefs` names families,
+  best first: Apple's own, then the free families drawn in the same spirit, then the
+  common sans-serif families of a Linux desktop. `startup_quiz::family` takes the first
+  one the display has, compared without regard to letter case, and the family the labels
+  have anyway when the display has none of them. Nothing is shipped or installed.
+- **R-QF2 — four faces**, sized from the size the session's labels have, so a session
+  that runs its interface larger gets a larger window: `small` at that size (the topic,
+  `Pick one:`, the hint), `body` one step up (the options, the explanation, the buttons),
+  `bold` the same in bold (the title, the verdict), `head` three steps up (the question).
+- **R-QF3 — private named fonts.** `startup_quiz_small`, `_body`, `_bold`, `_head`. No
+  `Tk*Font` is changed, so nothing else in the session changes its look.
+- **R-QF4 — the page.** One column of text 64 `n` wide in the body face; 20 pixels of
+  margin at the sides and 16 above and below; a hairline between the text and the
+  button row.
 
 ## 3. Kinds of question
 
@@ -224,4 +283,8 @@ control's.
 - re-asking a question that was answered wrong sooner than the others;
 - a user's or a PDK's own question file beside the shipped one;
 - a "show me" button that runs the command a question is about;
-- keys for the answers (A to E, T and F).
+- keys for the answers (A to E, T and F);
+- Return for `Next question`;
+- a window that gets smaller again for a shorter question (R-QW3 keeps its size);
+- a setting for the family: `startup_quiz::font_prefs` is a variable a script can set
+  before the window is built, and no menu or rc entry names it.

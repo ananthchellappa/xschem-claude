@@ -4966,7 +4966,16 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   clone's own pointer reads 1750 and it holds 1742 to 1749, so after 1741 this clone's
   next mint has to skip to what is free there.
 
-**The next free number is 1739.**
+~~**The next free number is 1739.**~~
+- **1739**: the tip-of-the-day window hides its buttons after an answer once it has been
+  given a size from outside, and its typeface (the user's report of 2026-11-24). Repaired
+  by the change that adds its issue file. Minted 2026-11-24 after both checks: no clone
+  held 1739 as an issue, and `~/private/xschem-private`'s `NUMBERING.md` names it only to
+  say that 1739 and 1740 were left to this clone. 1741 is the last number that clone
+  skipped; it holds 1742 to 1749 and its pointer reads 1750, so read its entry for 1741
+  before minting it here.
+
+**The next free number is 1740.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

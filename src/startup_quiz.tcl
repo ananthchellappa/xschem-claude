@@ -49,6 +49,19 @@ namespace eval startup_quiz {
   variable launch_delay 400
   variable launch_retry 200
   variable launch_tries 25
+  ## the families the window's text may be set in, best first: the first one this
+  ## display has is used, and the family the labels have anyway when it has none
+  variable font_prefs {
+    {SF Pro Text} {SF Pro Display} Inter {Helvetica Neue} {Segoe UI} Roboto
+    {Noto Sans} {Open Sans} {Source Sans 3} {Source Sans Pro} Lato {Ubuntu Sans}
+    Ubuntu Cantarell {Liberation Sans} {Nimbus Sans} Helvetica Arial
+  }
+  ## the family in use; empty until a window has been built
+  variable font_family {}
+  ## 1 once the open window has been given its place on the screen
+  variable placed 0
+  ## pixels kept free between the window and the screen's edges when it grows
+  variable screen_margin 48
 }
 
 # ---------------------------------------------------------------------------
@@ -520,14 +533,15 @@ proc startup_quiz::launch_show {n} {
 # ---------------------------------------------------------------------------
 
 # Foreground colours that stay readable on the widget background in use: $rgb is
-# the background as {r g b}, each 0..65535, $what is good, bad or dim.
+# the background as {r g b}, each 0..65535, $what is good, bad, dim or rule (the
+# hairline above the buttons).
 proc startup_quiz::tone {rgb what} {
   lassign $rgb r g b
   set lum [expr {(0.299 * $r + 0.587 * $g + 0.114 * $b) / 65535.0}]
   if {$lum >= 0.5} {
-    set t {good #116329 bad #a40e26 dim #555555}
+    set t {good #116329 bad #a40e26 dim #555555 rule #a6a6a6}
   } else {
-    set t {good #7ee787 bad #ff9492 dim #b0b0b0}
+    set t {good #7ee787 bad #ff9492 dim #b0b0b0 rule #5c5c5c}
   }
   return [dict get $t $what]
 }
@@ -543,14 +557,51 @@ proc startup_quiz::hint_text {} {
   return {Bring it back any time: command palette (Ctrl+Shift+P), "Toggle tip of the day at startup".}
 }
 
+# The family the window is set in: the first of font_prefs this display has,
+# else the family of $fallback (the font the labels have anyway).
+proc startup_quiz::family {fallback} {
+  variable font_prefs
+  set have [dict create]
+  catch { foreach f [font families] { dict set have [string tolower $f] $f } }
+  foreach want $font_prefs {
+    set k [string tolower $want]
+    if {[dict exists $have $k]} { return [dict get $have $k] }
+  }
+  return [font actual $fallback -family]
+}
+
+# The window's faces: private named fonts, never a change to a Tk*Font. Sized
+# from $from, the font the labels have anyway, so a session that runs its
+# interface larger or smaller gets a window in proportion. A size below zero is
+# one in pixels, where larger means further from zero.
+#   body   the options, the explanation, the buttons   one step up
+#   bold   the title and the verdict                   body, bold
+#   head   the question itself                         three steps up
+#   small  the topic, the kind of question, the hint   the labels' own size
+proc startup_quiz::fonts {from} {
+  variable font_family
+  set font_family [family $from]
+  set base [font actual $from -size]
+  foreach {name step weight} {body 1 normal bold 1 bold head 3 normal small 0 normal} {
+    set size [expr {$base < 0 ? $base - $step : $base + $step}]
+    set f startup_quiz_$name
+    if {[lsearch -exact [font names] $f] < 0} { font create $f }
+    font configure $f -family $font_family -size $size -weight $weight \
+      -slant roman -underline 0 -overstrike 0
+  }
+  return $font_family
+}
+
 # Build the window if it is not there. Returns its path.
 proc startup_quiz::window {} {
+  variable placed
   set w .startup_quiz
   if {[winfo exists $w]} {
     catch { wm deiconify $w ; raise $w }
     return $w
   }
-  toplevel $w -class Dialog -padx 12 -pady 10
+  set placed 0
+  toplevel $w -class Dialog -padx 20 -pady 16
   wm title $w {Tip of the day}
   set parent .
   catch { set parent [winfo toplevel [xschem get topwindow]] }
@@ -570,50 +621,110 @@ proc startup_quiz::window {} {
   frame $w.foot
   checkbutton $w.foot.dont -text {Don't show anymore} -variable ::startup_quiz \
     -onvalue 0 -offvalue 1 -command startup_quiz::pref_changed
-  button $w.foot.close -text {Close} -command startup_quiz::dismiss
-  button $w.foot.next -text {Next question} -command startup_quiz::next_question
+  button $w.foot.close -text {Close} -command startup_quiz::dismiss -padx 12
+  button $w.foot.next -text {Next question} -command startup_quiz::next_question -padx 12
   pack $w.foot.dont -side left
   pack $w.foot.close -side right
-  pack $w.foot.next -side right -padx 6
+  pack $w.foot.next -side right -padx 8
   label $w.hint -anchor w -justify left -text [hint_text]
+  frame $w.rule -height 1 -background [tone_of $w rule]
 
-  ## a bold face derived from the font the labels really use; a private named
-  ## font, never a change to a Tk*Font
-  set f [$w.q cget -font]
-  if {[lsearch -exact [font names] startup_quiz_bold] < 0} {
-    font create startup_quiz_bold {*}[font actual $f] -weight bold
-  } else {
-    font configure startup_quiz_bold {*}[font actual $f] -weight bold
-  }
+  fonts [$w.q cget -font]
   $w.head.title configure -font startup_quiz_bold
+  $w.head.topic configure -font startup_quiz_small
+  $w.prompt configure -font startup_quiz_small
+  $w.q configure -font startup_quiz_head
   $w.verdict configure -font startup_quiz_bold
-  set wrap [font measure $f [string repeat n 62]]
+  $w.why configure -font startup_quiz_body
+  $w.foot.dont configure -font startup_quiz_body
+  $w.foot.close configure -font startup_quiz_body
+  $w.foot.next configure -font startup_quiz_body
+  $w.hint configure -font startup_quiz_small
+  ## one column of text for everything, a comfortable line long
+  set wrap [font measure startup_quiz_body [string repeat n 64]]
   foreach l [list $w.q $w.verdict $w.why $w.hint] { $l configure -wraplength $wrap }
   set dim [tone_of $w dim]
   $w.head.topic configure -foreground $dim
   $w.prompt configure -foreground $dim
   $w.hint configure -foreground $dim
 
-  pack $w.head -side top -fill x
-  pack $w.prompt -side top -fill x -pady {10 0}
-  pack $w.q -side top -fill x -pady {2 8}
-  pack $w.opts -side top -fill x
-  pack $w.verdict -side top -fill x -pady {10 0}
-  pack $w.why -side top -fill x -pady {2 10}
-  pack $w.hint -side bottom -fill x -pady {6 0}
+  ## THE BUTTONS ARE PACKED FIRST. The packer gives room in packing order, so in
+  ## a window that is too short for everything it is the explanation that loses
+  ## its last lines, never the row with Next question and Close.
+  pack $w.hint -side bottom -fill x -pady {10 0}
   pack $w.foot -side bottom -fill x
+  pack $w.rule -side bottom -fill x -pady {0 12}
+  pack $w.head -side top -fill x
+  pack $w.prompt -side top -fill x -pady {14 0}
+  pack $w.q -side top -fill x -pady {2 10}
+  pack $w.opts -side top -fill x
+  pack $w.verdict -side top -fill x -pady {14 0}
+  pack $w.why -side top -fill x -pady {4 16}
   bind $w <Escape> startup_quiz::dismiss
-
-  ## centred on the window it belongs to, a third of the way down
-  catch {
-    update idletasks
-    set x [expr {[winfo rootx $parent] + ([winfo width $parent] - [winfo reqwidth $w]) / 2}]
-    set y [expr {[winfo rooty $parent] + ([winfo height $parent] - [winfo reqheight $w]) / 3}]
-    if {$x < 0} { set x 0 }
-    if {$y < 0} { set y 0 }
-    wm geometry $w +$x+$y
-  }
   return $w
+}
+
+# Give the window the room its content asks for, and keep all of it on the
+# screen. Called whenever the content has changed: a question put up, an answer
+# given. Returns the size asked for as {width height}, or {} with no window.
+#
+# The size is SET, every time, and not left to Tk's following of its widgets: Tk
+# stops following for good the first time the window gets a size from outside (a
+# person's drag of its border, or a window manager's own idea of the size), and
+# from then on an answer's explanation pushed the buttons out of the window.
+#
+# The window only ever grows: the size it has is kept when the content asks for
+# less. So a question shorter than the one before leaves Next question and Close
+# where the pointer left them, and a size a person dragged it to stays. What the
+# content asks for is also the window's minimum size, so a drag cannot take it
+# below that.
+proc startup_quiz::fit {} {
+  variable placed
+  variable screen_margin
+  set w .startup_quiz
+  if {![have_tk] || ![winfo exists $w]} { return {} }
+  update idletasks
+  set nw [winfo reqwidth $w]
+  set nh [winfo reqheight $w]
+  wm minsize $w $nw $nh
+  if {$placed && [winfo ismapped $w]} {
+    set nw [expr {max($nw, [winfo width $w])}]
+    set nh [expr {max($nh, [winfo height $w])}]
+  }
+  ## where it is, or where it goes the first time: centred on the window it
+  ## belongs to, a third of the way down
+  set gx 0
+  set gy 0
+  set ox 0
+  set oy 0
+  if {!$placed} {
+    set parent .
+    catch { set parent [winfo toplevel [xschem get topwindow]] }
+    catch {
+      set gx [expr {[winfo rootx $parent] + ([winfo width $parent] - $nw) / 2}]
+      set gy [expr {[winfo rooty $parent] + ([winfo height $parent] - $nh) / 3}]
+    }
+  } elseif {[regexp {([+-]-?[0-9]+)([+-]-?[0-9]+)$} [wm geometry $w] -> gx gy]} {
+    set gx [expr {$gx + 0}]
+    set gy [expr {$gy + 0}]
+    ## the window manager's border and title bar, when it has put them on
+    if {[winfo ismapped $w]} {
+      set ox [expr {max(0, min(100, [winfo rootx $w] - $gx))}]
+      set oy [expr {max(0, min(100, [winfo rooty $w] - $gy))}]
+    }
+  }
+  ## all of it on the screen: one that would pass the right or the bottom edge
+  ## is moved back by that much, and never past the top or the left
+  set x [expr {max(0, min($gx, [winfo screenwidth $w] - $screen_margin - $nw - $ox))}]
+  set y [expr {max(0, min($gy, [winfo screenheight $w] - $screen_margin - $nh - $oy))}]
+  if {!$placed} {
+    wm geometry $w ${nw}x${nh}+$x+$y
+    set placed 1
+  } else {
+    wm geometry $w ${nw}x${nh}
+    if {$x != $gx || $y != $gy} { wm geometry $w +$x+$y }
+  }
+  return [list $nw $nh]
 }
 
 # Put question $id in the window, unanswered.
@@ -643,9 +754,10 @@ proc startup_quiz::display {id} {
   for {set i 0} {$i < $n} {incr i} {
     radiobutton $w.opts.o$i -text [option_text $id $perm $i] -anchor w -justify left \
       -wraplength $wrap -variable ::startup_quiz::choice -value $i \
-      -command [list startup_quiz::answer $i]
-    pack $w.opts.o$i -side top -fill x
+      -font startup_quiz_body -command [list startup_quiz::answer $i]
+    pack $w.opts.o$i -side top -fill x -pady 1
   }
+  fit
   return $id
 }
 
@@ -702,6 +814,8 @@ proc startup_quiz::answer {pos} {
   $w.why configure -text [dict get $g why]
   set last [dict create id $cur pick $pick correct [dict get $g correct] head [dict get $g head]]
   mark_done $cur
+  ## the verdict and the explanation need room the unanswered question did not
+  fit
   return $g
 }
 
