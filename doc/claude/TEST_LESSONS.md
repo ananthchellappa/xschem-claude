@@ -338,6 +338,18 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   are re-derived on every font step; enforce the last pane with a backward cap; take the
   inter-pane gap and the sash-coordinate lead from the live widget (`calc::sash_metrics`),
   never from `-sashwidth` or from extent minus pane extents.
+- **A generated drag cannot see a pane hidden under the window that manages it.**
+  `event generate` addresses the paned window by name, so the drag rows of
+  `test_ase_pane_dividers_1737` stay green with the two `lower` calls of
+  `ase::ui::pane_layout` taken out, while on a screen the panes are not seen at all. A
+  pane that is managed by a window it is not a child of needs a row on the stacking
+  order (`winfo children` lists it lowest first; band `PD0`).
+- **A mapped classic paned window stops listening to what its panes ask for.** That is
+  what keeps a repaint from moving a divider, and it is also what broke a window that
+  used to grow with a live font-size change (issue 1737). No row existed for it; a probe
+  that printed the window's and the panes' sizes at the base and with the change, side
+  by side, through the same steps, showed it. Before replacing a geometry manager, run
+  such a pair for every door that changes what the content asks for.
 - **Never `font configure` a `Tk*Font`**: it resizes every other dialog (row `CF18`; row
   `FZ5` of `test_rdw_window_1245`).
 

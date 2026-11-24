@@ -2175,6 +2175,66 @@ Design Window does not raise/open the schematic — fix in this rework.
   Gated by the Tcl global `ase_eng_notation` (default 1; rc may preset 0
   to recover plain scientific display). Formatter: `ase::format_value`.
 
+#### The dividers between the panes (issue 1737)
+
+The user, 2026-11-24: *"The dividers ... between the various panes - variables,
+analyses, outputs, are not moveable as they are in Cadence ADE-L. We'd like to be
+able to adjust - sometimes, you'd like to trade size of the analyses pane
+(vertically) to see more outputs (measures), etc."* P stands for what those words
+settle; the rest are the builder's choices, recorded for a ruling in the issue file.
+
+- **R-PANE1 — two dividers (P).** The gap between Design Variables and the two panes
+  at its right is a divider that is dragged left and right. The gap between Analyses
+  and Outputs is one that is dragged up and down. Button 1 pressed on the gap and
+  moved drags it, and the panes follow the pointer during the drag. A drag takes from
+  one pane what it gives the other; the window's own size does not change.
+- **R-PANE2 — what carries them.** Two classic Tk paned windows made by
+  `ase::ui::pane_layout`: one holds Design Variables and the second, the second holds
+  Analyses over Outputs. The three labelframes stay children of the body frame under
+  the paths every reader of a pane's tree uses; the paned windows are put below them
+  in the stacking order. Classic and not ttk, because with `-stretch always` on every
+  pane it shares a window resize out in proportion to the panes' sizes, stops a drag
+  at a pane's `-minsize`, and, once mapped, lays its panes out from the sizes it holds
+  and not from what a pane asks for.
+- **R-PANE3 — before a drag nothing looks different.** A new window has the size it
+  had under the grid and each pane the size it asks for. The gap is as wide as the
+  grid's two pads made it and draws no relief. The only sign is the pointer, which
+  over a divider is the double arrow of the divider's direction.
+- **R-PANE4 — where a drag stops.** `ase::ui::pane_min` gives a pane's smallest size
+  and `ase::ui::pane_bounds` hands it to the paned windows. In height: the pane's
+  title, its column headings and its first row whole, with room for the horizontal
+  scrollbar whether or not it is showing. In width: the pane's title, or its first
+  column's heading beside the vertical scrollbar, whichever is wider; for the two
+  panes at the right, the wider of the two. Both come from what the widgets ask for
+  and from their fonts. A pane cannot be dragged away, and a divider at its stop
+  drags back.
+- **R-PANE5 — only a drag moves a divider.** Not a row added, edited or deleted
+  (`ase::ui::populate`), not results arriving, not the Measures and Saves tabs (the
+  Saves tree fills the same pane), not the theme applied again, not a state loaded or
+  reverted, not a scrollbar that appears or goes away.
+- **R-PANE6 — a window resize keeps the proportions.** Both panes of a divider take
+  their share of the growth or the loss, so the divider stays at the same fraction of
+  the room, within the rounding of a pixel, and inside the bounds of R-PANE4.
+- **R-PANE7 — a font-size change.** The panes then ask for other sizes and a mapped
+  paned window does not listen, so `ase::ui::retune_columns` has
+  `ase::ui::pane_reseed` take the panes out and hand them over again with the sizes of
+  `ase::ui::pane_sizes`: what each pane now asks for, and, for a divider the user
+  dragged, the same room split at the remembered fraction. A window the user has not
+  sized therefore grows or shrinks with the font as it did under the grid; a dragged
+  divider keeps its fraction; the bounds are taken again.
+- **R-PANE8 — the split is remembered for the session while this xschem runs.**
+  `ase::ui::pane_drop`, the release of a drag, is the only writer. It stores the
+  dragged divider alone, as a fraction of the room its two panes share, under the
+  session's key; a press and release that moved nothing stores nothing.
+  `ase::ui::close` does not drop it, so a window closed and opened again comes back
+  with the dividers where they were left (`ase::ui::pane_restore`, once, when the
+  paned window is first shown). Another session has its own split, or none. Nothing is
+  written to disk and nothing goes into a state file: a new xschem opens every window
+  with the default split.
+- **Not built.** A split that survives a restart of xschem. A gesture that puts the
+  default split back. Dividers in the other ASE-L windows that hold two or more lists.
+- **Rows:** `tests/headless/test_ase_pane_dividers_1737.tcl`.
+
 ### Action strip (right vertical panel; text placeholders for now — real
 icons welcome where Tk can do them, e.g. unicode ▶ ■)
 - `OP,TR` → Choose Analyses dialog

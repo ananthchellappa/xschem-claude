@@ -4948,7 +4948,16 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   own next free number, `~/private/xschem-private`'s among them, so that clone's next
   mint has to skip it.
 
-**The next free number is 1737.**
+~~**The next free number is 1737.**~~
+- **1737**: the dividers between the ASE-L window's three panes can be dragged (the
+  user's request of 2026-11-24). Built by the change that adds its issue file. Minted
+  2026-11-24 in the clone `~/ob23` after both checks (pointer + bands, then every
+  `NUMBERING.md` and issues directory under `~/dev/*` and `~/private/*`, and the clones
+  `~/g*`, `~/ob*` and `~/pp*`). No clone held 1737 as an issue: the other files that
+  contain the number are pointer lines, this tree's and those of two copies made for the
+  port of 1736.
+
+**The next free number is 1738.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

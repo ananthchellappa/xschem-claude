@@ -125,6 +125,20 @@ namespace eval ase::ui {
   variable cbopt;     array set cbopt {}
   variable colpolicy; array set colpolicy {}
   variable colfont;   array set colfont {}
+  # issue 1737, the window's two dividers.
+  # panesplit(key): where the user left them, a dict with `h` (the divider
+  # between Design Variables and the two panes at its right) and `v` (the one
+  # between Analyses and Outputs), each a FRACTION of the room its two panes
+  # share and present only once that divider was dragged. One writer, the
+  # release of a drag (ase::ui::pane_drop). It is NOT dropped by
+  # ase::ui::close, on purpose: a window closed and opened again comes back
+  # with the dividers where they were left. It lives as long as this xschem.
+  # panepress(pw): where a divider stood when button 1 went down on it, so a
+  # press and release with no motion stores nothing. panearmed(top): the
+  # remembered split was applied to this window once; dropped in close.
+  variable panesplit; array set panesplit {}
+  variable panepress; array set panepress {}
+  variable panearmed; array set panearmed {}
   # simuse(key): the Simulators dialog's "which one is in force" combobox
   # variable (issue 0937). Session-keyed for the same reason `annot` is: two
   # ASE-L windows can be open at once, and Tk resolves a -textvariable in the
@@ -596,6 +610,13 @@ proc ase::ui::_theme_widget {w} {
     Scrollbar {
       catch {$w configure -background $panel}
     }
+    Panedwindow {
+      # issue 1737: a divider is drawn in its paned window's background, so
+      # this arm is what keeps the gap between two panes the colour of the
+      # window in both colour schemes. A paned window draws no text: there is
+      # no foreground to own.
+      catch {$w configure -background $panel}
+    }
     Canvas {
       # ⚠ NEW IN ISSUE 1464, AND IT IS NOT DECORATION. The campaign result
       # table's histogram and scatter are the first canvases ASE-L has ever
@@ -726,6 +747,11 @@ proc ase::ui::close {key} {
   variable outtab; variable outsort
   catch {unset outtab($key)}
   catch {unset outsort($key)}
+  # issue 1737: the records of this window's two paned windows go; the split
+  # the user left (panesplit) stays for the next window of this session.
+  variable panepress; variable panearmed
+  array unset panepress $top.body.*
+  array unset panearmed $top.body.*
   array unset edrow $key,*
   array unset edchk $key,*
   array unset annot $key,*
@@ -1327,13 +1353,9 @@ proc ase::ui::build {key top} {
   pack $top.body.outs.tabs.m $top.body.outs.tabs.s -side left
   $top.body.outs configure -labelwidget $top.body.outs.tabs
   frame $top.body.saves
-  grid $top.body.vars -row 0 -column 0 -rowspan 2 -sticky nsew -padx 2 -pady 2
-  grid $top.body.ana  -row 0 -column 1 -sticky nsew -padx 2 -pady 2
-  grid $top.body.outs -row 1 -column 1 -sticky nsew -padx 2 -pady 2
-  grid columnconfigure $top.body 0 -weight 1
-  grid columnconfigure $top.body 1 -weight 2
-  grid rowconfigure $top.body 0 -weight 1
-  grid rowconfigure $top.body 1 -weight 1
+  # issue 1737: the three panes sit in two paned windows, so the gap between
+  # two panes is a divider the user can drag. See ase::ui::pane_layout.
+  ase::ui::pane_layout $key $top
   # COLUMN POLICY (issue 1398), one `{glyphs stretch anchor}` triple per column
   # instead of the pixel constant that used to sit here. The width is that many
   # `0`s of the DATA font, floored at the column's own heading ink in the
@@ -1460,6 +1482,7 @@ proc ase::ui::retune_columns {top} {
   catch {set sz [font actual AseEntryFont -size]}
   catch {set sz [list $sz [font measure AseLabelFont 0]]}
   if {[info exists colfont($top)] && $colfont($top) eq $sz} { return }
+  set moved [info exists colfont($top)]
   set colfont($top) $sz
   foreach pane {vars ana outs saves} {
     set tv $top.body.$pane.tv
@@ -1471,6 +1494,11 @@ proc ase::ui::retune_columns {top} {
                            -minwidth [ase::ui::colw 0 $h]}
     }
   }
+  # issue 1737: the fonts moved under a window that already had its widths, so
+  # its panes ask for other sizes now. When idle, because the trees ask only
+  # then. The first derivation of a new window needs none of this: its paned
+  # windows take the panes' sizes when they are first shown.
+  if {$moved} { after idle [list catch [list ase::ui::pane_reseed $top]] }
 }
 
 # ─── A CELL TOO NARROW FOR ITS TEXT NOW SAYS SO WHEN YOU HOVER IT ───────────
@@ -1625,6 +1653,349 @@ proc ase::ui::tip_attach {W} {
   bind $W <Leave>   [list ase::ui::tip_cancel %W]
   bind $W <Destroy> [list ase::ui::tip_cancel %W]
   return $W
+}
+
+# ─── THE WINDOW'S TWO DIVIDERS (issue 1737) ─────────────────────────────────
+# The user: "The dividers ... between the various panes - variables, analyses,
+# outputs, are not moveable as they are in Cadence ADE-L."
+#
+# Two classic Tk paned windows carry them. $top.body.h holds Design Variables
+# and, at its right, $top.body.v; $top.body.v holds Analyses over Outputs. The
+# three labelframes stay children of $top.body and keep their paths, which
+# every reader of a pane's tree addresses: Tk lets a paned window manage a
+# window whose parent is the paned window's own parent.
+#
+# Why the classic widget and not ttk's. With `-stretch always` on every pane it
+# hands a window resize out in proportion to the panes' sizes, so the split the
+# user set holds as a fraction with no <Configure> handler of ours. It stops a
+# drag at a pane's -minsize by itself. And once it is mapped it lays its panes
+# out from the sizes it holds and no longer from what a pane asks for, so a
+# pane whose content asks for more or less room (a scrollbar that appears, the
+# other Outputs tab, columns retuned to a new font) moves no divider.
+#
+# The paned windows are made after the labelframes and are then put at the
+# bottom of the stacking order: a pane has to be above the window that manages
+# it, or it is not seen.
+#
+# The gap between two panes is what it was under the grid (twice the old pad)
+# and a paned window draws no relief, so nothing looks different until the
+# pointer is over a divider and turns into the double arrow of its direction.
+proc ase::ui::pane_layout {key top} {
+  set pad 2
+  set h $top.body.h
+  set v $top.body.v
+  foreach {pw orient cur} [list $h horizontal sb_h_double_arrow \
+                                $v vertical   sb_v_double_arrow] {
+    panedwindow $pw -orient $orient -sashwidth [expr {2 * $pad}] -sashpad 0 \
+      -sashrelief flat -borderwidth 0 -showhandle 0 -opaqueresize 1 \
+      -sashcursor $cur
+  }
+  lower $v
+  lower $h
+  ase::ui::pane_add $top
+  pack $h -side top -fill both -expand 1 -padx $pad -pady $pad
+  foreach pw [list $h $v] {
+    bind $pw <ButtonPress-1>   +[list ase::ui::pane_press $pw]
+    bind $pw <ButtonRelease-1> +[list ase::ui::pane_drop $key $pw]
+    bind $pw <Map>             [list ase::ui::pane_arm $key $top $pw]
+  }
+  return $h
+}
+
+# Hand the three panes to the two paned windows. With no `sizes` a pane takes
+# the size it asks for at that moment, which is how a new window is laid out.
+# `sizes` (ase::ui::pane_sizes) names each pane's size outright. `-stretch
+# always` on all of them is what shares a window resize out in proportion.
+proc ase::ui::pane_add {top {sizes {}}} {
+  set h $top.body.h
+  set v $top.body.v
+  set o [dict create ana {} outs {} vars {} right {}]
+  if {$sizes ne {}} {
+    dict set o ana   [list -height [dict get $sizes ana]]
+    dict set o outs  [list -height [dict get $sizes outs]]
+    dict set o vars  [list -width  [dict get $sizes vars]]
+    dict set o right [list -width  [dict get $sizes right]]
+  }
+  $v add $top.body.ana  -sticky nsew -stretch always {*}[dict get $o ana]
+  $v add $top.body.outs -sticky nsew -stretch always {*}[dict get $o outs]
+  $h add $top.body.vars -sticky nsew -stretch always {*}[dict get $o vars]
+  $h add $v             -sticky nsew -stretch always {*}[dict get $o right]
+}
+
+# What the pane `pane` of `top` asks for, as {width height}, without the
+# horizontal scrollbar when that one is showing: the bar comes and goes with
+# the pane's width, and a height taken while it shows would keep its strip
+# for good. For Outputs it is the tab in front that is asked.
+proc ase::ui::pane_natural {top pane} {
+  set pf $top.body.$pane
+  set w [winfo reqwidth $pf]
+  set ht [winfo reqheight $pf]
+  set inner $pf
+  if {$pane eq {outs} && [winfo exists $top.body.saves]
+      && [lsearch -exact [grid slaves $pf] $top.body.saves] >= 0} {
+    set inner $top.body.saves
+  }
+  if {[winfo exists $inner.hsb]
+      && [lsearch -exact [grid slaves $inner] $inner.hsb] >= 0} {
+    set ht [expr {$ht - [winfo reqheight $inner.hsb]}]
+  }
+  return [list $w $ht]
+}
+
+# The sizes the panes of `top` are handed over with when they are laid out
+# afresh: what each asks for, and, for a divider the user dragged, the same
+# room split at the fraction remembered for the session `key`, inside the
+# panes' smallest sizes. A dict with ana and outs (heights), vars and right
+# (widths; right is the two panes at the right of Design Variables).
+proc ase::ui::pane_sizes {key top} {
+  variable panesplit
+  foreach pane {vars ana outs} {
+    lassign [ase::ui::pane_natural $top $pane] nw($pane) nh($pane)
+    lassign [ase::ui::pane_min $top $pane] mw($pane) mh($pane)
+  }
+  set left $nw(vars)
+  set right [expr {$nw(ana) > $nw(outs) ? $nw(ana) : $nw(outs)}]
+  set up $nh(ana)
+  set down $nh(outs)
+  set split [expr {[info exists panesplit($key)] ? $panesplit($key) : {}}]
+  if {[dict exists $split h]} {
+    set room [expr {$left + $right}]
+    set pos [ase::ui::pane_pos_of [dict get $split h] $room $mw(vars) \
+               [expr {$mw(ana) > $mw(outs) ? $mw(ana) : $mw(outs)}]]
+    if {$pos > 0 && $pos < $room} {
+      set left $pos
+      set right [expr {$room - $pos}]
+    }
+  }
+  if {[dict exists $split v]} {
+    set room [expr {$up + $down}]
+    set pos [ase::ui::pane_pos_of [dict get $split v] $room $mh(ana) $mh(outs)]
+    if {$pos > 0 && $pos < $room} {
+      set up $pos
+      set down [expr {$room - $pos}]
+    }
+  }
+  return [dict create ana $up outs $down vars $left right $right]
+}
+
+# The fonts moved under a window that is on screen (ase::ui::retune_columns),
+# so its panes ask for other sizes, and a mapped paned window does not listen
+# to that. Take the panes out and hand them over again with the sizes of
+# ase::ui::pane_sizes: a window the user has not sized grows or shrinks with
+# the font as it did when the panes sat in a grid, and a divider the user
+# dragged keeps its fraction of the new room.
+#
+# `update idletasks` first, because what a pane asks for after a font change
+# reaches its labelframe only through the idle handlers of the tree and of
+# the grid inside the pane, and a pane handed over with a stale request would
+# keep it.
+proc ase::ui::pane_reseed {top} {
+  variable wins
+  set h $top.body.h
+  set v $top.body.v
+  if {![winfo exists $h] || ![winfo exists $v]} { return 0 }
+  update idletasks
+  if {![winfo exists $h] || ![winfo exists $v]} { return 0 }
+  if {![winfo ismapped $h]} { return 0 }
+  set key {}
+  dict for {k t} $wins { if {$t eq $top} { set key $k } }
+  set sizes [ase::ui::pane_sizes $key $top]
+  foreach {pw w} [list $v $top.body.ana $v $top.body.outs \
+                       $h $top.body.vars $h $v] {
+    catch {$pw forget $w}
+  }
+  ase::ui::pane_add $top $sizes
+  ase::ui::pane_bounds $top
+  return 1
+}
+
+# A divider's place as a FRACTION of the room its two panes share, or 0 when
+# the figures are not a split: no room, or a pane left with nothing. Pure.
+# A fraction and never pixels, for the reason the waveform viewer's browser
+# split gives (wviewer::browser_sash): the window is resized freely, and a
+# pixel split put back into a smaller window lands outside it.
+proc ase::ui::pane_frac_of {pos room} {
+  if {![string is double -strict $pos] || ![string is double -strict $room]} {
+    return 0
+  }
+  if {$room <= 1 || $pos <= 0 || $pos >= $room} { return 0 }
+  return [expr {double($pos) / $room}]
+}
+
+# The inverse: where `frac` puts a divider in `room` pixels, kept between `lo`
+# (the smallest size of the pane before it) and `room - hi` (the pane after
+# it). -1 when `frac` is not a fraction or there is no room. Where the room
+# cannot hold both smallest sizes the pane before the divider keeps its own.
+# Pure.
+proc ase::ui::pane_pos_of {frac room {lo 0} {hi 0}} {
+  if {![string is double -strict $frac] || $frac <= 0 || $frac >= 1} {
+    return -1
+  }
+  if {![string is integer -strict $room] || $room <= 1} { return -1 }
+  set pos [expr {int(round($frac * $room))}]
+  if {$pos > $room - $hi} { set pos [expr {$room - $hi}] }
+  if {$pos < $lo} { set pos $lo }
+  return $pos
+}
+
+# The pixels the two panes of the paned window `pw` share along its direction,
+# or 0 while it is not mapped. Before mapping a window's size reads 1, and a
+# fraction taken from that would look like a choice the user made.
+proc ase::ui::pane_room {pw} {
+  if {![winfo exists $pw] || ![winfo ismapped $pw]} { return 0 }
+  if {[$pw cget -orient] eq {horizontal}} {
+    set len [winfo width $pw]
+  } else {
+    set len [winfo height $pw]
+  }
+  set room [expr {$len - [winfo pixels $pw [$pw cget -sashwidth]]
+                       - 2 * [winfo pixels $pw [$pw cget -sashpad]]
+                       - 2 * [winfo pixels $pw [$pw cget -borderwidth]]}]
+  return [expr {$room > 1 ? $room : 0}]
+}
+
+# Where the divider of `pw` stands, in pixels from the start of its room; -1
+# when it cannot be read. The paned window answers this at once after a move;
+# the panes' own sizes follow only when it next lays them out.
+proc ase::ui::pane_at {pw} {
+  if {![winfo exists $pw] || [catch {$pw sash coord 0} xy]} { return -1 }
+  lassign $xy x y
+  return [expr {[$pw cget -orient] eq {horizontal} ? $x : $y}]
+}
+
+# The divider of `pw` as a fraction, read off the mapped widget; 0 otherwise.
+proc ase::ui::pane_frac {pw} {
+  return [ase::ui::pane_frac_of [ase::ui::pane_at $pw] [ase::ui::pane_room $pw]]
+}
+
+# The split remembered for the session `key`: a dict with `h` and `v`, each
+# present only once that divider was dragged. {} when nothing was.
+proc ase::ui::pane_split {key} {
+  variable panesplit
+  if {[info exists panesplit($key)]} { return $panesplit($key) }
+  return {}
+}
+
+# Button 1 went down on a divider: note where it stands.
+proc ase::ui::pane_press {pw} {
+  variable panepress
+  set panepress($pw) [ase::ui::pane_at $pw]
+}
+
+# THE ONLY WRITER OF THE REMEMBERED SPLIT: button 1 was let go after a drag.
+# A press and release that moved nothing stores nothing, so a click on a
+# divider cannot turn the default split into a remembered one. Only the
+# divider that was dragged is stored. Returns the fraction stored, or 0.
+proc ase::ui::pane_drop {key pw} {
+  variable panepress
+  variable panesplit
+  if {![info exists panepress($pw)]} { return 0 }
+  set was $panepress($pw)
+  unset panepress($pw)
+  if {![winfo exists $pw]} { return 0 }
+  if {[ase::ui::pane_at $pw] == $was} { return 0 }
+  set f [ase::ui::pane_frac $pw]
+  if {$f <= 0} { return 0 }
+  if {![info exists panesplit($key)]} { set panesplit($key) [dict create] }
+  dict set panesplit($key) \
+    [expr {[$pw cget -orient] eq {horizontal} ? {h} : {v}}] $f
+  return $f
+}
+
+# The smallest {width height} at which the pane `pane` of `top` still shows
+# its title, its column headings and its first row whole, with room for the
+# horizontal scrollbar whether or not that one is showing; and is not narrower
+# than its title, or than its first column's heading beside the vertical
+# scrollbar. Derived from what the widgets ask for and from their fonts, so it
+# follows the font size. {0 0} while the pane has not asked for a size yet.
+proc ase::ui::pane_min {top pane} {
+  set pf $top.body.$pane
+  set tv $pf.tv
+  if {![winfo exists $pf] || ![winfo exists $tv]} { return {0 0} }
+  set nh [lindex [ase::ui::pane_natural $top $pane] 1]
+  if {$nh <= 1} { return {0 0} }
+  set rh {}
+  catch {set rh [ttk::style lookup [$tv cget -style] -rowheight]}
+  if {![string is integer -strict $rh] || $rh <= 0} {
+    set rh [expr {[font metrics AseEntryFont -linespace] + 4}]
+  }
+  set mh [expr {$nh - ([$tv cget -height] - 1) * $rh + [winfo reqheight $pf.hsb]}]
+  if {$mh < $rh} { set mh $rh }
+  set share [expr {2 * ([winfo pixels $pf [$pf cget -borderwidth]]
+                        + [winfo pixels $pf [$pf cget -padx]])}]
+  set lw [$pf cget -labelwidget]
+  if {$lw ne {} && [winfo exists $lw]} {
+    set title [winfo reqwidth $lw]
+  } else {
+    set title [font measure [$pf cget -font] [$pf cget -text]]
+  }
+  set title [expr {$title + $share + 2 * [font measure [$pf cget -font] 0]}]
+  set col [expr {[$tv column [lindex [$tv cget -columns] 0] -minwidth]
+                 + [winfo reqwidth $pf.sb] + $share}]
+  return [list [expr {$title > $col ? $title : $col}] $mh]
+}
+
+# Give the two paned windows of `top` their panes' smallest sizes: a drag
+# stops there. Returns {vars {w h} ana {w h} outs {w h}}, or {} when the
+# window has no dividers. Run when the window is first shown and again when
+# the fonts move (ase::ui::retune_columns).
+proc ase::ui::pane_bounds {top} {
+  set h $top.body.h
+  set v $top.body.v
+  if {![winfo exists $h] || ![winfo exists $v]} { return {} }
+  set out [dict create]
+  foreach pane {vars ana outs} {
+    dict set out $pane [ase::ui::pane_min $top $pane]
+  }
+  lassign [dict get $out vars] vw vh
+  lassign [dict get $out ana]  aw ah
+  lassign [dict get $out outs] ow oh
+  $v paneconfigure $top.body.ana  -minsize $ah
+  $v paneconfigure $top.body.outs -minsize $oh
+  $h paneconfigure $top.body.vars -minsize $vw
+  $h paneconfigure $v -minsize [expr {$aw > $ow ? $aw : $ow}]
+  return $out
+}
+
+# <Map> of one of the two paned windows: the panes have asked for their sizes
+# by now, so the bounds can be taken, and the split remembered for the session
+# can be put back. Put back when idle, after the paned window has laid its
+# panes out for the first time.
+proc ase::ui::pane_arm {key top pw} {
+  catch {ase::ui::pane_bounds $top}
+  after idle [list ase::ui::pane_restore $key $pw]
+}
+
+# Put the remembered split of the session `key` back on the paned window `pw`,
+# once per window: the first time `pw` is shown. Afterwards only a drag moves
+# the divider. Returns the pixel position applied, or -1.
+proc ase::ui::pane_restore {key pw} {
+  variable panearmed
+  if {![winfo exists $pw] || ![winfo ismapped $pw]} { return -1 }
+  if {[info exists panearmed($pw)]} { return -1 }
+  set panearmed($pw) 1
+  return [ase::ui::pane_place $key $pw]
+}
+
+# Put the divider of the mapped paned window `pw` at the fraction remembered
+# for the session `key`, inside the panes' smallest sizes. A divider that was
+# never dragged has no fraction and is left where the paned window put it.
+# Returns the pixel position applied, or -1.
+proc ase::ui::pane_place {key pw} {
+  variable panesplit
+  if {![winfo exists $pw] || ![winfo ismapped $pw]} { return -1 }
+  set horiz [expr {[$pw cget -orient] eq {horizontal}}]
+  set which [expr {$horiz ? {h} : {v}}]
+  if {![info exists panesplit($key)] || ![dict exists $panesplit($key) $which]} {
+    return -1
+  }
+  lassign [$pw panes] a b
+  set pos [ase::ui::pane_pos_of [dict get $panesplit($key) $which] \
+             [ase::ui::pane_room $pw] \
+             [$pw panecget $a -minsize] [$pw panecget $b -minsize]]
+  if {$pos < 0} { return -1 }
+  if {$horiz} { $pw sash place 0 $pos 0 } else { $pw sash place 0 0 $pos }
+  return $pos
 }
 
 proc ase::ui::build_pane {key top pane columns headings policy} {

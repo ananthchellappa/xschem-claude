@@ -14,6 +14,34 @@ Newest entries on top.
 
 ---
 
+## Q101. The Outputs pane of the ASE-L window shows eight rows and I have thirty measures. Can I make it taller?
+
+- **Asked:** 2026-11-24
+- **Project state:** branch `pane-sash` on `fluid-editing` at `4fba0839e`, issue 1737.
+
+**Drag the divider.** The gap between Analyses and Outputs is a divider: put the pointer
+on it (it turns into an up-and-down double arrow), press button 1 and drag up. Analyses
+gets shorter, Outputs taller, and more rows are in view. The gap between Design Variables
+and the two panes at its right drags left and right the same way. The window itself does
+not change size.
+
+**Where it stops.** Before a pane would lose its title, its column headings or its first
+row, and before it would be narrower than its title. No pane can be dragged away.
+
+**What keeps the split.** Resizing the window keeps the proportions. Adding rows, a run,
+the Measures and Saves tabs, loading a state and a change of font size leave the dividers
+alone. Closing the ASE-L window and opening it again brings them back where you left
+them, per session, for as long as this xschem runs. It is not saved to disk: after a
+restart every window opens with the default split.
+
+**Why a classic Tk paned window.** It shares a window resize out in proportion with no
+handler of ours, and once it is on screen it lays its panes out from the sizes it holds,
+so a pane whose content asks for more or less room cannot move a divider. The one case
+where the panes must be asked again, a font-size change under an open window, is
+`ase::ui::pane_reseed`. Rules R-PANE1 to R-PANE8 in `doc/claude/specs/ase_l.md`.
+
+---
+
 ## Q100. I want the difference of two nets as one trace, straight from the schematic. How, and why is the AC one not `vf(b) - vf(a)`?
 
 - **Asked:** 2026-11-23

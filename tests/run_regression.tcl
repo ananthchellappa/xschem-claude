@@ -186,7 +186,14 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_pin_marker_1724" \
                   "headless/test_cmdmode_0201" \
                   "headless/test_ase_plot_difference_1727" \
-                  "headless/test_wave_expr_reattach_1734"]
+                  "headless/test_wave_expr_reattach_1734" \
+                  "headless/test_ase_pane_dividers_1737"]
+## `headless/test_ase_pane_dividers_1737` IS IN BOTH LISTS, registered in the change that
+## creates it (issue 1737: the dividers between the ASE-L window's three panes can be
+## dragged). This arm runs the arithmetic of a split, which needs no window: a divider's
+## place as a fraction of the room and back, the bounds, and what is refused. Each band
+## that needs the window prints one LOWERCASE `skip:` line, the spelling summarize_all
+## counts.
 ## `headless/test_wave_expr_reattach_1734` IS IN BOTH LISTS, registered in the change
 ## that creates it (issue 1734: an expression trace and a Calculator wave keep drawing
 ## when the viewer's results are loaded again). This arm runs what needs no window, on
@@ -1149,7 +1156,15 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_rdw_keys_1245" \
                   "headless/test_ase_terminal_pick_1724" \
                   "headless/test_ase_plot_difference_1727" \
-                  "headless/test_wave_expr_reattach_1734"]
+                  "headless/test_wave_expr_reattach_1734" \
+                  "headless/test_ase_pane_dividers_1737"]
+## `headless/test_ase_pane_dividers_1737` IS ALSO IN `hcases` (see the note there): this
+## entry is its display arm. It drags each divider of a real ASE-L window with generated
+## button presses, pointer motion and releases on the paned window, and reads the panes'
+## sizes off the widgets: after the drag, after what a user does next (rows added, the
+## Saves tab, the theme, a state loaded, a window resize, a font-size change), at each
+## stop of a drag past a bound, after many drag cycles, and after the window is closed
+## and opened again.
 ## `headless/test_wave_expr_reattach_1734` IS ALSO IN `hcases` (see the note there): this
 ## entry is its display arm, with src/cadence_style_rc sourced. On a sheet whose nets
 ## carry the names of the committed real results file, it plots a difference by the real

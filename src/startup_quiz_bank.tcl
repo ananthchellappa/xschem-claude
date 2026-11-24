@@ -1056,6 +1056,28 @@ startup_quiz::add plot-difference {
          && [P_body ::ase::ui::pd_msg {click second net (second minus first)}]
          && [P_hasre src/cadence_style_rc {bind \.drw <Control-Key-4>\s+\{ase::direct_plot_for_current;\s+break\}}]}
 }
+# Issue 1737. A topic of its own: the topic ASE-L holds as many questions as a
+# topic may.
+startup_quiz::add ase-pane-dividers {
+  type mc  kind howto  topic {ASE-L window}
+  q   {The Outputs pane of the ASE-L window shows fewer rows than you have measures. How do
+       you bring more of them into view?}
+  a   {{Drag the gap between the Analyses and Outputs panes upward}
+       {Delete analyses until the Outputs pane grows}
+       {Set a pane height in the state file and load the state again}
+       {You cannot: the three panes have a fixed split}}
+  ok  0  last 3
+  why {The gap between two panes is a divider. Over it the pointer turns into a double
+       arrow; drag it with the left button. The one between Design Variables and the two
+       panes at its right drags left and right. Resizing the window keeps the proportions,
+       and a window closed and opened again in the same xschem comes back with your split.}
+  proof {[P_body ::ase::ui::pane_layout {panedwindow $pw -orient $orient}]
+         && [P_body ::ase::ui::pane_layout {-sashcursor $cur}]
+         && [P_body ::ase::ui::pane_add {-stretch always}]
+         && [P_body ::ase::ui::pane_drop {dict set panesplit($key)}]
+         && [P_body ::ase::ui::build {ase::ui::pane_layout $key $top}]
+         && ![P_bodyre ::ase::ui::close {unset\s+panesplit}]}
+}
 # The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
 # so this one is asked where the others above are.
 startup_quiz::add dblclick-labels {
