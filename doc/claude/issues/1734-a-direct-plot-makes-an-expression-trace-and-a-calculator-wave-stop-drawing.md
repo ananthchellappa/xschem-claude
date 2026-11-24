@@ -127,6 +127,14 @@ analysis kept per postfix, a restored trace of another text than the window's ow
 without the records being dropped, so row GYA4, which fences the dropping, now loads a state
 over a viewer that computed the same text on another analysis.
 
+**What the last check found, and the repair.** The same with the later trace in ANOTHER TAB:
+undo history is kept per tab, so after the undo both traces are in the model, with one vector
+between them, and the record matches the later one. The trace that was back read the other
+tab's numbers under its own label, and a load did not put it right. Undo and redo now first
+give the trace that is back a vector name of its own (`wviewer::expr_unshare`); its label and
+the analysis on record for it stay. Only a name of the viewer's own making is changed. Rows
+GG17 (real keys, two tabs, a Direct Plot after it), RS6 and RS7 (both arms).
+
 **Rows.** `tests/headless/test_wave_expr_reattach_1734.tcl`, on a results file a real ngspice
 wrote, with real keys and clicks: a difference, the Calculator's Plot button, the Add Trace door,
 an ASE-L Outputs expression row and a Calculator wave, each followed by a real Direct Plot and

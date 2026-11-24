@@ -1308,6 +1308,15 @@ difference of two nets, the Calculator's Plot, Graph > Add Trace with an express
   and is evaluated after it. The trace that is back is held to the analysis its own
   postfix was computed on, whatever was computed into the name since. Redo is the same
   the other way. Rows RU1 to RU7, RS1 to RS5.
+  **When the later trace is in another tab** it is still in the model after the undo
+  (undo history is kept per tab), so the two traces would share the one vector and one
+  of them would draw the other's numbers, at every load after it too. The trace that is
+  back is first given a vector name of its own (`wviewer::expr_unshare`, as a pasted
+  trace is whose vector's name is taken where it lands); the label it is shown under
+  stays, and so does the analysis on record for it. Only a name of the viewer's own
+  making (`expr<N>`) is changed: a name the user gave to two expressions is one vector
+  by the user's choice, and two traces of one postfix keep their one vector. Row GG17
+  of the difference's suite; rows RS6 and RS7.
 - **A Calculator wave is kept.** A load is told which databases to keep
   (`ase::attach_dbs`' last argument): the ones this window's traces draw from that the
   Calculator made in memory (`wviewer::mem_dbs`: a database a trace of any tab names that

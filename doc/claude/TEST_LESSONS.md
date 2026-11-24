@@ -209,6 +209,17 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
 - **A whole-file text scan counts every occurrence, including prose about the predicate**
   (issue 1646). Strip comments first (`wvproc_body`), and for the stripper's non-vacuity
   leg run it on a shipped sibling that does carry a comment.
+- **A tip-of-the-day proof names the command it is about, and a row that scans all of
+  `src/` for that name then counts the proof's lines.** Row `PR4` of
+  `test_ase_plot_difference_1727` ("no door outside the profile runs it") went red on both
+  arms when the question for Alt-Shift-D was added, and `test_startup_quiz` alone was run
+  for that commit, so the full regression was red until the next one. After adding a
+  question, run the suite of the feature it is about as well. A scan for doors passes over
+  a proof clause by its shape and still shows any other line of the bank.
+- **A comment inside a braced `group` body is still brace-counted.** One `{` in the prose
+  with no `}` gives `missing close-brace: possible unbalanced brace in comment`, the suite
+  prints no row at all and `run_suites.sh` says `NORESULT (exit 0)`. Spell the brace in
+  words.
 - **A row's name states its method, not its coverage**, and cross-references to rows are
   checked, not trusted (row `X1` of `test_snprintf_fmt_1608.tcl` derives the real row set
   from the suite's own `check` calls).

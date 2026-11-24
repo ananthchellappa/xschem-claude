@@ -856,6 +856,11 @@ group PR {
     # the key table, a bind in the stock bindings -- shows as one more line.
     # Blind to: a call spelled through a variable, and Select On Design entered
     # in this flavour by its own proc.
+    # The tip-of-the-day bank proves what its questions say by naming what
+    # they are about. A clause of a question's proof (the word proof and an
+    # opening brace, or `&&`, then `[P_...]`) is text that tests/headless/test_startup_quiz.tcl alone
+    # evaluates, never a key, a menu entry or a button, so it is no door and
+    # is passed over. Any other line of that file shows like any file's.
     set scanned {}
     set found {}
     set files {}
@@ -878,6 +883,7 @@ group PR {
             if {[string first plot_difference $ln] < 0} { continue }
             set t [string trim $ln]
             if {!$cfile && [string index $t 0] eq {#}} { continue }
+            if {[file tail $f] eq {startup_quiz_bank.tcl} && [regexp {^(proof \{|&& )\[P_[a-z]+ } $t]} { continue }
             lappend found [list [file tail $f] [string map [list \{ ( \} )] [regsub -all {\s+} $t { }]]]
         }
     }
@@ -885,7 +891,7 @@ group PR {
     foreach n {xschem.tcl keybindings.csv actions.csv action_registry.tcl mouse_bindings.tcl callback.c scheduler.c ase_window.tcl cadence_style_rc xschemrc} {
         if {[lsearch -exact $scanned $n] < 0} { lappend carriers $n }
     }
-    check "PR4 over the text files of src/ and its folders, the menus, the key table, the action registry, the stock bindings and the C sources among them, the only lines that are not comments and name the command or the mode's entry are their two definitions, the command's call of the mode, the name in its refusal, and the profile's one line: no menu entry, toolbar button or key outside the profile runs it" \
+    check "PR4 over the text files of src/ and its folders, the menus, the key table, the action registry, the stock bindings and the C sources among them, the only lines that are not comments and name the command or the mode's entry are their two definitions, the command's call of the mode, the name in its refusal, and the profile's one line: no menu entry, toolbar button or key outside the profile runs it (a clause of a tip-of-the-day proof is no door)" \
         [list [expr {[llength $scanned] > 60}] $carriers [lsort $found]] \
         [list 1 {} [lsort [list \
             [list ase.tcl {proc ase::plot_difference_for_current ((analysis tran)) (}] \
@@ -2484,6 +2490,8 @@ group GZ {
 #   ...leaving such a vector in the data                       GG15, GG16
 #   ...the analysis on record for the vector, not for the
 #   trace's own expression                                     GG16
+#   wviewer::state_apply not giving a trace that is back a
+#   vector of its own while another tab's trace has its name   GG17
 #   wviewer::expr_lost_why with no arm for a trace's vector    GG8, GG9
 #   ...telling a bare name to be saved                         GG9
 # Leaving no strips out, with the load quiet, reddens GG14 (the removed
@@ -2775,6 +2783,53 @@ group GG {
               [nsaid "wviewer: trace 'v(b)-v(a)' is empty: it was computed on the transient analysis and the viewer now shows the DC sweep analysis of [file tail $::rawpath]; it draws again when the viewer shows the transient analysis"]] \
         {dc dc {} 1 ok {NEG v(b)-v(a)} {MISSING MISSING MISSING} 1 1}
     set shown [run_only {op tran}]
+    # THE LATER DIFFERENCE IS IN ANOTHER TAB. Undo history is kept per tab, so
+    # the undo that brings the first difference back leaves the later one
+    # where it is: both are in the model, and the first one's vector has the
+    # later one's name. The one that is back is given a vector of its own:
+    # each reads its own two nets under its own label, and a load of results
+    # after it leaves them so.
+    set ::OMIT {} ; set ::RUNSEL 1
+    pd_raw $::rawpath {tran ac dc op}
+    clean_viewer
+    gz_tilde
+    to_design
+    set before [traces]
+    chord_d ; click a ; click b
+    set v1 [lindex [lindex [newtraces $before] 0] 0]
+    set ::RUNSEL 2
+    pd_raw $::rawpath {tran ac dc op}
+    gz_tilde
+    set idA [pcall wviewer::tab_id $::key]
+    set idB [pcall wviewer::new_tab $::key]
+    update
+    to_design
+    set before [traces]
+    chord_d ; click a ; click e
+    set v2 [lindex [lindex [newtraces $before] 0] 0]
+    set wb [at_rt [pd_sub $::T2(b) $::T2(a)]]
+    set we [at_rt [pd_sub $::T2(e) $::T2(a)]]
+    set r2 [near [rd_at {v(e)-v(a)} $::RT] $we 2e-3]
+    pcall wviewer::select_tab $idA $::key
+    update
+    set ::notices {}
+    gz_vkeys 0 1 u 0
+    set nv {}
+    foreach t [traces] { if {[label_of [lindex $t 0]] eq {v(b)-v(a)}} { set nv [lindex $t 0] } }
+    set undone [list [gg_labels] [near [rd_at {v(b)-v(a)} $::RT] $wb 2e-3]]
+    to_design
+    set m [dplot a]
+    set loaded [near [rd_at {v(b)-v(a)} $::RT] $wb 2e-3]
+    pcall wviewer::select_tab $idB $::key
+    update
+    set inB [list [gg_labels] [near [rd_at {v(e)-v(a)} $::RT] $we 2e-3]]
+    check "GG17 the same with the later difference plotted in a second tab, so that it is still there after the undo: back on the first tab, one press of the real undo key brings the first difference back under its label with a vector of its own, and the bar reads the new run's b minus a there, not e minus a; a real Direct Plot after it leaves that so; and the second tab's difference still reads e minus a; nothing is said about an empty trace" \
+        [list [expr {$v1 ne {} && $v1 eq $v2}] [expr {$idB ne {} && $idB ne $idA}] $r2 [expr {[apart $wb $we] > 0.3}] $undone [expr {$nv ne {} && $nv ne $v2}] $m $loaded $inB [gg_lost]] \
+        {1 1 ok 1 {{NEG v(b)-v(a)} ok} 1 plot ok {v(e)-v(a) ok} {}}
+    pcall wviewer::select_tab $idA $::key
+    update
+    pcall wviewer::close_tab $idB $::key
+    update
     # an expression that names another expression's trace
     set ::OMIT {} ; set ::RUNSEL 1
     pd_raw $::rawpath {tran ac dc op}

@@ -5083,9 +5083,11 @@ proc wviewer::validate_rpn {rpn varlist {fuzzy {}}} {
 # model is every tab's (wviewer::all_graphs): the tabs of a window draw from
 # one set of data, and a trace that could not be evaluated has no vector there
 # to hold its name (wviewer::expr_remake), so the data alone would hand a
-# second trace the name of one in a tab that is not shown.
-proc wviewer::auto_expr_name {token} {
-  set used {}
+# second trace the name of one in a tab that is not shown. `taken` is names to
+# pass over besides: the ones a caller has handed out and not yet written to
+# the model (wviewer::expr_unshare).
+proc wviewer::auto_expr_name {token {taken {}}} {
+  set used $taken
   foreach G [wviewer::all_graphs $token] {
     foreach tr [wviewer::dget $G traces {}] {
       lappend used [wviewer::dget $tr vec {}]
@@ -5500,6 +5502,92 @@ proc wviewer::expr_remake {token {leave {}} {absent 0} {quiet 0}} {
     }
   }
   return [dict create said $said made $made]
+}
+
+# ONE NAME, TWO TABS: what undo and redo do before they evaluate
+# (wviewer::state_apply). Undo history is kept per tab. A trace leaves the tab
+# shown (a plot under Replace, a delete), a trace of ANOTHER tab is computed
+# into the name its vector left free (wviewer::auto_expr_name), and undo then
+# brings the first one back. Both are in the model now with one vector between
+# them, and the data holds one expression under one name: the trace that is
+# back would draw the other tab's numbers under its own label, and every load
+# after it would make the vector from the other tab's postfix again. Evaluating
+# cannot serve both, so the trace that is back is given a vector name of its
+# own, as a pasted trace is whose vector's name is taken where it lands
+# (wviewer::paste_traces). Its `name`, which is what it is shown under, stays
+# as it is, and the analysis on record for its own postfix goes with it, so it
+# is still held to the analysis it was computed on (wviewer::expr_remake).
+#
+# Only a name of the viewer's own making (expr<N>) is changed. A name the user
+# gave to two expressions is one vector by the user's choice ("TWO TRACES, ONE
+# VECTOR" above). Two traces of one postfix are left with their one vector,
+# which serves both. The current context is the viewer's. Answers how many
+# traces were given a vector of their own.
+proc wviewer::expr_unshare {token} {
+  variable exprtype
+  variable exprseen
+  set cur [wviewer::tab_index $token]
+  set other [dict create]
+  set i 0
+  foreach rec [wviewer::tab_records $token] {
+    if {$i != $cur} {
+      foreach G [wviewer::dget [wviewer::dget $rec layout {}] graphs {}] {
+        foreach tr [wviewer::dget $G traces {}] {
+          set ex  [wviewer::dget $tr expr {}]
+          set vec [wviewer::dget $tr vec {}]
+          if {$vec eq {} || [llength [regexp -all -inline {\S+} $ex]] < 2} { continue }
+          if {[wviewer::db_suffix $tr] ne {}} { continue }
+          dict lappend other $vec $ex
+        }
+      }
+    }
+    incr i
+  }
+  if {![dict size $other]} { return 0 }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set moved [dict create]
+  set taken {}
+  set n 0
+  set out {}
+  foreach G $gs {
+    set trs {}
+    set hit 0
+    foreach tr [wviewer::dget $G traces {}] {
+      set ex  [wviewer::dget $tr expr {}]
+      set vec [wviewer::dget $tr vec {}]
+      if {[regexp {^expr[0-9]+$} $vec] && [dict exists $other $vec]
+          && [llength [regexp -all -inline {\S+} $ex]] > 1
+          && [wviewer::db_suffix $tr] eq {}
+          && [lsearch -exact [dict get $other $vec] $ex] < 0} {
+        set k [list $vec $ex]
+        if {![dict exists $moved $k]} {
+          set nv [wviewer::auto_expr_name $token $taken]
+          lappend taken $nv
+          dict set moved $k $nv
+          set was {}
+          if {[info exists exprseen($token)]} {
+            set was [wviewer::dget [wviewer::dget $exprseen($token) $vec {}] $ex {}]
+          }
+          if {$was ne {}} {
+            if {![info exists exprtype($token)]} { set exprtype($token) [dict create] }
+            dict set exprtype($token) $nv $was
+            dict set exprseen($token) $nv $ex $was
+          }
+        }
+        # the label it was shown under stays: a trace named by its vector
+        # (name blank or the vector's) keeps showing that name
+        if {[wviewer::dget $tr name {}] eq {}} { dict set tr name $vec }
+        dict set tr vec [dict get $moved $k]
+        set hit 1
+        incr n
+      }
+      lappend trs $tr
+    }
+    if {$hit} { dict set G traces $trs }
+    lappend out $G
+  }
+  if {$n} { wviewer::set_graphs $token $out }
+  return $n
 }
 
 # AFTER A PLOT THAT LOADED QUIETLY (ase::ui::auto_plot, whose load is
@@ -10102,7 +10190,9 @@ proc wviewer::state_apply {token snap {view {}}} {
   # later trace was computed into. The expression traces whose vector the
   # data lacks, or holds as another trace's, are evaluated again here, before
   # the rebuild that fits and draws them; one that cannot be is told of, as
-  # after a load.
+  # after a load. First, a trace that is back while a trace of another tab
+  # holds its vector's name is given a vector of its own (expr_unshare).
+  catch {wviewer::expr_unshare $token}
   catch {wviewer::expr_remake $token {} 1}
   wviewer::regenerate $token [wviewer::view_keep $token $view \
     [wviewer::pinned_axes [wviewer::shared_graphs [wviewer::layout_for $token]]]]

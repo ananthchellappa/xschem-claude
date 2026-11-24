@@ -91,6 +91,12 @@
 #   leaving such a vector in the data                              RS3, RS4, RS5
 #   the analysis on record for the vector, not for the trace's
 #   own expression                                                 RS5
+# AND of the later trace standing in another tab (wviewer::expr_unshare, what
+# undo and redo run before that pass), measured 2026-11-24 on both arms:
+#   wviewer::state_apply not calling it                            GG17 of the difference's suite
+#   ...renaming nothing                                            RS6, RS7
+#   ...renaming a name the user gave, or a trace of one postfix    RS7
+#   ...not taking the analysis on record to the new vector         RS7
 #
 # Run it (never a bare ./src/xschem, which would use your screen and HOME):
 #   tests/headless/run_suites.sh [--nogui] test_wave_expr_reattach_1734
@@ -460,6 +466,48 @@ group RS {
     check "RS5 a trace on record as computed on the AC analysis, whose vector's name a trace of the transient has taken since: on a model that holds it, the pass holds it to its own analysis -- the vector is dropped from the data, not evaluated from transient columns, and one sentence says which analysis the trace was computed on and when it draws again" \
         [list [dg $a made] $::RSADD [pcall xschem raw index nm] [dg $a said]] \
         [list 0 {} -1 [list "wviewer: trace 'nm' is empty: it was computed on the AC analysis and the viewer now shows the transient analysis of [file tail $::RAWFIX]; it draws again when the viewer shows the AC analysis"]]
+    # THE LATER TRACE IS IN ANOTHER TAB, so it is still in the model when undo
+    # brings the first one back: the tab shown holds the trace that is back,
+    # the tab that is not shown holds the later one, and the data holds the
+    # later one's numbers under the name both have. What undo and redo run
+    # first (wviewer::expr_unshare) gives the trace that is back a vector of
+    # its own; the pass then evaluates it.
+    catch {wviewer::expr_forget __rs}
+    catch {xschem raw del nm}
+    catch {xschem raw del dep}
+    set a1 [rs_add expr1 {v(ramp) 2 *}]
+    set a2 [rs_add expr1 {v(div) 5 *}]
+    set other [dict create layout [dict create sharedx 0 graphs [list [dict create traces [list [rs_tr expr1 {v(div) 5 *}]]]]]]
+    set ::wviewer::tabstash(__rs) [list {} $other]
+    set ::wviewer::curtab(__rs) 0
+    rs_model [dict create expr {v(ramp) 2 *} name first vec expr1 color 4]
+    set n [pcall wviewer::expr_unshare __rs]
+    set tr [lindex [dict get [lindex [dict get [wviewer::layout_for __rs] graphs] 0] traces] 0]
+    set nv [dict get $tr vec]
+    set a [rs_pass]
+    set again [pcall wviewer::expr_unshare __rs]
+    check "RS6 the later trace stands in a tab that is not shown, with the name of the vector of the trace that is back: that trace is given a vector name of its own and keeps the label it is shown under; the pass computes that vector alone, it reads twice the one column, and the vector of the other tab still reads five times the other; asked again, nothing is renamed" \
+        [list $a1 $a2 $n [expr {$nv ne {expr1} && [regexp {^expr[0-9]+$} $nv]}] [dict get $tr name] [dg $a made] [expr {$::RSADD eq [list $nv]}] [near [rs_at $nv] $r2] [near [rs_at expr1] $d5] $again] \
+        {1 0 1 1 first 1 1 ok ok 0}
+    # what is NOT renamed: a name the user gave (one vector by the user's
+    # choice) and a trace of the same postfix as the other tab's (one vector
+    # serves both). And the analysis on record for the trace goes with it.
+    rs_add nm {v(div) 5 *}
+    set other [dict create layout [dict create sharedx 0 graphs [list [dict create traces [list [rs_tr nm {v(div) 5 *}] [rs_tr expr1 {v(div) 5 *}]]]]]]
+    set ::wviewer::tabstash(__rs) [list {} $other]
+    rs_model [rs_tr nm {v(ramp) 2 *}] [rs_tr expr1 {v(div) 5 *}]
+    set kept [list [pcall wviewer::expr_unshare __rs] [lmap t [dict get [lindex [dict get [wviewer::layout_for __rs] graphs] 0] traces] {dict get $t vec}]]
+    pcall wviewer::expr_note __rs expr1 ac {v(ramp) 2 *}
+    rs_add expr1 {v(div) 5 *}
+    rs_model [dict create expr {v(ramp) 2 *} name first vec expr1 color 4]
+    set n [pcall wviewer::expr_unshare __rs]
+    set nv2 [dict get [lindex [dict get [lindex [dict get [wviewer::layout_for __rs] graphs] 0] traces] 0] vec]
+    set a [rs_pass]
+    check "RS7 a vector the user named, held by a trace of each tab with two expressions, and a trace of the same expression as the other tab's, keep the vector they share; and a trace on record as computed on the AC analysis takes that record to its new vector: the pass does not evaluate it from transient columns, and one sentence says which analysis it was computed on" \
+        [list $kept $n [expr {$nv2 ne {expr1}}] [dg $a made] $::RSADD [pcall xschem raw index $nv2] [near [rs_at expr1] $d5] [dg $a said]] \
+        [list {0 {nm expr1}} 1 1 0 {} -1 ok [list "wviewer: trace 'first' is empty: it was computed on the AC analysis and the viewer now shows the transient analysis of [file tail $::RAWFIX]; it draws again when the viewer shows the AC analysis"]]
+    catch {unset ::wviewer::tabstash(__rs)}
+    catch {unset ::wviewer::curtab(__rs)}
     catch {dict unset ::wviewer::layouts __rs}
     catch {wviewer::expr_forget __rs}
     catch {xschem raw clear}
