@@ -98,6 +98,42 @@ re-issuing the command (menu or key) always brings the one window forward AND
 gives it the keyboard, regardless of which window was active before. Still exactly
 one Library Manager window.
 
+## 4. Ctrl-Alt-S with nothing to locate (issue 1738)
+
+The Cadence profile's Ctrl-Alt-S (`locate_selected_in_libmgr`,
+`utils/lib_mgr_helpers.tcl`) locates a cell in the Library Manager. The user,
+2026-11-24: on `untitled.sch` it did nothing, so it could not be used "to just raise
+the Library Manager (which is what the user sometimes wants, because of how things
+load and windows are behind other Windows windows)".
+
+- **R-LMR1.** Every press of the key ends with the Library Manager in front and
+  holding the keyboard. When there is a cell to locate that is section 3's raise, as
+  before. When there is none, the key runs `xschem library_manager` with no cell,
+  which is the same raise; a closed Library Manager is opened, a minimised one comes
+  back.
+- **R-LMR2.** "None" is four cases: nothing selected and the schematic is in no
+  registered library (an untitled one, a file outside every library); one instance
+  whose symbol is in no library; one text note with no `lib/cell` in it; any other
+  selection. The user asked for the first. The other three are the builder's choice:
+  they used to write a line in the CIW and raise nothing.
+- **R-LMR3.** One line in the CIW says why nothing is located and that the window was
+  raised. In the first case it is not styled as an error: that press is how the key
+  is used to get the window.
+- **R-LMR4.** A raise with no cell asked for keeps what is selected in the Library
+  Manager (`libmgr::open`, the already-open arm). The refresh that arm runs empties
+  the Cell and View panes, so the selection is taken before it and put back after.
+  This also holds for Tools > Library Manager on an open window.
+
+The user first asked for the raise without the keyboard ("No need for it to steal
+focus though. Just raise."). On the X server the user works on, a window is raised by
+mapping it again, and a window that is mapped again is given the keyboard, so leaving
+it on the schematic takes a hand-back like the Results Display window's
+(`src/rdw.tcl`, "THE HAND-BACK IS EVENT DRIVEN"). Told that, the user chose the
+simple way: "wrap it up WITH handing the Library Manager focus". Not built: the
+raise that leaves the keyboard on the schematic.
+
+Suite: `tests/headless/test_libmgr_raise_1738.tcl`, registered on both arms.
+
 ## Acceptance / tests
 
 `tests/headless/test_lib_manager_launch.tcl` (needs X) — only the deterministic,

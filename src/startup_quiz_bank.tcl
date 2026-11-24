@@ -595,6 +595,28 @@ startup_quiz::add lib-git {
          && [P_has src/library_manager.tcl {-label "Cancel checkout"}]
          && [P_proc ::libmgr::ctx_checkout_cell] && [P_file src/library_git.tcl]}
 }
+# Issue 1738. The key is the Cadence profile's, so it is asked there.
+startup_quiz::add libmgr-raise-key {
+  type mc  kind howto  topic {Library Manager}
+  q   {The Library Manager is hidden behind other windows, and the schematic in front of
+       you is a new, untitled one. Which key brings the Library Manager to the front?}
+  a   {{Ctrl-Alt-S}
+       {Ctrl-Alt-N}
+       {Ctrl-Alt-H}
+       {None: Ctrl-Alt-S needs a schematic that is in a library}}
+  ok  0  last 3
+  why {Ctrl-Alt-S shows the cell you are viewing, or the selected instance's cell, in the
+       Library Manager. When there is nothing to show, as on an untitled schematic, it
+       still raises the Library Manager and gives it the keyboard, and the CIW says why no
+       cell was located. Ctrl-Alt-N places the cell selected in the Library Manager, and
+       Ctrl-Alt-H selects every instance of it in the schematic.}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
+  proof {[P_hasre src/cadence_style_rc {bind \.drw <Control-Alt-Key-s>\s+.locate_selected_in_libmgr;}]
+         && [P_hasre src/cadence_style_rc {bind \.drw <Control-Alt-Key-n>\s+.place_libmgr_selection;}]
+         && [P_hasre src/cadence_style_rc {bind \.drw <Control-Alt-Key-h>\s+.select_same_cell;}]
+         && [P_order utils/lib_mgr_helpers.tcl {set tag result} {Library Manager raised, nothing located}]
+         && [P_hasre utils/lib_mgr_helpers.tcl {\n\s+xschem library_manager\n\s+ciw_echo}]}
+}
 
 # -------------------------------------------------------------------------- ASE-L
 # ase-open's proof also holds its two menu wrong options to the source: no File

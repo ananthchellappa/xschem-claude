@@ -187,7 +187,13 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_cmdmode_0201" \
                   "headless/test_ase_plot_difference_1727" \
                   "headless/test_wave_expr_reattach_1734" \
-                  "headless/test_ase_pane_dividers_1737"]
+                  "headless/test_ase_pane_dividers_1737" \
+                  "headless/test_libmgr_raise_1738"]
+## `headless/test_libmgr_raise_1738` IS IN BOTH LISTS, registered in the change that
+## creates it (issue 1738: Ctrl-Alt-S brings the Library Manager forward also when there
+## is nothing to locate). This arm has no window to look at: it runs the key's command on
+## the untitled schematic of a fresh session and holds that it ends without an error.
+## Each band that needs the window prints one LOWERCASE `skip:` line.
 ## `headless/test_ase_pane_dividers_1737` IS IN BOTH LISTS, registered in the change that
 ## creates it (issue 1737: the dividers between the ASE-L window's three panes can be
 ## dragged). This arm runs the arithmetic of a split, which needs no window: a divider's
@@ -1157,7 +1163,14 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_ase_terminal_pick_1724" \
                   "headless/test_ase_plot_difference_1727" \
                   "headless/test_wave_expr_reattach_1734" \
-                  "headless/test_ase_pane_dividers_1737"]
+                  "headless/test_ase_pane_dividers_1737" \
+                  "headless/test_libmgr_raise_1738"]
+## `headless/test_libmgr_raise_1738` IS ALSO IN `hcases` (see the note there): this entry
+## is its display arm. With the Library Manager behind the schematic window it presses
+## the Cadence profile's Ctrl-Alt-S on an untitled schematic, and with a wire, two wires,
+## a note and an instance of a symbol in no library selected, and reads from the window
+## manager that the Library Manager is in front and has the keyboard; also a minimised
+## and a closed Library Manager, and a cell that is in a library, located as before.
 ## `headless/test_ase_pane_dividers_1737` IS ALSO IN `hcases` (see the note there): this
 ## entry is its display arm. It drags each divider of a real ASE-L window with generated
 ## button presses, pointer motion and releases on the paned window, and reads the panes'

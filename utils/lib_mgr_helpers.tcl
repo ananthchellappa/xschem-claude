@@ -14,29 +14,43 @@ proc place_libmgr_selection {} {
 #   - one instance  -> its master (xschem get_inst_lcv);
 #   - nothing        -> the cell currently being viewed (schematic_cellview);
 #   - one text note  -> the first "lib/cell" token in the note.
+#
+# EVERY PRESS ENDS WITH THE LIBRARY MANAGER IN FRONT, HOLDING THE KEYBOARD
+# (issue 1738). When there is a cell to locate, `xschem library_manager <cell>`
+# raises the window, gives it the keyboard and selects the cell, as it always
+# has. When there is none -- the schematic is an untitled one or is in no
+# registered library, the selected instance or note names no library cell, or
+# the selection is something else -- the same command without a cell brings the
+# window forward the same way (and opens it when it is closed), and one line in
+# the CIW says why nothing is located. The user's case was the first: the key
+# pressed on untitled.sch to get a Library Manager that was behind other
+# windows. Before, those four cases wrote the line and raised nothing.
 proc locate_selected_in_libmgr {} {
   set k [cadence::selkind]
+  set tag error
   switch -- [lindex $k 0] {
     inst {
-      if {[catch {xschem get_inst_lcv} lcv] || $lcv eq {}} {
-        ciw_echo "cannot resolve the selected instance's cell ($lcv)" error ; return
-      }
-      xschem library_manager $lcv
+      if {![catch {xschem get_inst_lcv} lcv] && $lcv ne {}} { xschem library_manager $lcv ; return }
+      set why "cannot resolve the selected instance's cell ($lcv)"
     }
     text {
       set lc [cadence::first_libcell [lindex $k 2]]
-      if {$lc eq {}} { ciw_echo "no library/cell (lib/cell) in the selected note" error ; return }
-      xschem library_manager $lc
+      if {$lc ne {}} { xschem library_manager $lc ; return }
+      set why "no library/cell (lib/cell) in the selected note"
     }
     none {
       set lcv [schematic_cellview [xschem get schname]]
-      if {$lcv eq {}} { ciw_echo "current cell is not in a registered library" error ; return }
-      xschem library_manager [lrange $lcv 0 1]
+      if {$lcv ne {}} { xschem library_manager [lrange $lcv 0 1] ; return }
+      # not a mistake of the user's: this is how the key is used to get the window
+      set why "current cell is not in a registered library"
+      set tag result
     }
     default {
-      ciw_echo "select one instance, one lib/cell text note, or nothing (for the current cell)" error
+      set why "select one instance, one lib/cell text note, or nothing (for the current cell)"
     }
   }
+  xschem library_manager
+  ciw_echo "$why: Library Manager raised, nothing located" $tag
 }
 
 

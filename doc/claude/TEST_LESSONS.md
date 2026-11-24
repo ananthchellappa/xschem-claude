@@ -231,6 +231,15 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
 - House helpers in the Calculator suites: `pcall` takes separate arguments (`pcall mt_load
   ac`, not a braced list); `near` answers the word `ok`, not a boolean; arithmetic on an
   accessor's output is counted by ratchet row `MT29/D`, so use a sentinel-safe proc.
+- **A newline inside the brackets of a quiz proof ends the command** (issue 1738): the
+  proof is handed to `expr`, and `[P_order file {a}` continued on the next line with
+  `{b}]` is `P_order` with two arguments, so the proof RAISES and row A15 reads it as
+  false. Keep each `[...]` call of a proof on one line. Evaluate a failing proof clause
+  by clause with `catch`: the row's name prints only the proof's first line under `grep`.
+- **`string is integer` refuses `clock milliseconds`** (issue 1738, met in a cut that was
+  not shipped): the value is wider than 32 bits, so a guard written that way is always
+  false and whatever it guards silently never happens. Use `string is wideinteger`, and
+  give the row a value the clock really produces, not `1000`.
 
 ## 3. Tk and event traps
 

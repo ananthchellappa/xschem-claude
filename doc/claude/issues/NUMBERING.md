@@ -4957,7 +4957,16 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   contain the number are pointer lines, this tree's and those of two copies made for the
   port of 1736.
 
-**The next free number is 1738.**
+~~**The next free number is 1738.**~~
+- **1738**: the Cadence profile's Ctrl-Alt-S brings the Library Manager forward also
+  when there is nothing to locate (the user's request of 2026-11-24). Built by the
+  change that adds its issue file. Minted 2026-11-24 in the clone `~/ob23` after both
+  checks. No clone held 1738 as an issue: `~/private/xschem-private`'s `NUMBERING.md`
+  names it only to say that it skipped 1738 to 1741 and left 1738 to this clone. That
+  clone's own pointer reads 1750 and it holds 1742 to 1749, so after 1741 this clone's
+  next mint has to skip to what is free there.
+
+**The next free number is 1739.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

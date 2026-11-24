@@ -62,6 +62,12 @@ Bind today: `bind .drw <Control-Alt-Key-s> {locate_selected_in_libmgr; break}`
 
 In all cases the manager is raised (the `library_manager` C/Tcl path already raises).
 
+**Since issue 1738** that last sentence is true of every press: when there is nothing
+to locate (an untitled schematic or one in no library, an instance or a note that
+names no library cell, case 4) the key still raises the Library Manager, by
+`xschem library_manager` with no cell, and the hint says so. Rules R-LMR1 to R-LMR4 in
+`doc/claude/specs/library_manager_launch.md`, section 4.
+
 ## 4. CTRL-SHIFT-N — open schematic view read-only in a new window
 
 Bind today: `bind .drw <Control-Shift-Key-N> {cadence::open_inst_sch_readonly; break}`

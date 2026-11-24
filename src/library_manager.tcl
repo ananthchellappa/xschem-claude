@@ -97,6 +97,10 @@ proc libmgr::open {{lcv {}}} {
     # single window: bring the existing one forward and focus it rather than
     # building a second one. See doc/claude/specs/library_manager_launch.md.
     libmgr::raise_to_front
+    # Raised with no cell to go to (Tools > Library Manager, or Ctrl-Alt-S with
+    # nothing to locate, issue 1738): what is selected here stays selected.
+    # The refresh empties the Cell and View panes, so it is put back after it.
+    if {$lcv eq {}} { set lcv [libmgr::selection] }
     libmgr::refresh
     libmgr::locate $lcv
     return
