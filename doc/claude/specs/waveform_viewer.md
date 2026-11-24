@@ -1161,6 +1161,28 @@ recompile (decision: pure-Tcl `.drw` bind, defer device-pin terminal currents).
   fires [sabotage-verified], prompt shows/returns via pump/clears, no-session honest
   no-op). 124 checks green.
 
+## Alt-Shift-D schematic entry: the difference of two nets (issue 1727, 2026-11-23)
+
+A second key that sends a plot from the design window, beside Ctrl-4:
+`ase::plot_difference_for_current ?analysis?` asks for two nets on the schematic and plots
+the second minus the first as one expression trace. Its rules are in
+[`ase_l.md`](ase_l.md), "Plot the difference of two nets" (R-PD1 to R-PD11). What this
+window is asked to do for it:
+
+- **It is opened or raised** exactly as for Direct Plot (`wviewer::open`).
+- **It is made to show the analysis that was read**, which need not be the one it showed:
+  `wviewer::attach_raw` with that analysis. Not when it already draws from that very result
+  read as that analysis (`wviewer::attach_record`, `wviewer::attach_is_same`): a second
+  load would drop the vector every expression trace was computed into (issue 1734), and
+  each difference would blank the one before it. A difference that reads another analysis,
+  or the same one after the results file changed, does load, and does blank the
+  differences plotted before it.
+- **The trace arrives through the Calculator's plot** (`calc::plot_in_token`, hence
+  `wviewer::plot_signals`), with Direct Plot's destination: appended to the target
+  subwindow, per its plot mode.
+
+Nothing in this window's own code changed for it.
+
 ## Clear All (issue 0171, 2026-07-27)
 
 **Ctrl-D in the viewer deletes every graph and every trace and leaves ONE empty

@@ -27447,6 +27447,168 @@ proc ase::direct_plot_for_current {} {
   return $key
 }
 
+# ---------------------------------------------------------------------------
+# PLOT THE DIFFERENCE OF TWO NETS, from the schematic (issue 1727; spec
+# doc/claude/specs/ase_l.md, "Plot the difference of two nets").
+#
+# The user, 2026-11-23: "In Cadence, I had set up Alt-Shift-D to plot a
+# difference. It would ask me to click on one, then another (status bar prompt
+# message) and then, when it had two, it would plot the difference of 2nd minus
+# 1st."  And: "It will work in the schematic, so, what the Waveform Viewer is
+# currently showing is irrelevant. ... If there is ONLY ONE analysis in ASE-L,
+# for which a difference of signals makes sense, then, yes, we can support
+# that analysis. However, if TRAN is ONE of the analyses that was run in the
+# loaded result, then Alt-Shift-D should default to that."
+#
+# The procs here DECIDE and SPELL, and need no window: which analysis is read
+# (ase::diff_analysis), which names that analysis of the results file holds
+# (ase::diff_names), and the text that is plotted (ase::diff_text).  The click
+# mode and the plot are ase::ui::plot_difference's (src/ase_window.tcl), which
+# is Direct Plot's click mode in a third flavour and the Calculator's own
+# translator and plot.
+# ---------------------------------------------------------------------------
+
+# The analyses a difference of two node voltages is plotted from, each with the
+# Calculator's voltage function for it: the Calculator's own selector table
+# (calc::pick_analyses) less the operating point, which is one point and no
+# wave.  The keys are ASE-L's words for those analyses, and they are the words
+# ase::plot_difference_for_current takes.
+proc ase::diff_functions {} {
+  set out [dict create]
+  if {[info commands ::calc::pick_analyses] eq {}} { return $out }
+  foreach {id an} [calc::pick_analyses] {
+    if {[string index $id 0] ne {v} || $an eq {op}} { continue }
+    dict set out $an $id
+  }
+  return $out
+}
+
+# An analysis in the words a sentence uses for it (the Calculator's map:
+# transient, AC, DC sweep, operating point); a type that map does not hold is
+# said as it is.
+proc ase::diff_word {an} {
+  set w $an
+  catch {set w [calc::analysis_word $an]}
+  return $w
+}
+
+# `words` as one phrase: `a`, `a and b`, `a, b and c` (`last` is the joining
+# word).
+proc ase::diff_listed {words {last and}} {
+  if {[llength $words] < 2} { return [lindex $words 0] }
+  return "[join [lrange $words 0 end-1] {, }] $last [lindex $words end]"
+}
+
+# WHICH ANALYSIS IS READ.  PURE: `present` is the analyses the loaded result
+# holds (calc::raw_analyses' sim types, in the file's order), `word` the
+# analysis asked for.  Answers a dict:
+#   ok 1  analysis <an>  fallback 0|1  msg <sentence, when fallback is 1>
+#   ok 0  msg <the refusal>
+# ONE rule for every word.  The word's analysis is read when the result holds
+# it.  When it does not, and the result holds exactly one of the analyses a
+# difference is plotted from (ase::diff_functions), that one is read instead
+# and `fallback` says so.  Otherwise nothing is read: the sentence names what
+# the result holds, and either the words to bind or what to run.  A word that
+# is not one of those analyses is refused whatever the result holds, so a
+# mistyped word is never read as some other analysis; the word is taken in any
+# letter case.
+proc ase::diff_analysis {present word} {
+  set words [dict keys [ase::diff_functions]]
+  set cmd ase::plot_difference_for_current
+  set want [string tolower [string trim $word]]
+  if {$want ni $words} {
+    return [dict create ok 0 analysis {} fallback 0 msg "ase: Plot Difference — '$word' names\
+ no analysis a difference is plotted from; write [ase::diff_listed $words or] after $cmd"]
+  }
+  set pop {}
+  foreach an $words { if {$an in $present} { lappend pop $an } }
+  if {$want in $pop} { return [dict create ok 1 analysis $want fallback 0 msg {}] }
+  set held {no analysis that can be read}
+  if {[llength $present]} { set held [ase::diff_listed [lmap t $present {ase::diff_word $t}]] }
+  if {![llength $pop]} {
+    return [dict create ok 0 analysis {} fallback 0 msg "ase: Plot Difference — nothing to plot\
+ a difference from: the loaded result holds $held, and a difference needs a\
+ [ase::diff_listed [lmap t $words {ase::diff_word $t}] or] analysis; enable one in ASE-L and\
+ run again"]
+  }
+  set none "ase: Plot Difference — the loaded result has no [ase::diff_word $want] analysis\
+ (it holds $held)"
+  if {[llength $pop] == 1} {
+    set an [lindex $pop 0]
+    return [dict create ok 1 analysis $an fallback 1 \
+              msg "$none; reading its [ase::diff_word $an] analysis instead"]
+  }
+  return [dict create ok 0 analysis {} fallback 0 msg "$none; name the analysis to read on the\
+ key's bind line: $cmd [ase::diff_listed $pop or]"]
+}
+
+# The variable names the `an` analysis of the results file `rawfile` holds, as
+# the file's own header spells them; empty when the file has no such analysis
+# or cannot be read.  A file with several plots of one analysis answers the
+# first one's.  Read from the header alone (ase::cap_raw_plots steps over the
+# data), so a click can be asked about before any viewer has loaded the file.
+proc ase::diff_names {rawfile an} {
+  if {[info commands ::calc::analysis_of_plot] eq {}} { return {} }
+  set plots {}
+  if {[catch {ase::cap_raw_plots $rawfile} plots]} { return {} }
+  foreach p $plots {
+    if {[calc::analysis_of_plot [lindex $p 0]] eq $an} { return [lindex $p 2] }
+  }
+  return {}
+}
+
+# The net of a picked voltage `v(<net>)`: what is between the parentheses.
+proc ase::diff_net {ex} {
+  if {[regexp {^[vV]\((.*)\)$} $ex -> n]} { return $n }
+  return $ex
+}
+
+# THE TEXT THAT IS PLOTTED: the difference SECOND MINUS FIRST of two picked
+# voltages (`v(<net>)`, as Direct Plot spells a pick), for the Calculator to
+# translate.  PURE.
+#
+# The transient and the DC sweep: `<fn>(second) - <fn>(first)` with the
+# analysis's own voltage function (vt, vs).
+#
+# AC IS NOT THAT TEXT, and the reason is measured (issue 1727, C8).  An AC
+# database holds each node as a magnitude column `v(net)` and a phase column
+# `ph(net)`, in degrees, and this expression language has no complex type: the
+# Calculator translates `vf(b) - vf(a)` to `v(b) v(a) -`, which is the
+# difference of the two MAGNITUDES.  On two nodes of equal magnitude a quarter
+# turn apart that is zero, while the two voltages differ by more than either
+# (row PT5 of tests/headless/test_ase_plot_difference_1727.tcl measures that
+# pair).  So the AC text is the engine's postfix for the
+# magnitude of the complex difference: the real and imaginary part of each
+# voltage from its magnitude and phase (`re()`, `im()`), subtracted, squared,
+# summed, rooted.  It still names both voltages with `vf()`, so the
+# Calculator's analysis check reads it as an AC text.  What the viewer draws
+# for it is what it draws for one AC net, a magnitude.
+proc ase::diff_text {an first second} {
+  set fn [dict get [ase::diff_functions] $an]
+  set a [calc::aq_qualify $fn $first]
+  set b [calc::aq_qualify $fn $second]
+  if {$an ne {ac}} { return "$b - $a" }
+  set pa "ph([ase::diff_net $first])"
+  set pb "ph([ase::diff_net $second])"
+  return "$b $pb re() $a $pa re() - dup() * $b $pb im() $a $pa im() - dup() * + sqrt()"
+}
+
+# Alt-Shift-D in the Cadence profile (src/cadence_style_rc): plot the
+# difference of two nets picked on the schematic, second minus first, for the
+# session Ctrl-4's Direct Plot would use (ase::session_for_current: this
+# schematic's, or once descended its nearest ancestor's).  `analysis` is the
+# analysis to read, one of ase::diff_functions' words; with none it is the
+# transient.  No session: the one honest report Direct Plot gives
+# (ase::no_session_notice) and {}.  Otherwise the session key, whether or not
+# the mode could be entered: every refusal is said by ase::ui::plot_difference.
+proc ase::plot_difference_for_current {{analysis tran}} {
+  set r [ase::session_for_current]
+  if {$r eq {}} { ase::no_session_notice; return {} }
+  set key [lindex $r 0]
+  ase::ui::plot_difference $key $analysis
+  return $key
+}
+
 # Ctrl-Shift-4 (issue 0151, doc/claude/specs/waveform_viewer_modes.md): change
 # the PLOT MODE of the waveform viewer belonging to the ASE-L session bound to
 # the CURRENT schematic, without leaving the design window. `mode` is

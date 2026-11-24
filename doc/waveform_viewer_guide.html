@@ -82,7 +82,7 @@ window. Anything not listed there does nothing at all, silently;</li>
 ASE session owns <b>at most one</b> viewer: asking for it again raises the window
 you already have.</p>
 
-<h3>Four ways it opens</h3>
+<h3>Five ways it opens</h3>
 <table>
 <tr><th>How</th><th>What you get</th></tr>
 <tr><td>The <code>~</code> button at the bottom of the ASE window's right-hand
@@ -113,11 +113,44 @@ replaced the traces they still show the old colours. If you close that
 schematic window instead of pressing <kbd>ESC</kbd>, nothing is plotted and
 the CIW says how many queued traces were dropped. Opens the viewer if
 it is not up.</td></tr>
+<tr><td><b>Plot Difference</b> — <kbd>Alt-Shift-D</kbd> on the schematic</td>
+<td>Plots the difference of two nets, the second minus the first. Press the
+key, click the first net (a wire or a net label), then the second: the trace is
+plotted at the second click and the mode is over, with no <kbd>ESC</kbd>
+(<kbd>ESC</kbd> before that cancels). The bottom status line says which step
+you are on and which analysis is read. It reads the transient of the session's
+results, whatever this window is showing, and switches this window to the
+analysis it read; if the results hold no transient and exactly one of AC and a
+DC sweep, it reads that one and says so. A click that is not one net of the
+results &#8212; empty space, a device, a bus, the first net again, a net the run
+did not save &#8212; plots nothing and says what to click instead. The two nets
+may be on different levels of the hierarchy. For AC the trace is the magnitude
+of the difference of the two (complex) voltages. The trace is appended to the
+target subwindow, per its plot mode, as a Direct Plot pick is: neither ASE-L's
+destination drop-down nor the Calculator's is read
+(<a href="#browser-menu">§11.3</a>). Opens the viewer if it is not
+up.</td></tr>
 </table>
 
-<p><kbd>Ctrl-4</kbd> is a binding from <code>cadence_style_rc</code>, so it exists
-only if you started xschem with that rc (<code>sky130A/run.sh</code> and
-<code>gf180mcuD/run.sh</code> both do). The menu entry always works.</p>
+<p><kbd>Ctrl-4</kbd> and <kbd>Alt-Shift-D</kbd> are bindings from
+<code>cadence_style_rc</code>, so they exist only if you started xschem with
+that rc (<code>sky130A/run.sh</code> and <code>gf180mcuD/run.sh</code> both do).
+The menu entry always works; Plot Difference has no menu entry. To have the
+difference of an AC or a DC-sweep result on a key of its own, uncomment one of
+the two example lines under the <kbd>Alt-Shift-D</kbd> line of that rc: the
+word after the command (<code>tran</code>, <code>ac</code>, <code>dc</code>) is
+the analysis the key reads.</p>
+
+<div class="note">
+The difference is an <i>expression</i> trace, and an expression trace stops
+drawing when the results are loaded again: by a Direct Plot, by a re-run, or
+by a Plot Difference that reads another analysis than this window is showing
+(for example the AC or DC-sweep key after <kbd>Alt-Shift-D</kbd>, or
+<kbd>Alt-Shift-D</kbd> after one of them). The window is switched to that
+analysis, and the earlier trace stays in its strip with nothing drawn; plot
+that difference again. A second Plot Difference leaves the first one drawing
+only when it reads the same analysis of the same, unchanged results.
+</div>
 
 <div class="note">
 Direct Plot works after descending into an instance: it finds the ASE session of
@@ -1310,8 +1343,9 @@ right end of its status bar: <b>Append</b>, <b>Replace</b>, <b>New SubWin</b>,
 <b>New Win</b> (a new tab here). It is saved with the session state. Its
 default is <b>Replace</b>, so each <kbd>~</kbd> press and each finished run
 clears the target subwindow first; pick <b>Append</b> to add to it.
-<b>Direct Plot</b> (<kbd>Ctrl-4</kbd> on the schematic) does not use this
-drop-down: its signals are always added to the target subwindow. To start every
+<b>Direct Plot</b> (<kbd>Ctrl-4</kbd> on the schematic) and <b>Plot
+Difference</b> (<kbd>Alt-Shift-D</kbd> on the schematic) do not use this
+drop-down: their signals are always added to the target subwindow. To start every
 new session on another choice, put it in your rc file: the <code>--script</code> rc you
 launch with (a PDK workarea's <code>cadence_style_rc</code>), else your
 <code>xschemrc</code>. Run from the source tree, xschem does not read
@@ -1325,6 +1359,9 @@ the same five as the viewer, it is remembered while xschem runs, and changing
 it changes nothing in the viewer or in ASE-L (nor do they change it). Its
 default is <b>Append</b>; changing it prints the rc line in the CIW, e.g.</p>
 <pre>set calc_plot_dest replace ;# append, replace, newstrip, newsubwin or newtab</pre>
+<p>Plot Difference makes its trace through the Calculator and still does not
+read the Calculator's drop-down: like a Direct Plot pick, its trace is always
+added to the target subwindow.</p>
 
 <h3 id="browser-loc">11.4 The Location bar</h3>
 

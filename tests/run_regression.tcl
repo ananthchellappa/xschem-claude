@@ -184,7 +184,22 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_ase_probe_deck_1724" \
                   "headless/test_ase_terminal_pick_1724" \
                   "headless/test_pin_marker_1724" \
-                  "headless/test_cmdmode_0201"]
+                  "headless/test_cmdmode_0201" \
+                  "headless/test_ase_plot_difference_1727"]
+## `headless/test_ase_plot_difference_1727` IS IN BOTH LISTS, registered in the
+## commit that creates it (issue 1727: the Cadence profile's Alt-Shift-D plots the
+## difference of two nets picked on the schematic, second minus first). This arm
+## runs what needs no window, on sheets and an ASCII results file the suite writes
+## itself, so no simulator is needed: which analysis is read, as a table over every
+## combination of transient, AC and DC sweep present or absent and every word; the
+## text that is plotted, its translation by the Calculator and the engine's numbers
+## for it, the AC text's among them; the names an analysis of the file holds; what a
+## click is on the loaded sheet, each refusal included, and after a descend; every
+## sentence; the command's own refusals; and src/cadence_style_rc read as text. The
+## bands that press the real chord and click the real canvas cannot run here, and
+## the suite says so with one LOWERCASE `skip:` line for each of them -- the spelling
+## summarize_all counts, so each is named in this arm's block of the verdict and
+## this entry shows in `skips=` on every machine.
 ## `headless/test_cmdmode_0201` IS IN BOTH LISTS. It is the contract test of
 ## src/cmdmode.tcl (issue 0201): a command mode registers how it is put down and
 ## picked back up, and what it holds on a canvas, so that a window made while the
@@ -1123,7 +1138,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_sod_pick_no_select_0204" \
                   "headless/test_ase_plot" \
                   "headless/test_rdw_keys_1245" \
-                  "headless/test_ase_terminal_pick_1724"]
+                  "headless/test_ase_terminal_pick_1724" \
+                  "headless/test_ase_plot_difference_1727"]
 ## `headless/test_dblclick_connected_grow` IS ALSO IN `hcases` (see the note above
 ## that list): this entry is its display arm, where the double click is driven as
 ## the streams of canvas events a pointer makes, under the switches the Cadence-style
@@ -1172,6 +1188,15 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
 ## window, before the completion line, and prints no lower-case `skip:` line. Its
 ## sibling test_rdw_window_1245 is in no list (issue 1655: its tooltip rows are
 ## not stable).
+## `headless/test_ase_plot_difference_1727` IS ALSO IN `hcases` (see the note there):
+## this entry is its display arm, with src/cadence_style_rc sourced. The key is
+## pressed as a real key event on the design canvas and the nets are clicked as
+## real pointer events; the suite reads the prompt on the status line at each step,
+## the one new trace in the session's viewer and its values against the numbers it
+## wrote into the results file, the end of the mode on the second net's release,
+## ESC, every refusal, a descend between the two clicks, the two example lines of
+## the profile uncommented into a rc of their own, the fall-back to the one analysis
+## a result holds, Caps Lock, and a canvas made after the profile was sourced.
 ## `headless/test_ase_terminal_pick_1724` IS ALSO IN `hcases` (see the note there):
 ## this entry is its display arm. The rows are the same on both arms; what differs is
 ## the engine. With a window, a sheet that holds an instance whose own name carries an

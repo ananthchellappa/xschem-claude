@@ -94,7 +94,7 @@ cd "$REPO" || exit 2
 # a fatal abort (util.c:344-349). nolog_tests holds only test_nolog, so there is
 # no overlap to guard in the first place.)
 logdir_tests=" test_ciw test_ciw_autocomplete test_ciw_puts_capture test_hi_descend \
-  test_ase_log_seam_0207 test_select_at \
+  test_ase_log_seam_0207 test_ase_plot_difference_1727 test_select_at \
   test_action_log_dispatch test_action_log_libmgr test_context_menu_log \
   test_gesture_end_log test_phase3_mints test_lib_roundtrip test_selflog_output \
   test_altf5_ciw test_undo_link_symbols test_dblclick_connected_grow test_delete_cut_selflog \

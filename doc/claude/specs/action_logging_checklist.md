@@ -116,6 +116,7 @@ file → pane, one way.
 | 77 | The pane still gets each message, exactly once (no double-echo, no re-entrancy) | yes — a SEAM, not a tee inside `ciw_echo`; `log_output()` writes the file only |
 | 78 | An EMPTY message logs nothing rather than a stray flag line | yes — guarded in the seam AND in the C dispatcher (a value-less `log_action -result` no longer falls through to the bare-line arm) |
 | 79 | A **replayable** line for the Ctrl-4 pick itself (0204's left-undone item 1) | no — deferred to issue 0208; a `#=` comment is not replayable by design, and the gesture-vs-outcome altitude is unresolved |
+| 79a | The notices of the difference-of-two-nets mode (Alt-Shift-D, issue 1727) reach the log the same way, and its key and clicks write no command line | yes for the notices — every one goes through `ase::echo` (rows GL1, GL2 of `tests/headless/test_ase_plot_difference_1727.tcl`); a replayable line: no, for the reason in row 79 |
 | 80 | The waveform viewer's own ~75 `ciw_echo` sites (`src/wave_viewer.tcl`) | no — out of scope here (owned by the `fluid-editing` branch); `wviewer::log_action` already exists as its seam |
 | 81 | C code calling `ciw_echo` directly (`hilight.c`, `draw.c`, `scheduler.c`, `actions.c`, `move.c`, `paste.c`, `callback.c`) | no — same pane-only class, not surveyed |
 

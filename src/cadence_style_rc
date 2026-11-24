@@ -406,6 +406,45 @@ bind .drw <Control-Key-4>       {ase::direct_plot_for_current;    break}
 # replace "dollar" with whatever your Shift-4 produces (`xev`).
 bind .drw <Control-Key-dollar>  {ase::plot_mode_for_current invert; break}
 bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
+# Alt-Shift-D : ASE-L "plot the difference of two nets", driven from the design
+# window (issue 1727; the user's own Cadence key). For the session Ctrl-4 above
+# would use -- this schematic's, or once descended its nearest ancestor's -- it
+# asks for two nets, one click each, with a prompt on the bottom status line
+# that names the analysis being read: click the FIRST net (a wire or a net
+# label), then the SECOND. At the second click the trace SECOND MINUS FIRST is
+# plotted in the session's waveform viewer (opened if needed; appended, as
+# Direct Plot appends) and the mode is over, with no ESC. ESC before that
+# cancels and plots nothing. A click that is not one named net of the loaded
+# result -- empty space, a device, a bare pin, a wire the netlist skips, a bus,
+# the first net again, a net the run did not save -- plots nothing, says what
+# was clicked and what to click instead, and leaves the mode on the same step.
+# The two nets may be on different levels: descend, or return, between the
+# clicks.
+#
+# THE WORD AFTER THE COMMAND IS THE ANALYSIS TO READ: tran (the transient), ac,
+# or dc (the DC sweep). Those are the analyses in which the difference of two
+# node voltages is a wave; the operating point is one point and is not among
+# them. The analysis is read from the session's loaded result. What the
+# waveform viewer happens to show plays no part, and the viewer is switched to
+# the analysis read when it shows another. When the loaded result does not hold
+# the word's analysis and holds exactly one of the three, that one is read
+# instead and the CIW says so; when it holds two others, or none, the key plots
+# nothing and says which analyses the result holds. For AC the trace is the
+# magnitude of the complex difference of the two voltages, which is what the
+# viewer draws for one AC net: its magnitude.
+#
+# A SHORTCUT OF YOUR OWN for AC or for the DC sweep is this line with another
+# chord and another word: uncomment one of the two lines under it, or copy it.
+# The sequence names the CAPITAL letter and no Shift, because the letter case
+# as typed decides, as for Shift-X above: Alt with Shift types the capital, and
+# so does Alt alone with Caps Lock on. Without this profile Alt-Shift-D does
+# nothing, and neither do the two chords of the examples; no other line of this
+# file binds any of the three. Each line ends in `break`, as every key line
+# here does, so the key goes no further. Like every bind in this file these are
+# invisible to keybindings.csv: remap by editing the chord on the line.
+bind .drw <Alt-Key-D>           {ase::plot_difference_for_current tran; break}
+# bind .drw <Alt-Key-A>           {ase::plot_difference_for_current ac;   break}
+# bind .drw <Alt-Key-S>           {ase::plot_difference_for_current dc;   break}
 # 6 / Ctrl-6 / Alt-6 : OPERATING-POINT ANNOTATION MODE (doc/claude/specs/op_annotation.md
 # step S8, issue 0614). These write xctx->annot_show, the bitmask text_hidden()
 # (src/actions.c) gates the annotation classes on -- so device OP numbers and node

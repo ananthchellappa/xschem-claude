@@ -4922,7 +4922,20 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   Do not "reclaim" it.
 - 1727 is still free here; after it, take 1736 (1728 to 1735 are taken).
 
-**The next free number is 1727.**
+~~**The next free number is 1727.**~~
+- **1727**: Plot the difference of two nets from the schematic (the Cadence profile's
+  Alt-Shift-D; the user's request of 2026-11-23). Built by the commit that adds its issue
+  file. Minted 2026-11-23 by crew plotdiff in the clone `~/ob22` after both checks (pointer +
+  bands, then every `NUMBERING.md` and issues directory under `~/dev/*` and `~/private/*`,
+  and the clones `~/g*`, `~/ob*` and `~/pp21`). No clone held 1727 as an issue: every other
+  `NUMBERING.md` that contains the number names it as this branch's own next free number
+  (`~/private/xschem-private`'s says it is left to this branch).
+- After 1727 the next number here is 1736: 1728 to 1735 are taken (above).
+  `~/private/xschem-private`'s own pointer read 1736 as well on 2026-11-23, with no issue
+  filed under it: whichever clone mints next takes it, and the minting check's grep of
+  every clone is what tells the other to skip it.
+
+**The next free number is 1736.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

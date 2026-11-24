@@ -14,6 +14,50 @@ Newest entries on top.
 
 ---
 
+## Q100. I want the difference of two nets as one trace, straight from the schematic. How, and why is the AC one not `vf(b) - vf(a)`?
+
+- **Asked:** 2026-11-23
+- **Project state:** branch `plot-difference` on `fluid-editing` at `73f73e686`, issue 1727.
+
+**Alt-Shift-D in the Cadence profile.** Press it on the schematic, click the first net,
+click the second: the trace *second minus first* is plotted in the session's waveform
+viewer at the second click, and the mode is over. The status line says which step you are
+on. ESC before the second click cancels. The command is
+`ase::plot_difference_for_current ?analysis?`, beside Ctrl-4's
+`ase::direct_plot_for_current`, and the mode is Direct Plot's click mode in a third
+flavour, so a descend between the two clicks keeps the first net.
+
+**Which analysis.** The word after the command: `tran`, `ac` or `dc`. The key's line in
+`src/cadence_style_rc` carries `tran`. The analysis is read from the session's results
+file, never from what the viewer shows; the viewer is switched to it. If the results do
+not hold the word's analysis and hold exactly one of the three, that one is read and the
+CIW says so; if they hold two others, or none, nothing is plotted and the sentence names
+what they hold. A key of your own for AC or the DC sweep is one of the two commented
+lines under the Alt-Shift-D line, uncommented.
+
+**Why the AC text is long.** An AC database stores each node as a magnitude column
+`v(net)` and a phase column `ph(net)`, and the expression language has no complex type.
+`vf(b) - vf(a)` therefore translates to the difference of the two *magnitudes*. For two
+nodes of the same magnitude a quarter turn apart that is zero, while the voltage between
+them is not. So for AC the trace is built from the real and imaginary part of each
+voltage (`re()`, `im()` over magnitude and phase), which gives the magnitude of the
+complex difference. That is the same kind of curve the viewer draws for one AC net. Row
+PT5 of `tests/headless/test_ase_plot_difference_1727.tcl` holds both numbers side by
+side.
+
+**What to expect afterwards.** The trace is an expression trace, like one plotted from
+the Calculator: the legend shows the viewer's name for an expression, and the trace stops
+drawing when the results are loaded again (issue 1734, open). Three things load them
+again: a Direct Plot, a re-run, and a difference that reads another analysis than the
+viewer shows, which is what the AC or DC-sweep key does after Alt-Shift-D, and what
+Alt-Shift-D does after one of them or when it falls back to another analysis. The viewer
+is then switched to that analysis and the earlier difference stays in its strip with
+nothing drawn (rows GU4 and GS3 of the suite read its values). A second difference leaves
+the first one drawing only when it reads the same analysis of the same, unchanged results
+file (row GS2).
+
+---
+
 ## Q99. I loaded a results file from the Waves menu and then asked for the operating point. Why did I get noise totals before, and what happens now?
 
 - **Asked:** 2026-11-21

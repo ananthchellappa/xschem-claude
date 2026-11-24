@@ -3142,6 +3142,11 @@ proc ase::ui::sod_prompt_pump {key} {
   if {![ase::ui::sod_covered $sod($key,canvas)]} {
     set text $sod($key,prompt)
     catch {set text [ase::ui::sod_prompt_now $key]}
+    # issue 1727: the difference flavour's sentences can be longer than the
+    # slot has room for, and are cut to it on every write (pd_fit)
+    if {[info exists sod($key,mode)] && $sod($key,mode) eq {diff}} {
+      catch {set text [ase::ui::pd_fit $sod($key,canvas) $text]}
+    }
     ase::ui::sod_prompt_set $sod($key,canvas) $text
   }
   set sod($key,pump) [after 80 [list ase::ui::sod_prompt_pump $key]]
@@ -3163,7 +3168,10 @@ proc ase::ui::sod_prompt_base {mode} {
 # the same window test, sod_design_shown), so the prompt and the click cannot
 # disagree about where a pin is. Writes nothing and touches no widget.
 proc ase::ui::sod_prompt_text {key x y} {
+  variable sod
   set text [ase::ui::sod_prompt_words $key]
+  # the difference flavour takes nets only: a pin is never what a click takes
+  if {[info exists sod($key,mode)] && $sod($key,mode) eq {diff}} { return $text }
   if {![ase::ui::sod_design_shown $key]} { return $text }
   set term [ase::ui::sod_terminal_at $key $x $y]
   if {![llength $term]} { return $text }
@@ -3261,7 +3269,9 @@ proc ase::ui::sod_press_script {key} {
 #                      click to the most specific binding -- left alone, those
 #                      presses would go to the editor in the middle of the mode.
 #   <ButtonRelease-1>  swallowed: the press it pairs with never reached the
-#                      editor
+#                      editor. In a mode that ends with its last click (the
+#                      difference flavour, sod(<key>,done)) the release of
+#                      that click ends the mode instead (sod_done_script)
 #   <B1-Motion>        swallowed: a pointer motion with the left button held.
 #                      Left to the editor it starts the selection rectangle,
 #                      which clears the selection and which only the editor's
@@ -3273,14 +3283,27 @@ proc ase::ui::sod_press_script {key} {
 # One table for the seize (sod_seize) and for what the mode reports it holds
 # (sod_held). sod_release spells the sequences again, each beside its record.
 proc ase::ui::sod_slots {key} {
+  variable sod
   set press [ase::ui::sod_press_script $key]
+  set rel {break}
+  if {[info exists sod($key,done)]} { set rel [ase::ui::sod_done_script $key] }
   return [list \
       prevpress   <ButtonPress-1>   $press \
       prevdbl     <Double-Button-1> $press \
-      prevrel     <ButtonRelease-1> {break} \
+      prevrel     <ButtonRelease-1> $rel \
       prevmotion  <B1-Motion>       {break} \
       prevesc     <Key-Escape>      "[list ase::ui::sod_end $key]; break" \
       prevdestroy <Destroy>         [list ase::ui::sod_canvas_gone $key %W]]
+}
+
+# The script the release slot holds once a one-shot flavour has taken its last
+# click: it ends the mode. The mode ends on the RELEASE and not inside the
+# press, as the Calculator's pick does (calc::pick_done): handed back in the
+# middle of a click, the canvas would give the rest of that click to the
+# editor -- a held motion that starts a selection rectangle, and a release with
+# no press before it.
+proc ase::ui::sod_done_script {key} {
+  return "[list ase::ui::sod_end $key]; break"
 }
 
 # Is `script` one this mode binds on a canvas, for any session: the pick, the
@@ -3367,7 +3390,7 @@ proc ase::ui::sod_seize {key cv} {
     set cur [bind $cv $seq]
     set own [ase::ui::sod_own_script $cur]
     if {$rec eq {prevrel} || $rec eq {prevmotion}} {
-      set own [expr {$pressown && $cur eq {break}}]
+      set own [expr {$pressown && ($cur eq {break} || $own)}]
     }
     if {!$own} {
       set sod($key,$rec) $cur
@@ -3440,11 +3463,15 @@ proc ase::ui::sod_canvas {{ctx {}}} {
 # -> the dialog checkboxes). `mode` (item 13, D1) selects what a click
 # queues: `outputs` (default — item-08 behavior, session outputs written) or
 # `plot` (Results > Direct Plot — trace expressions collected into
-# sod($key,queue), handed to dp_finish on ESC; the flavor is inert there).
+# sod($key,queue), handed to dp_finish on ESC; the flavor is inert there) or
+# `diff` (issue 1727, ase::ui::plot_difference: two nets, one click each, and
+# their difference plotted at the second; `recs` is that flavour's own records,
+# `name value ...`, kept as sod($key,<name>) before the prompt is first
+# written, because the prompt names the analysis they carry).
 # ONE mode globally: entering while another is active cleanly ends the
 # previous one first. Returns 1 when the mode is armed, 0 when the design
 # window cannot be opened.
-proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
+proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1} {recs {}}} {
   variable sod
   # ONE CLICK MODE ON THE CANVAS AT A TIME. A Calculator selector that is waiting
   # for its click has seized the same canvas slots; if it were left up, the
@@ -3491,6 +3518,7 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   set sod($key,mode)      $mode
   if {$mode eq {plot}} { set sod($key,queue) {}; set sod($key,qcolors) {} }
   set sod($key,count)     0
+  foreach {rk rv} $recs { set sod($key,$rk) $rv }
   ase::ui::sod_seize $key $cv
   # The seized <Key-Escape>/<ButtonPress-1> binds live on the design CANVAS, but
   # design_window's raise_activate_toplevel + `focus $tp` just moved keyboard
@@ -3505,10 +3533,15 @@ proc ase::ui::select_on_design {key flavor {mode outputs} {do_raise 1}} {
   # (the C engine blanks .statusbar.10 on every event — see that proc). Cleared
   # and the pump cancelled in sod_end.
   set sod($key,prompt) [ase::ui::sod_prompt_base $mode]
+  if {$mode eq {diff}} { set sod($key,prompt) [ase::ui::pd_prompt $key] }
   set sod(active) $key
   ase::ui::sod_prompt_set $cv $sod($key,prompt)
   ase::ui::sod_prompt_pump $key
-  catch {::ase::echo [ase::ui::sod_entry_notice $mode]}
+  if {$mode eq {diff}} {
+    catch {::ase::echo [ase::ui::pd_entry_notice $key]}
+  } else {
+    catch {::ase::echo [ase::ui::sod_entry_notice $mode]}
+  }
   return 1
 }
 
@@ -3526,12 +3559,14 @@ proc ase::ui::sod_entry_notice {mode} {
 }
 
 # End the mode: restore the seized bindings verbatim (catch — the
-# canvas may be dead; the restore is IDENTICAL for both modes), clear the
+# canvas may be dead; the restore is IDENTICAL for every mode), clear the
 # mode records, then finish per mode: `outputs` reports how many outputs
 # were queued and returns focus to the ASE window (raise_activate_toplevel —
 # a bare raise is a no-op under WSLg/Weston, issue 0054); `plot` (item 13)
 # SKIPS the ASE-window raise and hands the queued trace expressions to
-# dp_finish, which raises/opens the VIEWER instead. Safe to call when no
+# dp_finish, which raises/opens the VIEWER instead; `diff` (issue 1727) plots
+# the difference when both nets were picked and otherwise says the mode was
+# cancelled (pd_end). Safe to call when no
 # mode is active for `key` (early return).
 # Shared teardown: hand every seized canvas binding (the slots of sod_slots) back verbatim,
 # stop the prompt pump, clear the status-line prompt. Deliberately does NOT touch the sod($key,*) records
@@ -3658,12 +3693,22 @@ proc ase::ui::sod_end {key} {
   if {[info exists sod($key,queue)]} { set queue $sod($key,queue) }
   set qcolors {}                        ;# issue 0153: colors already on the schematic
   if {[info exists sod($key,qcolors)]} { set qcolors $sod($key,qcolors) }
+  # issue 1727: the difference flavour's analysis and its two nets, as far as
+  # they were picked
+  set diff {}
+  foreach rk {diffan difffirst diffsecond} {
+    if {[info exists sod($key,$rk)]} { lappend diff $rk $sod($key,$rk) }
+  }
   array unset sod $key,*
   if {[info exists sod(active)] && $sod(active) eq $key} { unset sod(active) }
   ase::ui::sod_marks_clear
   if {$mode eq {plot}} {
     catch {::ase::echo "ase: Direct Plot — $n trace(s) queued"}
     ase::ui::dp_finish $key $queue $qcolors
+    return
+  }
+  if {$mode eq {diff}} {
+    ase::ui::pd_end $key $diff
     return
   }
   catch {::ase::echo "ase: Select On Design ended — $n output(s) queued"}
@@ -3945,6 +3990,17 @@ proc ase::ui::sod_click {key {x {}} {y {}}} {
   if {![info exists sod($key,flavor)]} { return }
   if {![ase::ui::sod_design_shown $key]} {
     catch {::ase::echo [ase::ui::sod_elsewhere_notice $key] error}
+    return
+  }
+  # issue 1727: the difference flavour takes nets only, one per click, and has
+  # its own click (pd_click). An error inside it is said and goes no further:
+  # this proc is a canvas binding followed by `break`, so one that escaped
+  # would hand the same press to the editor.
+  if {[info exists sod($key,mode)] && $sod($key,mode) eq {diff}} {
+    if {[catch {ase::ui::pd_click $key $x $y} err]} {
+      catch {::ase::echo "ase: Plot Difference — this click could not be read ($err);\
+ click again, or press ESC to leave the mode" error}
+    }
     return
   }
   set px $x
@@ -6002,17 +6058,390 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   # issue 0153: `qcolors` are the colors the picker already painted onto the
   # schematic nets, passed through verbatim so each trace lands in ITS wire's
   # color. Empty (a scripted/replayed call) -> plot_signals derives them itself.
-  foreach pair [wviewer::plot_signals $key $queue $qcolors append] {
+  foreach pair [wviewer::plot_signals $key $queue $qcolors [ase::ui::dp_dest]] {
     lassign $pair ex err
     catch {::ase::echo "ase: cannot plot '$ex': $err" error}
   }
 }
+
+# WHERE A PLOT SENT FROM THE SCHEMATIC LANDS: appended to the viewer's target
+# subwindow, always (the ruling of 2026-11-16 recorded in dp_finish). One proc,
+# because two gestures read it: Direct Plot and the difference of two nets
+# (pd_finish), which lands where Direct Plot lands and not where the
+# Calculator's own destination setting says.
+proc ase::ui::dp_dest {} { return append }
 
 # Results > Direct Plot (item 13, D13): the Select-On-Design mode in the
 # `plot` flavor — clicks queue traces; the flavor content is inert in plot
 # mode (D2) but kept self-documenting.
 proc ase::ui::direct_plot {key {do_raise 1}} {
   ase::ui::select_on_design $key {save 0 plot 1} plot $do_raise
+}
+
+# --- Plot the difference of two nets (issue 1727) -----------------------------
+# The Cadence profile's Alt-Shift-D, `ase::plot_difference_for_current ?word?`
+# (src/ase.tcl). The Select-On-Design mode in a third flavour, `diff`: the
+# first click takes one net, the second another, and at the second the trace
+# SECOND MINUS FIRST is plotted in the session's waveform viewer and the mode
+# ends, with no ESC (the Calculator's selectors end the same way, calculator.md
+# R208b). ESC before that cancels. Spec: doc/claude/specs/ase_l.md, "Plot the
+# difference of two nets"; rows: tests/headless/test_ase_plot_difference_1727.tcl.
+#
+# WHAT IS REUSED, AND FROM WHERE. The seize, the prompt slot and its timer,
+# the pause across a descend and the release are this file's Select On Design
+# (select_on_design, sod_seize, sod_prompt_pump, sod_suspend/sod_resume,
+# sod_end). What a click is on is asked of the Calculator's voltage selector
+# (calc::pick_classify, calc::pick_what) and of Direct Plot's own net rule
+# (sod_net_at, sod_bits), and the name is Direct Plot's (sod_qualify, sod_expr).
+# The trace is the Calculator's: its translator (calc::ix_route) and its plot
+# (calc::plot_in_token), so the legend, a saved session and a re-run treat it
+# as any expression the Calculator plotted. The destination is Direct Plot's
+# (dp_dest).
+#
+# THE ANALYSIS IS DECIDED AT ENTRY, FROM THE SESSION'S RESULTS FILE, and what
+# the waveform viewer shows plays no part (the user's ruling): pd_finish makes
+# the viewer show the analysis that was read.
+#
+# THE RECORDS, beside the mode's own, as sod(<key>,...):
+#   diffan      the analysis read (ase::diff_analysis' answer)
+#   diffindex   the names that analysis of the results file holds, as
+#               wviewer::name_index keeps them: what a click is asked against
+#   difffirst   the first net, `v(<net>)` as Direct Plot spells a pick; absent
+#               on the first step
+#   diffsecond  the second net, set by the click that ends the mode
+#   done        set with diffsecond: the release of that click ends the mode
+
+# Every sentence the mode puts on the status line. `an` is the analysis read,
+# `which` the step a refusal was made on (`first` or `second`), `a` and `b`
+# what the sentence names. One `kind { return ... }` per line and no prose
+# between two kinds: a comment there is read as a pattern.
+#
+# THE ORDER OF EACH SENTENCE IS SET BY THE ROOM OF THE SLOT. The slot is cut
+# to its room (pd_fit). In a design window nobody sized, with the red field
+# beside it holding the short form of a notice (the notice channel writes it
+# there whenever the CIW is not in front of the user: xschem::notify,
+# src/ciw.tcl), the first prompt fits and the longer sentences do not. So what
+# the user must be able to read comes straight after the head, and what may be
+# lost to the cut comes last: the second prompt asks for the second net and
+# says the plot is the second minus the first BEFORE it names the first net,
+# whose name has no bound; a refusal says what to click instead BEFORE it says
+# what was clicked. The CIW gets every sentence whole. Band GQ of
+# tests/headless/test_ase_plot_difference_1727.tcl reads those opening words
+# off the slot of such a window, for the transient and for the analysis with
+# the longest name.
+proc ase::ui::pd_msg {kind an {which {}} {a {}} {b {}}} {
+  set h "Plot Difference ([ase::diff_word $an])"
+  switch -exact -- $kind {
+    first { return "$h: click the first net; ESC cancels" }
+    second { return "$h: click second net (second minus first); first net $a; ESC cancels" }
+    nothing { return "$h: click a wire or a net label for the $which net (nothing under that click)" }
+    terminal { return "$h: click a wire or a net label for the $which net (that was a device pin with no wire or net label on it)" }
+    body { return "$h: click a wire or a net label for the $which net ($a is not a net)" }
+    unnamed { return "$h: click another wire or net label for the $which net (that wire has no net name in the netlist)" }
+    bus { return "$h: click a one-bit wire or net label for the $which net ($a is a bus of $b bits)" }
+    same { return "$h: click another net for the second ($a is the first net already)" }
+    absent { return "$h: click a net the run saved for the $which net ($a is not in the [ase::diff_word $an] analysis of the loaded result), or save it (ASE-L Outputs > To Be Saved) and run again" }
+  }
+  return {}
+}
+
+# The prompt of the step the mode is on, from its records: the first net's
+# request, or, once there is a first net, the request for the second and that
+# net.
+proc ase::ui::pd_prompt {key} {
+  variable sod
+  set an {}
+  if {[info exists sod($key,diffan)]} { set an $sod($key,diffan) }
+  if {[info exists sod($key,difffirst)]} {
+    return [ase::ui::pd_msg second $an {} [ase::diff_net $sod($key,difffirst)]]
+  }
+  return [ase::ui::pd_msg first $an]
+}
+
+# What the mode says in the CIW when it is entered.
+proc ase::ui::pd_entry_notice {key} {
+  variable sod
+  set an {}
+  if {[info exists sod($key,diffan)]} { set an $sod($key,diffan) }
+  return "ase: Plot Difference ([ase::diff_word $an]) — click the first net, then the second\
+ (wires or net labels); the second minus the first is plotted; ESC cancels"
+}
+
+# `text` as the prompt slot of canvas `cv` has room for it: itself, or as much
+# of its head as fits, with a cut mark after it. The sentences of this flavour
+# name an analysis and a net and say what to click, and a net's name has no
+# bound.
+#
+# WHY IT IS CUT HERE AND NOT LEFT TO THE STATUS BAR. A label that asks for
+# more width than its bar has left raises the bar's requested width, and a
+# window whose size nobody has set grows to it. The design canvas is then
+# resized, the engine answers that event by blanking this very slot, the
+# window shrinks back, and the prompt timer starts the round again: the prompt
+# is never on screen (measured on this flavour's second prompt; pack_widgets
+# in src/xschem.tcl records the same growth for the readout beside it). So
+# the slot is never asked to hold more than fits: the room is the bar's width
+# less what its other children ask for.
+#
+# The text comes back whole where that cannot be measured: no Tk, no such
+# label, or a bar that has no width yet.
+proc ase::ui::pd_fit {cv text} {
+  if {[info commands winfo] eq {} || [info commands font] eq {}} { return $text }
+  set lab [ase::ui::sod_statusbar $cv]
+  if {[catch {winfo exists $lab} there] || !$there} { return $text }
+  set bar [winfo parent $lab]
+  set room [winfo width $bar]
+  if {$room <= 1} { return $text }
+  foreach c [winfo children $bar] {
+    if {$c eq $lab || [winfo manager $c] eq {}} { continue }
+    incr room -[winfo reqwidth $c]
+  }
+  foreach opt {-borderwidth -highlightthickness -padx} {
+    if {![catch {$lab cget $opt} v] && [string is integer -strict $v]} { incr room [expr {-2 * $v}] }
+  }
+  incr room -8
+  set f [$lab cget -font]
+  if {[font measure $f $text] <= $room} { return $text }
+  set lo 0
+  set hi [string length $text]
+  set best {}
+  while {$lo <= $hi} {
+    set mid [expr {($lo + $hi) / 2}]
+    set cand "[string range $text 0 [expr {$mid - 1}]]\u2026"
+    if {[font measure $f $cand] <= $room} {
+      set best $cand
+      set lo [expr {$mid + 1}]
+    } else {
+      set hi [expr {$mid - 1}]
+    }
+  }
+  return $best
+}
+
+# Make `text` the mode's prompt and show it at once, cut to the slot's room
+# (pd_fit). The prompt timer writes what it worked out last for an unmoved
+# pointer (sod_prompt_now), so that record is dropped with the old words.
+proc ase::ui::pd_show {key text} {
+  variable sod
+  set sod($key,prompt) $text
+  unset -nocomplain sod($key,promptat) sod($key,prompttext)
+  if {[info exists sod($key,canvas)]} {
+    ase::ui::sod_prompt_set $sod($key,canvas) [ase::ui::pd_fit $sod($key,canvas) $text]
+  }
+}
+
+# WHAT ONE CLICK IS, at the point (x, y) of the sheet shown, for session `key`.
+# Reads only; moves nothing of the mode. `first` is the first net when there is
+# one, `index` the names the analysis holds (a wviewer::name_index; one with no
+# names asks nothing). Answers a dict:
+#   kind net  ex <v(net)>      one named net of the result, as Direct Plot
+#                              spells and qualifies a pick (sod_qualify from
+#                              the session's level, sod_expr in its case mode)
+#   kind <refusal>  a  b       one of pd_msg's kinds, with what it names
+# The classes are the Calculator's voltage selector's (calc::pick_classify):
+# empty space, a device pin with nothing on it, a wire the netlist skips, a
+# device body. Then, of a net: a bus is refused (a difference is one trace),
+# the first net again is refused, and a net the analysis does not hold is
+# refused here, at its click, by the viewer's own lookup rule
+# (wviewer::name_lookup; a name two spellings answer is left to the plot).
+#
+# TWO POINTS, as the Calculator's click: what is under the cursor is asked at
+# the cursor itself, the copper test at the snapped point (`sx`, `sy`; the
+# point itself when none is given).
+proc ase::ui::pd_pick {key x y first index {sx {}} {sy {}}} {
+  if {$sx eq {}} { set sx $x }
+  if {$sy eq {}} { set sy $y }
+  set hit {}
+  catch {set hit [xschem object_at $x $y]}
+  set net {}
+  catch {set net [ase::ui::sod_net_at $x $y $hit]}
+  set at {}
+  catch {set at [xschem net_at $sx $sy]}
+  set cls [calc::pick_classify $hit $net $at]
+  if {$cls eq {body}} { return [dict create kind body a [calc::pick_what $hit] b {}] }
+  if {$cls ne {net}} { return [dict create kind $cls a {} b {}] }
+  set bits [ase::ui::sod_bits $net]
+  if {[llength $bits] > 1} { return [dict create kind bus a $net b [llength $bits]] }
+  set ex [ase::ui::sod_expr voltage \
+            [ase::ui::sod_qualify voltage $net [ase::ui::sod_base_level $key]] \
+            [ase::ui::sod_case_mode $key]]
+  set name [ase::diff_net $ex]
+  if {$first ne {} && $ex eq $first} { return [dict create kind same a $name b {}] }
+  if {[dict size [dict get $index exact]] && [wviewer::name_lookup $index $ex] eq {no}} {
+    return [dict create kind absent a $name b {}]
+  }
+  return [dict create kind net ex $ex a $name b {}]
+}
+
+# One click of the mode. A refusal becomes the prompt and is said in the CIW,
+# and the mode stays on the step it was on. The first net is recorded and the
+# prompt moves to the second step. The second net ends the mode: on the
+# release of this click when the mode is on a canvas (sod_done_script), and a
+# press that arrives after that, with no release in between, ends it as well.
+proc ase::ui::pd_click {key {x {}} {y {}}} {
+  variable sod
+  if {[info exists sod($key,done)]} { ase::ui::sod_end $key ; return }
+  set sx $x
+  set sy $y
+  if {$x eq {}} { set x [xschem get mousex] ; set sx [xschem get mousex_snap] }
+  if {$y eq {}} { set y [xschem get mousey] ; set sy [xschem get mousey_snap] }
+  set an $sod($key,diffan)
+  set first {}
+  if {[info exists sod($key,difffirst)]} { set first $sod($key,difffirst) }
+  set which [expr {$first eq {} ? {first} : {second}}]
+  set p [ase::ui::pd_pick $key $x $y $first $sod($key,diffindex) $sx $sy]
+  if {[dict get $p kind] ne {net}} {
+    set s [ase::ui::pd_msg [dict get $p kind] $an $which [dict get $p a] [dict get $p b]]
+    ase::ui::pd_show $key $s
+    catch {::ase::echo "ase: $s" error}
+    return
+  }
+  if {$first eq {}} {
+    set sod($key,difffirst) [dict get $p ex]
+    ase::ui::pd_show $key [ase::ui::pd_prompt $key]
+    catch {::ase::echo "ase: Plot Difference ([ase::diff_word $an]) — first net [dict get $p a]"}
+    return
+  }
+  set sod($key,diffsecond) [dict get $p ex]
+  set sod($key,done) 1
+  if {[info exists sod($key,canvas)]} {
+    catch {bind $sod($key,canvas) <ButtonRelease-1> [ase::ui::sod_done_script $key]}
+  }
+}
+
+# The mode has ended (sod_end, with the canvas already handed back). `diff` is
+# what it had on record: with both nets the difference is plotted, with fewer
+# the mode was cancelled -- ESC, the key pressed again, another click mode
+# entered, the session window closed -- and that is said and nothing plotted.
+# A plot that raises is said too: this runs inside a canvas binding.
+proc ase::ui::pd_end {key diff} {
+  if {![dict exists $diff difffirst] || ![dict exists $diff diffsecond]} {
+    catch {::ase::echo "ase: Plot Difference cancelled — nothing plotted"}
+    return 0
+  }
+  if {[catch {ase::ui::pd_finish $key [dict get $diff diffan] \
+                [dict get $diff difffirst] [dict get $diff diffsecond]} r]} {
+    catch {::ase::echo "ase: Plot Difference — the plot failed ($r); nothing plotted. Press the\
+ key and click the two nets again, and report this line if it fails the same way" error}
+    return 0
+  }
+  return $r
+}
+
+# DOES THE VIEWER OF `key` DRAW FROM THIS VERY DATA ALREADY: the results file
+# `rf` read as analysis `an` (with these VCDs), unchanged on disk since the
+# viewer's last attach, and still its current database? The viewer's own
+# record and rule answer (wviewer::attach_record, wviewer::attach_is_same).
+#
+# It is asked so that a difference is not plotted through a second load of the
+# data the viewer already has: a load drops every vector an expression trace
+# was computed into (issue 1734), so each difference would blank the one
+# before it.
+proc ase::ui::pd_shown {key rf an vcds} {
+  if {[catch {wviewer::enter_ctx $key} t] || ![lindex $t 0]} { return 0 }
+  set cur {}
+  catch {set cur [wviewer::dget [wviewer::attach_db] cur {}]}
+  catch {wviewer::leave_ctx $key $t}
+  return [wviewer::attach_is_same [wviewer::attach_record $key] \
+            [wviewer::attach_stamp $rf $an $vcds] $cur]
+}
+
+# Plot the difference `second` minus `first` (two picks, `v(<net>)`) read from
+# analysis `an` of session `key`'s results. 1 when a trace was plotted.
+#   1. the viewer is raised or opened, as Direct Plot's finish does;
+#   2. the results file is asked again what it holds. The analysis was chosen
+#      when the key was pressed, and a run that ends between the two clicks
+#      writes the file again, perhaps without that analysis; the viewer's load
+#      answers 1 for such a file all the same (wviewer::attach_raw) and leaves
+#      the viewer with no data, so the question is put here, before the load;
+#   3. the viewer is made to show the analysis that was read: the results are
+#      attached as `an` unless it draws from that very data already
+#      (pd_shown). What it showed before plays no part in what is read;
+#   4. the text (ase::diff_text) goes through the Calculator's translator and
+#      the Calculator's plot, with Direct Plot's destination. Whatever those
+#      refuse is said with their own sentence.
+# Every refusal names the two nets, says what stopped the plot and what to do,
+# and plots nothing.
+proc ase::ui::pd_finish {key an first second} {
+  set h "ase: Plot Difference ([ase::diff_word $an])"
+  set what "[ase::diff_net $second] minus [ase::diff_net $first]"
+  if {![wviewer::open $key]} {
+    catch {::ase::echo "$h — $what not plotted: cannot open the waveform viewer for $key;\
+ open it from the session's ASE-L window (the ~ button), then press the key again" error}
+    return 0
+  }
+  set rf [ase::last_rawfile $key]
+  if {$rf eq {}} {
+    catch {::ase::echo "$h — $what not plotted: the session's results file is gone; run\
+ again, then press the key again" error}
+    return 0
+  }
+  set held [calc::raw_analyses $rf]
+  if {$an ni $held} {
+    set now {no analysis that can be read}
+    if {[llength $held]} { set now [ase::diff_listed [lmap t $held {ase::diff_word $t}]] }
+    catch {::ase::echo "$h — $what not plotted: the session's results no longer hold the\
+ [ase::diff_word $an] analysis (they hold $now); press the key again" error}
+    return 0
+  }
+  set vcds [ase::last_vcdfiles $key]
+  if {![ase::ui::pd_shown $key $rf $an $vcds] && ![wviewer::attach_raw $key $rf $an $vcds]} {
+    catch {::ase::echo "$h — $what not plotted: the waveform viewer could not be switched to\
+ the results in $rf, as happens while a run or another command is in progress; when it has\
+ finished, press the key and click the two nets again" error}
+    return 0
+  }
+  set r [calc::ix_route [ase::diff_text $an $first $second]]
+  if {[dict get $r mode] eq {refuse}} {
+    catch {::ase::echo "$h — $what not plotted: [dict get $r msg]" error}
+    return 0
+  }
+  set d [calc::plot_in_token $key [dict get $r rpn] [ase::ui::dp_dest]]
+  if {![dict get $d ok]} {
+    catch {::ase::echo "$h — $what not plotted: [dict get $d msg]" error}
+    return 0
+  }
+  catch {::ase::echo "$h — plotted $what as trace '[dict get $d name]'"}
+  return 1
+}
+
+# Enter the mode for session `key`, reading the analysis `word` names
+# (ase::plot_difference_for_current's argument). Everything that stops it is
+# said here, in one sentence with what to do, and nothing is armed:
+#   no Calculator        which of its procs is missing, where its file is
+#                        looked for, and to restart;
+#   no results file      Direct Plot's words for it, and "run first";
+#   the analysis         ase::diff_analysis' refusal, which names what the
+#                        loaded result holds.
+# When that proc read another analysis than the word's, its sentence is said
+# before the mode's own. Answers 1 when the mode is armed. Without Tk there is
+# no canvas to arm on and the answer is 0 after the same checks.
+proc ase::ui::plot_difference {key {word tran}} {
+  foreach need {::calc::pick_classify ::calc::ix_route ::calc::plot_in_token ::calc::raw_analyses} {
+    if {[info commands $need] eq {}} {
+      set dir {the xschem share directory}
+      if {[info exists ::XSCHEM_SHAREDIR]} { set dir $::XSCHEM_SHAREDIR }
+      catch {::ase::echo "ase: Plot Difference — nothing armed: the trace is made by the\
+ Calculator, and this xschem has not loaded it ($need is missing); check that calculator.tcl\
+ is in $dir, then restart xschem" error}
+      return 0
+    }
+  }
+  set rf [ase::last_rawfile $key]
+  if {$rf eq {}} {
+    catch {::ase::echo "ase: Plot Difference — no simulation results yet — run first, then\
+ press the key again" error}
+    return 0
+  }
+  set d [ase::diff_analysis [calc::raw_analyses $rf] $word]
+  if {![dict get $d ok]} {
+    catch {::ase::echo [dict get $d msg] error}
+    return 0
+  }
+  if {![info exists ::has_x]} { return 0 }
+  if {[dict get $d fallback]} { catch {::ase::echo [dict get $d msg]} }
+  set an [dict get $d analysis]
+  return [ase::ui::select_on_design $key {save 0 plot 1} diff 0 \
+            [list diffan $an diffindex [wviewer::name_index [ase::diff_names $rf $an]]]]
 }
 
 # --- Results > Annotate: the annotation visibility control (issue 0682) ------

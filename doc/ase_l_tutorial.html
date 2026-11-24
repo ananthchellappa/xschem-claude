@@ -582,7 +582,7 @@ mouse reference, and how to rebind its keys. This section is only the
 orientation you need to get a plot on screen.
 </div>
 
-<h3>Two ways traces get there</h3>
+<h3>Three ways traces get there</h3>
 <ul>
 <li><b>Auto-plot</b>: every Outputs row with <b>Plot</b> checked is rebuilt
 into <i>one dedicated auto graph</i> after each successful run. It is
@@ -636,6 +636,34 @@ picked wires it stays after <kbd>ESC</kbd>, until you clear the highlights
 (key <kbd>0</kbd> in the Cadence-style key profile). If a later run replaces
 the viewer's traces, the ellipse still has the old colour: clear the
 highlights and pick again.</li>
+<li><b>Plot Difference</b>: <kbd>Alt-Shift-D</kbd> on the schematic (Cadence-style
+key profile only; there is no menu entry) plots the difference of two nets. The
+bottom status line asks for the first net
+(<span class="msg">Plot Difference (transient): click the first net; ESC
+cancels</span>), then for the second
+(<span class="msg">Plot Difference (transient): click second net (second minus
+first); first net inp; ESC cancels</span>); at the second click the
+trace <i>second minus first</i> is plotted and the mode is over, with no
+<kbd>ESC</kbd>. <kbd>ESC</kbd> before that cancels. A net is a wire or a net
+label; anything else, a bus, the first net again or a net the run did not save
+plots nothing and says what to click instead, then what was clicked
+(<span class="msg">Plot Difference (transient): click a wire or a net label
+for the first net (R1 is not a net)</span>). Where the status line has no room
+for a whole sentence it shows the beginning of it, which is why each begins
+with what to click; the CIW has every sentence whole. You may descend, or
+return, between the two clicks. The key reads the <i>transient</i> of the session's results,
+whatever the viewer is showing. If the results hold no transient and exactly
+one of AC and a DC sweep, that one is read and the CIW says so; if they hold
+both, the key plots nothing and names them. To read AC or the DC sweep from a
+key of its own, uncomment one of the two example lines under the
+<kbd>Alt-Shift-D</kbd> line of <code>cadence_style_rc</code>: the word after
+the command (<code>tran</code>, <code>ac</code>, <code>dc</code>) is the
+analysis. For AC the trace is the magnitude of the difference of the two
+complex voltages. Nothing is added to the session outputs, and the trace is an
+expression trace like one plotted from the Calculator: it stops drawing when
+the results are loaded again (a Direct Plot, a re-run, a Plot Difference that
+reads another analysis than the viewer shows) and has to be plotted
+again.</li>
 </ul>
 <p>Each run overwrites <code>&lt;cell&gt;_ase.raw</code> in place and
 re-attaches it, so auto-plot and Direct&nbsp;Plot graphs simply show fresh

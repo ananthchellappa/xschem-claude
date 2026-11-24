@@ -779,7 +779,7 @@ analysis of the current result's raw file whatever analysis is current.
     when the result's raw file holds its analysis — asked always, through
     `calc::aq_present`, even when the stored type equals the selector's analysis (band
     AT14: `vs` does not arm on a `dc`-stored multi-point operating point) — presence is read live from the file's
-    own `Plotname:` records (`calc::raw_analyses`, through `ase::cap_raw_plots`, which seeks
+    own `Plotname:` records (`calc::raw_analyses`, which reads each record with `calc::analysis_of_plot`, through `ase::cap_raw_plots`, which seeks
     past every binary payload) — and refuses only when the run wrote none: *"selector vs:
     this result has no DC sweep analysis"*.
   - **Evaluation** (Eval, measurement verbs through Eval): the press decides the analysis

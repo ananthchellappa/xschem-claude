@@ -3458,6 +3458,21 @@ proc calc::aq_plan {s} {
     return [dict create ok 1 type $type id $id msg {}]
 }
 
+# One `Plotname:` record as a sim type, or empty for a plot that is none of
+# them.  `calc::raw_analyses` reads a whole file through it, and
+# `ase::diff_names` (src/ase.tcl) finds one analysis's own plot through it, so
+# the two cannot read a record differently.
+proc calc::analysis_of_plot {plotname} {
+    set n [string tolower $plotname]
+    if {[string first {transient analysis} $n] >= 0} { return tran }
+    if {[string first {dc transfer characteristic} $n] >= 0} { return dc }
+    if {[string first {noise spectral density curves} $n] >= 0} { return noise }
+    if {[string first {operating point} $n] >= 0} { return op }
+    if {[string first {ac analysis} $n] >= 0 || [string first spectrum $n] >= 0
+        || [string first {sp analysis} $n] >= 0} { return ac }
+    return {}
+}
+
 # The analyses a raw file holds, as sim types, from its `Plotname:` records.
 proc calc::raw_analyses {path} {
     if {[string trim $path] eq {}} { return {} }
@@ -3466,20 +3481,7 @@ proc calc::raw_analyses {path} {
     if {[catch {ase::cap_raw_plots $path} plots]} { return {} }
     set out {}
     foreach p $plots {
-        set n [string tolower [lindex $p 0]]
-        set t {}
-        if {[string first {transient analysis} $n] >= 0} {
-            set t tran
-        } elseif {[string first {dc transfer characteristic} $n] >= 0} {
-            set t dc
-        } elseif {[string first {noise spectral density curves} $n] >= 0} {
-            set t noise
-        } elseif {[string first {operating point} $n] >= 0} {
-            set t op
-        } elseif {[string first {ac analysis} $n] >= 0 || [string first spectrum $n] >= 0
-                  || [string first {sp analysis} $n] >= 0} {
-            set t ac
-        }
+        set t [calc::analysis_of_plot [lindex $p 0]]
         if {$t ne {} && [lsearch -exact $out $t] < 0} { lappend out $t }
     }
     return $out

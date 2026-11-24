@@ -3175,6 +3175,169 @@ the top, which is how ngspice names a nested branch (`v.x1.x2.v1#branch`).
 The 0153 colour cue keeps the RAW schematic token — `hilight_netname` wants
 the schematic's name, not the simulator's.
 
+**Plot the difference of two nets** (issue 1727, BUILT 2026-11-23). The user,
+2026-11-23: *"In Cadence, I had set up Alt-Shift-D to plot a difference. It would ask me
+to click on one, then another (status bar prompt message) and then, when it had two, it
+would plot the difference of 2nd minus 1st."* And, on which analysis: *"It will work in
+the schematic, so, what the Waveform Viewer is currently showing is irrelevant. … If there
+is ONLY ONE analysis in ASE-L, for which a difference of signals makes sense, then, yes,
+we can support that analysis. However, if TRAN is ONE of the analyses that was run in the
+loaded result, then Alt-Shift-D should default to that."* And: *"The catch - the user,
+looking at how this is realized in the bind command in the cadence_style_rc, should be
+easily able to make a custom shortcut for DC or AC analysis."*
+
+Those words rule four things: one command started from the schematic by Alt-Shift-D that
+asks for two nets with a status-bar prompt and plots second minus first; the viewer plays
+no part in which analysis is read; the transient is read when the loaded result has one,
+and otherwise the one analysis that has a wave when there is exactly one; and the bind
+line is what a user reads to make a shortcut for AC or the DC sweep. **Everything else in
+the rules below was chosen by the driver of the build and has not been ruled by the
+user**; issue 1727 lists each choice. The suite is
+`tests/headless/test_ase_plot_difference_1727.tcl`, and every row named below is one of
+its rows.
+
+- **R-PD1 — the command and its key.** `ase::plot_difference_for_current ?analysis?`
+  (`src/ase.tcl`, beside `ase::direct_plot_for_current`) finds the session as Direct Plot
+  does (`ase::session_for_current`, the nearest ancestor that owns one) and hands it to
+  `ase::ui::plot_difference`. With no session it says what Direct Plot says
+  (`ase::no_session_notice`). The Cadence profile binds it on the design canvas to the
+  capital D with Alt, beside Ctrl-4, and the binding reaches every canvas made later the
+  way Ctrl-4's does. Without the profile the letter of the line, and of each of its two
+  examples, is bound with Alt on none of the canvas's binding tags, and a press of the
+  chord moves nothing and says nothing (row GN1): the line displaces no key. There is no
+  menu entry, no toolbar button, no dialog, and no key outside the profile: of the text
+  files of `src/`, only the two definitions, the command's own call of the mode, the name
+  inside its refusal and the profile's line name the command or the mode's entry outside a
+  comment (row PR4). Rows PA2, PR1, PR3, PR4, GN1, GK1, GW1, PE5, GE2.
+- **R-PD2 — which analysis is read.** The word after the command is ASE-L's word for an
+  analysis: `tran`, `ac` or `dc`. Those are the analyses in which the difference of two
+  node voltages is a wave: the Calculator's voltage selectors (`calc::pick_analyses`) less
+  the operating point, which is one point (`ase::diff_functions`). The analyses of the
+  loaded result are read from the session's results file (`ase::last_rawfile`,
+  `calc::raw_analyses`), which is the file of the result in view: the last run's, or,
+  while the session views a saved result (issue 1705, results_selection.md R913), that
+  saved result's. Issue 1705's fence classifies `ase::ui::plot_difference` and
+  `ase::ui::pd_finish` as readers that follow the view (row SVR-D1 of
+  `tests/headless/test_ase_saved_results_1705.tcl`; it is not a row of this suite). The
+  analyses are never read from what the session has enabled now (row GM1: a session
+  set to run AC alone, or the DC sweep alone, over a loaded result that holds a transient
+  still reads the transient) and never from the viewer (row GV1). One rule for every word, `ase::diff_analysis`, a pure proc: the word's analysis
+  when the result holds it; when it does not and the result holds exactly one of the
+  three, that one, and the CIW is told which analysis is read instead; otherwise nothing
+  is armed and one sentence names the analyses the result holds and either the words to
+  bind or that an analysis must be run. A word that is none of the three is refused
+  whatever the result holds, so a mistyped word is never read as another analysis; the
+  word is taken in any letter case. With no word the command reads the transient. A
+  session with no results file arms nothing either, in Direct Plot's words for it and
+  with what to do. Rows PA1, PA3 to PA8, PE1 to PE4, GE1, GF1 to GF3, GM1, GV1.
+- **R-PD3 — the mode.** Select On Design in a third flavour, `diff`, entered by
+  `ase::ui::select_on_design` like the other two: the same seize of the canvas, the same
+  status-bar slot and timer, the same release. The first prompt asks for the first net;
+  once a net is taken the prompt asks for the second, says the plot is the second minus
+  the first, and then names the first net; both name the analysis read. The pointer
+  resting on a device pin adds nothing to either: Direct Plot's prompt names the pin a
+  click would take there, and this flavour takes no pin (`ase::ui::sod_prompt_text`; row
+  GH1). The second net ends the mode and
+  plots at once, with no ESC, as the Calculator's selectors end (calculator.md R208b): on
+  the RELEASE of that click, so the rest of the click cannot reach the editor. ESC before
+  that cancels, says so and plots nothing; so does anything else that ends the mode with
+  fewer than two nets. Rows GK1 to GK3, GK8, GH1, GO1 to GO4, GX1, GX2.
+- **R-PD4 — what a click is.** `ase::ui::pd_pick`, which only reads. What is under the
+  cursor is classified by the Calculator's voltage selector (`calc::pick_classify`) and
+  the net is resolved by Direct Plot's own rule (`ase::ui::sod_net_at`). A net is a wire
+  or a net label: a label clicked on its own text is its net, and a wire clicked where it
+  ends on a pin of a block or of a source is the wire's net, never the pin's current
+  (Direct Plot's pin rule is not asked). A click that is
+  not one named net of the loaded result is refused in one sentence that says what to
+  click instead and then what was clicked, on the status line and in the CIW, and the mode
+  stays on the step it was on: empty space, a device body (a voltage source's among them:
+  Direct Plot's source rule is not asked), a device pin with nothing on
+  it, a wire the netlist skips, a bus (a difference is one trace; no bit dialog opens),
+  the first net again as the second, and a net the analysis read does not hold. The last
+  is refused at its own click, first or second, from the names in the results file's
+  header (`ase::diff_names`, which finds the analysis's plot by the Calculator's reading of
+  a `Plotname:` record, `calc::analysis_of_plot`) by the viewer's lookup rule
+  (`wviewer::name_lookup`); the names are read once, when the mode is entered. Currents, device pins and sources are
+  not taken. Rows PC0 to PC4, PM1 to PM3, PN1 to PN3, GK12, GK13, GR1 to GR4.
+- **R-PD5 — depth.** A net is named as Direct Plot names a pick (`ase::ui::sod_qualify`
+  from the session's own level, `ase::ui::sod_expr` in the session's case mode), so an
+  inner net carries its path and a port's wire is the parent's net. The two nets may be
+  picked on different levels: the mode is put down and brought back across a descend by
+  Direct Plot's own contract (`ase::ui::sod_suspend`, `ase::ui::sod_resume`,
+  `src/cmdmode.tcl`), with the first net kept. Rows PC5, GD1 to GD8.
+- **R-PD6 — the trace.** The text `ase::diff_text` writes goes through the Calculator's
+  translator (`calc::ix_route`) and the Calculator's plot (`calc::plot_in_token`): for the
+  transient and the DC sweep it is the second net's voltage function minus the first's
+  (`vt`, `vs`). So the trace is an expression trace like any the Calculator plots: named by
+  the viewer, kept in a saved session, and re-read as those are. Exactly one trace is
+  added, at Direct Plot's destination (`ase::ui::dp_dest`: appended, whatever the session's
+  or the Calculator's destination setting says). Before the plot the viewer is opened or
+  raised and made to show the analysis that was read (`wviewer::attach_raw`) — unless it
+  already draws from that very result read as that analysis (`ase::ui::pd_shown`), in which
+  case nothing is loaded again and the traces already there keep their data. That is the
+  only case in which a second difference leaves the first one drawing. A difference that
+  reads another analysis than the viewer shows (the AC or DC-sweep key after Alt-Shift-D,
+  Alt-Shift-D after one of them, a fall-back), or the same analysis after the results file
+  changed, loads the results, and every expression trace plotted before it, an earlier
+  difference among them, then has no data and stays in its strip with nothing drawn
+  (issue 1734). Rows PT1,
+  PT3, PT4, GK4 to GK7, GK9, GK10, GS1 to GS3, GU4, GV1.
+- **R-PD7 — AC is the complex difference.** An AC database holds a node as a magnitude
+  column and a phase column, and the expression language has no complex type: the
+  Calculator's translation of `vf(b) - vf(a)` is the difference of the two magnitudes.
+  Measured on two nodes that differ in phase, that is not the magnitude of the difference
+  of the two voltages. So the AC text is the engine's postfix for that magnitude, formed
+  from each voltage's real and imaginary part (`re()`, `im()` over the magnitude and
+  phase columns), still naming both voltages with `vf()`. What the viewer draws for it is
+  what it draws for one AC net: a magnitude. Rows PT2, PT5, GU2, GU3, GF2.
+- **R-PD8 — a shortcut of the user's own.** The profile's line carries the transient's
+  word, and under it are two commented lines, one for AC and one for the DC sweep, each
+  the same line with another chord and another word; no other line of the profile binds
+  any of the three chords. The sequences name the capital letter and no Shift, so the
+  case of the letter as typed decides: Alt with Shift, or Alt alone with Caps Lock on.
+  Rows PR1 to PR3, GU0 to GU2, GC1.
+- **R-PD9 — the prompt fits its slot.** The sentences of this flavour are longer than
+  Direct Plot's and carry a net's name, and a label that asks for more width than the
+  status bar has left makes an unsized window grow; the canvas is then resized, the engine
+  answers by blanking the slot, and the prompt is never seen. So every write of this
+  flavour's prompt is cut to the room the slot has (`ase::ui::pd_fit`): the whole sentence
+  where it fits, else its head with a cut mark. The CIW always has the whole sentence.
+  The other flavours' prompts are written as before. Because the slot may show the head
+  of a sentence only, every sentence but the first prompt opens, straight after its head,
+  with the request (`ase::ui::pd_msg`; row PM2): the second prompt with the request for
+  the second net and the words that the plot is the second minus the first, before the
+  first net's name, which has no bound; a refusal with what to click instead, before what
+  was clicked. In a design window nobody sized, with the red field beside the slot
+  holding the short form of a notice (it does whenever the CIW is not in front of the
+  user), the first prompt is on the slot whole and those opening words are on it for the
+  second prompt and for every refusal, for the transient and for the DC sweep, the
+  analysis with the longest name. Rows GK2, GK3, PM2, GQ1 to GQ4, GP1.
+- **R-PD10 — the log.** Every sentence goes through `ase::echo`, so it reaches the CIW and
+  the action log as a comment line, a refusal as an error. Neither the key nor a click
+  writes a command line of its own, as Direct Plot's picks do not (issue 0208): every line
+  the gesture adds to the log is a comment. The two rows need an action log; the display
+  arm of the full regression runs the suite with one, and so does `full_audit.sh`, which
+  has the suite on its list of suites that need one (row PX2). Rows GL1, GL2, PX2.
+- **R-PD11 — what stops the plot after the second click.** Each is said in one sentence
+  that names the two nets, what stopped the plot and what to do; nothing is plotted and
+  the mode is over (`ase::ui::pd_finish`, `ase::ui::pd_end`). The viewer cannot be opened:
+  where to open it. The results file is gone: run again. The results file no longer holds
+  the analysis that was chosen when the key was pressed (a run that ended between the two
+  clicks): which analyses it holds now, and to press the key again; the file is asked
+  before anything is loaded, because the viewer's load answers yes for such a file and
+  leaves the viewer with no data. The viewer cannot be switched to the results: when to
+  try again. The translator's or the Calculator's own refusal, in their sentence (a net
+  the analysis does not hold, when the file's header gave no names to refuse it by at its
+  click). A plot that raises: the error, and to report it if it repeats. A click whose
+  reading raises is said and leaves the mode on its step. And before anything is armed:
+  an xschem whose Calculator did not load says which part is missing and where its file
+  is looked for. Rows PE6, GT1 to GT8.
+- **Limits.** The trace is an expression, and an expression trace stops drawing when a
+  Direct Plot, a re-run, or a difference read from another analysis than the viewer shows
+  loads the results again (issue 1734, older than this and not repaired here; R-PD6).
+  Nothing is coloured on the schematic for the two nets. Nothing is added
+  to the session's outputs, so a net the run did not save is refused, not saved.
+
 ### Menu tree (v2)
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —

@@ -179,6 +179,29 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   product routes a key the way the row needs, and report `not-sent` (rows `KM16`, `KM19`).
   An error raised inside a binding is a background error, and Tk's dialog for it blocks
   the suite: record it for the leg with `interp bgerror {} <recorder>`.
+- **A status-bar prompt longer than the bar has room for is never on screen in a window
+  whose size nobody set.** The label's request grows the bar, the window grows, the design
+  canvas gets a `<Configure>`, the engine blanks `.statusbar.10` on that event, and the
+  prompt timer starts the round again. A row that reads the slot once after a click can
+  read the sentence in the instant between two rounds: poll for it, then let the event
+  loop turn several times and read it again (`prompt_is` in
+  `test_ase_plot_difference_1727`). `wm geometry . WxH` pins the window and hides the loop,
+  so drive at least one long prompt before the suite sets a geometry.
+- **A prompt compared with the mode's record says nothing about the slot.** The record
+  holds the whole sentence in any window; the slot is cut to its room, and the room
+  depends on the red field beside it (`.statusbar.12`), which the notice channel fills
+  whenever the CIW is not mapped. Under `--logdir` the CIW is mapped and that field stays
+  empty, so a sentence that is cut for a user with the CIW closed reads almost whole in
+  the suite. Put the short form there the way the channel does
+  (`xschem::notify_statusbar [xschem::notify_short {} <notice>]`), give the prompt timer
+  a few turns, and assert the words the user must see on the widget's own text, in a
+  window whose size was put back to unset with `wm geometry . {}` (`slot_tight`, band GQ
+  of `test_ase_plot_difference_1727`).
+- **After a plot the current context is the viewer's.** A command on the design canvas
+  that asks which schematic is current (`ase::session_for_current`) then reads the
+  viewer's untitled sheet. A pointer coming back onto the schematic switches it; a suite
+  has to do that itself (`xschem new_schematic switch .drw`) before the next generated
+  key, and should read the path back.
 - **`update idletasks` runs no timers**, so the suite watchdog cannot fire inside a loop
   of it.
 - **A synthetic double click with a second press (`4, 5, 4, -3, 5`) on a free device PIN
@@ -273,6 +296,14 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   its name.
 - After a delegated crew fails to return, re-run the suites it touched: a red-first row
   may be planted with no fix behind it.
+- **A new proc can redden a suite nobody on the job opened.** Some rows derive their
+  population from the product's text and hold every member to a hand-kept table: row
+  `SVR-D1` of `test_ase_saved_results_1705` reads the Tcl sources results_selection.md R913
+  lists for every proc that names one of its artifact-path procs and fails on one its `CLASS`
+  table lacks (issue 1727's two readers, red in the full T1 only). Before the gate, grep
+  `tests/` for the name of the proc the new one stands beside (`dp_finish` for a sibling
+  of Direct Plot's finish) and run every suite that names it. Class the newcomer by what
+  the row's rule demands of it, then build the break that class exists to catch.
 
 ## 6. Measuring
 

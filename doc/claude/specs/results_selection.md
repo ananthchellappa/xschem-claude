@@ -3250,6 +3250,7 @@ already taken:
 | run-health strip (`health_refresh` via `conv_logtext`), Convergence (`conv_logtext`, `conv_netlist_text`) | the saved log and `<cell>.spice` |
 | Annotate (`annot_ensure_loaded`, `6`, `annot_menu_sync`), `matrix_dialog` | the saved raw, OP dump via `opdump_find` |
 | Plot Outputs (`~`, `plot_outputs` → `auto_plot`) and Direct Plot (`dp_finish`) | under a saved view: `results::select` (R910 shape) + `xschem raw read` of the saved VCDs, meta `viewtype`; **never** `wviewer::attach_raw`/`attach_dbs`. Live view: unchanged |
+| Plot Difference (`ase::ui::plot_difference`, `ase::ui::pd_finish`; issue 1727, ase_l.md R-PD2 and R-PD6) | both ask `last_rawfile` for the results file, and `pd_finish` asks `last_vcdfiles`, so the analyses the result holds, the names a click is asked against and the data the viewer is made to show are those of the result in view, saved or live (SVR23 holds those two procs to the view; SVR-D1 classifies these two callers as readers). The attach is `wviewer::attach_raw`, as Direct Plot's still is (SVR48, not built) |
 | `ckpt_report` | run completion only — n/a |
 | Campaign Results | live, unchanged (v1) |
 | Calculator, waveform viewer | already follow `results::current` / `results::select` |

@@ -388,3 +388,27 @@ Two things worth knowing before adding a fourth:
 
 The three OP-annotation chords are specified in
 [`op_annotation.md` §4.6](op_annotation.md); their body is `utils/annot_mode.tcl`.
+
+---
+
+## 11. Addendum, 2026-11-23 — `Alt-Shift-D`, the difference of two nets (issue 1727)
+
+| Chord | Does | Bound in | Displaces |
+|-------|------|----------|-----------|
+| `Alt-Shift-D` | `ase::plot_difference_for_current tran`: pick two nets on the schematic, plot the second minus the first | `src/cadence_style_rc`, beside the `Ctrl-4` line | nothing: without the profile the chord is bound on no binding tag of the canvas and has no action, and nothing else in `src/` runs the command (rows GN1 and PR4 of `tests/headless/test_ase_plot_difference_1727.tcl`) |
+
+The same mechanism as `Ctrl-4`: a `.drw` bind whose body ends in `break`, copied to every
+canvas made later, invisible to `xschem bindings dump` and to `keybindings.csv`. Two things
+differ from the lines above it, both on purpose:
+
+* **The sequence names the capital letter and no Shift.** With Shift held a letter key
+  types the capital, and so does the key alone with Caps Lock on, so one sequence serves
+  both and the case of the letter as typed decides — the rule the profile's Shift-X line
+  already follows (user ruling 2026-10-16). A sequence that named Shift as well would be
+  dead under Caps Lock. Row GC1.
+* **The line takes a word, and is meant to be copied.** The word is the analysis to read
+  (`tran`, `ac`, `dc`). Under the line are two commented lines, for AC and for the DC sweep,
+  on chords nothing else in the profile binds; a user's own shortcut is one of them
+  uncommented, or the line with another chord and another word. Rows PR1 to PR3, GU1, GU2.
+
+The behaviour is specified in [`ase_l.md`](ase_l.md), "Plot the difference of two nets".
