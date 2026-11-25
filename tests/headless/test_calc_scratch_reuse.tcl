@@ -724,7 +724,23 @@ group SR5 {
     # directly reddens.  The domain check is one proc, `calc::et_scalar_dom`,
     # whose callers are exactly the pure evaluator's step and `eval_win`, each
     # inside its own bracket; `calc::et_domain`'s only caller is it.
+    #
+    # ⚠ AND WIDENED BY ONE NAME FOR A NUMBER ARGUMENT TYPED AS AN EXPRESSION
+    # (issue 1760), KEPT WHOLE BY THREE MORE HOPS.  `cross(...) + 80n` in a
+    # number argument is arithmetic around a measurement, and the arithmetic is
+    # the engine's: `calc::nest_number` hands it to the window's engine step
+    # (`calc::eval_win`), so that step has a third caller.  It is inside a
+    # bracket by the same kind of chain as the others: its only caller is
+    # `calc::nest_resolve`, whose only caller is `calc::aq_arg_invoke`, and that
+    # proc is the measurement verbs' one invocation, called from the three
+    # places that already hold a bracket -- the window's measurement body
+    # (`meas_in_ctx`, through `calc::aq_run`), the pure evaluator's step
+    # (`et_one`) and the operand step both doors share (`et_sub_map`).  All
+    # three hops are asserted below.
     set wincallers {}
+    set nncallers {}
+    set nrcallers {}
+    set aicallers {}
     set sdcallers {}
     set callers {}
     set subcallers {}
@@ -744,11 +760,14 @@ group SR5 {
         if {$nm ne {et_domain} && [regexp {calc::et_domain\M} $b]} { lappend domcallers $nm }
         if {$nm ne {eval_win} && [regexp {calc::eval_win\M} $b]} { lappend wincallers $nm }
         if {$nm ne {et_scalar_dom} && [regexp {calc::et_scalar_dom\M} $b]} { lappend sdcallers $nm }
+        if {$nm ne {nest_number} && [regexp {calc::nest_number\M} $b]} { lappend nncallers $nm }
+        if {$nm ne {nest_resolve} && [regexp {calc::nest_resolve\M} $b]} { lappend nrcallers $nm }
+        if {$nm ne {aq_arg_invoke} && [regexp {calc::aq_arg_invoke\M} $b]} { lappend aicallers $nm }
     }
-    check "SR5 ...and exactly THREE procs call eval_rpn -- the window's engine step, the pure evaluator's step, and that step's R610 domain probe -- each reached only from inside a bracket: the window step by the two loan bodies (each held by one loan holder), the pure step by the file bracket (which only the batch door calls), and the probe through the one scalar-domain check, which only the two steps call" \
+    check "SR5 ...and exactly THREE procs call eval_rpn -- the window's engine step, the pure evaluator's step, and that step's R610 domain probe -- each reached only from inside a bracket: the window step by the two loan bodies (each held by one loan holder) and by the number-argument step (whose one caller's one caller is the measurement verbs' invocation, itself called only by the three bracket-holding steps), the pure step by the file bracket (which only the batch door calls), and the probe through the one scalar-domain check, which only the two steps call" \
         [list [lsort $callers] [lsort $wincallers] $ctxcallers $subcallers $onecallers $runcallers \
-              $dvcallers $domcallers [lsort $sdcallers]] \
-        {{et_domain_value et_one eval_win} {eval_in_ctx eval_subs} eval_in_token eval_subs_in_token et_run eval_texts et_domain et_scalar_dom {et_one eval_win}}
+              $dvcallers $domcallers [lsort $sdcallers] $nncallers $nrcallers [lsort $aicallers]] \
+        {{et_domain_value et_one eval_win} {eval_in_ctx eval_subs nest_number} eval_in_token eval_subs_in_token et_run eval_texts et_domain et_scalar_dom {et_one eval_win} nest_resolve aq_arg_invoke {et_one et_sub_map meas_in_ctx}}
 }
 
 # =============================================================================

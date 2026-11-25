@@ -191,6 +191,24 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   then remove one of the two or break both at once (the suite header's "the size left to
   Tk and no minimum size").
 
+- **Two things that agree because both hit a wall do not agree.** Row `S25` of
+  `test_calc_skeleton` asserted that one wheel notch over the function list's scrollbar moves
+  it as far as Tk's own binding, and a comment recorded the two figures as equal "to the last
+  digit". They were equal because the list could scroll less than three units in all, so 3
+  units and Tk's 5 both stopped at its end. Six more catalogue entries gave the list one more
+  row and the row went red on a change that touched no wheel code (issue 1760). When two
+  measured numbers are equal, check that neither is the end of its range: drive the same
+  comparison where there is room left.
+- **An expected number derived from the formula is not the number the product owes when the
+  product works on samples.** `ymax` at a window limit between two samples of `x(5-x)` owes
+  the straight line between them (5.7), not the parabola (5.76); the row was wrong and the
+  product right (issue 1760, row `EVD8`). Derive from what the samples are.
+- **A row that compares against the product's own helper does not see that helper break.** A
+  refusal was asserted equal to a sentence built with `calc::nest_say`, the proc that drops
+  the translator's opening words; with that proc made to do nothing both sides kept the
+  words and the row stayed green. One literal a user reads, beside the built comparands,
+  turned the break red (row `EVA6`).
+
 ## 2. Text scans, names and Tcl parse traps
 
 - **Never put a comment between two `switch` patterns.** The trailing argument is parsed

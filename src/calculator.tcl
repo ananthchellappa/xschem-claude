@@ -3786,6 +3786,11 @@ proc calc::et_scalar_dom {rpn dataset} {
 # CURRENT database and rewritten to `v(net)`.  A refusal answers the verbs' own
 # `{ok 0 msg}` shape.
 proc calc::aq_arg_invoke {name vals} {
+    # A number argument typed as an expression is measured here, in the same
+    # database, and its number takes its place (`calc::nest_resolve`).
+    set nr [calc::nest_resolve $name $vals]
+    if {![dict get $nr ok]} { return [dict create ok 0 msg [dict get $nr msg]] }
+    set vals [dict get $nr vals]
     set out {}
     foreach {k v} $vals {
         set g [calc::aq_guard $v]
@@ -3911,6 +3916,13 @@ proc calc::uq_meas_exprs {m} {
             continue
         }
         lappend out [dict get $r rpn]
+    }
+    foreach sub [calc::nest_calls $name [calc::meas_vals $name [dict get $m args]]] {
+        lassign $sub sn sv
+        set skeys [calc::ix_rpnkeys $sn]
+        foreach {k v} $sv {
+            if {$k in $skeys} { lappend out $v }
+        }
     }
     return $out
 }
@@ -4118,6 +4130,199 @@ proc calc::et_sub_map {rpn subs} {
         incr k
     }
     return [dict create ok 1 rpn [string map $map $rpn]]
+}
+
+# ---------------------------------------------------------------------------
+# A NUMBER ARGUMENT MAY BE AN EXPRESSION (issue 1760).
+#
+# `value(vt(a1), cross(vt(en), 0.6, 1, falling))`: the X point is the instant a
+# comparator trips, and the user should not have to read that instant off one
+# row and type it into the next.  Before this a nested call was accepted inside
+# a WAVE argument (`calc::ix_primary`'s marker) and refused in a NUMBER argument
+# one slot along, by `calc::arg_field_bad`'s "must be a finite number".
+#
+# WHAT A NUMBER ARGUMENT MAY HOLD: a number, as before and by the same reader
+# (`calc::num_read`), read FIRST, so every text that was a number is handled as
+# it was; or an expression that answers ONE number and holds at least one
+# measurement call -- the call alone, or arithmetic over numbers and calls
+# (`cross(...) + 80n`), in the language `calc::ix_route` reads.  A signal is not
+# one number: an expression that reads a wave, the sweep or a running function
+# is refused with the sentence a non-number has always had, and so is
+# arithmetic with no measurement in it.
+#
+# THREE PLACES, ONE PLAN (`calc::nest_plan`, pure, no database):
+#   * the shape check, `calc::arg_field_bad` -- the dialog's OK, and a call
+#     typed in the buffer or in an ASE-L Outputs row, before any read;
+#   * the evaluation, `calc::nest_resolve`, at the head of
+#     `calc::aq_arg_invoke`, which every measurement of every door goes through
+#     inside its database bracket -- so the nested call reads the SAME database
+#     as the call around it, and its number replaces its text before the verb
+#     sees the argument;
+#   * the signals, `calc::nest_calls` -- R208d's unqualified-signal refusal
+#     (`calc::uq_meas_exprs`) and ASE-L's save list (`calc::eval_text_signals`)
+#     both descend into the nested calls.
+#
+# A REFUSAL FROM INSIDE names the outer verb and the field: `value: X point:
+# cross takes 4 arguments.` before a read, `value: X point: Cross: there is no
+# 1st falling crossing ...` after one.  The translator's "Cannot evaluate: "
+# opening is dropped there (`calc::nest_say`): the outer sentence has already
+# said what could not be done.
+#
+# DECLARED LIMITS.  A measurement inside a measurement's WAVE argument is still
+# refused (`calc::ix_msg nestarg`).  Nesting is bounded (`calc::nest_maxdepth`).
+# A nested call is evaluated each time the call around it is, with no cache.
+# Fence: tests/headless/test_calc_event_verbs_1760.tcl, band EVA; the window's
+# Eval press is band PG14E of tests/headless/test_calc_pick.tcl.
+# ---------------------------------------------------------------------------
+namespace eval calc { variable nest_depth 0 }
+
+proc calc::nest_maxdepth {} { return 8 }
+
+proc calc::nest_say {msg} {
+    if {[string match {Cannot evaluate: *} $msg]} { return [string range $msg 17 end] }
+    return $msg
+}
+
+# THE PLAN for number-argument text `$text`, with no database:
+#   {ok 1 rpn <postfix; a measurement operand is a calc::ix_marker> subs {{verb vals} ...}}
+#   {ok 0 named 0|1 msg <sentence>}
+# `named` 1 is a text written with a parenthesis -- a call, or an expression in
+# brackets -- whose fault has a sentence of its own.  `named` 0 is a text that
+# is simply not a number (a word, a signal, a half-typed figure): the caller
+# keeps the sentence such a text has always had.
+proc calc::nest_plan {text} {
+    variable nest_depth
+    set t [string trim $text]
+    if {$t eq {} || [calc::quote_bad $t]} { return [dict create ok 0 named 0 msg {}] }
+    if {$nest_depth >= [calc::nest_maxdepth]} {
+        return [dict create ok 0 named 1 msg [calc::ix_msg deep [calc::nest_maxdepth]]]
+    }
+    incr nest_depth
+    set rc [catch {calc::nest_plan_text $t} p]
+    incr nest_depth -1
+    if {$rc} { return [dict create ok 0 named 0 msg {}] }
+    if {![dict get $p ok] && [string first "(" $t] < 0} { dict set p named 0 }
+    return $p
+}
+
+proc calc::nest_plan_text {t} {
+    set r [calc::ix_route $t]
+    if {[dict get $r mode] eq {refuse}} {
+        return [dict create ok 0 named 1 msg [dict get $r msg]]
+    }
+    set rpn [dict get $r rpn]
+    set toks [calc::rpn_tokens $rpn]
+    set sf [calc::rpn_stack_fault $toks]
+    if {$sf ne {}} {
+        return [dict create ok 0 named 1 msg [calc::eval_msg badtoken $sf]]
+    }
+    foreach tok $toks {
+        if {[string first "\u0001" $tok] >= 0} continue
+        if {[calc::et_operand $tok] || $tok in [calc::ix_wavy]
+            || [string tolower $tok] in {time frequency}} {
+            return [dict create ok 0 named 0 msg {}]
+        }
+    }
+    set subs {}
+    foreach st [dict get $r subs] {
+        set sm [calc::meas_split $st]
+        if {$sm eq {}} {
+            return [dict create ok 0 named 1 msg [calc::ix_msg nestbad $st {}]]
+        }
+        set p [calc::ix_meas_prep $sm]
+        if {![dict get $p ok]} {
+            return [dict create ok 0 named 1 msg [dict get $p msg]]
+        }
+        lappend subs [list [dict get $sm verb] [dict get $p vals]]
+    }
+    # Arithmetic with no measurement in it (`+3u`, `2*1u`) is not taken: a text
+    # that was refused as "not a number" before this stays refused.
+    if {![llength $subs]} { return [dict create ok 0 named 0 msg {}] }
+    return [dict create ok 1 named 1 rpn $rpn subs $subs msg {}]
+}
+
+# The number that number-argument text `$text` answers, in the CURRENT
+# database: `{ok 1 value <number>}` or `{ok 0 msg <sentence>}`.  A lone
+# measurement call hands its own number on untouched; arithmetic around one is
+# the engine's, through the window's engine step (`calc::eval_win`: the same
+# refusal of a division by zero or a log of nothing as Outputs), read at full
+# precision (`calc::eval_rpn`'s `full`).  The expression holds no signal, so it
+# is one number at every point and which point is read does not matter.
+proc calc::nest_number {text} {
+    variable nest_depth
+    set p [calc::nest_plan $text]
+    if {![dict get $p ok]} {
+        set m [dict get $p msg]
+        if {$m eq {}} { set m [calc::ix_msg number [string trim $text]] }
+        return [dict create ok 0 msg $m]
+    }
+    incr nest_depth
+    set rc [catch {calc::et_sub_map [dict get $p rpn] [dict get $p subs]} sm]
+    incr nest_depth -1
+    if {$rc} { return [dict create ok 0 msg [calc::eval_msg engine $sm]] }
+    if {![dict get $sm ok]} { return [dict create ok 0 msg [dict get $sm msg]] }
+    set rpn [dict get $sm rpn]
+    set toks [calc::rpn_tokens $rpn]
+    if {[llength $toks] == 1 && [calc::eval_finite [lindex $toks 0]]} {
+        return [dict create ok 1 value [lindex $toks 0]]
+    }
+    set d [calc::eval_win $rpn 0]
+    if {![dict get $d ok]} { return [dict create ok 0 msg [dict get $d msg]] }
+    set v [dict get $d value]
+    if {[dict exists $d full]} { set v [dict get $d full] }
+    if {![calc::eval_finite $v]} {
+        return [dict create ok 0 msg [calc::ix_msg nestbad [string trim $text] $v]]
+    }
+    return [dict create ok 1 value $v]
+}
+
+# Call `$name $vals` with every number argument that was typed as an expression
+# replaced by its number: `{ok 1 vals <vals>}` or `{ok 0 msg <sentence>}`.
+# Only a text `calc::nest_plan` accepts is evaluated.  Anything else goes on to
+# the verb as it stands, to be refused in the verb's own words as before.
+proc calc::nest_resolve {name vals} {
+    set spec [calc::fn_argspec $name]
+    set out {}
+    foreach {k v} $vals {
+        set lbl {}
+        foreach f $spec {
+            if {[lindex $f 0] eq $k && [lindex [lindex $f 2] 0] eq {real}} {
+                set lbl [lindex $f 1]
+            }
+        }
+        if {$lbl ne {} && [string trim $v] ne {} && [calc::num_eng $v] eq {}
+            && [dict get [calc::nest_plan $v] ok]} {
+            set d [calc::nest_number $v]
+            if {![dict get $d ok]} {
+                return [dict create ok 0 msg [calc::meas_msg fields $name \
+                            [calc::arg_msg nested $lbl [calc::nest_say [dict get $d msg]]]]]
+            }
+            set v [dict get $d value]
+        }
+        lappend out $k $v
+    }
+    return [dict create ok 1 vals $out]
+}
+
+# The measurement calls nested in the NUMBER arguments of call `$name $vals`,
+# at every depth, as `{verb vals}` each, their expression arguments already
+# postfix (`calc::ix_meas_prep`).  No database.  A number argument that is a
+# number, or a text `calc::nest_plan` refuses, holds none.
+proc calc::nest_calls {name vals} {
+    set out {}
+    foreach f [calc::fn_argspec $name] {
+        if {[lindex [lindex $f 2] 0] ne {real}} continue
+        set v {}
+        foreach {k kv} $vals { if {$k eq [lindex $f 0]} { set v $kv } }
+        if {[string trim $v] eq {} || [calc::num_eng $v] ne {}} continue
+        set p [calc::nest_plan $v]
+        if {![dict get $p ok]} continue
+        foreach sub [dict get $p subs] {
+            lappend out $sub
+            set out [concat $out [calc::nest_calls [lindex $sub 0] [lindex $sub 1]]]
+        }
+    }
+    return $out
 }
 
 # Inside the loan: the operands, then the engine on what they left.
@@ -4810,6 +5015,22 @@ proc calc::cross_msg {kind {a {}} {b {}}} {
  (sim_type $a)." }
         valrange   { return "Value: X $a is outside the sweep ($b)." }
         valnan     { return "Value: the expression has no finite value at X $a." }
+        spanempty  { return "Nothing to measure: $a was given an empty expression." }
+        spannosweep { return "Cannot measure: that result has no sweep for $a to read an X on (sim_type $b)." }
+        spanfew    { return "Cannot measure: $a needs at least two samples of that expression." }
+        ibnolim    { return "Integral: both limits must be supplied (from '$a', to '$b')." }
+        ibbadlim   { return "Integral: a limit is not a finite number ($a)." }
+        iborder    { return "Integral: the first limit must be below the second ($a, $b)." }
+        ibrange    { return "Integral: limit $a is outside the sweep ($b)." }
+        ibfold     { return "Integral: the sweep turns back on itself, so two X values do not bound one span ($a)." }
+        ibnan      { return "Integral: the expression has no finite value somewhere between $a and $b." }
+        vwnotrig   { return {Value when: the trigger expression must not be empty.} }
+        vwnth0     { return "Value when: nth 0 names every crossing and the value is read at one ($a)." }
+        vwnan      { return "Value when: the expression has no finite value at X $a." }
+        exbadlim   { return "Extremum: a window limit is not a finite number ($a)." }
+        exorder    { return "Extremum: the window's limits must be in order ($a, $b)." }
+        exrange    { return "Extremum: window limit $a is outside the sweep ($b)." }
+        exnone     { return {Extremum: no sample of that expression is a finite number in that window.} }
         bwnodrop   { return {Bandwidth: the drop in dB must be supplied.} }
         bwbaddrop  { return "Bandwidth: the drop is not a finite number ($a)." }
         bwzerodrop { return "Bandwidth: the drop must be a positive number of dB\
@@ -5210,7 +5431,12 @@ proc calc::cross_scan {xs ys L nth edge} {
 #
 # ⚠ THE DELETE IS UNCONDITIONAL AND BEFORE EVERY RETURN BELOW IT, never driven by
 # the add's return code: a failed add can still have created the column.
-proc calc::series_of {rpn dataset} {
+#
+# `dcsweep` 1 also reads a DC sweep, against the raw's first column -- the swept
+# quantity, whatever ngspice called it, which is `calc::value`'s rule.  The
+# windowed verbs (`calc::span_read`) ask for it; the callers that measure a TIME
+# do not, and for them a DC sweep stays `nosweep`.
+proc calc::series_of {rpn dataset {dcsweep 0}} {
     if {[string trim $rpn] eq {}} {
         return [dict create ok 0 why empty xs {} ys {} dest {}]
     }
@@ -5230,6 +5456,7 @@ proc calc::series_of {rpn dataset} {
     switch -exact -- $sty {
         tran { set sweep time }
         ac   { set sweep frequency }
+        dc   { if {$dcsweep eq {1}} { catch {set sweep [lindex [xschem raw list] 0]} } }
     }
     set six -1
     if {$sweep ne {}} { catch {set six [xschem raw index $sweep]} }
@@ -7655,6 +7882,20 @@ proc calc::overshoot {rpn {initial {}} {final {}} {dataset 0}} {
 # tests/headless/test_calc_measure.tcl), so the answer is an if-ladder.  Band ET15
 # of tests/headless/test_calc_eval_text.tcl; the derived bands of
 # test_calc_measure (MT11, MT13, MT21, MT28) carry it as a clickable verb.
+#
+# ⚠ AN X A ROUNDING HAIR OUTSIDE THE SWEEP IS THAT END OF THE SWEEP
+# (`calc::span_snap`, issue 1760).  A linearized transient ends an ulp short of
+# its stop time -- 0.009999999999999995 for 10 ms on the committed fixture -- so
+# `value(w, 10m)` was refused as outside a sweep the user had just named the
+# end of.  A hair is a billionth of the sweep's span; anything farther out is
+# outside and is refused as before.
+proc calc::span_snap {x lo hi} {
+    set tol [expr {1e-9 * (double($hi) - double($lo))}]
+    if {$x > $hi && $x - $hi <= $tol} { return [expr {double($hi)}] }
+    if {$x < $lo && $lo - $x <= $tol} { return [expr {double($lo)}] }
+    return $x
+}
+
 proc calc::value_at {xs ys X} {
     set n [llength $xs]
     if {$n == 0 || [llength $ys] != $n} { return {nan} }
@@ -7665,6 +7906,7 @@ proc calc::value_at {xs ys X} {
         if {$hi eq {} || $x > $hi} { set hi $x }
     }
     if {$lo eq {}} { return {nan} }
+    set X [calc::span_snap $X $lo $hi]
     if {$X < $lo || $X > $hi} { return [list range $lo $hi] }
     for {set i 0} {$i < $n} {incr i} {
         set xa [lindex $xs $i]
@@ -7762,6 +8004,317 @@ proc calc::value {rpn x {dataset 0}} {
                     "[lindex $got 1] to [lindex $got 2]"] $dataset $dest]
     }
     return [calc::cross_refusal [calc::cross_msg valnan $x] $dataset $dest]
+}
+
+# ---------------------------------------------------------------------------
+# EVENT-ANCHORED MEASUREMENTS (issue 1760): `integBetween`, `valueWhen`, `ymax`,
+# `ymin`, `xmax`, `xmin`.
+#
+# What they are for.  Three numbers off one transient -- when a comparator
+# tripped, a node's voltage at that instant, the charge that flowed after it --
+# are ngspice's `WHEN`, `FIND ... WHEN` and `INTEG FROM TO`.  `cross` is the
+# first, `valueWhen` the second, `integBetween` the third; the largest or
+# smallest value of a wave and the X it occurs at are `ymax`/`ymin` and
+# `xmax`/`xmin` (ngspice's `MAX`/`MIN` and their `at=`).
+#
+# ⚠ A GATE IS NOT A LIMIT.  `integ(w*(time>t0)*(time<t1))` zeroes every SAMPLE
+# outside the window and integrates what is left, so the interval that straddles
+# each limit is counted as a triangle down to zero.  At a sharp event that
+# interval carries most of the area.  `integBetween` cuts the wave AT the
+# limits: the samples inside, plus the wave's own interpolated value at each
+# limit.  Row EVB2 of tests/headless/test_calc_event_verbs_1760.tcl measures the
+# two against each other on one wave.
+#
+# ALL SIX READ THROUGH THE ONE SERIES DOOR (`calc::series_of`, asked for a DC
+# sweep too) by way of `calc::span_read`, the request half they share: the empty
+# expression, the loaded-data gate, the dataset, and the door's own refusals in
+# the family's voice.  None opens a door of its own and none reads through
+# another measurement verb.  `valueWhen` also asks `calc::cross` for the
+# trigger's crossing, so in band MT10's partition
+# (tests/headless/test_calc_measure.tcl) it stands where `calc::settlingTime`
+# stands; the other five are that partition's class of their own.
+#
+# THE ANSWER SHAPE is the family's: `{ok 1 absent 0 value <number> dataset dest
+# msg}`, a `calc::cross_refusal`, or a `calc::cross_absent` when the request is
+# sound and the samples hold no answer.
+#
+# AN X LIMIT OUTSIDE THE SWEEP IS REFUSED, never clamped: `calc::value`'s rule
+# and its reason -- except by a rounding hair, which is that end of the sweep
+# (`calc::span_snap`).  The extremum verbs' two limits are optional, and a blank
+# one is that end of the sweep.
+#
+# THE EXTREMUM OF A WINDOW COUNTS THE WAVE'S VALUE AT THE WINDOW'S OWN LIMITS,
+# interpolated, beside the samples inside it.  Between two samples the wave is a
+# straight line, so its largest value over a window is at a sample or at a limit
+# and nowhere else.  ngspice's `MAX ... FROM TO` reads the samples only; the two
+# differ when the wave is still climbing at a limit that falls between samples.
+# ---------------------------------------------------------------------------
+
+# The request half: `{1 <calc::series_of's answer>}` or `{0 <refusal>}`.
+# `$who` is the verb's name, for the sentences that name it.
+proc calc::span_read {who rpn dataset} {
+    set rpn [string trim $rpn]
+    if {$rpn eq {}} {
+        return [list 0 [calc::cross_refusal [calc::cross_msg spanempty $who]]]
+    }
+    set lv -1
+    catch {set lv [xschem raw loaded]}
+    if {![string is integer -strict $lv] || $lv < 0} {
+        return [list 0 [calc::cross_refusal [calc::cross_msg nodata]]]
+    }
+    if {![string is integer -strict $dataset]} {
+        return [list 0 [calc::cross_refusal [calc::cross_msg intdataset $dataset]]]
+    }
+    set nds 0
+    catch {set nds [xschem raw datasets]}
+    if {![string is integer -strict $nds]} { set nds 0 }
+    if {$dataset < 0} {
+        return [list 0 [calc::cross_refusal [calc::cross_msg allpoints $dataset] $dataset]]
+    }
+    if {$dataset >= $nds} {
+        return [list 0 [calc::cross_refusal [calc::cross_msg dataset $dataset $nds] $dataset]]
+    }
+    set d [calc::series_of $rpn $dataset 1]
+    if {[dict get $d ok]} { return [list 1 $d] }
+    set dest [dict get $d dest]
+    set why [dict get $d why]
+    set m [calc::cross_msg spanfew $who]
+    if {$why eq {badtoken}} { set m [calc::cross_msg badtoken [dict get $d detail]] }
+    if {$why eq {noname}} { set m [calc::cross_msg noname] }
+    if {$why eq {stale}} { set m [calc::cross_msg stale $dest] }
+    if {$why eq {nosweep}} { set m [calc::cross_msg spannosweep $who [dict get $d sim]] }
+    if {$why eq {nodata}} { set m [calc::cross_msg nodata] }
+    return [list 0 [calc::cross_refusal $m $dataset $dest]]
+}
+
+# The smallest and the largest finite X of a series, as `{lo hi}`, or {}.
+proc calc::span_range {xs} {
+    set lo {} ; set hi {}
+    foreach x $xs {
+        if {![calc::eval_finite $x]} continue
+        if {$lo eq {} || $x < $lo} { set lo $x }
+        if {$hi eq {} || $x > $hi} { set hi $x }
+    }
+    if {$lo eq {}} { return {} }
+    return [list $lo $hi]
+}
+
+# THE AREA under the series between X `$a` and X `$b` (`$a` < `$b`, both inside
+# the sweep): the trapezoid of every interval, each cut at the limits with the
+# wave's interpolated value there.  Pure.  Answers `{ok <area>}`; `{fold <x>}`
+# when the sweep changes direction (the same X is then passed twice and the two
+# limits bound no single span); `{nan}` when a sample that counts is not a
+# finite number.  A sweep that runs downward gives the same area as the same
+# wave swept upward: the area is over X, not over the order of the samples.
+proc calc::area_between {xs ys a b} {
+    set n [llength $xs]
+    if {[llength $ys] < $n} { set n [llength $ys] }
+    set dir 0
+    set area 0.0
+    for {set p 1} {$p < $n} {incr p} {
+        set x0 [lindex $xs [expr {$p - 1}]]
+        set x1 [lindex $xs $p]
+        if {![calc::eval_finite $x0] || ![calc::eval_finite $x1]} { return {nan} }
+        set x0 [expr {double($x0)}]
+        set x1 [expr {double($x1)}]
+        if {$x1 == $x0} continue
+        set d [expr {$x1 > $x0 ? 1 : -1}]
+        if {$dir == 0} { set dir $d }
+        if {$d != $dir} { return [list fold $x0] }
+        set lo [expr {$x0 < $x1 ? $x0 : $x1}]
+        set hi [expr {$x0 < $x1 ? $x1 : $x0}]
+        if {$hi <= $a || $lo >= $b} continue
+        set ca [expr {$lo > $a ? $lo : $a}]
+        set cb [expr {$hi < $b ? $hi : $b}]
+        set y0 [lindex $ys [expr {$p - 1}]]
+        set y1 [lindex $ys $p]
+        if {![calc::eval_finite $y0] || ![calc::eval_finite $y1]} { return {nan} }
+        set y0 [expr {double($y0)}]
+        set y1 [expr {double($y1)}]
+        set ya [expr {$y0 + ($ca - $x0) * ($y1 - $y0) / ($x1 - $x0)}]
+        set yb [expr {$y0 + ($cb - $x0) * ($y1 - $y0) / ($x1 - $x0)}]
+        set area [expr {$area + 0.5 * ($ya + $yb) * ($cb - $ca)}]
+    }
+    if {![calc::eval_finite $area]} { return {nan} }
+    return [list ok $area]
+}
+
+# `integBetween(wave, from, to)`: ngspice's `INTEG ... FROM TO`.
+proc calc::integBetween {rpn {t0 {}} {t1 {}} {dataset 0}} {
+    if {[string trim $t0] eq {} || [string trim $t1] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg ibnolim $t0 $t1] $dataset]
+    }
+    if {![calc::eval_finite $t0]} {
+        return [calc::cross_refusal [calc::cross_msg ibbadlim $t0] $dataset]
+    }
+    if {![calc::eval_finite $t1]} {
+        return [calc::cross_refusal [calc::cross_msg ibbadlim $t1] $dataset]
+    }
+    set a [expr {double($t0)}]
+    set b [expr {double($t1)}]
+    if {$a >= $b} {
+        return [calc::cross_refusal [calc::cross_msg iborder $t0 $t1] $dataset]
+    }
+    lassign [calc::span_read integBetween $rpn $dataset] ok d
+    if {!$ok} { return $d }
+    set xs [dict get $d xs]
+    set ys [dict get $d ys]
+    set dest [dict get $d dest]
+    set r [calc::span_range $xs]
+    if {$r eq {}} {
+        return [calc::cross_absent [calc::cross_msg ibnan $t0 $t1] $dataset $dest]
+    }
+    lassign $r lo hi
+    set a [calc::span_snap $a $lo $hi]
+    set b [calc::span_snap $b $lo $hi]
+    if {$a < $lo || $a > $hi} {
+        return [calc::cross_refusal [calc::cross_msg ibrange $t0 "$lo to $hi"] $dataset $dest]
+    }
+    if {$b < $lo || $b > $hi} {
+        return [calc::cross_refusal [calc::cross_msg ibrange $t1 "$lo to $hi"] $dataset $dest]
+    }
+    if {$a >= $b} {
+        return [calc::cross_refusal [calc::cross_msg iborder $t0 $t1] $dataset $dest]
+    }
+    set got {nan}
+    catch {set got [calc::area_between $xs $ys $a $b]}
+    if {[lindex $got 0] eq {ok}} {
+        return [dict create ok 1 absent 0 value [lindex $got 1] \
+                    dataset $dataset dest $dest msg {}]
+    }
+    if {[lindex $got 0] eq {fold}} {
+        return [calc::cross_refusal [calc::cross_msg ibfold [lindex $got 1]] $dataset $dest]
+    }
+    return [calc::cross_absent [calc::cross_msg ibnan $t0 $t1] $dataset $dest]
+}
+
+# `valueWhen(wave, trigger, level, edge, nth)`: the wave's value at the Nth
+# crossing of the trigger; ngspice's `FIND ... WHEN`.  The crossing is
+# `calc::cross`'s, with its refusals and its absence handed back as it built
+# them; the value is `calc::value_at`'s interpolation at that X.
+proc calc::valueWhen {rpn {rpnTrig {}} {level {}} {edge rising} {nth 1} {dataset 0}} {
+    if {[string trim $rpn] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg spanempty valueWhen]]
+    }
+    if {[string trim $rpnTrig] eq {}} {
+        return [calc::cross_refusal [calc::cross_msg vwnotrig] $dataset]
+    }
+    if {[calc::eval_finite $nth] && [expr {double($nth) == 0.0}]} {
+        return [calc::cross_refusal [calc::cross_msg vwnth0 $nth] $dataset]
+    }
+    set c [calc::cross $rpnTrig $level $nth $edge $dataset]
+    set cok 0
+    catch {set cok [dict get $c ok]}
+    if {$cok ne {1}} { return $c }
+    set x [dict get $c value]
+    lassign [calc::span_read valueWhen $rpn $dataset] ok d
+    if {!$ok} { return $d }
+    set dest [dict get $d dest]
+    set got {nan}
+    catch {set got [calc::value_at [dict get $d xs] [dict get $d ys] [expr {double($x)}]]}
+    if {[lindex $got 0] eq {ok}} {
+        return [dict create ok 1 absent 0 value [lindex $got 1] \
+                    dataset $dataset dest $dest msg {}]
+    }
+    return [calc::cross_absent [calc::cross_msg vwnan $x] $dataset $dest]
+}
+
+# THE EXTREMUM of the series over the window `$a`..`$b` (either may be {} for
+# that end of the sweep), as `{x y}`, or {} when no value in the window is a
+# finite number.  Pure.  `$which` is `max` or `min`.  The candidates are the
+# wave's interpolated value at each limit that was given and every sample
+# between them; among equal values the first one met wins.
+proc calc::extremum_in {xs ys which a b} {
+    set n [llength $xs]
+    if {[llength $ys] < $n} { set n [llength $ys] }
+    set cand {}
+    if {$a ne {}} {
+        set g [calc::value_at $xs $ys $a]
+        if {[lindex $g 0] eq {ok}} { lappend cand $a [expr {double([lindex $g 1])}] }
+    }
+    for {set i 0} {$i < $n} {incr i} {
+        set x [lindex $xs $i]
+        set y [lindex $ys $i]
+        if {![calc::eval_finite $x] || ![calc::eval_finite $y]} continue
+        if {$a ne {} && $x < $a} continue
+        if {$b ne {} && $x > $b} continue
+        lappend cand [expr {double($x)}] [expr {double($y)}]
+    }
+    if {$b ne {}} {
+        set g [calc::value_at $xs $ys $b]
+        if {[lindex $g 0] eq {ok}} { lappend cand $b [expr {double([lindex $g 1])}] }
+    }
+    set ex {} ; set ey {}
+    foreach {x y} $cand {
+        if {$ey eq {} || ($which eq {max} && $y > $ey) || ($which ne {max} && $y < $ey)} {
+            set ex $x
+            set ey $y
+        }
+    }
+    if {$ey eq {}} { return {} }
+    return [list $ex $ey]
+}
+
+# The act the four extremum verbs share.  `$axis` is `y` for the value and `x`
+# for where it occurs.
+proc calc::span_extremum {who which axis rpn from to dataset} {
+    set a {} ; set b {}
+    if {[string trim $from] ne {}} {
+        if {![calc::eval_finite $from]} {
+            return [calc::cross_refusal [calc::cross_msg exbadlim $from] $dataset]
+        }
+        set a [expr {double($from)}]
+    }
+    if {[string trim $to] ne {}} {
+        if {![calc::eval_finite $to]} {
+            return [calc::cross_refusal [calc::cross_msg exbadlim $to] $dataset]
+        }
+        set b [expr {double($to)}]
+    }
+    if {$a ne {} && $b ne {} && $a > $b} {
+        return [calc::cross_refusal [calc::cross_msg exorder $from $to] $dataset]
+    }
+    lassign [calc::span_read $who $rpn $dataset] ok d
+    if {!$ok} { return $d }
+    set xs [dict get $d xs]
+    set ys [dict get $d ys]
+    set dest [dict get $d dest]
+    set r [calc::span_range $xs]
+    if {$r eq {}} {
+        return [calc::cross_absent [calc::cross_msg exnone] $dataset $dest]
+    }
+    lassign $r lo hi
+    if {$a ne {}} { set a [calc::span_snap $a $lo $hi] }
+    if {$b ne {}} { set b [calc::span_snap $b $lo $hi] }
+    if {$a ne {} && ($a < $lo || $a > $hi)} {
+        return [calc::cross_refusal [calc::cross_msg exrange $from "$lo to $hi"] $dataset $dest]
+    }
+    if {$b ne {} && ($b < $lo || $b > $hi)} {
+        return [calc::cross_refusal [calc::cross_msg exrange $to "$lo to $hi"] $dataset $dest]
+    }
+    set got {}
+    catch {set got [calc::extremum_in $xs $ys $which $a $b]}
+    if {[llength $got] != 2} {
+        return [calc::cross_absent [calc::cross_msg exnone] $dataset $dest]
+    }
+    set v [lindex $got 1]
+    if {$axis eq {x}} { set v [lindex $got 0] }
+    return [dict create ok 1 absent 0 value $v dataset $dataset dest $dest msg {}]
+}
+
+# `ymax(wave ?, from, to?)` and its three siblings: ngspice's `MAX`/`MIN` and
+# the `at=` they print.
+proc calc::ymax {rpn {from {}} {to {}} {dataset 0}} {
+    return [calc::span_extremum ymax max y $rpn $from $to $dataset]
+}
+proc calc::ymin {rpn {from {}} {to {}} {dataset 0}} {
+    return [calc::span_extremum ymin min y $rpn $from $to $dataset]
+}
+proc calc::xmax {rpn {from {}} {to {}} {dataset 0}} {
+    return [calc::span_extremum xmax max x $rpn $from $to $dataset]
+}
+proc calc::xmin {rpn {from {}} {to {}} {dataset 0}} {
+    return [calc::span_extremum xmin min x $rpn $from $to $dataset]
 }
 
 # ---------------------------------------------------------------------------
@@ -12723,7 +13276,7 @@ proc calc::catalogue {} {
 {average {Special Functions} P scalar {avg()} {Mean value of the wave over the X range}}
 {rms {Special Functions} C scalar {dup() * avg() sqrt()} {Root-mean-square value over the X range}}
 {stddev {Special Functions} T scalar {} {Standard deviation of the wave over the X range}}
-{integ {Special Functions} P scalar {integ()} {Area under the curve over the X range}}
+{integ {Special Functions} P scalar {integ()} {Area under the curve over the whole X range; integBetween takes limits}}
 {iinteg {Special Functions} P wave {integ()} {Running integral of the wave, read back as a wave}}
 {deriv {Special Functions} P wave {deriv()} {Slope of the wave (derivative), as a wave}}
 {clip {Special Functions} T wave {} {The wave restricted to a chosen X range}}
@@ -12743,6 +13296,12 @@ proc calc::catalogue {} {
 {settlingTime {Special Functions} T scalar {} {Time to settle inside a band of +/-tol % of the step}}
 {overshoot {Special Functions} T scalar {} {Percent by which the wave passes its final value}}
 {value {Special Functions} T scalar {} {The wave's value at an X point, interpolated}}
+{valueWhen {Special Functions} T scalar {} {The wave's value at the Nth crossing of a trigger wave}}
+{integBetween {Special Functions} T scalar {} {Area under the wave between two X values, ends interpolated}}
+{ymax {Special Functions} T scalar {} {Largest Y value of the wave, over all of it or between two X values}}
+{ymin {Special Functions} T scalar {} {Smallest Y value of the wave, over all of it or between two X values}}
+{xmax {Special Functions} T scalar {} {The X value where the wave is largest}}
+{xmin {Special Functions} T scalar {} {The X value where the wave is smallest}}
 {dutyCycle {Special Functions} T scalar/wave {} {Fraction of a period the signal spends high}}
 {frequency {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
 {freq {Special Functions} T scalar/wave {} {Frequency measured from the wave's crossings}}
@@ -13393,6 +13952,28 @@ proc calc::fn_argspec {name} {
                 {x {X point} real 1 {}}
             }
         }
+        valueWhen {
+            return {
+                {rpnTrig {Trigger (RPN)}    rpn                          1 {}}
+                {level   {Trigger level}    real                         1 {}}
+                {edge    {Edge}             {enum rising falling either} 0 rising}
+                {nth     {Occurrence (Nth)} int                          0 1}
+                {dataset {Dataset}          int                          0 0}
+            }
+        }
+        integBetween {
+            return {
+                {t0      {From (X)} real 1 {}}
+                {t1      {To (X)}   real 1 {}}
+                {dataset {Dataset}  int  0 0}
+            }
+        }
+        ymax - ymin - xmax - xmin {
+            return {
+                {from {From (X)} real 0 {}}
+                {to   {To (X)}   real 0 {}}
+            }
+        }
         overshoot {
             return {
                 {initial {Initial value} real 1 {}}
@@ -13490,6 +14071,7 @@ proc calc::arg_msg {kind {a {}} {b {}}} {
         badvalue { return "Measuring $a: the result is not a literal number ($b)." }
         nodialog { return "Measuring $a: the argument dialog did not open ($b)." }
         capM { return "$a: M is milli in SPICE; type m or meg ($b)." }
+        nested { return "$a: $b" }
     }
     return {}
 }
@@ -13580,10 +14162,20 @@ proc calc::arg_trouble {spec} {
             set argval($key) $dflt
             set v $dflt
         }
+        if {[calc::arg_blank_ok $row $v]} continue
         set m [calc::arg_field_bad $label $kind $v]
         if {$m ne {}} { lappend out $m }
     }
     return $out
+}
+
+# 1 when `$v` is blank and the spec row `$row` lets it be: an OPTIONAL field
+# whose default is itself blank, which says "nothing chosen" (the extremum
+# verbs' window limits: a blank one is that end of the sweep).  An optional
+# field with a default is filled with it instead, and a required one refused.
+proc calc::arg_blank_ok {row v} {
+    if {[string trim $v] ne {}} { return 0 }
+    return [expr {[lindex $row 3] eq {0} && [string trim [lindex $row 4]] eq {}}]
 }
 
 # ONE field, judged.  Pure: no Tk, no `argval`, no spec walk -- so the whole
@@ -13607,7 +14199,14 @@ proc calc::arg_field_bad {label kind v} {
         default {
             set r [calc::num_read $v]
             if {[lindex $r 0] eq {capM}} { return [calc::arg_msg capM $label $v] }
-            if {[lindex $r 0] ne {ok}} { return [calc::arg_msg real $label $v] }
+            if {[lindex $r 0] ne {ok}} {
+                set p [calc::nest_plan $v]
+                if {[dict get $p ok]} { return {} }
+                if {[dict get $p named]} {
+                    return [calc::arg_msg nested $label [calc::nest_say [dict get $p msg]]]
+                }
+                return [calc::arg_msg real $label $v]
+            }
         }
     }
     return {}
@@ -14329,14 +14928,36 @@ proc calc::meas_flat {s} {
 # word `$name(...)` is an ARRAY ELEMENT reference and the obvious spelling
 # raises `can't read "name(...)": variable isn't array`.  Same trap, same site,
 # as the one `calc::arg_provenance`'s header records.
+#
+# A NUMBER argument may hold a measurement call of its own (`calc::nest_plan`),
+# whose commas sit inside its parentheses: for that kind only a TOP-LEVEL comma
+# is refused, which is the one the splitter would cut at.  A blank argument is
+# composed only where the spec lets a field be blank (`calc::arg_blank_ok`), and
+# a trailing run of those is not composed at all when a typed call may leave
+# those arguments out (`calc::meas_optional`), so the extremum verbs' untouched
+# dialog gives `ymax(w)`.
 proc calc::meas_compose {name vals} {
     if {[llength $vals] == 0} { return {} }
+    set spec [calc::fn_argspec $name]
+    set opt {}
+    foreach {k v} [calc::meas_optional $name] { lappend opt $k }
+    set n [llength $vals]
+    while {$n >= 2 && [lindex $vals [expr {$n - 2}]] in $opt
+           && [calc::meas_flat [lindex $vals [expr {$n - 1}]]] eq {}} {
+        incr n -2
+    }
     set a {}
     set sep {}
-    foreach {k v} $vals {
+    foreach {k v} [lrange $vals 0 [expr {$n - 1}]] {
         set t [calc::meas_flat $v]
-        if {$t eq {}} { return {} }
-        if {[string first {,} $t] >= 0} { return {} }
+        set row {}
+        foreach f $spec { if {[lindex $f 0] eq $k} { set row $f } }
+        if {$t eq {} && ![calc::arg_blank_ok $row $t]} { return {} }
+        if {[lindex [lindex $row 2] 0] eq {real}} {
+            if {[llength [calc::meas_args $t]] != 1} { return {} }
+        } elseif {[string first {,} $t] >= 0} {
+            return {}
+        }
         if {[calc::meas_paren_bad $t]} { return {} }
         append a $sep $t
         set sep [calc::meas_sep]
@@ -14417,13 +15038,63 @@ proc calc::meas_split {s} {
 # Zip the parsed arguments onto the formals.  Refuses on arity rather than
 # padding or truncating: a short call would otherwise reach the verb with a
 # default the user never saw.
+#
+# The ONE exception is a trailing run of formals `calc::meas_optional` names: a
+# call may stop before them, and each one left out takes the value given there.
 proc calc::meas_vals {name argl} {
     set fm [calc::meas_formals $name]
     if {[llength $fm] == 0} { return {} }
-    if {[llength $argl] != [llength $fm]} { return {} }
+    set opt [calc::meas_optional $name]
+    set n [llength $argl]
+    if {$n > [llength $fm] || $n < [llength $fm] - [llength $opt] / 2} { return {} }
     set out {}
-    foreach f $fm a $argl { lappend out $f $a }
+    set i 0
+    foreach f $fm {
+        if {$i < $n} {
+            lappend out $f [lindex $argl $i]
+        } else {
+            lappend out $f [dict get $opt $f]
+        }
+        incr i
+    }
     return $out
+}
+
+# THE TRAILING FORMALS A TYPED CALL MAY LEAVE OUT (issue 1760), and the value
+# each then takes, as a key/value list in formal order: `integBetween(w, 1u, 2u)`
+# reads dataset 0, and `ymax(w)` the whole sweep -- a blank limit is that end of
+# it (`calc::arg_blank_ok`).  Every other verb answers {} and keeps its one
+# arity, so a short `cross(...)` is refused rather than handed a default the
+# user never saw.  The dialog does not read this table: it composes what its
+# fields hold (`calc::meas_compose`).
+proc calc::meas_typed_defaults {name} {
+    switch -exact -- $name {
+        valueWhen - integBetween { return {dataset 0} }
+        ymax - ymin - xmax - xmin { return {from {} to {}} }
+    }
+    return {}
+}
+
+# ...the same table, honoured only when its keys are the LAST formals of the
+# verb's call, in order (`calc::meas_formals`).  A table that disagreed with the
+# formals answers {}: nothing is padded and the one arity stands.
+proc calc::meas_optional {name} {
+    set opt [calc::meas_typed_defaults $name]
+    if {![llength $opt]} { return {} }
+    set keys {}
+    foreach {k v} $opt { lappend keys $k }
+    set fm [calc::meas_formals $name]
+    if {[lrange $fm [expr {[llength $fm] - [llength $keys]}] end] ne $keys} { return {} }
+    return $opt
+}
+
+# How many arguments a typed call of `$name` takes, as the arity sentence says
+# it: `4`, or `1 to 3`.
+proc calc::meas_arity {name} {
+    set max [llength [calc::meas_formals $name]]
+    set min [expr {$max - [llength [calc::meas_optional $name]] / 2}]
+    if {$min == $max} { return $max }
+    return "$min to $max"
 }
 
 # Every malformed argument at once, through the SAME predicate the dialog uses
@@ -14440,6 +15111,7 @@ proc calc::meas_trouble {name vals} {
         }
         foreach f $spec {
             if {[lindex $f 0] ne $k} { continue }
+            if {[calc::arg_blank_ok $f $v]} { continue }
             set b [calc::arg_field_bad [lindex $f 1] [lindex $f 2] $v]
             if {$b ne {}} { lappend msgs $b }
         }
@@ -14865,7 +15537,7 @@ proc calc::meas_prepare {m} {
     set vals [calc::meas_vals $name [dict get $m args]]
     if {[llength $vals] == 0} {
         return [dict create ok 0 msg \
-                    [calc::meas_msg arity $name [llength [calc::meas_formals $name]]]]
+                    [calc::meas_msg arity $name [calc::meas_arity $name]]]
     }
     set bad [calc::meas_trouble $name $vals]
     if {[llength $bad] > 0} {
@@ -15392,6 +16064,11 @@ proc calc::eval_text_signals {text} {
         lappend exprs [dict get $c rpn]
         set calls [dict get $c subs]
     }
+    set inner {}
+    foreach call $calls {
+        set inner [concat $inner [calc::nest_calls [lindex $call 0] [lindex $call 1]]]
+    }
+    set calls [concat $calls $inner]
     foreach call $calls {
         lassign $call name vals
         set keys [calc::ix_rpnkeys $name]
@@ -16041,7 +16718,8 @@ proc calc::build_pad {} {
 # The steps below are those same class values, so no region's feel changes: 5
 # units for a listbox and 50 pixels for a text.
 #
-# ⚠ THE CANVAS STEP IS 3 UNITS, NOT property_form.tcl's 1 — ruled by the crew
+# ⚠ THE CANVAS STEP IS NOT property_form.tcl's 1 (it was 3 units, and since
+# issue 1760 it is 5 vertically: the note under the measurements) — ruled by the crew
 # 2026-08-15 (item 13 review), measured, and written into spec §4.1's R112a.
 # The canvas leaves -yscrollincrement at 0, so one unit is one TENTH of the
 # visible height, and 1 unit had two consequences neither of which anybody
@@ -16056,9 +16734,15 @@ proc calc::build_pad {} {
 #   over .calc.fn.vsb, one notch, Tk's class binding   -> yview 0.2205882…
 #   over .calc.fn.vsb, one notch, ours at 1 unit       -> yview 0.0735294…
 #   over .calc.fn.vsb, one notch, ours at 3 units      -> yview 0.2205882…
-# 3 units is therefore not a taste: it is the number that leaves the scrollbar
-# exactly as fast as it was before this item, to the last digit, while giving
-# the canvas body the same gesture.  Do not "restore the house 1 unit" without
+# ⚠ THAT EQUALITY WAS THE END OF THE LIST, NOT THE STEP (issue 1760).  With 56
+# entries the list could scroll less than three units in all, so 3, 4 and 5
+# units each stopped at the bottom and read the same.  Six more entries gave the
+# list one more row and the two parted: Tk's 5 units reached 0.2870 and 3 units
+# 0.2108, measured through this proc's own binding.  So the VERTICAL step is
+# Tk's own number, 5 units: a notch over the scrollbar is then Tk's class
+# binding to the last digit whatever the list holds, because it is the same
+# command.  The horizontal step has no class binding to match and stays at 3.
+# Do not "restore the house 1 unit" without
 # also excluding Scrollbar-class widgets from the walk — and that is the wrong
 # trade, because it puts a wheel-dead strip back under the horizontal
 # scrollbar (Tk's Scrollbar binding is `v`-only, so a plain wheel over an
@@ -16099,7 +16783,7 @@ proc calc::build_pad {} {
 # Region -> {name  y-target {y-step}  x-target {x-step}  {root widgets}}
 proc calc::wheel_areas {} {
     return {
-        {fn  .calc.fn.list  {3 units}
+        {fn  .calc.fn.list  {5 units}
              .calc.fn.list  {3 units}     {.calc.pw.bot.fn .calc.fn}}
         {stk .calc.stk.list {5 units}
              .calc.stk.list {5 units}     {.calc.pw.stk .calc.stk}}

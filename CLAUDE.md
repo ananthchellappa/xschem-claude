@@ -549,7 +549,8 @@ awk -v n="$n" -F'|' '/^\| \*\*[0-9]/{gsub(/[^0-9]/," ",$2); split($2,b," ")
 set -- ~/dev/*/doc/claude/issues/NUMBERING.md \
        ~/private/*/doc/claude/issues/NUMBERING.md  # EVERY clone on this machine
 for f; do [ -e "$f" ] || echo "!! $f matched nothing -- fix the path, not the number"; done
-ls ~/dev/*/doc/claude/issues/"$n"-* ~/private/*/doc/claude/issues/"$n"-* 2>/dev/null
+ls ~/dev/*/doc/claude/issues/"$n"-* ~/private/*/doc/claude/issues/"$n"-* \
+   ~/*/*/.claude/worktrees/*/doc/claude/issues/"$n"-* 2>/dev/null
 /usr/bin/grep -lw "$n" "$@"                        # or a reservation with no file
 ```
 
@@ -559,6 +560,8 @@ ls ~/dev/*/doc/claude/issues/"$n"-* ~/private/*/doc/claude/issues/"$n"-* 2>/dev/
 - `~/dev/*` plus `~/private/*` is every checkout today; add any clone living elsewhere
   (a missed clone has cost a renumbering). The `[ -e "$f" ]` loop catches a glob matching
   nothing (grep would exit 2 with silent stdout, reading "free").
+- A batch's worktree mints too: the third `ls` glob is for it (issue 1760: 1750 to 1752
+  were held there, unseen).
 - **Use `/usr/bin/grep`, never the bare `grep`**: here `grep` is a function routing to
   ugrep, which misses forms like `-lE "(^|[^0-9])$n([^0-9]|$)"`.
 - **`1500–1599` is reserved for the op-wcard branch: after 1499 the next number here

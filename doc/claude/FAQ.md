@@ -14,6 +14,44 @@ Newest entries on top.
 
 ---
 
+## Q102. I gate a current with `(time>t0)*(time<t1)` and integrate it, and I get half the charge ngspice's `INTEG` reports. What do I write?
+
+- **Asked:** 2026-11-24 (a designer's hand-off of 2026-11-21)
+- **Project state:** branch `calc-event` on `fluid-editing` at `2c2c2093a`, issue 1760.
+
+**Write `integBetween(wave, from, to)`.** It is the area between two X values with the
+wave's own interpolated value at each, which is what ngspice's `INTEG ... FROM TO` computes.
+
+**Why the gate loses area.** `w*(time>t0)` is still a wave on the simulator's samples: it is
+`w` at every sample after `t0` and zero at every sample up to it. `integ()` then joins those
+samples with straight lines, so the step that straddles `t0` runs from zero up to the first
+kept sample: a triangle, where the wave itself was at full height. The simulator takes few
+samples just before a sharp event and the current is largest there, so that one step can
+hold most of the area. On the bench this came from, the gated form gave 4.77e-14 C and
+`integBetween` 9.38e-14 C, ngspice's own number. A gate picks samples; it is not a limit.
+
+**The limit can be the event itself.** A number argument takes a measurement:
+
+```
+integBetween(it(vsup), cross(vt(en), 0.6, 1, rising), cross(vt(en), 0.6, 1, rising) + 80n)
+value(vt(out), cross(vt(trip), 0.6, 1, falling))
+valueWhen(vt(out), vt(trip), 0.6, falling, 1)
+ymax(vt(out), 2u, 5.9u)      xmax(vt(out), 2u, 5.9u)      ymin(vt(a) - vt(b))
+```
+
+`valueWhen` is the second line in one verb (ngspice's `FIND ... WHEN`). `ymax`, `ymin`,
+`xmax` and `xmin` give a wave's extremes and where they are, over the whole sweep or
+between two X values; leave the second out for "to the end", and write `ymax(w, , 5u)` for
+"from the start". A window's own limits count, interpolated, which ngspice's `MAX` does not
+do: the two differ only when the wave is still climbing at a limit between two samples.
+
+**What a number argument does not take.** A signal (`vt(ref)` is a wave, not one number)
+and arithmetic with no measurement in it. A measurement inside another measurement's WAVE
+argument is refused too, so a window is written with the limits, not with a gate.
+
+Code: `calc::nest_resolve`, `calc::area_between`, `calc::extremum_in` in
+`src/calculator.tcl`; spec R423 to R427; `tests/headless/test_calc_event_verbs_1760.tcl`.
+
 ## Q101. The Outputs pane of the ASE-L window shows eight rows and I have thirty measures. Can I make it taller?
 
 - **Asked:** 2026-11-24

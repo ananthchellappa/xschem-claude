@@ -5000,7 +5000,27 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   pointer line, and take the number here only if that clone has moved past it or says it
   leaves it.
 
-**The next free number is 1750.**
+~~**The next free number is 1750.**~~
+- **1750 to 1759**: NOT TAKEN HERE. On 2026-11-24 this clone's pointer and
+  `~/private/xschem-private`'s both read 1750. That evening a batch of that clone minted
+  1750, 1751 and 1752 in a workflow worktree of its own
+  (`~/private/xschem-private/.claude/worktrees/`), where the two checks of CLAUDE.md did
+  not look: this clone had taken 1751 for the issue below, and the tool that cuts the patch
+  for that tree found the second 1751 before anything was committed here. The issue was
+  renumbered to 1760 the same hour. 1753 to 1759 are left to that clone, whose pointer
+  read 1753. None of the ten names an issue here.
+- **1760**: the Calculator refused a measurement call in a number argument
+  (`value(w, cross(...))`), and had no area between two X values, no value at a crossing
+  of another wave and no scalar extremum (a designer's hand-off of 2026-11-21, asked for by
+  the user on 2026-11-24). Built by the change that adds its issue file: number arguments
+  take a measurement, and the verbs `integBetween`, `valueWhen`, `ymax`, `ymin`, `xmax`,
+  `xmin`. Minted 2026-11-24 after both checks AND a look into every worktree: no checkout
+  holds 1760 as an issue and no `NUMBERING.md` names it; `~/private/xschem-private`'s
+  batch pointer read 1753 that hour, seven below it.
+  **The two clones still mint from one stretch.** The pointer below is a candidate only:
+  run both checks of CLAUDE.md, worktrees included, and read that clone's pointer first.
+
+**The next free number is 1761.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

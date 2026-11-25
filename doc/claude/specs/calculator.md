@@ -329,8 +329,15 @@ and wholly obscured — so the guard has to be stacking order or `winfo containi
     `break`s, it **replaced** `Scrollbar`'s own class binding and made the one place the
     wheel already worked **3x slower**. Measured on `:99`, one notch over `.calc.fn.vsb`:
     Tk's class binding `0.2205882…`, ours at 1 unit `0.0735294…`, ours at 3 units
-    `0.2205882…`. 3 units is the number that leaves the scrollbar exactly as it was
-    before the item, to the last digit. Do not "restore the house 1 unit" without also
+    `0.2205882…`. ~~3 units is the number that leaves the scrollbar exactly as it was
+    before the item, to the last digit.~~ **Corrected by issue 1760: the vertical step is
+    5 units, Tk's own.** The three figures above were equal because that list could
+    scroll less than three units in all, so 3, 4 and 5 units each stopped at its end.
+    Six more catalogue entries gave the list one more row, and one notch over
+    `.calc.fn.vsb` then read `0.2870…` for Tk's class binding and `0.2108…` for ours at
+    3 units. With 5 units the two are the same command, so they agree whatever the list
+    holds. The horizontal step stays 3 units (Tk has no class binding to match there).
+    Do not "restore the house 1 unit" without also
     excluding `Scrollbar` widgets from the walk — and that is the wrong trade, because
     Tk's Scrollbar binding is `v`-only, so a plain wheel over a **horizontal** scrollbar
     does nothing at all and a wheel-dead strip comes back under the function list.
@@ -1389,6 +1396,10 @@ opcode, **✘** = out of scope v1.
 | `settlingTime` | scalar | time to stay inside a band | T (on `cross`) |
 | `overshoot` | scalar | % past final value | T, **own engine door — NOT on `cross`** (an extremum is not a crossing; see R418c) |
 | `value` | scalar | the wave's value at an X point, interpolated (R422) | T, **own engine door** — refuses an X outside the sweep |
+| `valueWhen` | scalar | the wave's value at the Nth crossing of a trigger wave (R425) | T (on `cross`, the wave read through the shared series door) |
+| `integBetween` | scalar | area under the wave between two X values, the wave interpolated at both (R424) | T (the shared series door) |
+| `ymax` / `ymin` | scalar | largest / smallest Y of the wave, over all of it or between two X values (R426) | T (the shared series door) |
+| `xmax` / `xmin` | scalar | the X where the wave is largest / smallest (R426) | T (the shared series door) |
 | `dutyCycle` | scalar/wave | high fraction of a period — one value per cycle (§7.2ab) | T (on `cross`) |
 | `frequency` / `freq` | scalar/wave | frequency from crossings (one per period for `cycle` 0) | T (on `cross`) |
 | `period_jitter` / `freq_jitter` | scalar | period/frequency spread | T |
@@ -1717,6 +1728,79 @@ Decided 2026-10-02. Full reasoning and measurements:
     R402's temporary column). Fences: band ET15 of `test_calc_eval_text`; the derived bands of
     `test_calc_measure` (MT11, MT13, MT21, MT28 — the open half: dimensionless on both arms),
     `test_calc_skeleton` (S23/S24/S28) and `test_calc_widgets` (CW14) carry it as a clickable verb.
+  - **Amended by issue 1760:** an X within a billionth of the sweep's span of either end is that
+    end (`calc::span_snap`). A linearized transient ends an ulp short of its stop time, so
+    `value(w, 10m)` was refused as outside a sweep whose end the user had just named. Anything
+    farther out is refused as before.
+
+- **R423** (issue 1760, from a designer's hand-off of 2026-11-21) **A NUMBER argument of a
+  measurement may hold a measurement.** `value(vt(a1), cross(vt(en), 0.6, 1, falling))` reads a
+  node at the instant a comparator trips. Before this the nested call was accepted inside a wave
+  argument and refused in a number argument (*"X point must be a finite number"*), so the instant
+  had to be read off one row and typed into the next.
+  - **What a number argument may hold:** a number, read first and by the same reader as before
+    (`calc::num_read`), so every text that was a number is handled as it was; or an expression
+    that answers one number and holds at least one measurement call: the call alone, or
+    arithmetic over numbers and calls (`cross(...) + 80n`), in R610's language. Nesting goes
+    eight calls deep.
+  - **What it may not hold:** a signal, the sweep, a running function (one number is not a
+    wave), or arithmetic with no measurement in it (`+3u`, `2*1u`). These keep the sentence they
+    always had, *"<field> must be a finite number (<text>)."*
+  - **Refusals from inside** name the outer verb and the field: *"value: X point: cross takes 4
+    arguments."* before any read; *"value: X point: Cross: there is no 1st falling crossing of
+    that level in this sweep."* after one. A nested call that answers a waveform or a list is
+    refused the same way.
+  - **Every door:** the argument dialog's field (R412a's line shows the refusal), a call typed
+    in the buffer and evaluated with Eval, an ASE-L Outputs row (R609), and a call that is an
+    operand of an expression. The nested call is measured in the same database as the call
+    around it, inside that call's own bracket (`calc::nest_resolve` at the head of
+    `calc::aq_arg_invoke`). R208d's refusal of a signal with no analysis and ASE-L's save list
+    both read the nested calls' signals (`calc::nest_calls`).
+  - **Declared limit:** a measurement inside a measurement's WAVE argument is still refused
+    (`calc::ix_msg nestarg`).
+  - Fence: band EVA of `test_calc_event_verbs_1760`; band PG14E of `test_calc_pick` (the window's
+    Eval press); row SR5 of `test_calc_scratch_reuse` (the engine step it uses is inside a bracket).
+
+- **R424** (issue 1760) **`integBetween(wave, from, to)` — the area under the wave between two X
+  values, the wave interpolated at both** (ngspice's `INTEG ... FROM TO`). The catalogue had
+  `integ` over the whole sweep and nothing with limits, and the gated form
+  `integ(w*(time>t0)*(time<t1))` is a different thing: the gate drops samples, so the interval
+  that straddles each limit is counted as a triangle from zero. On the hand-off's bench that
+  form answered 4.77e-14 C where ngspice's `INTEG` gave 9.38e-14 C. `integ` is unchanged.
+  - Refused: a limit that is not a number, `from` not below `to`, a limit outside the sweep (R422's
+    rule and its rounding hair), an analysis with no sweep, a sweep that turns back on itself.
+  - A DC sweep is read against its first column, as `value` reads it, in either direction.
+  - A fourth argument names the dataset; a call may leave it out (R427).
+
+- **R425** (issue 1760) **`valueWhen(wave, trigger, level, edge, nth)` — the wave's value at the
+  Nth crossing of a trigger wave** (ngspice's `FIND ... WHEN`). It is `cross` on the trigger and
+  `value`'s interpolation on the wave, so it answers the same number as
+  `value(wave, cross(trigger, level, nth, edge))`. `cross`'s refusals and its absence come back as
+  `cross` built them. `nth` 0 (every crossing) is refused: the value is read at one. The wave
+  comes from the buffer and the trigger from the dialog. A sixth argument names the dataset.
+
+- **R426** (issue 1760) **`ymax(wave)`, `ymin(wave)`, `xmax(wave)`, `xmin(wave)` — the largest and
+  smallest value of a wave and the X where each occurs** (ngspice's `MAX`/`MIN` and their
+  `at=`). Two more arguments give a window, `ymax(wave, from, to)`; either may be left out or
+  left empty for that end of the sweep.
+  - **The window's own limits count**, with the wave's interpolated value there, beside the
+    samples inside. Between two samples the wave is a straight line, so its extremum over a
+    window is at a sample or at a limit. ngspice reads the samples only; the two differ when
+    the wave is still climbing at a limit that falls between samples.
+  - Among equal values the first one met wins. A sample that is not a finite number is passed
+    over; a window holding none is an absence.
+  - Refused: a limit that is not a number, `from` above `to`, a limit outside the sweep, an
+    analysis with no sweep.
+
+- **R427** (issue 1760) **A typed call may leave out a trailing argument only where
+  `calc::meas_typed_defaults` names it:** the dataset of `integBetween` and `valueWhen` (0), the
+  window of the four extremum verbs (blank). Each one left out takes the value given there. Every other verb keeps its one
+  arity, so a short `cross(...)` is still refused (R421a's composed form: *"a short call would
+  otherwise reach the verb with a default the user never saw"*). The refusal names the range:
+  *"ymax takes 1 to 3 arguments."* A field whose spec default is blank (the two window limits)
+  may be left blank in the dialog and written as an empty argument, `ymax(w, , 3m)`.
+  - Fence for R424 to R427: bands EVB to EVE of `test_calc_event_verbs_1760`; the derived bands of
+    `test_calc_measure` (MT10's fifth class, MT11, MT13, MT21, MT28).
 
 ### 7.2a Three corrections this table needed before it could build a catalogue
 

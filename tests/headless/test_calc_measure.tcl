@@ -3858,28 +3858,73 @@ group MT10 {
     # that grew a PRIVATE reader lands here with the wrong answer and reddens this
     # class's own row, which is what `mt_closure_raw` returning anything other than
     # the shared door's name measures.
+    #
+    # AND FIVE-WAY, BY THE SAME PARAGRAPH (issue 1760).  `integBetween` and the
+    # four extremum verbs read samples and reach `calc::cross` nowhere, own no
+    # engine door and stand on no measurement verb: they read through the ONE
+    # SHARED series door and through nothing else.  The old split put them with
+    # the verb-delegates, whose claim (a closure that reaches an own-door VERB)
+    # is false of them.  So the instrument that tells the fourth class apart
+    # tells this one apart too -- its closure's readers are exactly the shared
+    # door -- and the class carries the claim that is true of it, structurally
+    # and through a refusing stub on that door.  `valueWhen` asks `cross` for
+    # the trigger and reads the signal through the same door, so it lands in the
+    # fourth class beside `settlingTime` with no change to that class's claim.
     set owndoor {}
     foreach v $verbs {
         if {[mt_direct_raw $v] eq {yes}} { lappend owndoor $v }
     }
-    set delegates {} ; set verbdeleg {} ; set sharedoor {}
+    set delegates {} ; set verbdeleg {} ; set sharedoor {} ; set seriesonly {}
     foreach v $verbs {
         if {[mt_direct_raw $v] eq {yes}} continue
         if {[mt_reaches_cross $v] eq {reaches}} {
             if {[mt_closure_raw $v] ne {}} { lappend sharedoor $v ; continue }
             lappend delegates $v ; continue
         }
+        if {[mt_closure_raw $v] eq {series_of}} { lappend seriesonly $v ; continue }
         lappend verbdeleg $v
     }
-    check "MT10 T1 the derived verb set PARTITIONS FOUR WAYS by the same structural instruments the claims below use -- the verbs that DELEGATE to calc::cross, the verbs that own an engine door of their own, and the verbs that own no door and reach cross NOWHERE because they are layered on another MEASUREMENT VERB -- with a floor on each class and the partition asserted as a cover with no overlap, so a verb that quietly grew a door, or quietly stopped delegating, MOVES between classes and is measured where it lands instead of being hand-excluded from a single claim.  ⚠ The three are NOT interchangeable: a cross-delegate must reach cross and read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and a verb-delegate must do neither while reaching an own-door VERB -- which is what stops the third class being a hiding place for a verb reading samples through a private helper.  The membership of one name per class rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor $verbdeleg $sharedoor]] \
+    check "MT10 T1 the derived verb set PARTITIONS FOUR WAYS by the same structural instruments the claims below use -- the verbs that DELEGATE to calc::cross, the verbs that own an engine door of their own, and the verbs that own no door and reach cross NOWHERE because they are layered on another MEASUREMENT VERB -- with a floor on each class and the partition asserted as a cover with no overlap, so a verb that quietly grew a door, or quietly stopped delegating, MOVES between classes and is measured where it lands instead of being hand-excluded from a single claim.  ⚠ The three are NOT interchangeable: a cross-delegate must reach cross and read no samples, an own-door verb must NOT reach cross and must be the ONLY reader in its own closure, and a verb-delegate must do neither while reaching an own-door VERB -- which is what stops the third class being a hiding place for a verb reading samples through a private helper.  The membership of one name per class rides along as a positive control on the instrument"         [list $present [lsort [concat $delegates $owndoor $verbdeleg $sharedoor $seriesonly]] \
               [mt_atleast [llength $delegates] 3] [mt_atleast [llength $owndoor] 1] \
               [mt_atleast [llength $verbdeleg] 1] [mt_atleast [llength $sharedoor] 1] \
               [expr {[lsearch -exact $delegates riseTime] >= 0 ? {has} : {MISSING}}] \
               [expr {[lsearch -exact $owndoor overshoot] >= 0 ? {has} : {MISSING}}] \
               [expr {[lsearch -exact $verbdeleg gainBwProd] >= 0 ? {has} : {MISSING}}] \
               [expr {[lsearch -exact $sharedoor settlingTime] >= 0 ? {has} : {MISSING}}] \
-              [llength [mt_overlap $delegates $owndoor $verbdeleg $sharedoor]]] \
+              [llength [mt_overlap $delegates $owndoor $verbdeleg $sharedoor $seriesonly]]] \
         [list $verbs $verbs atleast3 atleast1 atleast1 atleast1 has has has has 0]
+    # THE FIFTH CLASS, structurally and behaviourally.  Structurally: no direct
+    # engine verb, `cross` nowhere, no own-door VERB in the closure, and the
+    # closure's readers exactly the shared series door.  Behaviourally: with
+    # that door replaced by a stub that refuses, the verb refuses and carries
+    # the stub's own words, the stub called exactly once -- so the samples came
+    # through the door and from nowhere else.  The argument table must name
+    # exactly this class, so a sixth member enlists itself.
+    set stubargs5 [list \
+        integBetween {{v(ramp)} 0.001 0.002 0} \
+        ymax {{v(ramp)}} ymin {{v(ramp)}} xmax {{v(ramp)}} xmin {{v(ramp)}}]
+    set soBAD {} ; set soN 0
+    foreach v $seriesonly {
+        if {[mt_direct_raw $v] ne {no}} { lappend soBAD "$v=OWNDOOR" ; continue }
+        if {[mt_reaches_cross $v] ne {no}} { lappend soBAD "$v=REACHESCROSS" ; continue }
+        if {[llength [mt_closure_verbdoors $v $owndoor]]} { lappend soBAD "$v=VERBDOOR" ; continue }
+        if {![dict exists $stubargs5 $v]} { lappend soBAD "$v=NOARGS" ; continue }
+        incr soN
+        set soR [mt_vstub_run series_of \
+            {ok 0 why badtoken xs {} ys {} dest {} detail {MTSTUB refused this on purpose}} {
+            set a [mt_call $v {*}[dict get $stubargs5 $v]]
+            return [list [mt_disp $a] [mt_msg $a] [llength $::mt_vstub_log]]
+        }]
+        if {[mt_at $soR 0] ne {refused}} { lappend soBAD "$v=[mt_at $soR 0]" ; continue }
+        if {![string match {*MTSTUB*} [mt_at $soR 1]]} { lappend soBAD "$v=nomarker" ; continue }
+        if {[mt_at $soR 2] ne {1}} { lappend soBAD "$v=calls:[mt_at $soR 2]" }
+    }
+    check "MT10 T1 ...and the FIFTH class carries the claim that is true of IT: each of its verbs reads its samples through the ONE SHARED series door and through nothing else -- no direct engine verb, calc::cross nowhere, no own-door verb in its closure -- and with that door replaced by a REFUSING stub it refuses and carries the stub's own words, the stub called exactly once.  The class holds integBetween and the extremum verbs by derivation, a floor rides along, and the probe's argument table must name exactly this class" \
+        [list $present $seriesonly $soBAD [mt_sized $soN [llength $seriesonly]] \
+              [lsort [dict keys $stubargs5]] [mt_atleast [llength $seriesonly] 5] \
+              [expr {[lsearch -exact $seriesonly ymax] >= 0 ? {has} : {MISSING}}] \
+              [llength [info commands ::mt_vstub_keep]]] \
+        [list $verbs $seriesonly {} sized $seriesonly atleast5 has 0]
     check "MT10 the verb set this band's claims are about is DERIVED from the catalogue and from calc::fn_argspec -- every route-T name with a non-empty argument spec, minus the primitive they are layered on -- so a new layered verb ENLISTS ITSELF in every row below instead of being measured by nothing.  The floor rides along because an empty derivation would make all of them vacuous, and `cross` is asserted absent because it is the one name that must not be in it" \
         [list [mt_atleast [llength $verbs] 3] \
               [expr {[lsearch -exact $verbs cross] < 0 ? {nocross} : {CROSS}}] \
@@ -3978,7 +4023,8 @@ group MT10 {
         slewRate  {{v(sq)} 0 1 10 90 1 rising 0} \
         frequency {{v(sq)} 0.5 rising 1} \
         freq      {{v(sq)} 0.5 rising 1} \
-        settlingTime {{v(sq)} 1 1 0 0 0}]
+        settlingTime {{v(sq)} 1 1 0 0 0} \
+        valueWhen {{v(lp)} {v(sq)} 0.5 rising 1}]
     # ⚠ THE SWEEP COVERS THE FOURTH CLASS AS WELL, and that is the point of adding
     # it rather than dropping `settlingTime` from the drive table: a verb that
     # delegates to `cross` AND owns a shared reader must STILL carry `cross`'s
@@ -4315,6 +4361,34 @@ set AG_WANT [list \
         {final   {Final value}         real                         1 {}}
         {dataset {Dataset}             int                          0 0}
     } \
+    valueWhen {
+        {rpnTrig {Trigger (RPN)}       rpn                          1 {}}
+        {level   {Trigger level}       real                         1 {}}
+        {edge    {Edge}                {enum rising falling either} 0 rising}
+        {nth     {Occurrence (Nth)}    int                          0 1}
+        {dataset {Dataset}             int                          0 0}
+    } \
+    integBetween {
+        {t0      {From (X)}            real                         1 {}}
+        {t1      {To (X)}              real                         1 {}}
+        {dataset {Dataset}             int                          0 0}
+    } \
+    ymax {
+        {from    {From (X)}            real                         0 {}}
+        {to      {To (X)}              real                         0 {}}
+    } \
+    ymin {
+        {from    {From (X)}            real                         0 {}}
+        {to      {To (X)}              real                         0 {}}
+    } \
+    xmax {
+        {from    {From (X)}            real                         0 {}}
+        {to      {To (X)}              real                         0 {}}
+    } \
+    xmin {
+        {from    {From (X)}            real                         0 {}}
+        {to      {To (X)}              real                         0 {}}
+    } \
     bandwidth {
         {drop     {Drop (dB)}          real                         1 {}}
         {units    {Units}              {enum magnitude dB}          0 magnitude}
@@ -4357,7 +4431,7 @@ group MT11 {
         [list [expr {[info procs ::calc::fn_argspec] ne {} ? 1 : 0}] \
               [pcall calc::fn_fields] \
               [llength [pcall calc::catalogue]] $agbadarity] \
-        [list 1 {name category route returns insert help} 110 {}]
+        [list 1 {name category route returns insert help} 116 {}]
     # ⚠ THE CONTROL FOR EVERY `{}` BELOW.  An empty answer and a missing proc are
     # the same empty string to a careless reader; `ag_spec` tells them apart, and
     # without this row the fall-through sweep would be green on a tree with no
@@ -4378,7 +4452,7 @@ group MT11 {
 
     # --- the clickable set, derived -----------------------------------------
     check "MT11 the clickable set is DERIVED from the tree -- every route-T catalogue row that has a proc of its own -- so a verb whose proc lands without its argument spec, or the reverse, reddens here and in the fall-through sweep below rather than composing a call to nothing" \
-        [ag_verbs] {bandwidth cross delay dutyCycle freq frequency gainBwProd gainMargin overshoot phaseMargin riseTime settlingTime slewRate value}
+        [ag_verbs] {bandwidth cross delay dutyCycle freq frequency gainBwProd gainMargin integBetween overshoot phaseMargin riseTime settlingTime slewRate value valueWhen xmax xmin ymax ymin}
     set agempty {}
     set agnswept 0
     set agnonempty 0
@@ -4394,7 +4468,7 @@ group MT11 {
         if {[llength $rows] != 0} { lappend agempty $nm=([ag_canon $rows]) }
     }
     check "MT11 the route-T fall-through is LEGIBLE rather than accidental: every catalogue name that is not one of the clickable set answers an EMPTY spec, and each member of that set answers a non-empty one -- swept over the whole table, with both counts riding along so neither direction can be vacuous" \
-        [list $agnswept $agnonempty $agempty] {110 14 {}}
+        [list $agnswept $agnonempty $agempty] {116 20 {}}
 
     # --- the specifications, by literal, ONE ROW EACH ------------------------
     # ⚠ TWO PAIRS OF CATALOGUE NAMES ARE NOW SERVED BY ONE `switch` ARM EACH
@@ -4407,7 +4481,8 @@ group MT11 {
     # `calc::bandwidth`, so its spec IS that verb's spec by definition, and row
     # GBW6 asserts the two are byte-identical through the interpreter as well.
     foreach agv {cross riseTime delay dutyCycle slewRate frequency freq settlingTime \
-                 overshoot bandwidth gainBwProd gainMargin phaseMargin} {
+                 overshoot bandwidth gainBwProd gainMargin phaseMargin \
+                 valueWhen integBetween ymax ymin xmax xmin} {
         check "MT11 the argument spec for $agv is exactly the ruled field list -- key, label, kind, requiredness and default, in DISPLAY order (labels and the edge default are UNRATIFIED: the `rule` debt names them and this row is where an overrule lands)" \
             [ag_canon [ag_rows $agv]] [ag_canon [dict get $AG_WANT $agv]]
     }
@@ -4451,10 +4526,13 @@ group MT11 {
         set n 0
         foreach row [ag_rows $agv] { if {[ag_cell [ag_cell $row 2] 0] eq {rpn}} { incr n } }
         set want [expr {($agv eq {delay} || $agv eq {gainMargin} || $agv eq {phaseMargin}) ? 2 : 0}]
+        # `valueWhen` takes the wave it reads from the buffer and asks for the
+        # TRIGGER wave in its dialog: one typed operand, and one from the buffer.
+        if {$agv eq {valueWhen}} { set want 1 }
         if {$n != $want} { lappend agbadrpn $agv=$n/want$want }
     }
-    check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except the two verbs that take TWO operands and therefore cannot take either from the buffer alone: `delay`, whose B side no ruling supplies, and `gainMargin`, whose second operand is the loop PHASE and has no node-name spelling at all, because `xschem raw add` on an ac database creates one REAL column and no phase sibling" \
-        [list [llength [ag_verbs]] $agbadrpn] {14 {}}
+    check "MT11 R421 the expression operand comes from the BUFFER and is not a dialog field -- so no spec offers an `rpn` field except the two verbs that take TWO operands and therefore cannot take either from the buffer alone: `delay`, whose B side no ruling supplies, and `gainMargin`, whose second operand is the loop PHASE and has no node-name spelling at all, because `xschem raw add` on an ac database creates one REAL column and no phase sibling -- and `valueWhen`, which reads the buffer's wave at a crossing of a SECOND wave and so asks for that one" \
+        [list [llength [ag_verbs]] $agbadrpn] {20 {}}
 
     # --- the keys are the formals, in two directions ------------------------
     set agbadformal {} ; set agnchecked 0
@@ -5216,7 +5294,7 @@ group MT13 {
     check "MT13 ...and the four-way census of those decisions is the shape the catalogue really has: every row decides INSERT, MEASURE or UNAVAILABLE, ZERO rows decide `inert`, and ZERO decide nothing -- so `calc::inert`'s phase-5 promise is UNREACHABLE from a browser click today, which is a derived property of the live table and the reason the `inert` arm is a DEFENSIVE one" \
         [list $ac_cnt(insert) $ac_cnt(measure) $ac_cnt(unavailable) \
               $ac_cnt(inert) $ac_cnt(none) $ac_n] \
-        {61 35 14 0 0 110}
+        {61 41 14 0 0 116}
     # the census above pins four numbers; this row is what keeps the FIRST of
     # them honest against the field it is supposed to be counting, since
     # `insert` is the only one of the six catalogue fields the decision reads.
@@ -9922,6 +10000,12 @@ group MT21 {
         gainMargin   {rpnMag {v(lp)} rpnPh {ph(lp)}}
         phaseMargin  {rpnMag {v(lp)} rpnPh {ph(lp)}}
         value        {x 0.001}
+        valueWhen    {rpnTrig {v(sq)} level 0.5}
+        integBetween {t0 0.001 t1 0.002}
+        ymax         {}
+        ymin         {}
+        xmax         {}
+        xmin         {}
     }
     # the per-verb legs, plus the `real`-field SPLIT.
     #
@@ -14721,8 +14805,9 @@ proc m28_train {g} {
 #             sweep's own X in the sweep's own unit.
 #   freqgate  gated the OTHER way already, by issue 1653.
 #
-# `@R@` is the ramp, `@T@` the train, `@A@` the axis's first sample --
-# substituted at the drive site, so the table holds no fixture knowledge.
+# `@R@` is the ramp, `@T@` the train, `@A@` the axis's first sample and `@B@`
+# its last -- substituted at the drive site, so the table holds no fixture
+# knowledge.
 # ---------------------------------------------------------------------------
 proc m28_timegate {} {
     return [list \
@@ -14737,8 +14822,19 @@ proc m28_open {} {
     return [list cross {@T@ 0.5 0 rising} \
                  dutyCycle {@T@ 0.5} \
                  overshoot {@T@ 0 0.25} \
-                 value {@R@ @A@}]
+                 value {@R@ @A@} \
+                 valueWhen {@T@ @T@ 0.5 rising 1} \
+                 ymax {@T@} \
+                 ymin {@T@} \
+                 xmax {@T@} \
+                 xmin {@T@} \
+                 integBetween {@R@ @A@ @B@}]
 }
+# the members of the open half whose answer is in the SWEEP'S OWN UNIT (an X, or
+# an area over X) and so is a different number on the two arms by construction:
+# `cross` has its own legs in row MT28/D, these three carry "finite, and not the
+# transient answer".
+proc m28_xunit {} { return {xmax xmin integBetween} }
 proc m28_freqgate {} {
     return [list bandwidth   {{v(lp)} 3 magnitude low 0} \
                  gainBwProd  {{v(lp)} 3 magnitude low 0} \
@@ -14761,6 +14857,7 @@ proc m28_args {spec g} {
             @R@ { lappend m28out [m28_ramp $g] }
             @T@ { lappend m28out [m28_train $g] }
             @A@ { lappend m28out [bw_dget $g a] }
+            @B@ { lappend m28out [bw_dget $g b] }
             default { lappend m28out $m28w }
         }
     }
@@ -14838,7 +14935,7 @@ group MT28 {
               [mt_atleast [llength $m28POP] 13] \
               [mt_sized [llength $m28DECL] [llength $m28POP]]] \
         [list 1 tran time -1 {} {} 1 ac frequency -1 {} {} {} {} {} \
-              {cross delay dutyCycle freq frequency riseTime settlingTime slewRate} \
+              {cross delay dutyCycle freq frequency riseTime settlingTime slewRate valueWhen} \
               atleast13 sized]
 
     # --- B: every GATED verb refuses the `ac` read, in its OWN voice ---------
@@ -15018,6 +15115,16 @@ group MT28 {
             }
             continue
         }
+        if {[lsearch -exact [m28_xunit] $m28v] >= 0} {
+            # an X, or an area over X: finite on the ac arm and NOT the number
+            # the transient arm gave, which is the leg that stops this passing
+            # over an arm that never changed.
+            if {![mt_finite $m28av]} { lappend m28DBAD "$m28v=AC-NONFINITE" }
+            if {[mt_distinct $m28av $m28tv] ne {distinct}} {
+                lappend m28DBAD "$m28v=AC-SAME-AS-TRAN"
+            }
+            continue
+        }
         set m28n [mt_len $m28tv]
         if {![string is integer -strict $m28n] || $m28n < 1} { lappend m28DBAD "$m28v=SHAPE" ; continue }
         set m28allsame 1
@@ -15043,7 +15150,7 @@ group MT28 {
         [list $m28DBAD $m28FBAD [bw_sortg $m28DSAME] \
               [mt_sized $m28DN [llength [dict keys [m28_open]]]] \
               [mt_atleast $m28DN 3] [mt_atleast $m28FN 4]] \
-        [list {} {} {dutyCycle overshoot value} sized atleast3 atleast4]
+        [list {} {} {dutyCycle overshoot value valueWhen ymax ymin} sized atleast3 atleast4]
 
     # --- E: the NO-DATA path is not hijacked, which is why the gate is `eq ac`
     pcall xschem raw clear

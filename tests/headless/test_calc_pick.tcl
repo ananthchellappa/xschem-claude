@@ -868,6 +868,45 @@ group PG14 {
 }
 
 # =============================================================================
+# PG14E -- EVAL OF A CALL WHOSE NUMBER ARGUMENT IS ITSELF A MEASUREMENT
+# (issue 1760), in the real window: the text in the buffer, a real press on
+# `.calc.mode.eval`.  The fixture's ramp is 1 V/ms and its pulse crosses 0.5 at
+# 1.0 ms rising and 2.2 ms falling, so the numbers are the deck's and not read
+# back.  The counted rows are tests/headless/test_calc_event_verbs_1760.tcl;
+# this band is the one door that suite cannot press.
+# =============================================================================
+group PG14E {
+    pcall calc::pick_end cancel
+    pcall calc::stk_set {}
+    set e1 {value(vt(ramp), cross(vt(sq), 0.5, 1, rising))}
+    pcall calc::buf_set_expr $e1
+    pg_press .calc.mode.eval
+    set got1 [pg_buf]
+    check "PG14E Eval of value(wave, cross(...)) puts the wave's value at the crossing in the buffer (the ramp at 1.0 ms: 1.0), pushes the typed call on the stack, and says the provenance" \
+        [list [pg_word [expr {[string is double -strict $got1] && abs($got1 - 1.0) < 1e-9}] value "buf=$got1"] \
+              [pcall calc::stk_get] \
+              [pg_word [string match {value(*) = *} [lindex [pcall calc::status_history] 0]] provenance \
+                   [lindex [pcall calc::status_history] 0]]] \
+        [list value [list $e1] provenance]
+    pcall calc::stk_set {}
+    set e2 {integBetween(vt(ramp), cross(vt(sq), 0.5, 1, rising), cross(vt(sq), 0.5, 1, falling))}
+    pcall calc::buf_set_expr $e2
+    pg_press .calc.mode.eval
+    set got2 [pg_buf]
+    check "PG14E ...and of integBetween between two crossings: the ramp's area from 1.0 to 2.2 ms, 1.92e-3" \
+        [pg_word [expr {[string is double -strict $got2] && abs($got2 - 0.00192) < 1e-12}] value "buf=$got2"] value
+    pcall calc::stk_set {}
+    set e3 {value(vt(ramp), cross(vt(sq), 5, 1, rising))}
+    pcall calc::buf_set_expr $e3
+    pg_press .calc.mode.eval
+    check "PG14E a crossing that does not exist is refused on the status line behind the outer verb and its field, and the buffer and the stack are left as they were" \
+        [list [lindex [pcall calc::status_history] 0] [pg_buf] [pcall calc::stk_get]] \
+        [list "value: X point: [calc::cross_msg absent 1st rising]" $e3 {}]
+    pcall calc::stk_set {}
+    .calc.buf delete 1.0 end
+}
+
+# =============================================================================
 # PG15 — R208c THROUGH THE REAL LOAN: Eval and Plot on analysis-qualified tokens
 # =============================================================================
 # The user, 2026-10-11: "A simulation could have both AC and TRAN simulations.

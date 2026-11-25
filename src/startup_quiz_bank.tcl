@@ -957,6 +957,40 @@ startup_quiz::add calc-measure {
          && [calc::meas_verb slewRate] && [calc::meas_verb settlingTime] && [calc::meas_verb frequency]
          && [calc::meas_verb gainMargin] && [calc::meas_verb gainBwProd]}
 }
+startup_quiz::add calc-nested-number {
+  type tf  kind shipped  topic {Measurements}
+  q   {In a Calculator measurement, a number argument can itself be a measurement:
+       value(vt(out), cross(vt(en), 0.6, 1, rising)) reads out at the moment en crosses
+       0.6.}
+  ok  true
+  why {A number argument takes a measurement call, or arithmetic around one such as
+       cross(...) + 80n, so the time of an event is never read off one row and typed into
+       the next. A bare signal in that place is still refused: it is not one number.}
+  proof {[P_proc ::calc::nest_resolve] && [P_body ::calc::aq_arg_invoke {calc::nest_resolve}]
+         && [calc::arg_field_bad {X point} real {cross(vt(en), 0.6, 1, rising)}] eq {}
+         && [calc::arg_field_bad {X point} real {cross(vt(en), 0.6, 1, rising) + 80n}] eq {}
+         && [calc::arg_field_bad {X point} real {vt(en)}] ne {}}
+}
+startup_quiz::add calc-integ-between {
+  type mc  kind howto  topic {Measurements}
+  q   {Which Calculator expression gives the charge a supply delivers between an event and
+       a later time, the current's area cut exactly at both limits?}
+  a   {{integBetween(it(vdd), cross(vt(en), 0.6, 1, rising), 2.1u)}
+       {integ(it(vdd)*(time>2u)*(time<2.1u))}
+       {average(it(vdd))}
+       {value(it(vdd), 2.1u)}}
+  ok  0
+  why {integBetween takes the wave's own value at each limit. Gating integ() with (time>t0)
+       only drops samples, so the step that straddles each limit is counted as a triangle
+       from zero, and at a sharp event that can lose half the area. valueWhen reads a wave
+       at a crossing of another, and ymax, ymin, xmax and xmin give a wave's extremes and
+       where they are, over the whole run or between two X values.}
+  proof {[calc::meas_verb integBetween] && [calc::meas_verb valueWhen]
+         && [calc::meas_verb ymax] && [calc::meas_verb ymin]
+         && [calc::meas_verb xmax] && [calc::meas_verb xmin]
+         && [lindex [calc::area_between {0 1 2 3} {0 2 2 0} 0.5 2.5] 1] == 3.5
+         && [calc::meas_arity ymax] eq {1 to 3}}
+}
 
 # ---------------------------------------------------------------- Operating point
 startup_quiz::add rdw {
