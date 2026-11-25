@@ -1308,9 +1308,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       check "G7 snapshot: 2 graphs" [llength $g7] 2
       check "G7 snapshot: auto marker on graph 0" \
         [wviewer::dget [lindex $g7 0] auto 0] 1
-      check "G7 snapshot: graph 0 = the exact id trace model dict" \
+      ## issue 1765: a trace ASE-L's own plot added is saved with its mark
+      check "G7 snapshot: graph 0 = the exact id trace model dict, marked as ASE-L's own" \
         [dict get [lindex $g7 0] traces] \
-        {{expr {i(v1) -1 *} name id vec id color 4}}
+        {{expr {i(v1) -1 *} name id vec id color 4 byase 1}}
       check "G7 snapshot: graph 1 = the exact v(d) trace model dict" \
         [dict get [lindex $g7 1] traces] \
         {{expr v(d) name {} vec v(d) color 4}}

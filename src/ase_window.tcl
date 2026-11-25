@@ -1157,6 +1157,16 @@ proc ase::ui::build {key top} {
   $top.mb.results add separator
   $top.mb.results add command -label {Direct Plot} \
     -command [list ase::ui::direct_plot $key]
+  # ISSUE 1765: whether a finished run plots the outputs ticked Plot (ADE-L's
+  # "Auto Plot Outputs After Simulation", asked for by name). Below Direct
+  # Plot: both say what reaches the waveform viewer. A CHECKBUTTON, because it
+  # is a yes/no whose state is the whole of it. The tick follows the session
+  # (ase::ui::plot_after_sim_sync, from refresh_status), so Load State and a
+  # script move it.
+  $top.mb.results add checkbutton -label [ase::ui::lbl_plot_after_sim_menu] \
+    -variable ::ase::ui::plotafter($key) \
+    -command [list ase::ui::plot_after_sim_picked $key]
+  set ::ase::ui::plotafter($key) [ase::plot_after_sim_of [ase::session_state $key]]
   menu $top.mb.results.annotate -tearoff 0 \
     -postcommand [list ase::ui::annot_menu_sync $key]
   $top.mb.results.annotate add checkbutton -label {Operating Point info} \
@@ -15610,9 +15620,12 @@ proc ase::ui::lbl_rdel_menu {} { return "Delete…" }
 # SVR40). `--` is a separator.
 proc ase::ui::results_menu_labels {} {
   return [list [ase::ui::lbl_rsave_menu] [ase::ui::lbl_rsel_menu] \
-            [ase::ui::lbl_rdel_menu] -- {Direct Plot} Annotate -- \
+            [ase::ui::lbl_rdel_menu] -- {Direct Plot} \
+            [ase::ui::lbl_plot_after_sim_menu] Annotate -- \
             [ase::ui::lbl_hilite_menu]]
 }
+# issue 1765: ADE-L's own words for the option
+proc ase::ui::lbl_plot_after_sim_menu {} { return {Auto Plot Outputs After Simulation} }
 proc ase::ui::lbl_rsave_title {} { return {Save Results} }
 proc ase::ui::lbl_rdel_title {} { return {Delete Results} }
 proc ase::ui::lbl_rsave_badname {} { return "Name: 1 to 64 characters, no / or \\." }
@@ -17295,6 +17308,8 @@ proc ase::ui::refresh_status {key} {
   if {[winfo exists $top.status.dest]} {
     $top.status.dest set [ase::ui::plot_dest_label [ase::plot_dest_of $st]]
   }
+  # issue 1765: and the tick of Results > Auto Plot Outputs After Simulation
+  ase::ui::plot_after_sim_sync $key
 }
 
 # EVERY OPEN SESSION'S BAR, because the registry is PROCESS-GLOBAL while the
@@ -17829,6 +17844,105 @@ proc ase::ui::plot_dest_picked {key} {
   catch {$w selection clear}
 }
 
+# --- ISSUE 1765: WHETHER A FINISHED RUN PLOTS -----------------------------------
+# Results > Auto Plot Outputs After Simulation. The session's answer is
+# ase::plot_after_sim_of its state (its own `plot_after_sim` key, else the rc
+# default); the menu's tick is `plotafter(<key>)`, moved here and by
+# refresh_status. Off, a finished run changes nothing in the waveform viewer:
+# no trace is added, removed or redrawn, and the viewer goes on showing the
+# data it had. `~` and the viewer's File > Reload (Ctrl-R) then bring it up to
+# the new run.
+
+# The session's answer, 1 or 0 (1 for an unknown session).
+proc ase::ui::plot_after_sim {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return 1 }
+  return [ase::plot_after_sim_of [ase::session_state $key]]
+}
+
+# The ONE CIW line a user change prints, naming the rc line that makes it the
+# default (the rule of the plot destination, ase::ui::plot_dest_msg). PURE.
+proc ase::ui::plot_after_sim_msg {on} {
+  set rc xschemrc
+  catch {set rc [::xschem::rc_name]}
+  return "ase: auto plot after simulation = [expr {$on ? {on} : {off}}] ($rc: set ase_plot_after_sim [expr {$on ? 1 : 0}])"
+}
+
+# The menu's tick made to say what the session says.
+proc ase::ui::plot_after_sim_sync {key} {
+  variable plotafter
+  set plotafter($key) [ase::ui::plot_after_sim $key]
+  return $plotafter($key)
+}
+
+# Set the session's answer. `req` is any Tcl boolean. Writes the state (a
+# choice equal to ase::plot_after_sim_default REMOVES the key, so choosing the
+# default back leaves a saved session as it was), moves the tick, and logs
+# `ase::ui::set_plot_after_sim <key> <0|1>` ON A CHANGE ONLY. Prints no CIW
+# line: that is the user gesture's (ase::ui::plot_after_sim_picked). Returns
+# 1 or 0, or {} for an unknown session or a request that is no boolean.
+proc ase::ui::set_plot_after_sim {key req} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
+  set b [ase::plot_after_sim_norm $req]
+  if {$b eq {}} {
+    catch {::ase::echo "ase: bad value '$req' for auto plot after simulation (use 1 or 0)" error}
+    return {}
+  }
+  set cur [ase::ui::plot_after_sim $key]
+  if {$b == $cur} {
+    ase::ui::plot_after_sim_sync $key
+    return $cur
+  }
+  set st [ase::session_state $key]
+  if {$b == [ase::plot_after_sim_default]} {
+    catch {dict unset st plot_after_sim}
+  } else {
+    dict set st plot_after_sim $b
+  }
+  ase::session_update $key $st
+  ase::ui::plot_after_sim_sync $key
+  ase::ui::log_action [list ase::ui::set_plot_after_sim $key $b]
+  return $b
+}
+
+# The menu entry's command: the USER's gesture. Tk has already flipped the
+# tick's variable, so that is the request; a real change prints
+# ase::ui::plot_after_sim_msg, once.
+proc ase::ui::plot_after_sim_picked {key} {
+  variable plotafter
+  set want 1
+  catch {set want $plotafter($key)}
+  set before [ase::ui::plot_after_sim $key]
+  set b [ase::ui::set_plot_after_sim $key $want]
+  if {$b ne {} && $b != $before} {
+    catch {::ase::echo [ase::ui::plot_after_sim_msg $b]}
+  }
+  return $b
+}
+
+# IS A RUN OF THIS SESSION LIVE? (issue 1766, wviewer::reload): 1 or 0. The
+# simulator is then writing the results file the reload would read.
+proc ase::ui::reload_busy {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
+  set lk {}
+  catch {set lk [ase::ui::run_busy $key]}
+  return [expr {$lk ne {} ? 1 : 0}]
+}
+
+# WHAT THE VIEWER'S RELOAD READS FOR THIS SESSION (issue 1766,
+# wviewer::reload_source): `{rawfile sim_type vcdfiles}` of the result in view
+# -- the latest run, or the saved result chosen with Results > Select
+# (ase::last_rawfile follows it) -- or {} when the session has none, shows an
+# operating point only, or is unknown. The analysis is the one the after-run
+# plot shows (ase::plot_sim_type).
+proc ase::ui::reload_source {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
+  set sim_t [ase::plot_sim_type [ase::session_state $key]]
+  if {$sim_t in {op {}}} { return {} }
+  set rf [ase::last_rawfile $key]
+  if {$rf eq {}} { return {} }
+  return [list $rf $sim_t [ase::last_vcdfiles $key]]
+}
+
 # THE ROWS THE VIEWER IS ASKED TO DRAW (ase_l.md R-OUT12).  Every row with
 # Plot ticked, less two kinds, each decided from what the row IS:
 #   refused -- qualified for an analysis the viewer does not show
@@ -17916,7 +18030,7 @@ proc ase::ui::plot_outputs {key} {
       && ![llength [dict get $t refused]]} {
     catch {::ase::echo [ase::ui::lbl_plot_outputs_nowave] note}
   }
-  if {[catch {ase::ui::auto_plot $key} err]} {
+  if {[catch {ase::ui::auto_plot $key user} err]} {
     catch {::ase::echo "ase: the waveform viewer could not be opened: $err" error}
   }
   return 1
@@ -17926,10 +18040,13 @@ proc ase::ui::plot_outputs {key} {
 # plot==1 is plotted into the viewer's ACTIVE tab, in its TARGET subwindow,
 # under the session's plot destination (R-OUT15, ase::ui::plot_dest; spec
 # doc/claude/specs/waveform_viewer_subwindows.md §8):
-#   Replace    -- the target subwindow is emptied, then the run's rows go into
-#                 fresh `auto 1` strips laid out by the viewer's plot mode
-#                 (R-OUT14: one strip in single-plot, one per row in
-#                 multi-plot, last row on top). The default.
+#   Replace    -- ASE-L's own traces leave the target subwindow
+#                 (wviewer::owned_clear) and the rows go into its `auto 1`
+#                 strips laid out by the viewer's plot mode (R-OUT14: one
+#                 strip in single-plot, one per row in multi-plot, last row
+#                 on top). What the user plotted by hand stays: its strips,
+#                 its traces and its view (issue 1765; before it the whole
+#                 subwindow was emptied). The default.
 #   Append     -- the target subwindow keeps everything; the rows land by the
 #                 viewer's own append rule (single: the target strip, an auto
 #                 strip included; multi: new strips on top).
@@ -17937,18 +18054,35 @@ proc ase::ui::plot_outputs {key} {
 #   New Win    -- a new viewer tab holds them.
 # Under New SubWin and New Win the previous plot is kept where it is, and a
 # viewer this press had to OPEN is already new: nothing more is made in it.
-# Zero plot rows -> never opens a viewer to show nothing; under Replace an
-# already-open viewer's target subwindow is emptied when it holds an auto strip
-# (one empty auto strip is left), and under the other three nothing changes.
+# Zero plot rows -> never opens a viewer to show nothing; under Replace
+# ASE-L's own traces leave an already-open viewer's target subwindow (one
+# empty auto strip is left when nothing else is in it), and under the other
+# three no trace changes.
+#
+# `why` (issue 1765) says who asked, and decides WHICH RUN THE TRACES PLOTTED
+# BY HAND SHOW afterwards. The user, 2026-11-25: "Should they continue to show
+# the waveforms from old sim ...? yes AND no - yes for the 'auto plot' that
+# happens because sim finished ... and, no for the case of the user
+# intentionally plotting using the ~ button. In that case ... we also update
+# the existing user-manually-plotted waveforms."
+#   run   a finished run (auto_plot_idle). Under Replace the traces plotted by
+#         hand are kept on the run they show (wviewer::hold_manual) while
+#         ASE-L's rows are drawn from the new one. Under the other three
+#         destinations every trace follows the new run, as before.
+#   user  `~` (plot_outputs), and the default for a caller that says nothing.
+#         Every trace is brought to the result in view: the ones kept on an
+#         earlier run are put back first (wviewer::hold_release), under every
+#         destination, and with nothing ticked too.
 # op-only results -> notice (no sweep, nothing plottable). Row exprs go through
 # plot_map_expr (D6); the row name is used as the trace name when it is a legal
 # vector name (add_trace's rule), else auto. Reached from run_finished via
 # auto_plot_idle (after idle + catch): a viewer failure must never break the
 # status pipeline.
-proc ase::ui::auto_plot {key} {
+proc ase::ui::auto_plot {key {why user}} {
   set st [ase::session_state $key]
   set sim_t [ase::plot_sim_type $st]
   set dest [ase::plot_dest_of $st]
+  set run [expr {$why eq {run}}]
   # R208c/R208d: a row qualified for an analysis the viewer does not show is
   # refused with a sentence (plot_row_refusal), never drawn from the shown one.
   # Before the viewer opens, so the sentence is said even where it cannot; a
@@ -17961,15 +18095,18 @@ proc ase::ui::auto_plot {key} {
   }
   set rows [dict get $t rows]
   if {![llength $rows]} {
-    if {$dest eq {replace} && [wviewer::window_for $key] ne {}} {
+    if {[wviewer::window_for $key] eq {}} { return }
+    if {$dest eq {replace}} {
       set gs [dict get [wviewer::layout_for $key] graphs]
       lassign [wviewer::sw_range $gs [wviewer::target_index $key]] f l
-      if {[llength [wviewer::sw_auto_in $gs $f $l]]} {
+      if {[llength [wviewer::sw_auto_in $gs $f $l]] || [wviewer::owned_in $gs $f $l]} {
         # issue 0194: this regenerate carries every OTHER strip forward, so it
-        # owes the fold BEFORE the model mutation (clear_subwin takes it too).
-        # R-OUT14/R-OUT15: the cleared subwindow keeps ONE empty auto strip.
+        # owes the fold BEFORE the model mutation (owned_clear takes it too).
+        # R-OUT14/R-OUT15: ASE-L's traces leave (issue 1765: and no trace
+        # plotted by hand); a subwindow with nothing else keeps ONE empty auto
+        # strip.
         wviewer::capture_live_view_state $key
-        wviewer::clear_subwin $key
+        wviewer::owned_clear $key
         wviewer::auto_plot_strips $key 0
         # issue 1733 (round 2): the rebuild CARRIES every strip as it shows.
         # clear_subwin kept the other subwindows' view, and a plain rebuild here
@@ -17978,6 +18115,15 @@ proc ase::ui::auto_plot {key} {
         # what it showed"
         wviewer::regenerate $key [wviewer::live_axes $key]
       }
+    }
+    # issue 1765: `~` with nothing ticked still brings what the user plotted by
+    # hand to the result in view (the load of the plotting path below). Not
+    # after a run, and not where there is no sweep to show.
+    if {!$run && $sim_t ni {op {}} && [ase::last_rawfile $key] ne {}} {
+      wviewer::hold_release $key
+      wviewer::attach_raw $key [ase::last_rawfile $key] $sim_t [ase::last_vcdfiles $key]
+      # a load that read nothing: the kept traces stay on the run they show
+      wviewer::hold_settle $key
     }
     return
   }
@@ -18001,10 +18147,21 @@ proc ase::ui::auto_plot {key} {
   # were stored on, before the load below, and handed back by traces once the
   # rows are in (wviewer::sw_stored, wviewer::sw_stored_give). The view on the
   # rects is `view`, further down, as before.
+  # ISSUE 1765: WHICH RUN THE TRACES PLOTTED BY HAND SHOW, settled before
+  # anything below reads the strips, so the stored views, the view on screen
+  # and the strips the rows come back to are all read with the traces as the
+  # load will find them. A finished run under Replace keeps those traces on
+  # the run they show; `~` puts every kept trace back on the result.
+  set vcds [ase::last_vcdfiles $key]
+  if {$run} {
+    if {$dest eq {replace}} { wviewer::hold_manual $key $rf $sim_t $vcds }
+  } else {
+    wviewer::hold_release $key
+  }
   set had {}
   if {$dest eq {replace}} { set had [wviewer::sw_stored $key] }
-  # issue 1734: THE LOAD BELOW IS QUIET, AND LEAVES OUT THE STRIPS REPLACE IS
-  # ABOUT TO EMPTY. A load makes the viewer's expression traces again and says
+  # issue 1734: THE LOAD BELOW IS QUIET, AND LEAVES OUT WHAT REPLACE IS
+  # ABOUT TO TAKE OUT. A load makes the viewer's expression traces again and says
   # so when one cannot be evaluated ("is empty ... draws again when ..."). Said
   # by this load, that sentence was false of a trace this same press removes
   # (Replace) and of a trace whose vector this press computes again (a named
@@ -18013,17 +18170,23 @@ proc ase::ui::auto_plot {key} {
   # told of then (wviewer::expr_settle, after the rows). The traces of the
   # strips about to be emptied are not evaluated at all: their vectors would
   # be thrown away with their names left taken, and a row with no name of its
-  # own would be named one further at every run. The strips are the target
-  # subwindow's, which is what the clear below empties.
+  # own would be named one further at every run. Since issue 1765 those are
+  # ASE-L's own traces of the target subwindow's strips (`o<index>`,
+  # wviewer::all_graphs): an expression the user plotted by hand there stays
+  # and is evaluated.
   set leave {}
   if {$dest eq {replace}} {
     lassign [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] \
                [wviewer::target_index $key]] lf ll
-    for {set li $lf} {$li <= $ll} {incr li} { lappend leave $li }
+    for {set li $lf} {$li <= $ll} {incr li} { lappend leave o$li }
   }
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
-  wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key] $leave 1
+  wviewer::attach_raw $key $rf $sim_t $vcds $leave 1
+  # issue 1765: a load that read nothing leaves the viewer's data as it was,
+  # so what was done to the traces plotted by hand just above is taken back
+  # (the names of the kept data, the pins): wviewer::hold_settle
+  wviewer::hold_settle $key
   # ISSUE 1733 (user ruling 2026-11-22: "yes, re-run which then plots in
   # Replace mode should retain zoom level, not reset it"). attach_raw has just
   # kept each strip's view by the same-data or the new-data rule; this is that
@@ -18048,7 +18211,7 @@ proc ase::ui::auto_plot {key} {
   switch -exact -- $dest {
     newtab    { if {$wasup} { wviewer::new_tab $key } }
     newsubwin { if {$wasup} { wviewer::new_subwin $key } }
-    replace   { wviewer::clear_subwin $key }
+    replace   { wviewer::owned_clear $key }
   }
   # casemode item 12: map every row FIRST, then repair the batch in ONE pass —
   # wviewer::repair_currents reads the whole database inventory per call, so a
@@ -18082,7 +18245,11 @@ proc ase::ui::auto_plot {key} {
     incr ei
     set nm [ase::state_get $o name]
     if {![regexp {^[A-Za-z_][A-Za-z0-9_]*$} $nm]} { set nm {} }
+    # issue 1765: the trace is ASE-L's own (armed, and taken back in case the
+    # call returned before it took it, as an armed display name is)
+    wviewer::owner_arm $key
     set err [wviewer::add_trace $key $gi $ex $nm]
+    wviewer::owner_take $key
     if {$err ne {}} {
       catch {::ase::echo "ase: cannot auto-plot '[ase::state_get $o expr]': $err" error}
     }
@@ -18116,8 +18283,13 @@ proc ase::ui::auto_plot {key} {
 # bracket is balanced and switches work; wviewer::switch_ctx backstops any
 # residual refusal loudly. The catch keeps an idle-time viewer failure out
 # of Tk's bgerror modal.
+#
+# ISSUE 1765: it is the plot of a FINISHED RUN (`run`), and it is not made at
+# all when the session says a finished run does not plot (Results > Auto Plot
+# Outputs After Simulation, ase::ui::plot_after_sim).
 proc ase::ui::auto_plot_idle {key} {
-  catch {ase::ui::auto_plot $key}
+  if {![ase::ui::plot_after_sim $key]} { return }
+  catch {ase::ui::auto_plot $key run}
 }
 
 # ase run completion callback (eval'd at #0 by ase::run_done AFTER the log

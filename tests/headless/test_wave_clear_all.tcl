@@ -338,9 +338,11 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     event generate $vdrw <Control-Key-d>; update
     check "CG6 a disabled Ctrl-D clears nothing" [ngraphs $tok] 4
     # (b) an rc can bind its own sequence
-    bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+    ## (Ctrl-K: a key the viewer has no default for. It was Ctrl-R until that
+    ## became the viewer's Reload, issue 1766.)
+    bind WaveViewer <Control-Key-k> {wviewer::clear_all_at %W; break}
     check_true "CG6 the remapped key clears" \
-      [send_key $vdrw <Control-Key-r> {[ngraphs $tok] == 1}]
+      [send_key $vdrw <Control-Key-k> {[ngraphs $tok] == 1}]
     check "CG6 the remapped key left one empty strip" \
       [list [ngraphs $tok] [ntraces $tok 0]] {1 0}
     # (c) rc WINS: install_default_binds never overwrites an existing binding
@@ -353,7 +355,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       [bind WaveViewer <Control-Key-d>] {break}
     check "CG6 a second call is a no-op" [pcall {wviewer::install_default_binds}] 0
     # restore the shipped default for anything that runs after
-    bind WaveViewer <Control-Key-r> {}
+    bind WaveViewer <Control-Key-k> {}
     bind WaveViewer <Control-Key-d> {}
     set ::wviewer::tagbinds 0
     pcall {wviewer::install_default_binds}

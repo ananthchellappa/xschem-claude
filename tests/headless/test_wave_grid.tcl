@@ -272,12 +272,18 @@ proc wvproc_body {src name} {
 # viewer door's Replace handed stored views back to the strips that took their
 # traces again. It writes windows into the model and carries every other strip
 # forward, so gx_must.
+# ⚠ `owned_clear` ADDED WITH ISSUE 1765 (2026-11-25): the Replace of ASE-L's
+# plot takes ASE-L's own traces out of the target subwindow and carries every
+# other strip, and every trace plotted by hand, forward, so gx_must.
+# ⚠ `hold_settle` ADDED WITH THE SAME ISSUE: after a load that read nothing it
+# puts back what was done to the traces plotted by hand before the load (their
+# pins, the names of the kept data) and rebuilds once, carrying every strip.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok set_axis_scale
              select_tab new_tab close_tab paste_traces paste_payload
              rawbar_load new_subwin close_subwin clear_subwin set_text_size
-             sw_stored_settle}
+             sw_stored_settle owned_clear hold_settle}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -1581,11 +1587,16 @@ check_true "GX9 the re-plot path still regenerates after attach_raw" \
 # subwindows moving one subwindow's zoom onto another)
 set gx_av [string first {set view [wviewer::view_take $key]} $gx_ap]
 set gx_aw [string first {set vsw [wviewer::sw_range } $gx_ap]
+# (issue 1765: the destination's window half under Replace is owned_clear,
+# which takes out ASE-L's own traces, where clear_subwin emptied the subwindow;
+# and the plot's own load is the attach_raw that is handed `$rf`, since the
+# zero-rows branch now reads the result too)
 check_true "GX9 auto_plot reads the view, and its target subwindow, between attach_raw and the destination's window half" \
-  [expr {$gx_av > [string first {wviewer::attach_raw $key} $gx_ap]
-         && $gx_av < [string last {wviewer::clear_subwin $key} $gx_ap]
+  [expr {$gx_av > [string first {wviewer::attach_raw $key $rf} $gx_ap]
+         && [string first {wviewer::attach_raw $key $rf} $gx_ap] > 0
+         && $gx_av < [string last {wviewer::owned_clear $key} $gx_ap]
          && $gx_av < [string first {wviewer::plot_sites $key} $gx_ap]
-         && $gx_aw > $gx_av && $gx_aw < [string last {wviewer::clear_subwin $key} $gx_ap]
+         && $gx_aw > $gx_av && $gx_aw < [string last {wviewer::owned_clear $key} $gx_ap]
          && [regexp {if \{\$dest in \{replace append\}\} \{\s*set view \[wviewer::view_take \$key\]\s*set vsw \[wviewer::sw_range \[dict get \[wviewer::layout_for \$key\] graphs\]\s*\\\s*\[wviewer::target_index \$key\]\]\s*\}} $gx_ap]}]
 check_true "GX9 ...and its last regenerate, after the add_trace loop, hands that view to view_keep_subwin" \
   [expr {[string last {wviewer::regenerate $key [wviewer::view_keep_subwin $key $view $vsw $nsw]} $gx_ap]
@@ -1599,31 +1610,42 @@ check_true "GX9 ...and its last regenerate, after the add_trace loop, hands that
 # away what attach_raw, clear_subwin and new_subwin had kept, so `~` under New
 # SubWin reset every subwindow already on screen). It is the first carrying
 # rebuild AFTER attach_raw (the zero-rows branch's own comes before it).
-set gx_ar [string first {wviewer::attach_raw $key} $gx_ap]
+set gx_ar [string first {wviewer::attach_raw $key $rf} $gx_ap]
 set gx_al [string first {wviewer::regenerate $key [wviewer::live_axes $key]} $gx_ap $gx_ar]
 check_true "GX9 auto_plot's rebuild after the destination's window half carries the live view, before the rows" \
   [expr {$gx_ar > 0 && $gx_al > $gx_ar
          && $gx_al > [string last {wviewer::auto_plot_strips $key [llength $rows]} $gx_ap]
          && $gx_al > [string first {wviewer::plot_sites $key} $gx_ap]
          && $gx_al < [string first {wviewer::add_trace $key} $gx_ap]}]
-# the zero-rows branch (Replace with nothing ticked) empties the target
-# subwindow and rebuilds; that rebuild CARRIES every strip as it shows too
-# (issue 1733, second review round: a plain one there fitted every OTHER
-# subwindow again, measured on band PV6 of test_ase_plot_outputs). Its order:
-# the fold, the clear, the one empty auto strip, then the carrying rebuild,
-# all before the branch returns and before attach_raw.
+# the zero-rows branch (Replace with nothing ticked) takes ASE-L's own traces
+# out of the target subwindow and rebuilds; that rebuild CARRIES every strip as
+# it shows too (issue 1733, second review round: a plain one there fitted every
+# OTHER subwindow again, measured on band PV6 of test_ase_plot_outputs). Its
+# order: the fold, the removal (issue 1765: owned_clear, where clear_subwin
+# emptied the subwindow), the one empty auto strip, then the carrying rebuild,
+# all before the branch's own return and before the plot's load. The branch
+# ends at its own `return` line; the early return for a viewer that is not up
+# stands on its `if` line.
 set gx_z0 [string first {if {![llength $rows]} } $gx_ap]
-set gx_zr [string first {return} $gx_ap $gx_z0]
+set gx_zr [string first "\n    return\n" $gx_ap $gx_z0]
 set gx_zb [string range $gx_ap $gx_z0 $gx_zr]
 set gx_zl [string first {wviewer::regenerate $key [wviewer::live_axes $key]} $gx_zb]
-check_true "GX9 auto_plot's zero-rows rebuild, after the clear and the empty auto strip, carries the live view" \
+check_true "GX9 auto_plot's zero-rows rebuild, after ASE-L's traces leave and the empty auto strip, carries the live view" \
   [expr {$gx_z0 > 0 && $gx_zr > $gx_z0 && $gx_zr < $gx_ar && $gx_zl > 0
          && [string first {wviewer::capture_live_view_state $key} $gx_zb] >= 0
          && [string first {wviewer::capture_live_view_state $key} $gx_zb]
-            < [string first {wviewer::clear_subwin $key} $gx_zb]
-         && [string first {wviewer::clear_subwin $key} $gx_zb]
+            < [string first {wviewer::owned_clear $key} $gx_zb]
+         && [string first {wviewer::owned_clear $key} $gx_zb]
             < [string first {wviewer::auto_plot_strips $key 0} $gx_zb]
          && [string first {wviewer::auto_plot_strips $key 0} $gx_zb] < $gx_zl}]
+# issue 1765: the same branch then reads the result for `~`, never after a run,
+# so what the user plotted by hand follows the result: the kept traces put
+# back first, the load after its own rebuild
+set gx_zh [string first {wviewer::hold_release $key} $gx_zb]
+check_true "GX9 auto_plot's zero-rows branch reads the result for ~ only: guarded by !\$run, the kept traces put back, then the load, after its rebuild" \
+  [expr {$gx_zh > $gx_zl
+         && [string first {wviewer::attach_raw $key [ase::last_rawfile $key]} $gx_zb] > $gx_zh
+         && [regexp {if \{!\$run && \$sim_t ni \{op \{\}\} && \[ase::last_rawfile \$key\] ne \{\}\} \{\s*wviewer::hold_release \$key} $gx_zb]}]
 # ...so no plain rebuild is left anywhere in auto_plot: each of its sites
 # hands regenerate a view
 check "GX9 auto_plot has no plain rebuild left (every site it has carries a view)" \
@@ -1688,9 +1710,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the twenty-one documented viewer keys" \
-  [llength $gh_seqs] 21
-check "GH0 ...and sixteen documented menu accelerators" [llength $gh_menus] 16
+check "GH0 the guide's §9.1 carries the twenty-two documented viewer keys" \
+  [llength $gh_seqs] 22
+check "GH0 ...and seventeen documented menu accelerators" [llength $gh_menus] 17
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]

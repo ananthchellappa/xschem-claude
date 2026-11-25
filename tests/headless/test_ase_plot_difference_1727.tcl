@@ -2429,8 +2429,10 @@ group GZ {
     pcall ase::ui::auto_plot_idle $::key
     update
     set r [gz_axes]
-    check "GZ6 the bench run again (the results file written again with a second run's numbers) and the plot a finished run makes under Replace: the three rows are back a strip each, every strip on the zoomed X window and on the Y window it showed" \
-        [list [gz_vecs] [expr {$r eq $z}]] [list $vecs 1]
+    ## issue 1765: the difference was plotted by hand, so the run's plot leaves
+    ## it in its strip, on top of the three rows
+    check "GZ6 the bench run again (the results file written again with a second run's numbers) and the plot a finished run makes under Replace: the three rows are back a strip each, every strip on the zoomed X window and on the Y window it showed, and the difference plotted by hand stays in its strip above them" \
+        [list [gz_vecs] [expr {[lrange $r 1 end] eq $z}] [llength $r]] [list [linsert $vecs 0 $dvec] 1 4]
     to_design
     set before [traces]
     chord_d ; click a ; click b
@@ -2438,7 +2440,7 @@ group GZ {
     set dlab [label_of $dvec]
     set d [gz_axes]
     check "GZ7 a difference plotted after that run: its strip has the X extent every other strip has, and the bar reads the second run's b minus a" \
-        [list [llength $d] [gz_xs $d] [near [rd_at $dlab $::RT] [at_rt [pd_sub $::T2(b) $::T2(a)]] 2e-3]] [list 4 [gz_xs $z] ok]
+        [list [llength $d] [gz_xs $d] [near [rd_at $dlab $::RT] [at_rt [pd_sub $::T2(b) $::T2(a)]] 2e-3]] [list 5 [gz_xs $z] ok]
     # View > Fit stores a window on every strip as well, with no zoom at all
     clean_viewer
     pcall wviewer::set_plot_mode multi $::key
@@ -2456,8 +2458,19 @@ group GZ {
 
 # ---------------------------------------------------------------------------
 # GG -- THE PLOT A FINISHED RUN MAKES, UNDER REPLACE, AFTER A DIFFERENCE.
-# Replace is the session's default destination: the ~ button and a finished
-# run empty the target subwindow and plot the Outputs rows there. That plot
+#
+# SINCE ISSUE 1765 Replace takes out ASE-L's own traces and leaves what the
+# user plotted by hand, a difference included: rows GG1 and GG18 to GG20 say
+# what a difference then shows. The rest of the band is about a difference
+# that LEAVES the strips with a load of results in between and comes back by
+# undo, which the emptying Replace of before used to bring about in one
+# press. The user can still bring it about, and the rows now do it that way:
+# Graph > Clear SubWin (the viewer's own command, one undo step), then the
+# press (gg_clear_tilde, gg_clear_runend). Where a row below says "the plot
+# removes", read "the subwindow was cleared before the plot".
+#
+# Replace was the session's default destination: the ~ button and a finished
+# run emptied the target subwindow and plotted the Outputs rows there. That plot
 # loads the results first, and a load evaluates the viewer's expression traces
 # again and says so when one cannot be evaluated. The traces of the subwindow
 # the same press is about to empty are neither evaluated nor spoken of: a
@@ -2504,6 +2517,19 @@ group GZ {
 # reads what it draws.
 # ---------------------------------------------------------------------------
 proc gg_lost {} { return [lsearch -all -inline -glob $::notices {wviewer: trace * is empty*}] }
+# Graph > Clear SubWin on the viewer's target subwindow, then a real click on
+# the ~ button; and the same before the plot a finished run makes
+proc gg_clear_tilde {} {
+    pcall wviewer::clear_target_subwin $::key
+    update
+    return [gz_tilde]
+}
+proc gg_clear_runend {} {
+    pcall wviewer::clear_target_subwin $::key
+    update
+    pcall ase::ui::auto_plot_idle $::key
+    update
+}
 proc gg_neg {l} { return [lmap v $l {expr {-1.0 * $v}}] }
 proc gg_labels {} { return [lsort [lmap t [traces] {label_of [lindex $t 0]}]] }
 # real presses of the undo key on the viewer until the trace of `vec` is back
@@ -2536,12 +2562,20 @@ group GG {
         [list $shown [pcall ase::ui::plot_dest $::key] $tl [gg_labels] [llength [lsort -unique [lmap G [dict get [wviewer::layout_for $::key] graphs] {wviewer::gsw $G}]]] \
               [near [rd_at NEG $::RT] [at_rt [gg_neg $::T(e)]] 2e-3] [near [rd_at $dlab $::RT] [at_rt [pd_sub $::T(b) $::T(a)]] 2e-3]] \
         {tran replace {} {NEG v(b)-v(a)} 1 ok ok}
-    # the bench run again, every net there: the plot removes the difference
+    # the bench run again, every net there. Issue 1765: the ~ button under
+    # Replace puts the row back once and leaves the difference, and both read
+    # the new run
     set ::RUNSEL 2
     pd_raw $::rawpath {tran ac dc op}
     set ::notices {}
     gz_tilde
-    check "GG1 the bench run again and the ~ button under Replace: the target subwindow holds the row's trace alone, which reads the new run's numbers, and nothing is said about an empty trace" \
+    check "GG1 the bench run again and the ~ button under Replace: the row's trace is there once and the difference plotted by hand stays; both read the new run's numbers, and nothing is said about an empty trace" \
+        [list [gg_labels] [gg_lost] [near [rd_at NEG $::RT] [at_rt [gg_neg $::T2(e)]] 2e-3] \
+              [near [rd_at $dlab $::RT] [at_rt [pd_sub $::T2(b) $::T2(a)]] 2e-3]] [list [list NEG $dlab] {} ok ok]
+    # the subwindow cleared, then the press: the difference is gone
+    set ::notices {}
+    gg_clear_tilde
+    check "GG1b the subwindow cleared (Graph > Clear SubWin) and the ~ button: the target subwindow holds the row's trace alone, which reads the new run's numbers, and nothing is said about an empty trace" \
         [list [gg_labels] [gg_lost] [near [rd_at NEG $::RT] [at_rt [gg_neg $::T2(e)]] 2e-3]] {NEG {} ok}
     set ::notices {}
     set n [gg_undo_until $dvec]
@@ -2554,8 +2588,8 @@ group GG {
     set ::OMIT {b}
     pd_raw $::rawpath {tran ac dc op}
     set ::notices {}
-    gz_tilde
-    check "GG3 run again with net b no longer in the result, and the ~ button under Replace: the difference is removed with the subwindow's other traces and no sentence says it is empty or when it draws again; the row's trace reads" \
+    gg_clear_tilde
+    check "GG3 run again with net b no longer in the result, the subwindow cleared and the ~ button under Replace: the difference is gone with the subwindow's other traces and no sentence says it is empty or when it draws again; the row's trace reads" \
         [list [gg_labels] [gg_lost] [near [rd_at NEG $::RT] [at_rt [gg_neg $::T2(e)]] 2e-3]] {NEG {} ok}
     set ::notices {}
     set n [gg_undo_until $dvec]
@@ -2566,7 +2600,7 @@ group GG {
     set ::OMIT {}
     set ::RUNSEL 1
     pd_raw $::rawpath {tran ac dc op}
-    gz_tilde
+    gg_clear_tilde
     to_design
     set before [traces]
     chord_d ; click a ; click b
@@ -2575,9 +2609,8 @@ group GG {
     set shown [run_only {op dc}]
     pd_raw $::rawpath {tran ac dc op}
     set ::notices {}
-    pcall ase::ui::auto_plot_idle $::key
-    update
-    check "GG5 with a difference of the transient in the target subwindow, the session set to run the DC sweep and the plot a finished run makes under Replace: the viewer shows the DC sweep, the difference is removed, no sentence says it is empty or when it draws again, and the row's trace reads minus e of the sweep" \
+    gg_clear_runend
+    check "GG5 with a difference of the transient in the target subwindow, the session set to run the DC sweep, the subwindow cleared and the plot a finished run makes under Replace: the viewer shows the DC sweep, the difference is gone, no sentence says it is empty or when it draws again, and the row's trace reads minus e of the sweep" \
         [list $had $shown [vtype] [gg_labels] [gg_lost] [near [rd_at NEG {0.5 1 1.5}] {-0.25 -0.2 -0.15} 2e-3]] \
         {{NEG v(b)-v(a)} dc dc NEG {} ok}
     # Append: nothing is emptied, so the difference stays and is told of, once
@@ -2606,10 +2639,10 @@ group GG {
     catch { dict set st plot_dest replace }
     pcall ase::session_update $::key $st
     set ::notices {}
-    gz_tilde
+    gg_clear_tilde
     set mid [list [gg_labels] [llength [gg_lost]]]
     set n [gg_undo_until $dvec]
-    check "GG10 a difference that was already told of as empty, then removed by the ~ button under Replace (nothing is said) and brought back by one press of the undo key, is told of once more: what was on record about it went when it left the strips" \
+    check "GG10 a difference that was already told of as empty, then removed (the subwindow cleared, then the ~ button under Replace; nothing is said) and brought back by one press of the undo key, is told of once more: what was on record about it went when it left the strips" \
         [list $mid $n [label_of $dvec] [rd_at $dlab {1e-9}] [nsaid $gone] [llength [gg_lost]]] [list {NEG 0} 1 $dlab MISSING 1 1]
     # Append, and a run of another analysis: the row's trace of the run before
     # stays, and the row is plotted again into the same vector, on the DC
@@ -2661,9 +2694,9 @@ group GG {
     set ::OMIT {b}
     pd_raw $::rawpath {tran ac dc op}
     set ::notices {}
-    gz_tilde
+    gg_clear_tilde
     set lost [lsort [gg_lost]]
-    check "GG7 with one difference in a tab that is not shown, one in another subwindow of the tab shown and one in the target subwindow, a run without net b and the ~ button under Replace: the two that stay are each told of once, by label, and nothing is said of the one the plot removed" \
+    check "GG7 with one difference in a tab that is not shown, one in another subwindow of the tab shown and one in the target subwindow, a run without net b, the target subwindow cleared and the ~ button under Replace: the two that stay are each told of once, by label, and nothing is said of the one that was cleared" \
         [list [expr {$idB ne {} && $idB ne $idA}] $inB $nsw [gg_labels] [llength $lost] \
               [lmap l {v(b)-v(a) v(e)-v(b) v(b)-v(e)} {llength [lsearch -all -glob $lost "wviewer: trace '$l' is empty: v(b) is not in the results*"]}]] \
         {1 {NEG v(b)-v(e) v(e)-v(b)} 2 {NEG v(e)-v(b)} 2 {1 1 0}}
@@ -2716,7 +2749,7 @@ group GG {
     set v1 [lindex [lindex [newtraces $before] 0] 0]
     set ::RUNSEL 2
     pd_raw $::rawpath {tran ac dc op}
-    gz_tilde
+    gg_clear_tilde
     to_design
     set before [traces]
     chord_d ; click a ; click e
@@ -2729,7 +2762,7 @@ group GG {
     gz_vkeys 0 1 u 0
     set undone [list [gg_labels] [near [rd_at {v(b)-v(a)} $::RT] $wb 2e-3]]
     gz_vkeys 0 1 U $::SHIFT
-    check "GG14 a difference removed by the ~ button under Replace after a run, a second difference of two other nets computed into the vector name the first one left free, and one press of the real undo key: the first difference is back under its label and the bar reads the new run's b minus a there, which the row's own numbers put well apart from e minus a; one press of the real redo key then puts the later difference back, and the bar reads e minus a under that label; nothing is said about an empty trace" \
+    check "GG14 a difference removed (the subwindow cleared, then the ~ button under Replace) after a run, a second difference of two other nets computed into the vector name the first one left free, and one press of the real undo key: the first difference is back under its label and the bar reads the new run's b minus a there, which the row's own numbers put well apart from e minus a; one press of the real redo key then puts the later difference back, and the bar reads e minus a under that label; nothing is said about an empty trace" \
         [list [expr {$v1 ne {} && $v1 eq $v2}] $had $r2 [expr {[apart $wb $we] > 0.3}] $undone [gg_labels] [near [rd_at {v(e)-v(a)} $::RT] $we 2e-3] [gg_lost]] \
         {1 {NEG v(e)-v(a)} ok 1 {{NEG v(b)-v(a)} ok} {NEG v(e)-v(a)} ok {}}
     # the same with net b gone from the result: the first difference, brought
@@ -2742,7 +2775,7 @@ group GG {
     chord_d ; click a ; click b
     set ::OMIT {b} ; set ::RUNSEL 2
     pd_raw $::rawpath {tran ac dc op}
-    gz_tilde
+    gg_clear_tilde
     to_design
     chord_d ; click a ; click e
     set had [gg_labels]
@@ -2769,8 +2802,7 @@ group GG {
     set v1 [lindex [lindex [newtraces $before] 0] 0]
     set shown [run_only {op dc}]
     pd_raw $::rawpath {tran ac dc op}
-    pcall ase::ui::auto_plot_idle $::key
-    update
+    gg_clear_runend
     set before [traces]
     set e1 [pcall wviewer::add_trace $::key [pcall wviewer::target_index $::key] {v(e) v(a) -}]
     update
@@ -2778,7 +2810,7 @@ group GG {
     set r2 [near [rd_at $v2 {0.5 1 1.5}] {0.0 -0.3 -0.6} 2e-3]
     set ::notices {}
     gz_vkeys 0 1 u 0
-    check "GG16 a difference of the transient removed by the plot of a DC sweep run under Replace, an expression added while the viewer shows the sweep and computed into the vector name the difference left free, and one press of the undo key: the difference is back in its strip and empty -- the bar has no entry under its label -- and one sentence says it was computed on the transient analysis and when it draws again" \
+    check "GG16 a difference of the transient removed (the subwindow cleared) before the plot of a DC sweep run under Replace, an expression added while the viewer shows the sweep and computed into the vector name the difference left free, and one press of the undo key: the difference is back in its strip and empty -- the bar has no entry under its label -- and one sentence says it was computed on the transient analysis and when it draws again" \
         [list $shown [vtype] $e1 [expr {$v1 ne {} && $v1 eq $v2}] $r2 [gg_labels] [rd_at {v(b)-v(a)} {0.5 1 1.5}] [llength [gg_lost]] \
               [nsaid "wviewer: trace 'v(b)-v(a)' is empty: it was computed on the transient analysis and the viewer now shows the DC sweep analysis of [file tail $::rawpath]; it draws again when the viewer shows the transient analysis"]] \
         {dc dc {} 1 ok {NEG v(b)-v(a)} {MISSING MISSING MISSING} 1 1}
@@ -2799,7 +2831,7 @@ group GG {
     set v1 [lindex [lindex [newtraces $before] 0] 0]
     set ::RUNSEL 2
     pd_raw $::rawpath {tran ac dc op}
-    gz_tilde
+    gg_clear_tilde
     set idA [pcall wviewer::tab_id $::key]
     set idB [pcall wviewer::new_tab $::key]
     update
@@ -2830,6 +2862,46 @@ group GG {
     update
     pcall wviewer::close_tab $idB $::key
     update
+    # ISSUE 1765: A DIFFERENCE THROUGH A FINISHED RUN UNDER REPLACE. It was
+    # plotted by hand, so the plot a finished run makes leaves it, and it goes
+    # on showing the run it was plotted from; the ~ button then brings it to
+    # the result.
+    set ::OMIT {} ; set ::RUNSEL 1
+    pd_raw $::rawpath {tran ac dc op}
+    clean_viewer
+    gz_tilde
+    to_design
+    chord_d ; click a ; click b
+    set w1 [at_rt [pd_sub $::T(b) $::T(a)]]
+    set w2 [at_rt [pd_sub $::T2(b) $::T2(a)]]
+    set ::RUNSEL 2
+    pd_raw $::rawpath {tran ac dc op}
+    set ::notices {}
+    pcall ase::ui::auto_plot_idle $::key
+    update
+    check "GG18 a difference in the target subwindow, the bench run again and the plot a finished run makes under Replace: the difference stays and the bar still reads the FIRST run's b minus a under its label (which that run's numbers put well apart from the second's), the row's trace reads the second run's, and nothing is said about an empty trace" \
+        [list [gg_labels] [expr {[apart $w1 $w2] > 0.05}] [near [rd_at {v(b)-v(a)} $::RT] $w1 2e-3] \
+              [near [rd_at NEG $::RT] [at_rt [gg_neg $::T2(e)]] 2e-3] [gg_lost] [pcall wviewer::held_traces $::key]] \
+        {{NEG v(b)-v(a)} 1 ok ok {} 1}
+    set ::notices {}
+    gz_tilde
+    check "GG19 the ~ button then brings the difference to the result: the bar reads the second run's b minus a under its label, no trace is kept on the earlier run, and nothing is said" \
+        [list [gg_labels] [near [rd_at {v(b)-v(a)} $::RT] $w2 2e-3] [pcall wviewer::held_traces $::key] [gg_lost]] \
+        {{NEG v(b)-v(a)} ok 0 {}}
+    # ...and with net b gone from the new result: the difference kept on the
+    # earlier run still draws, and nothing is said of it until ~ asks for the
+    # result, where it is empty and told of once
+    set ::OMIT {b}
+    pd_raw $::rawpath {tran ac dc op}
+    set ::notices {}
+    pcall ase::ui::auto_plot_idle $::key
+    update
+    set kept [list [near [rd_at {v(b)-v(a)} $::RT] $w2 2e-3] [gg_lost]]
+    set ::notices {}
+    gz_tilde
+    check "GG20 a finished run without net b under Replace: the difference kept on the run before still reads that run's b minus a and nothing is said; the ~ button then puts it on the result, where it is empty, and the sentence that names the trace, the net and what to do is said once" \
+        [list $kept [gg_labels] [rd_at {v(b)-v(a)} {1e-9}] [nsaid $gone] [llength [gg_lost]]] \
+        [list {ok {}} {NEG v(b)-v(a)} MISSING 1 1]
     # an expression that names another expression's trace
     set ::OMIT {} ; set ::RUNSEL 1
     pd_raw $::rawpath {tran ac dc op}

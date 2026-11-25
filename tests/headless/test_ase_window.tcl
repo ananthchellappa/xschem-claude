@@ -2975,7 +2975,7 @@ Values:
     set a_tranB [file join $scratch a0684_foreign.raw]
     a_mktran684 $a_tranB
     catch {rename ase::ui::auto_plot a_autoplot_saved_0684}
-    proc ase::ui::auto_plot {key} { return 1 }
+    proc ase::ui::auto_plot {key args} { return 1 }
 
     ## Drive the run-completion event the way ase::run_done does, then let the
     ## idle queue drain -- the annotation refresh is deferred to idle for the

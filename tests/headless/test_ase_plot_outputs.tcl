@@ -62,13 +62,14 @@
 #        viewer's codes; set_plot_dest writes the state, dirties, logs once on
 #        a change, stores Replace as the empty default, refuses junk; the key
 #        saves and loads and is never written at its default (every committed
-#        .state file, with a control); Replace empties the target subwindow
-#        (hand strip included) keeping the run's zoom, as one undo step;
+#        .state file, with a control); Replace takes ASE-L's own traces out
+#        of the target subwindow and leaves a hand strip there (issue 1765),
+#        keeping the run's zoom, as one undo step;
 #        Append adds without clearing (single: into the target strip, auto
 #        included; multi: new strips on top); New SubWin adds a targeted
 #        subwindow and keeps the old plot; New Win a tab; a viewer the press
-#        opens is already new; zero rows empty only a Replace target holding an
-#        auto strip; a failed run plots nothing under any choice
+#        opens is already new; with zero rows only a Replace changes anything
+#        (ASE-L's own traces leave); a failed run plots nothing under any choice
 #   PO17 the evaluate-only half (R-OUT16): ase::ui::evaluate_outputs
 #        re-evaluates every Value exactly as `~` does and never asks for a
 #        plot; no results, a failed run and an unknown session answer 0 with
@@ -130,9 +131,10 @@
 #        replaced in multi-plot); `~` under New SubWin keeps every subwindow
 #        already there, the same data and after a re-run; a re-run of another
 #        analysis under Replace fits the strip in X and Y
-#   PV6  R3 with nothing ticked: `~` under Replace empties the target
-#        subwindow (auto_plot's zero-rows branch, no attach) and the other
-#        subwindow shows exactly what it showed, both axes
+#   PV6  R3 with nothing ticked: `~` under Replace takes ASE-L's traces out
+#        of the target subwindow (auto_plot's zero-rows branch, which reads the
+#        result once since issue 1765) and the other subwindow shows exactly
+#        what it showed, both axes
 #   PV7  issue 1736, a view STORED IN THE MODEL: the viewer's own zoom (real
 #        Ctrl-z presses on the canvas) and View > Fit (a real f) store a
 #        window on every strip; `~` and the run-end plot under Replace in
@@ -289,7 +291,7 @@ proc po_nref {t} {
 proc po_stub_autoplot {} {
     set ::po_ap {}
     rename ::ase::ui::auto_plot ::po_ap_orig
-    proc ::ase::ui::auto_plot {key} {
+    proc ::ase::ui::auto_plot {key args} {
         lappend ::po_ap [list $key [ase::session_getattr $key results]]
     }
 }
@@ -774,7 +776,10 @@ proc po14_stub {} {
         lappend ::po14_adds [list $gi $rpn]
         set gs [dict get [wviewer::layout_for $token] graphs]
         set G [lindex $gs $gi]
-        dict lappend G traces [dict create expr $rpn]
+        ## issue 1765: the real one marks a trace ASE-L's plot armed as its own
+        set tr [dict create expr $rpn]
+        if {[wviewer::owner_take $token]} { dict set tr byase 1 }
+        dict lappend G traces $tr
         wviewer::set_graphs $token [lreplace $gs $gi $gi $G]
         return {}
     }
@@ -1091,7 +1096,9 @@ group PO16 {
     ase::state_save $sf $sst
     check "PO16c ...and reads back from the file" [ase::plot_dest_of [ase::state_load $sf]] newtab
 
-    ## --- Replace (the default): the TARGET subwindow is emptied first -----
+    ## --- Replace (the default): ASE-L's own traces leave the TARGET
+    ## subwindow, and what was plotted by hand there stays (issue 1765; before
+    ## it the subwindow was emptied, "Cadence's Replace") ----------------------
     set saved_default [expr {[info exists ::wviewer_plot_mode] ? $::wviewer_plot_mode : {}}]
     po14_stub
     set ::wviewer_plot_mode single
@@ -1106,23 +1113,28 @@ group PO16 {
     set ::wviewer::target($key) 1
     set u0 [lindex [wviewer::history_depth $key] 0]
     pcall ase::ui::plot_outputs $key
-    check "PO16d Replace empties the target subwindow: the hand strip there is gone (Cadence's Replace)" \
-        [po14_strips $key] {{1 {v(sq) v(lp)}}}
+    check "PO16d Replace takes ASE-L's own traces out of the target subwindow and puts the rows back once: the hand strip there stays (issue 1765)" \
+        [po14_strips $key] {{1 {v(sq) v(lp)}} {0 v(hand)}}
     check "PO16d ...the run's strip keeps the zoom the user set on it" \
         [list [wviewer::dget [lindex [dict get [wviewer::layout_for $key] graphs] 0] x1 {}] \
               [wviewer::dget [lindex [dict get [wviewer::layout_for $key] graphs] 0] x2 {}]] {0.001 0.002}
-    check "PO16d ...and the clear is ONE undo step" \
+    check "PO16d ...and the replace is ONE undo step" \
         [expr {[lindex [wviewer::history_depth $key] 0] - $u0}] 1
+    check "PO16d ...and the target stays on the hand strip, where the user put it" \
+        [wviewer::target_index $key] 1
 
     ## --- Append: the target subwindow keeps everything --------------------
+    ## (the target back on the run's strip: an Append into an auto strip is
+    ## what the next row is about)
+    set ::wviewer::target($key) 0
     ase::ui::set_plot_dest $key append
     pcall ase::ui::plot_outputs $key
     check "PO16e Append in single-plot adds to the target strip (an auto strip may take it): no clear" \
-        [po14_strips $key] {{1 {v(sq) v(lp) v(sq) v(lp)}}}
+        [po14_strips $key] {{1 {v(sq) v(lp) v(sq) v(lp)}} {0 v(hand)}}
     set ::wviewer::mode($key) multi
     pcall ase::ui::plot_outputs $key
     check "PO16e Append in multi-plot: new strips on top, newest first, the old plot kept" \
-        [po14_strips $key] {{0 v(lp)} {0 v(sq)} {1 {v(sq) v(lp) v(sq) v(lp)}}}
+        [po14_strips $key] {{0 v(lp)} {0 v(sq)} {1 {v(sq) v(lp) v(sq) v(lp)}} {0 v(hand)}}
     set ::wviewer::mode($key) single
 
     ## --- New SubWin: a new subwindow holds the run; the old plot stays -----
@@ -1131,14 +1143,14 @@ group PO16 {
     pcall ase::ui::plot_outputs $key
     check "PO16g New SubWin: a second subwindow, made the target, holds the run in an auto strip" \
         [list [po16_tags $key] [po16_tsw $key] [lindex [po14_strips $key] end]] \
-        {{1 1 1 2} 1 {1 {v(sq) v(lp)}}}
+        {{1 1 1 1 2} 1 {1 {v(sq) v(lp)}}}
     check "PO16g ...and the first subwindow is untouched, traces and auto marker included" \
-        [lrange [po14_strips $key] 0 2] $before
+        [lrange [po14_strips $key] 0 3] $before
     set ::wviewer::mode($key) multi
     pcall ase::ui::plot_outputs $key
     check "PO16g a second press in multi-plot: a THIRD subwindow, one auto strip per row, newest on top" \
         [list [po16_tags $key] [po16_tsw $key] [lrange [po14_strips $key] end-1 end]] \
-        {{1 1 1 2 3 3} 2 {{1 v(lp)} {1 v(sq)}}}
+        {{1 1 1 1 2 3 3} 2 {{1 v(lp)} {1 v(sq)}}}
     set ::wviewer::mode($key) single
 
     ## --- zero rows: only Replace empties anything ---------------------------
@@ -1154,12 +1166,18 @@ group PO16 {
     pcall ase::ui::plot_outputs $key
     check "PO16i ...under Replace the target subwindow is left one empty auto strip, the others kept" \
         [list [po16_tags $key] [lindex [po14_strips $key] end] \
-              [expr {[lrange [dict get [wviewer::layout_for $key] graphs] 0 3] eq [lrange $snap 0 3]}]] \
-        {{1 1 1 2 3} {1 {}} 1}
+              [expr {[lrange [dict get [wviewer::layout_for $key] graphs] 0 4] eq [lrange $snap 0 4]}]] \
+        {{1 1 1 1 2 3} {1 {}} 1}
+    ## a subwindow ASE-L's plot never drew in: no auto strip, and (issue 1765)
+    ## no trace of ASE-L's own
     set ::wviewer::target($key) 0
     set snap [dict get [wviewer::layout_for $key] graphs]
     set gs $snap
-    for {set i 0} {$i < 3} {incr i} { lset gs $i [dict remove [lindex $gs $i] auto] }
+    for {set i 0} {$i < 4} {incr i} {
+        set g_ [dict remove [lindex $gs $i] auto own]
+        dict set g_ traces [lmap t_ [wviewer::dget $g_ traces {}] {dict remove $t_ byase}]
+        lset gs $i $g_
+    }
     wviewer::set_graphs $key $gs
     set snap [dict get [wviewer::layout_for $key] graphs]
     pcall ase::ui::plot_outputs $key
@@ -1296,8 +1314,8 @@ group PO16k {
           {replace {{1 v(sq)} {0 {v(lp) v(ramp) v(a) v(b) v(c)}}} {- -} 0}]
     ## ...and the drop-down still governs `~`: under Replace it empties first
     pcall ase::ui::plot_outputs $key
-    check "PO16k control: ~ under the same Replace DOES empty the subwindow first" \
-        [po14_strips $key] {{1 v(sq)}}
+    check "PO16k control: ~ under the same Replace puts its own row back once, and the Direct Plot batches beside it stay (issue 1765)" \
+        [po14_strips $key] {{1 v(sq)} {0 {v(lp) v(ramp) v(a) v(b) v(c)}}}
     po16_tabunstub
     po14_unstub $key
     catch {ase::session_close $key}
@@ -2024,8 +2042,11 @@ group PV6 {
     set a [pv_bysw $key]
     check "PV6 fixture: nothing ticked under Replace left the first subwindow one empty auto strip" \
         [list [pv_sw $key] [pv_vecs $key] [pv_auto $key]] {{1 2 2} {{} v(b) v(a)} {1 1 1}}
-    check "PV6 ...and called attach_raw not once (the spy), the attach record left as it was" \
-        [list $att [expr {[pv_record $key] eq $rec0}]] {{} 1}
+    ## issue 1765: `~` brings the traces plotted by hand to the result in
+    ## view, so a press with nothing ticked reads the result too: once, the
+    ## same data, and every strip then keeps exactly what it shows (R1)
+    check "PV6 ...and read the session's result once (the spy), as the same data" \
+        [list [llength $att] [lindex $att 0 1] [pv_same $key]] [list 1 $::pv_raw 1]
     check "PV6 Replace with nothing ticked: the subwindow it did not touch shows EXACTLY what it showed, strip by strip" \
         [pv_at $a 2] [pv_at $z 2]
     catch {wviewer::close $key}
@@ -2463,7 +2484,7 @@ if {!$GUI} {
         ## a spy on the one plotting door: it still plots, it also counts
         set ::pr13_ap 0
         rename ::ase::ui::auto_plot ::pr13_ap_orig
-        proc ::ase::ui::auto_plot {key} { incr ::pr13_ap ; return [::pr13_ap_orig $key] }
+        proc ::ase::ui::auto_plot {key args} { incr ::pr13_ap ; return [::pr13_ap_orig $key {*}$args] }
         set lay0 [wviewer::layout_for $key]
         set tabs0 [wviewer::tab_records $key]
         set tgt0 [wviewer::target_index $key]

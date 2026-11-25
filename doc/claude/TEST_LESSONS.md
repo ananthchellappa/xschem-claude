@@ -529,6 +529,27 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   resolve names no net: read the net's name off the wire (`xschem getprop wire 0 lab`)
   rather than predict it.
 
+- **A viewer rebuild after traces were taken out must come while the strips are still
+  the ones on screen, one for one.** `wviewer::view_map` gives each strip its own view by
+  place only while the count is unchanged; once a strip was added or removed it matches by
+  traces across the whole tab, and a strip of another subwindow that holds the same
+  traces as an emptied one takes the emptied strip's view (issue 1765, rows PV5 and PV6;
+  the defect issue 1733's review found). Rebuild inside the step that removes the traces,
+  as `wviewer::clear_subwin` and `wviewer::owned_clear` do, and only then ready strips.
+
+- **A step taken before a load must be taken back when the load reads nothing.** The
+  first cut of issue 1765 renamed the viewer's data and pinned traces to the new name,
+  then loaded; a load that read nothing left the rename standing, and the saved state
+  named `<file>@held1` as its result. A release before a load had the mirror defect.
+  Give the pair one settling step after the load (`wviewer::hold_settle`) and a row
+  whose file cannot be read (RK17, RL11).
+- **Traces pointed at other data make "the same data" false.** A load of a file the
+  window attached already is carried as the same data, view and all. After traces were
+  moved from an earlier run's data onto that file, a strip zoomed in X kept the earlier
+  run's Y window and its trace was off screen: drop the attach record with the move
+  (`wviewer::hold_release`), and read the Y window the strip SHOWS, not only a fit made by
+  the row (RK13: `rk_y` beside `rk_yfit`).
+
 ## 5. Registration, gates and flakes
 
 - **Derive a registration's trailer delta before the gate; never predict it from the
@@ -577,7 +598,35 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   of Direct Plot's finish) and run every suite that names it. Class the newcomer by what
   the row's rule demands of it, then build the break that class exists to catch.
 
+- **A spy that renames a proc out of its namespace breaks it.** `rename ::wviewer::p
+  ::spy_p` moves the proc to the global namespace, where its `variable windows` names
+  `::windows`: every call then fails with "can't read windows", inside whatever `catch`
+  the caller has. Rename inside the namespace (`::wviewer::spy_p`). (Issue 1765.)
+- **A stand-in for a proc that takes a one-shot arm must take the arm.**
+  `wviewer::add_trace` takes the display name and the owner mark armed for its window
+  (`expr_label_arm`, `owner_arm`). A stub that only records the call leaves the arm
+  standing and adds a trace without what the arm carried, so every row downstream reads
+  another product (issue 1765: the stub of `test_ase_plot_outputs` added unmarked traces
+  and Replace kept them all).
+- **A row that binds "a key the product does not use" names a key the product may use
+  tomorrow.** Rows KM19 and CG6 bound Ctrl-R on the viewer's tag as their own and removed
+  it afterwards; when Ctrl-R became the viewer's Reload they removed the default. Check
+  the key against `install_default_binds` when a default is added, and say in the row why
+  that key is free.
+- **A text fence over a proc's order breaks on an early `return`.** `string first {return}`
+  after a branch's opening found the guard `{ return }` on the branch's first line once
+  one was added (GX9 of `test_wave_grid`). Anchor on the line that ends the branch
+  (`"\n    return\n"`), and on the call's own arguments when the proc gains a second
+  call of the same name (`wviewer::attach_raw $key $rf`).
+
 ## 6. Measuring
+
+- **Which data a trace shows is three measurements, and the engine's fit is over the X
+  window on screen.** A value read in the database the trace names says what it is pinned
+  to; the rect's `node` token says what the engine was told; the engine's own Y fit says
+  what it draws. The fit covers the visible X window only, so after a zoom two runs that
+  differ in amplitude can fit to the same number: pick the window so the expected values
+  differ (rows RK3 and RL4, issues 1765 and 1766).
 
 - The linked binary's md5 is not a restore proof (`src/scheduler.c` embeds `__DATE__` and
   `__TIME__`); an object such as `save.o` is reproducible and is the witness.

@@ -231,12 +231,13 @@ sit at one X across subwindows. **Declared limit** for this version.
 
 | choice | where the run's strips go | previous `auto` strips |
 |---|---|---|
-| Replace | target subwindow cleared, then `want` fresh `auto 1` strips (1 single / one per row multi) | gone with the clear (they were in it), else kept |
+| Replace | ASE-L's own traces leave the target subwindow (issue 1765; before it the subwindow was cleared), then `want` `auto 1` strips (1 single / one per row multi) | their ASE-L traces replaced; a trace plotted by hand in one stays, and so does every hand strip |
 | Append | target subwindow, viewer append rule (single: target strip; multi: new strips on top); ASE's own batch may land in an `auto` strip | kept, traces kept |
 | New SubWin | a new subwindow, made the target, `want` `auto 1` strips | kept |
 | New Win | a new tab, `want` `auto 1` strips | kept |
 
-  The zero-ticked-rows path empties the target subwindow under Replace only.
+  The zero-ticked-rows path takes ASE-L's own traces out of the target subwindow under
+  Replace only.
   Direct Plot still never lands in an `auto` strip under Append (R-OUT14).
 - ASE-L's `plot_dest` governs `~`, the run-end plot AND Direct Plot
   (`ase::ui::dp_finish` passes it to `plot_signals`, §16). The viewer has no

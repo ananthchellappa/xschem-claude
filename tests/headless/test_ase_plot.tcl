@@ -637,12 +637,13 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check "P5 same viewer toplevel" [wviewer::window_for $key] $vtop
       check "P5 no new toplevel" [toplevel_count] $tls5
-      ## R-OUT15 (2026-10-15): the default Replace empties the target
-      ## subwindow, and the Direct-Plot graph is in it (one subwindow), so it
-      ## goes -- Cadence's Replace; Append or New SubWin keep it.
+      ## Issue 1765 (2026-11-25): the default Replace puts ASE-L's own rows
+      ## back and leaves what was plotted by hand, so the Direct-Plot graph
+      ## stays. (From R-OUT15, 2026-10-15, until then, Replace emptied the
+      ## target subwindow and that graph went with it.)
       set gs5 [dict get [wviewer::layout_for $key] graphs]
-      check "P5 under Replace ~ empties the target subwindow: one graph left, the auto graph with its 2 traces" \
-        [list $gc5 [llength $gs5] [wviewer::auto_graph_index $key] [gtr_n $gs5 0]] {2 1 0 2}
+      check "P5 under Replace ~ puts its rows back in the auto graph, once, and the Direct-Plot graph stays: two graphs, the auto graph with its 2 traces" \
+        [list $gc5 [llength $gs5] [wviewer::auto_graph_index $key] [gtr_n $gs5 0]] {2 2 0 2}
 
       # --- P6: re-run -> always-replace auto graph, Direct-Plot graph intact -
       # make the design current DETERMINISTICALLY first: P5's viewer raise
@@ -659,7 +660,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       update
       check "P6 exit 0" $ec6 0
       set gs6 [dict get [wviewer::layout_for $key] graphs]
-      check "P6 model graphs STILL 1 (replace, not append)" [llength $gs6] 1
+      check "P6 model graphs STILL 2 (the auto graph replaced, not appended to; the Direct-Plot graph intact)" [llength $gs6] 2
       set agi6 [wviewer::auto_graph_index $key]
       check "P6 auto graph still present" $agi6 0
       check "P6 auto graph REBUILT with exactly 2 traces" [gtr_n $gs6 $agi6] 2

@@ -1377,6 +1377,86 @@ so an undo of that deletion after a load brings back a trace with nothing to dra
 samples exist nowhere else. A restored trace that was computed on the transient or the
 DC sweep is evaluated on whichever analysis the restore shows, as before.
 
+## Reload: Ctrl-R, File > Reload (issue 1766, 2026-11-25)
+
+**Ctrl-R in the viewer reads the result again and brings every trace plotted there to
+it.** The user: *"add support for Ctrl-R (that's not Ctrl-Shift-R, just plain Ctrl-R) that
+will reload (from latest sim, or currently selected result in ASE-L ...) the waveforms
+currently plotted."*
+
+- **The key** is `<Control-Key-r>` on the `WaveViewer` tag (`wviewer::install_default_binds`;
+  an rc that binds it first wins, as for every default), with the menu twin File > Reload.
+  `<Control-Key-R>`, which is what Ctrl-Shift-R sends, is not bound.
+- **What is read** (`wviewer::reload_source`): the result the window's ASE-L session has in
+  view (`ase::ui::reload_source`: `ase::last_rawfile`, the analysis the after-run plot
+  shows, the run's digital files). That is the latest run, or the saved result chosen with
+  Results > Select. A session that answers nothing (no results file) reads again the file
+  the window attached last, else the file behind its current database.
+- **What happens** (`wviewer::reload`): the traces a finished run left on an earlier run
+  are put back on the result (`wviewer::hold_release`, below), then the load a run and a
+  Direct Plot use (`wviewer::attach_raw`), so the view is kept by the rules of "Keeping the
+  view across a rebuild" and expression traces are evaluated again. No trace or strip is
+  added or removed, the target stays, and no undo point is taken.
+- **Not while the session's run is live** (`ase::ui::reload_busy`): `wviewer: a simulation
+  of this session is running; reload when it has finished`, and nothing is read.
+- **A read that finds nothing** (no such analysis in the file, no data) leaves the viewer
+  as it was: `ase::attach_dbs` sets the loaded copy of the file aside under another name
+  before the read and gives it its own name back when the read fails, and
+  `wviewer::hold_settle` puts the pins back on the traces that were kept. The sentence
+  says the file could not be reloaded; nothing is logged.
+- **What is said:** `wviewer: reloaded <file or saved name> (<analysis>)`, with the number
+  of traces that were on an earlier run; `wviewer: nothing to reload: no result file is
+  attached to this window` when there is none. One log line for a read, `wviewer::reload
+  <token>`.
+
+Rows: `tests/headless/test_wave_reload_1766.tcl`.
+
+## An earlier run, kept for the traces plotted by hand (issue 1765, 2026-11-25)
+
+A load of results reads the file anew and drops every other database (`ase::attach_dbs`),
+so every trace follows the new run. ASE-L's plot of a finished run under its destination
+Replace has to leave what the user plotted by hand on the run it was plotted from
+(ase_l.md R-OUT15). `wviewer::hold_manual` does that before the load:
+
+- each database a hand-made trace draws from, in any tab, is given a kept NAME in the
+  registry: `<path>@held<n>` for the one that was current, `<path>@heldx<n>` for one a
+  trace named itself (`xschem raw rekey <slot> <name>`, `src/scheduler.c`). The data stays
+  in memory; the load then reads the file as a new database beside it;
+- the traces are pinned to the kept name with the keys a trace of another database has
+  always carried (`rawfile`, `sim_type`; `wviewer::held_pin`), so every reader that
+  follows a trace's database follows it: the draw, the fit, the readout;
+- the load keeps a kept database for as long as a trace names it (`wviewer::mem_dbs`);
+- nothing is kept when the load brings the data the window attached last
+  (`wviewer::attach_is_same`), nor for a database the Calculator made in memory (kept
+  already), nor for one that is kept already: a trace kept at an earlier run stays on it;
+- nothing is kept across a run of ANOTHER ANALYSIS than the viewer shows, and what was
+  kept before then follows the load: seconds and hertz do not share an X window;
+- a trace is pinned only when the database holds its vector, so a trace with nothing to
+  show there follows the load; a database with no point is not kept;
+- a name is never looked for in a kept database (`wviewer::resolve_signal_db`);
+- the caller loads next and calls `wviewer::hold_settle`: a load that read nothing gives
+  the renamed databases their names back and takes the pins off (after `hold_manual`), or
+  puts the pins back (after `hold_release`).
+
+A kept trace's legend name ends in `@HH:MM:SS`, the time its data was written
+(`wviewer::held_cue`, on the rect only); where a database is named it reads `<file> of
+<HH:MM:SS>` (`wviewer::db_label`). The time is the result file's own at the load that
+read it (`wviewer::attach_raw`, `wviewer::restore`); for data loaded by hand the window
+does not know it and says `@earlier` / `<file>, earlier run`. `wviewer::hold_release`
+takes the pins off (`~` in ASE-L, Reload here) and drops the window's record of its last
+attach, so the load that follows is new data for the strips (the X the user moved is kept,
+Y is fitted); that load drops the kept databases. A pasted copy of a kept trace is plain. A saved state holds a kept
+trace as the plain trace it was (`wviewer::snapshot`, `wviewer::held_plain`), and a model
+that comes back out of the undo history pinned to data that is gone comes back plain
+(`wviewer::state_apply`).
+
+**Whose trace it is.** A trace ASE-L's plot added carries `byase 1`
+(`wviewer::owner_arm`); an `auto 1` strip whose traces carry their own marks carries
+`own 1`. An auto strip without `own` is from before the marks and all its traces count as
+ASE-L's (`wviewer::owned_indices`). A pasted copy carries no mark.
+
+Rows: `tests/headless/test_ase_replace_keeps_1765.tcl`.
+
 ## Clear All (issue 0171, 2026-07-27)
 
 **Ctrl-D in the viewer deletes every graph and every trace and leaves ONE empty
@@ -1408,7 +1488,7 @@ owning the current xschem context, like the 0151 mode/target commands); also
 
   ```tcl
   bind WaveViewer <Control-Key-d> {break}                      ;# drop the default
-  bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+  bind WaveViewer <Control-Key-k> {wviewer::clear_all_at %W; break}
   ```
 
   An rc binding **wins** (defaults are only installed for a sequence nothing has

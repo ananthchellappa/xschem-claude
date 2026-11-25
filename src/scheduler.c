@@ -11323,6 +11323,15 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
      *   xschem raw info
      *     print information about loaded raw files and show the currently active one.
      *
+     *   xschem raw rekey n name
+     *     give the n-th loaded raw file (as `xschem raw info` numbers them) the
+     *     name 'name' in place of its file's path. The data stays in memory as it
+     *     is; a later read of the file it came from is then a new raw file, and a
+     *     graph node `vec%name type` goes on drawing the renamed one. Returns 1,
+     *     or 0 (nothing changed) for a bad index, an empty name, or a name another
+     *     loaded raw file of the same type has. The waveform viewer keeps an
+     *     earlier run's data this way (wviewer::hold_manual).
+     *
      *   xschem raw totals_as_op [n]
      *     1 if the current raw data (or the n-th, as `xschem raw info` numbers them) holds
      *     the noise totals of a results file under the type `op` because a read that
@@ -11683,6 +11692,31 @@ static int xschem_cmds_r(Tcl_Interp *interp, int argc, const char *argv[], int *
         Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "info")) {
         ret = extra_rawfile(4, NULL, NULL, -1.0, -1.0);
+      } else if(argc > 4 && !strcmp(argv[2], "rekey")) {
+        /* xschem raw rekey n name: the registry is keyed on raw->rawfile and
+         * raw->sim_type (extra_rawfile()), so the new name must not be one a
+         * slot of the same type already answers to. The base raw that was never
+         * put in the array (extra_raw_n == 0) is slot 0, as `raw info` lists it. */
+        int i, n = -1;
+        Raw *r = NULL;
+        ret = 0;
+        if(isonlydigit(argv[3])) n = atoi(argv[3]);
+        if(n >= 0 && n < xctx->extra_raw_n) r = xctx->extra_raw_arr[n];
+        else if(n == 0 && xctx->extra_raw_n == 0) r = xctx->raw;
+        if(r && argv[4][0]) {
+          ret = 1;
+          for(i = 0; i < xctx->extra_raw_n; i++) {
+            Raw *o = xctx->extra_raw_arr[i];
+            if(o == r || !o->rawfile || strcmp(o->rawfile, argv[4])) continue;
+            if((!o->sim_type && !r->sim_type) ||
+               (o->sim_type && r->sim_type && !strcmp(o->sim_type, r->sim_type))) {
+              ret = 0;
+              break;
+            }
+          }
+          if(ret) my_strdup2(_ALLOC_ID_, &r->rawfile, argv[4]);
+        }
+        Tcl_SetResult(interp, my_itoa(ret), TCL_VOLATILE);
       } else if(argc > 2 && !strcmp(argv[2], "switch_back")) {
         ret = extra_rawfile(5, NULL, NULL, -1.0, -1.0);
         /* only update_op() if switching INTO a 1-point OP or DC -- the same

@@ -5563,7 +5563,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
         # sequence, or the order was not what the leg moved.
         set km19_save {}
         foreach km_seq [bind WaveViewer] { lappend km19_save $km_seq [bind WaveViewer $km_seq] }
-        set km19_own {<Control-Key-r> <Key-F5> <Alt-Key-j> <Control-Alt-Key-D> <KeyRelease-u> <Control-Key>}
+        set km19_own {<Control-Key-k> <Key-F5> <Alt-Key-j> <Control-Alt-Key-D> <KeyRelease-u> <Control-Key>}
         foreach km_seq $km19_own { bind WaveViewer $km_seq break }
         set km19_all [bind WaveViewer]
         set ::km19_hit {}

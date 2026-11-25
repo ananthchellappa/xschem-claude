@@ -1143,6 +1143,7 @@ group SVR-D1 {
     ase::saved_artifacts neither  ase::runstate_path neither  ase::saved_save_body neither
     ase::saved_runstate_raw neither  ase::live_rawfile listing
     ase::result_plotmap_state neither  ase::ui::meas_results_list reader
+    ase::ui::reload_source reader
     ase::ui::netlist_display_text writer
     ase::probe_report neither  ase::ui::sod_terminal_pick reader
     ase::ui::plot_difference reader  ase::ui::pd_finish reader

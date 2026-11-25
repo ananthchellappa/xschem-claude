@@ -153,7 +153,7 @@
 # strip_bindings sweeps every widget-level sequence and an rc file must be able
 # to remap the key BEFORE any viewer window exists:
 #   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
-#   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+#   bind WaveViewer <Control-Key-k> {wviewer::clear_all_at %W; break}
 # The action is logged replayably through the same log_action seam as the mode
 # and target commands.
 #
@@ -988,6 +988,16 @@ proc wviewer::token_for_canvas {wp} {
 # precisely that reason -- to prove the seed fires rather than a leftover surviving.
 proc wviewer::forget {token} {
   wviewer::diag "forget         token=$token"
+  # issue 1765: the owner arm and the record of the kept runs
+  variable ownarm; variable held; variable heldn
+  variable datawhen; variable holdundo; variable relundo; variable lastread
+  catch {unset lastread($token)}
+  catch {unset ownarm($token)}
+  catch {unset held($token)}
+  catch {unset heldn($token)}
+  catch {unset datawhen($token)}
+  catch {unset holdundo($token)}
+  catch {unset relundo($token)}
   variable windows
   variable graphbb
   variable layouts
@@ -2893,6 +2903,10 @@ proc wviewer::db_label {path type} {
   set t $type
   if {$t eq {<NULL>}} { set t {} }
   set tail [file tail $path]
+  # issue 1765: an earlier run's data kept for the traces plotted by hand
+  # (wviewer::hold_manual) is named by its file and the time it was written
+  set hl [wviewer::held_label $path]
+  if {$hl ne {}} { set tail $hl }
   # ISSUE 1705 (R916): a saved result labels by its NAME.
   if {[info commands ::ase::saved_name_of] ne {}} {
     set sn {}
@@ -3275,6 +3289,13 @@ proc wviewer::db_fuzzy {} {
 # meant — the first slot that RESOLVES wins.
 proc wviewer::resolve_signal_db {token vec} {
   foreach db [wviewer::signal_list_all $token] {
+    # issue 1765: an earlier run kept for the traces plotted by hand
+    # (wviewer::hold_manual) is not where a NAME is looked for. A name the
+    # result lacks is refused, as it is with nothing kept: found there, an
+    # ASE-L row whose net the new run does not have was drawn from the earlier
+    # run with no word said (the review of that change, measured). A pick made
+    # under the kept database's own header names it by index and is not this.
+    if {[wviewer::held_parse [wviewer::dget $db path {}]] ne {}} { continue }
     set fuzzy [expr {[wviewer::dget $db case 0] ? 0 : 1}]
     set idx [wviewer::name_index [dict get $db names]]
     if {[wviewer::name_lookup $idx $vec $fuzzy] ne {ok}} { continue }
@@ -3945,11 +3966,17 @@ proc wviewer::auto_graph_indices {token} {
 # The mode is the window's (wviewer::plot_mode); a token with none falls back to
 # wviewer::default_plot_mode, the mode wviewer::open seeds a new window with.
 #
-# REPLACE IS UNCHANGED: every auto strip is cleared before anything lands, and no
-# strip without the marker (Direct Plot, a hand-built strip) is touched. Indices
-# that move because an auto strip was inserted or removed carry the target strip
-# and the trace highlights with them, by the same pure rules delete_empty_strips
-# and plot_signals use.
+# WHAT LEAVES (issue 1765): ASE-L's own traces, out of every strip of the target
+# subwindow (wviewer::owned_drop), and nothing else. A trace plotted by hand
+# stays where it is, in a strip of its own or in one of ASE-L's. So an auto
+# strip that is surplus (a longer earlier batch) is removed only when it is
+# empty; one that still holds a trace plotted by hand stays as an ordinary
+# strip (the `auto` mark goes). Before 1765 every auto strip was emptied
+# wholesale. The strips readied here are marked `own 1`: their traces carry
+# their own marks (wviewer::owned_indices). Indices that move because an auto
+# strip was inserted or removed carry the target strip and the trace
+# highlights with them, by the same pure rules delete_empty_strips and
+# plot_signals use.
 proc wviewer::auto_plot_strips {token n} {
   variable target
   set mode [wviewer::plot_mode $token]
@@ -3961,13 +3988,17 @@ proc wviewer::auto_plot_strips {token n} {
   # traces and all. With one subwindow the scope is the whole tab, as before.
   set gs [dict get [wviewer::layout_for $token] graphs]
   lassign [wviewer::sw_range $gs [wviewer::target_index $token]] f l
+  # issue 1765: ASE-L's traces leave first (no strip index moves), so the
+  # strips are judged by what stays in them
+  wviewer::owned_drop $token $f $l
+  set gs [dict get [wviewer::layout_for $token] graphs]
   set A [wviewer::sw_auto_in $gs $f $l]
   if {![llength $A]} {
     if {$l >= $f && $l == $f && [wviewer::graph_is_empty [lindex $gs $f]]} {
       # ⚠ CLAIM THE LONE EMPTY STRIP (issue 1616; ensure_auto_graph's rule,
       # scoped to the subwindow): a virgin viewer, a Clear All, a New SubWin,
       # a New Win and a Replace's cleared subwindow all leave exactly one.
-      set gs [lreplace $gs $f $f [dict merge [lindex $gs $f] [dict create auto 1]]]
+      set gs [lreplace $gs $f $f [dict merge [lindex $gs $f] [dict create auto 1 own 1]]]
       wviewer::set_graphs $token $gs
       set A [list $f]
     } elseif {$mode ne {multi}} {
@@ -3981,7 +4012,7 @@ proc wviewer::auto_plot_strips {token n} {
       set hl [lmap e [wviewer::wave_hilights $token] {
         lassign $e hg hn hs
         list [wviewer::index_after_insert $hg $at 1] $hn $hs}]
-      set g [dict merge [wviewer::empty_graph] [dict create auto 1]]
+      set g [dict merge [wviewer::empty_graph] [dict create auto 1 own 1]]
       set swat [wviewer::gsw [lindex $gs [expr {$at - 1}]]]
       if {$swat ne {}} { dict set g sw $swat }
       wviewer::set_graphs $token [linsert $gs $at $g]
@@ -3990,19 +4021,54 @@ proc wviewer::auto_plot_strips {token n} {
       set A [list $at]
     }
   }
-  foreach gi $A { wviewer::clear_graph_traces $token $gi }
+  # the auto strips that stay carry their traces' own marks from here on
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set marked 0
+  foreach gi $A {
+    if {[wviewer::dget [lindex $gs $gi] own 0] ne {1}} {
+      set gs [lreplace $gs $gi $gi [dict replace [lindex $gs $gi] own 1]]
+      set marked 1
+    }
+  }
+  if {$marked} { wviewer::set_graphs $token $gs }
   if {[llength $A] > $want} {
-    set kill [lrange $A $want end]
+    # surplus auto strips: an empty one is removed, one that holds a trace
+    # plotted by hand stays as an ordinary strip
+    set kill {}
+    set plain 0
+    set gs [dict get [wviewer::layout_for $token] graphs]
+    foreach gi [lrange $A $want end] {
+      if {[wviewer::graph_is_empty [lindex $gs $gi]]} {
+        lappend kill $gi
+      } else {
+        set gs [lreplace $gs $gi $gi [dict remove [lindex $gs $gi] auto own]]
+        set plain 1
+      }
+    }
+    if {$plain} { wviewer::set_graphs $token $gs }
     set gs [dict get [wviewer::layout_for $token] graphs]
     # read BEFORE the mutation (delete_empty_strips' rule: target_index clamps
     # against the live count)
+    # A target on a strip that goes stays in this subwindow, on the first auto
+    # strip kept (it stands above every strip removed, so its index holds):
+    # carried to the next strip left, it would land in ANOTHER subwindow when
+    # the removed strip was this one's last, and the next plot would follow it
+    # there. (Before issue 1765 the subwindow was emptied to one strip first,
+    # which put the target on that strip.)
     set tgt {}
-    if {[info exists target($token)]} {
-      set tgt [wviewer::index_after_removal [wviewer::target_index $token] $kill]
+    if {[llength $kill] && [info exists target($token)]} {
+      set was [wviewer::target_index $token]
+      if {[lsearch -exact $kill $was] >= 0} {
+        set tgt [lindex $A 0]
+      } else {
+        set tgt [wviewer::index_after_removal $was $kill]
+      }
     }
-    wviewer::wavehl_remap_apply $token \
-      [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
-    wviewer::set_graphs $token [wviewer::remove_graphs $gs $kill]
+    if {[llength $kill]} {
+      wviewer::wavehl_remap_apply $token \
+        [wviewer::wavehl_after_strip_removal [wviewer::wave_hilights $token] $kill]
+      wviewer::set_graphs $token [wviewer::remove_graphs $gs $kill]
+    }
     if {$tgt ne {}} { set target($token) $tgt }
   } elseif {[llength $A] < $want} {
     set k [expr {$want - [llength $A]}]
@@ -4018,7 +4084,7 @@ proc wviewer::auto_plot_strips {token n} {
     # explicitly (untagged they would join the subwindow above, sw_normalize)
     set swat [wviewer::gsw [lindex $gs $at]]
     for {set i 0} {$i < $k} {incr i} {
-      set g [dict merge [wviewer::empty_graph] [dict create auto 1]]
+      set g [dict merge [wviewer::empty_graph] [dict create auto 1 own 1]]
       if {$swat ne {}} { dict set g sw $swat }
       lappend fresh $g
     }
@@ -4823,6 +4889,10 @@ proc wviewer::graph_props {G {active 0} {grid 1}} {
       # `TOP.m.siga%/home/qflow/dev/xschem/claude_1/...`. With the alias the
       # legend is `find_nth(ntok,";",..,1)` = the display name (draw.c:4424-4425).
       if {$nm eq {} || $nm eq $vec} { set nm $vec }
+      # issue 1765: a trace kept on an earlier run says which, after its name
+      # (wviewer::held_cue: `@HH:MM:SS`), so a trace that did not follow the
+      # run is told from one that did. On the rect only, never in the model.
+      append nm [wviewer::held_cue $tr]
       lappend ntoks "\\\"$nm;$vec$sfx\\\""
     } elseif {$nm ne {} && $nm ne $vec} {
       lappend ntoks "\\\"$nm;$vec\\\""
@@ -5122,12 +5192,17 @@ proc wviewer::auto_expr_name {token {taken {}}} {
 # tab that is not (its frozen record). One window's tabs draw from one set of
 # data, so what is made in that data is made for all of them. `leave` names
 # strips of the tab shown, by index, to leave out: the ones a plot is about to
-# empty (ase::ui::auto_plot under Replace).
+# empty. An item `o<index>` leaves out only ASE-L's own traces of that strip
+# (wviewer::owned_less): what ase::ui::auto_plot under Replace is about to
+# take out since issue 1765, where the traces plotted by hand stay.
 proc wviewer::all_graphs {token {leave {}}} {
   set out {}
   set gi 0
   foreach G [wviewer::dget [wviewer::layout_for $token] graphs {}] {
-    if {[lsearch -exact $leave $gi] < 0} { lappend out $G }
+    if {[lsearch -exact $leave $gi] < 0} {
+      if {[lsearch -exact $leave o$gi] >= 0} { set G [wviewer::owned_less $G] }
+      lappend out $G
+    }
     incr gi
   }
   set cur [wviewer::tab_index $token]
@@ -5157,9 +5232,825 @@ proc wviewer::mem_dbs {token} {
     set t [wviewer::dget $e type {}]
     set made 0
     catch {set made [calc::wave_dest_made $p $t]}
-    if {$made eq {1}} { lappend out [list $p $t] }
+    # issue 1765: and the data of an earlier run that wviewer::hold_manual kept
+    # for the traces plotted by hand. It was read from a file, but under a
+    # name of the viewer's own, so no later run is mistaken for it; it goes
+    # when no trace names it any more (wviewer::hold_release).
+    if {$made eq {1} || [wviewer::held_parse $p] ne {}} { lappend out [list $p $t] }
   }
   return $out
+}
+
+# --- WHOSE TRACE IT IS, AND WHICH RUN IT SHOWS (issues 1765, 1766) ------------
+# The user, 2026-11-25, of the plot destination Replace: "plotting should only
+# replace the plots that are specified to be plotted in the Saves pane of
+# ASE-L. That is, we don't blank the canvas in Waveform Viewer and only draw
+# these waveforms. Those plots that the user plotted manually after the sim
+# should be retained." And of what the retained plots show: the run they were
+# plotted from after a plot that a finished run makes, the result in view after
+# `~` (and after Ctrl-R, wviewer::reload).
+#
+# TWO MARKS IN THE MODEL carry that:
+#   byase 1   on a TRACE: ASE-L's own plot put it there (ase::ui::auto_plot
+#             arms it, wviewer::owner_arm). Every other door leaves the key out,
+#             so a trace plotted by hand is byte-identical to what it was.
+#   own 1     on an `auto 1` STRIP: its traces carry their own marks. An auto
+#             strip without it is from before the marks (a saved state, a
+#             session opened by an older build), where everything in an auto
+#             strip was the tool's: all its traces count as ASE-L's
+#             (wviewer::owned_indices). The strips ASE-L's plot readies get it
+#             (wviewer::auto_plot_strips).
+#
+# AN EARLIER RUN, KEPT. A load of results reads the file anew and drops every
+# other database (ase::attach_dbs), so every trace follows the new run. For a
+# trace plotted by hand that must go on showing the run it was plotted from,
+# wviewer::hold_manual gives the database it draws from another NAME in the
+# registry before the load (`xschem raw rekey`): the data stays in memory, the
+# load reads the file as a new database beside it, and the trace is pinned to
+# the kept one by name (`rawfile`, `sim_type`: the keys a trace of another
+# database has always carried, wviewer::db_suffix). wviewer::hold_release takes
+# the pins off again; the kept database then has no trace and the next load
+# drops it. Nothing of this is saved: wviewer::snapshot writes such a trace as
+# the plain trace it was (wviewer::held_plain), since the kept data lives in
+# memory only.
+
+# PURE: 1 when ASE-L's own plot put trace `tr` in its strip.
+proc wviewer::trace_owned {tr} {
+  return [expr {[wviewer::dget $tr byase 0] eq {1}}]
+}
+
+# PURE: the model indices of the traces of strip `G` that are ASE-L's: the ones
+# marked, and every trace of an auto strip from before the marks.
+proc wviewer::owned_indices {G} {
+  if {[catch {dict size $G}]} { return {} }
+  set old [expr {[wviewer::dget $G auto 0] eq {1} && [wviewer::dget $G own 0] ne {1}}]
+  set out {}
+  set ti 0
+  foreach tr [wviewer::dget $G traces {}] {
+    if {$old || [wviewer::trace_owned $tr]} { lappend out $ti }
+    incr ti
+  }
+  return $out
+}
+
+# PURE: strip `G` without ASE-L's traces. For a reader that has to pass them
+# over (wviewer::all_graphs' `o<index>`); a removal goes through owned_drop,
+# which also moves the markers and the selection.
+proc wviewer::owned_less {G} {
+  set idx [wviewer::owned_indices $G]
+  if {![llength $idx]} { return $G }
+  set trs {}
+  set ti 0
+  foreach tr [wviewer::dget $G traces {}] {
+    if {[lsearch -exact $idx $ti] < 0} { lappend trs $tr }
+    incr ti
+  }
+  return [dict replace $G traces $trs]
+}
+
+# PURE: how many traces of the strips `f`..`l` of `gs` are ASE-L's.
+proc wviewer::owned_in {gs f l} {
+  set n 0
+  for {set k $f} {$k <= $l && $k < [llength $gs]} {incr k} {
+    if {$k >= 0} { incr n [llength [wviewer::owned_indices [lindex $gs $k]]] }
+  }
+  return $n
+}
+
+# THE NEXT TRACE ADDED TO `token` IS ASE-L'S. Armed for the window and taken by
+# the next wviewer::add_trace there on its first lines, whatever that call then
+# does: the shape the display name of an expression travels in
+# (wviewer::expr_label_arm), because add_trace's formals are pinned.
+proc wviewer::owner_arm {token} {
+  variable ownarm
+  set ownarm($token) 1
+  return {}
+}
+proc wviewer::owner_take {token} {
+  variable ownarm
+  if {![info exists ownarm($token)]} { return 0 }
+  unset ownarm($token)
+  return 1
+}
+
+# Take ASE-L's traces out of the strips `f`..`l` of the tab shown. The model
+# only: the markers on those traces go, the markers, the selection and the
+# trace highlights of the traces that stay move with them (delete_items'
+# rules), and the caller owes the rebuild. No undo point (owned_clear takes
+# one). Returns how many traces left.
+proc wviewer::owned_drop {token f l} {
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set delt [dict create]
+  set n 0
+  for {set k $f} {$k <= $l && $k < [llength $gs]} {incr k} {
+    if {$k < 0} { continue }
+    set idx [wviewer::owned_indices [lindex $gs $k]]
+    if {[llength $idx]} {
+      dict set delt $k $idx
+      incr n [llength $idx]
+    }
+  }
+  if {!$n} { return 0 }
+  set hl [wviewer::wave_hilights $token]
+  dict for {k idx} $delt {
+    set doomed {}
+    foreach ti $idx {
+      set ni [wviewer::node_index_of_trace [lindex $gs $k] $ti]
+      if {$ni >= 0} { lappend doomed $ni }
+    }
+    if {[llength $doomed]} { set hl [wviewer::wavehl_after_trace_delete $hl $k $doomed] }
+  }
+  wviewer::wavehl_remap_apply $token $hl
+  lassign [wviewer::delete_in_graphs $gs {} $delt] out gone
+  # A strip this leaves EMPTY keeps the X half of its stored view and nothing
+  # of its Y (window, scale, unit), nor a bold or selected trace: a Y window
+  # belongs to the traces it was set for, and those have left
+  # (wviewer::sw_clear_graphs' rule for the strip a clear leaves; the door
+  # that refills the strip hands it back the stored view of the strip that
+  # held its traces, wviewer::sw_stored_give). A strip that still holds a
+  # trace plotted by hand keeps its whole view.
+  dict for {k idx} $delt {
+    set G [lindex $out $k]
+    if {![catch {dict size $G}] && ![llength [wviewer::dget $G traces {}]]} {
+      set out [lreplace $out $k $k \
+        [dict remove [dict replace $G y1 {} y2 {} logy 0] markers hilight_wave sel_waves yunit]]
+    }
+  }
+  wviewer::set_graphs $token [wviewer::markers_sweep_numbers $out $gone]
+  if {[llength $gone]} { catch {xschem graph_marker select -none} }
+  return $n
+}
+
+# THE REPLACE DESTINATION'S WINDOW HALF (ase::ui::auto_plot; issue 1765):
+# ASE-L's own traces leave the subwindow holding strip `gi` (default: the
+# TARGET subwindow), and nothing else does. A strip plotted by hand keeps its
+# traces, its place and its view; a trace plotted by hand into one of ASE-L's
+# strips stays in it. Before this the whole subwindow was emptied
+# (wviewer::clear_subwin, still what the viewer's own doors and Graph > Clear
+# SubWin use).
+#
+# ONE undo step when something leaves, so `u` brings the replaced traces back.
+# Not logged (half of a plot gesture, as clear_subwin is). REBUILT HERE, while
+# the strips are still the ones on screen, one for one: every strip then keeps
+# its own view by place (wviewer::view_map's first rule). The caller readies
+# its strips next (auto_plot_strips), which may remove or insert some; had the
+# rebuild waited for that, a strip of ANOTHER subwindow holding the same
+# traces as one emptied here would have been handed the emptied strip's view
+# (measured: a subwindow zoomed to 6n..8n came back at the full sweep; the
+# defect the issue 1733 review found in the same place).
+# Returns how many traces left, {} when no viewer resolves.
+proc wviewer::owned_clear {{token {}} {gi {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window to replace a plot in" error
+    return {}
+  }
+  if {$gi eq {}} { set gi [wviewer::target_index $token] }
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  lassign [wviewer::sw_range $gs $gi] f l
+  set any 0
+  for {set k $f} {$k <= $l && $k < [llength $gs]} {incr k} {
+    if {$k >= 0 && [llength [wviewer::owned_indices [lindex $gs $k]]]} { set any 1 ; break }
+  }
+  if {!$any} { return 0 }
+  # the fold never adds or removes a trace, so the indices read after it are
+  # the ones just counted (delete_items' note)
+  wviewer::capture_live_view_state $token
+  set view [wviewer::view_take $token]      ;# every strip keeps its view
+  wviewer::push_undo $token
+  set n [wviewer::owned_drop $token $f $l]
+  wviewer::regenerate $token [wviewer::view_keep $token $view]
+  return $n
+}
+
+# PURE: the registry name the data read from `path` is kept under, number `n`.
+# `explicit` 1 is for a database a trace named itself (a digital database, a
+# file loaded beside the result): its path comes back when the pin is taken
+# off. 0 is for the database that was the current one: such a trace carried no
+# name and carries none afterwards. A path the node grammar cannot carry
+# (wviewer::db_path_safe) is spelled with `_`, which costs nothing: only an
+# explicit name has to give its path back, and a trace could only name a path
+# the grammar carries.
+proc wviewer::held_name {path n {explicit 0}} {
+  set p $path
+  if {![wviewer::db_path_safe $p]} { regsub -all {[][{}%\"\\$[:space:]]} $p _ p }
+  return "${p}@held[expr {$explicit ? {x} : {}}]$n"
+}
+
+# PURE: `{path explicit n}` for a name wviewer::held_name made, {} for any
+# other.
+proc wviewer::held_parse {name} {
+  if {![regexp {^(.*)@held(x?)([0-9]+)$} $name -> p x n]} { return {} }
+  return [list $p [expr {$x eq {x}}] $n]
+}
+
+# PURE: trace `tr` as it was before wviewer::hold_manual pinned it: no database
+# of its own when it read the current one, else the path it named. A trace
+# that is not pinned to a kept database is handed back as it is.
+proc wviewer::held_plain_trace {tr} {
+  if {[catch {dict size $tr}] || ![dict exists $tr rawfile]} { return $tr }
+  set h [wviewer::held_parse [dict get $tr rawfile]]
+  if {$h eq {}} { return $tr }
+  lassign $h p explicit
+  if {$explicit} { return [dict replace $tr rawfile $p] }
+  return [dict remove $tr rawfile sim_type]
+}
+
+# PURE: the strips `gs` with every trace that is pinned to a kept database made
+# plain again (held_plain_trace). `keep` names kept databases as `{path type}`
+# pairs whose traces stay pinned: what is still loaded, for a model that comes
+# back out of the undo history (wviewer::state_apply); {} unpins them all, for
+# what is saved (wviewer::snapshot) and for wviewer::hold_release.
+proc wviewer::held_plain {gs {keep {}}} {
+  set out {}
+  foreach G $gs {
+    if {[catch {dict size $G}]} { lappend out $G ; continue }
+    set trs {}
+    set hit 0
+    foreach tr [wviewer::dget $G traces {}] {
+      set new $tr
+      if {![catch {dict size $tr}] && [dict exists $tr rawfile]
+          && [wviewer::held_parse [dict get $tr rawfile]] ne {}
+          && [lsearch -exact $keep [list [dict get $tr rawfile] [wviewer::dget $tr sim_type {}]]] < 0} {
+        set new [wviewer::held_plain_trace $tr]
+        set hit 1
+      }
+      lappend trs $new
+    }
+    if {$hit} { set G [dict replace $G traces $trs] }
+    lappend out $G
+  }
+  return $out
+}
+
+# PURE: the strips `gs` with every trace plotted by hand pinned to the kept
+# name of the database it draws from. `map` is a dict `{path type}` -> kept
+# name; the key `{}` is the database that was the current one, for a trace
+# that names none, and its value is `{name type}`. `have` lists the vectors
+# that database holds, and only a trace of one of them is pinned to it (`-`:
+# every trace is). A trace of ASE-L's (wviewer::owned_indices), a trace with
+# no vector, and one whose database is not in `map` stay as they are.
+proc wviewer::held_pin {gs map {have -}} {
+  set out {}
+  foreach G $gs {
+    if {[catch {dict size $G}]} { lappend out $G ; continue }
+    set own [wviewer::owned_indices $G]
+    set trs {}
+    set hit 0
+    set ti 0
+    foreach tr [wviewer::dget $G traces {}] {
+      set new $tr
+      if {[lsearch -exact $own $ti] < 0 && ![catch {dict size $tr}]
+          && [wviewer::dget $tr vec {}] ne {}} {
+        if {[wviewer::db_suffix $tr] eq {}} {
+          if {[dict exists $map {}]
+              && ($have eq {-} || [lsearch -exact $have [dict get $tr vec]] >= 0)} {
+            lassign [dict get $map {}] hn ht
+            set new [dict replace $tr rawfile $hn sim_type $ht]
+            set hit 1
+          }
+        } else {
+          set k [list [dict get $tr rawfile] [dict get $tr sim_type]]
+          if {[dict exists $map $k]} {
+            set new [dict replace $tr rawfile [dict get $map $k]]
+            set hit 1
+          }
+        }
+      }
+      lappend trs $new
+      incr ti
+    }
+    if {$hit} { set G [dict replace $G traces $trs] }
+    lappend out $G
+  }
+  return $out
+}
+
+# The record of the strips last drawn (`drawn`, wviewer::view_take's source)
+# made to follow a model write that changed traces and nothing a rebuild would
+# show: a strip recorded with the traces `old` had is recorded with the traces
+# `new` has. Without it the next carried view would take every such strip for
+# one whose traces were replaced and fit it again.
+proc wviewer::drawn_follow {token old new} {
+  variable drawn
+  if {![info exists drawn($token)]} { return 0 }
+  set recs $drawn($token)
+  if {[llength $recs] != [llength $old] || [llength $old] != [llength $new]} { return 0 }
+  set out {}
+  set n 0
+  foreach rec $recs a $old b $new {
+    if {![catch {dict size $rec}] && ![catch {dict size $a}] && ![catch {dict size $b}]
+        && [wviewer::dget $rec tr {}] eq [wviewer::dget $a traces {}]
+        && [wviewer::dget $a traces {}] ne [wviewer::dget $b traces {}]} {
+      set rec [dict replace $rec tr [wviewer::dget $b traces {}]]
+      incr n
+    }
+    lappend out $rec
+  }
+  set drawn($token) $out
+  return $n
+}
+
+# Write `fn` (a command prefix that takes a strip list and answers one) over
+# the strips of EVERY tab of `token`: the tab shown, through set_graphs and
+# with the drawn record following (drawn_follow), and each tab that is not, in
+# its frozen record. Answers 1 when anything changed.
+proc wviewer::graphs_rewrite {token fn} {
+  variable tabstash
+  set changed 0
+  set gs [dict get [wviewer::layout_for $token] graphs]
+  set new [{*}$fn $gs]
+  if {$new ne $gs} {
+    wviewer::set_graphs $token $new
+    wviewer::drawn_follow $token $gs [dict get [wviewer::layout_for $token] graphs]
+    set changed 1
+  }
+  if {[info exists tabstash($token)]} {
+    set cur [wviewer::tab_index $token]
+    set recs {}
+    set hit 0
+    set i 0
+    foreach rec $tabstash($token) {
+      if {$i != $cur && ![catch {dict size $rec}]} {
+        set lay [wviewer::dget $rec layout {}]
+        if {![catch {dict size $lay}]} {
+          set g0 [wviewer::dget $lay graphs {}]
+          set g1 [{*}$fn $g0]
+          if {$g1 ne $g0} {
+            dict set lay graphs $g1
+            dict set rec layout $lay
+            set hit 1
+          }
+        }
+      }
+      lappend recs $rec
+      incr i
+    }
+    if {$hit} {
+      set tabstash($token) $recs
+      set changed 1
+    }
+  }
+  return $changed
+}
+
+# PURE: how many traces of the strips `gs` are pinned to a kept database.
+proc wviewer::held_count {gs} {
+  set n 0
+  foreach G $gs {
+    if {[catch {dict size $G}]} { continue }
+    foreach tr [wviewer::dget $G traces {}] {
+      if {![catch {dict size $tr}] && [dict exists $tr rawfile]
+          && [wviewer::held_parse [dict get $tr rawfile]] ne {}} { incr n }
+    }
+  }
+  return $n
+}
+
+# The databases loaded in the CURRENT context as `{path type}` pairs, as
+# `xschem raw info` spells them, with the slot each stands in: a dict
+# `{path type}` -> index.
+proc wviewer::loaded_dbs {} {
+  set out [dict create]
+  catch {
+    foreach d [dict get [wviewer::rawinfo_parse [xschem raw info]] dbs] {
+      dict set out [list [dict get $d path] [dict get $d type]] [dict get $d idx]
+    }
+  }
+  return $out
+}
+
+# KEEP THE RUN THE HAND-MADE PLOTS SHOW (issue 1765; ase::ui::auto_plot, for
+# the plot a finished run makes under Replace). `rawfile`, `sim_type` and
+# `vcdfiles` are what is about to be loaded (wviewer::attach_raw's arguments).
+# The caller loads next and then calls wviewer::hold_settle, which takes this
+# back when the load read nothing.
+#
+# WHAT IS KEPT. Each database a trace plotted by hand draws from is given a
+# kept name (`xschem raw rekey`), in every tab: the current one, for the
+# traces that name none and for a trace that names it, and each other one a
+# trace names itself. The traces are then pinned to the kept names
+# (wviewer::held_pin) and the load keeps those databases (wviewer::mem_dbs).
+#
+# WHAT IS NOT (each found by the review of this change, 2026-11-25):
+#   the same data      the load brings what the window attached last
+#                      (wviewer::attach_is_same): every trace already shows it.
+#   another analysis   the load brings another analysis than the one the
+#                      viewer shows. A transient kept beside an AC run would
+#                      put seconds and hertz on one X window, and one of the
+#                      two is then a sliver at its edge. Nothing is kept, and
+#                      what WAS kept goes back to following the load, as every
+#                      trace did before this change.
+#   no data            the current database holds no point (a results file
+#                      read while its run was writing it).
+#   nothing to show    a trace whose vector the current database does not
+#                      hold (an expression that could not be evaluated, a net
+#                      the result lacks) is not pinned: it follows the load,
+#                      so the run that brings its data draws it, as the
+#                      sentence said of it promised.
+#   kept anyway        a database a load keeps already (one the Calculator
+#                      made in memory, wviewer::mem_dbs), and one that is kept
+#                      already: a trace kept at an earlier run stays on it.
+#   no name            a database whose name the node grammar cannot carry, or
+#                      with no analysis of its own.
+#
+# The viewer's context is borrowed and given back. Returns how many traces
+# were pinned.
+proc wviewer::hold_manual {token rawfile sim_type {vcdfiles {}}} {
+  variable windows
+  variable attached
+  variable held
+  variable heldn
+  variable datawhen
+  variable holdundo
+  catch {unset holdundo($token)}
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
+  # the traces plotted by hand: the vectors of the ones that name no database
+  # (`plain`), and the databases the others name (`named`)
+  set plain {}
+  set named {}
+  set all [wviewer::all_graphs $token]
+  foreach G $all {
+    set own [wviewer::owned_indices $G]
+    set ti 0
+    foreach tr [wviewer::dget $G traces {}] {
+      if {[lsearch -exact $own $ti] < 0 && ![catch {dict size $tr}]
+          && [wviewer::dget $tr vec {}] ne {}} {
+        if {[wviewer::db_suffix $tr] eq {}} {
+          lappend plain [dict get $tr vec]
+        } elseif {[wviewer::held_parse [dict get $tr rawfile]] eq {}} {
+          set k [list [dict get $tr rawfile] [dict get $tr sim_type]]
+          if {[lsearch -exact $named $k] < 0} { lappend named $k }
+        }
+      }
+      incr ti
+    }
+  }
+  set washeld [wviewer::held_count $all]
+  if {![llength $plain] && ![llength $named] && !$washeld} { return 0 }
+  set ticket [wviewer::enter_ctx $token]
+  if {![lindex $ticket 0]} { return 0 }
+  set n 0
+  if {[catch {
+    set db [wviewer::attach_db]
+    set cur [wviewer::dget $db cur {}]
+    set ctype [wviewer::dget $db type {}]
+    set prev {}
+    if {[info exists attached($token)]} { set prev $attached($token) }
+    set rec [wviewer::attach_stamp $rawfile $sim_type $vcdfiles]
+    if {[wviewer::attach_is_same $prev $rec $cur]} {
+      # the same data: nothing to keep apart
+    } elseif {[llength $cur] == 2 && $sim_type ne {} && $ctype ne {} && $ctype ne $sim_type} {
+      # another analysis: nothing is kept, and what was kept follows the load
+      if {$washeld} { wviewer::graphs_rewrite $token [list wviewer::held_plain] }
+    } elseif {[llength $plain] || [llength $named]} {
+      if {![info exists heldn($token)]} { set heldn($token) 0 }
+      if {![info exists held($token)]} { set held($token) [dict create] }
+      # when the data about to be kept was written, when the window knows
+      set when {}
+      if {[info exists datawhen($token)]} { set when $datawhen($token) }
+      set loaded [wviewer::loaded_dbs]
+      set map [dict create]
+      set have {}
+      set made {}
+      if {[llength $cur] == 2} {
+        lassign $cur cp ct
+        # which of the plain traces the current database has a vector for
+        foreach v [lsort -unique $plain] {
+          set ix -1
+          catch {set ix [xschem raw index $v]}
+          if {[string is integer -strict $ix] && $ix >= 0} { lappend have $v }
+        }
+        set curname {}
+        if {[wviewer::held_parse $cp] ne {}} {
+          # the current database is a kept one already (a load that read
+          # nothing left it so): the traces it can show are pinned to it
+          if {[llength $have]} { set curname $cp }
+        } elseif {[llength $have] || [lsearch -exact $named $cur] >= 0} {
+          set np 0
+          catch {set np [xschem raw points]}
+          if {[dict exists $loaded $cur] && $ct ne {<NULL>} && [wviewer::db_path_safe $ct]
+              && [string is integer -strict $np] && $np > 0} {
+            set hn [wviewer::held_name $cp [incr heldn($token)]]
+            if {![catch {xschem raw rekey [dict get $loaded $cur] $hn} r] && $r eq {1}} {
+              set curname $hn
+              dict set held($token) $hn [dict create path $cp type $ct when $when]
+              lappend made [list $hn $cp $ct]
+            }
+          }
+        }
+        if {$curname ne {}} {
+          dict set map {} [list $curname $ct]
+          # a trace that names the database that was current goes with it: the
+          # slot has ONE name (renamed a second time, the first name's traces
+          # would draw nothing)
+          dict set map $cur $curname
+        }
+      }
+      # a database a load keeps anyway (wviewer::mem_dbs: one the Calculator
+      # made in memory) needs no keeping, and has to go on answering to its
+      # own name
+      set already [wviewer::mem_dbs $token]
+      foreach k $named {
+        if {$k eq $cur} { continue }
+        if {![dict exists $loaded $k]} { continue }
+        if {[lsearch -exact $already $k] >= 0} { continue }
+        lassign $k kp kt
+        set hn [wviewer::held_name $kp [incr heldn($token)] 1]
+        if {![catch {xschem raw rekey [dict get $loaded $k] $hn} r] && $r eq {1}} {
+          dict set map $k $hn
+          dict set held($token) $hn [dict create path $kp type $kt when $when]
+          lappend made [list $hn $kp $kt]
+        }
+      }
+      if {[dict size $map]} {
+        set before [wviewer::held_count [wviewer::all_graphs $token]]
+        wviewer::graphs_rewrite $token [list wviewer::held_pin_fn $map $have]
+        set n [expr {[wviewer::held_count [wviewer::all_graphs $token]] - $before}]
+      }
+      # for wviewer::hold_settle: what this call renamed
+      if {[llength $made]} { set holdundo($token) $made }
+    }
+  } err]} { wviewer::diag "hold_manual     token=$token error=$err" }
+  wviewer::leave_ctx $token $ticket
+  return $n
+}
+# held_pin with the map and the vectors first, for graphs_rewrite's prefix
+proc wviewer::held_pin_fn {map have gs} { return [wviewer::held_pin $gs $map $have] }
+
+# EVERY TRACE BACK ON THE RESULT IN VIEW (issue 1765: `~`; issue 1766: Ctrl-R).
+# The pins wviewer::hold_manual made are taken off in every tab: a trace that
+# named no database names none again, one that named a file names it again.
+# The kept databases then have no trace, and the load that follows drops them
+# (ase::attach_dbs keeps what wviewer::mem_dbs names, and that names none of
+# them now). Returns how many traces were unpinned. Model only: the caller
+# loads next and then calls wviewer::hold_settle, which puts the pins back
+# when the load read nothing.
+#
+# THE LOAD THAT FOLLOWS IS NEW DATA for the traces unpinned here, even when the
+# window attached that very file already (the plot of the finished run did):
+# they showed an earlier run a moment ago. So the window's record of its last
+# attach is dropped (wviewer::attach_forget): the strips keep the axes the
+# user moved and the rest is fitted. Carried as the same data, a strip zoomed
+# in X kept the Y window of the earlier run and its trace was drawn outside it
+# (the review of this change, measured).
+proc wviewer::hold_release {token} {
+  variable windows
+  variable tabstash
+  variable relundo
+  catch {unset relundo($token)}
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  set n [wviewer::held_count [wviewer::all_graphs $token]]
+  if {!$n} { return 0 }
+  set save [dict create graphs [dict get [wviewer::layout_for $token] graphs]]
+  if {[info exists tabstash($token)]} { dict set save stash $tabstash($token) }
+  set relundo($token) $save
+  wviewer::graphs_rewrite $token [list wviewer::held_plain]
+  wviewer::attach_forget $token
+  return $n
+}
+
+# AFTER THE LOAD that followed wviewer::hold_manual or wviewer::hold_release:
+# did it read anything? A load that read nothing leaves the data as it was
+# (ase::attach_dbs), so what the call before it did is taken back:
+#   hold_manual   the databases it renamed get their own names again and its
+#                 pins come off: the viewer is as it was before the run's plot;
+#   hold_release  the pins come back on: the traces go on showing the run
+#                 they were kept on, whose data is still loaded.
+# A load that read is the ordinary case and only drops the two records.
+# The test is wviewer::attach_raw's own word about its last call (`lastread`).
+# Returns 1 when the load read, 0 when it did not (and the step before it was
+# taken back).
+proc wviewer::hold_settle {token} {
+  variable windows
+  variable tabstash
+  variable holdundo
+  variable relundo
+  variable held
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  variable lastread
+  set read [expr {[info exists lastread($token)] && $lastread($token) eq {1}}]
+  set made {}
+  set save {}
+  if {[info exists holdundo($token)]} { set made $holdundo($token) ; unset holdundo($token) }
+  if {[info exists relundo($token)]} { set save $relundo($token) ; unset relundo($token) }
+  if {$read} { return 1 }
+  if {![llength $made] && ![llength $save]} { return 0 }
+  # the fold first (issue 0194), then the view, read before the model is
+  # written: the one rebuild at the end carries every strip forward. What is
+  # written below changes no strip, only its traces' pins, so the view is made
+  # to name the traces as they are afterwards (wviewer::view_follow) and every
+  # strip then counts as the one it was.
+  wviewer::capture_live_view_state $token
+  set view [wviewer::view_take $token]
+  set before [dict get [wviewer::layout_for $token] graphs]
+  if {[llength $made]} {
+    set ticket [wviewer::enter_ctx $token]
+    if {[lindex $ticket 0]} {
+      catch {
+        set loaded [wviewer::loaded_dbs]
+        foreach m $made {
+          lassign $m hn op ot
+          if {[dict exists $loaded [list $hn $ot]]} {
+            catch {xschem raw rekey [dict get $loaded [list $hn $ot]] $op}
+          }
+          if {[info exists held($token)]} { catch {dict unset held($token) $hn} }
+        }
+      }
+      wviewer::leave_ctx $token $ticket
+    }
+    # the pins on the names just given back come off; an earlier keep stays
+    set keep {}
+    if {[info exists held($token)]} {
+      dict for {hn info} $held($token) { lappend keep [list $hn [wviewer::dget $info type {}]] }
+    }
+    wviewer::graphs_rewrite $token [list wviewer::held_plain_fn $keep]
+  }
+  if {[llength $save]} {
+    set now [dict get [wviewer::layout_for $token] graphs]
+    wviewer::set_graphs $token [dict get $save graphs]
+    wviewer::drawn_follow $token $now [dict get [wviewer::layout_for $token] graphs]
+    if {[dict exists $save stash]} { set tabstash($token) [dict get $save stash] }
+  }
+  wviewer::regenerate $token [wviewer::view_keep $token \
+    [wviewer::view_follow $view $before [dict get [wviewer::layout_for $token] graphs]]]
+  return 0
+}
+
+# PURE: a wviewer::view_take answer `view` made to follow a model write that
+# changed traces and nothing a rebuild would show (drawn_follow's rule, for a
+# view already taken): a record whose traces are the ones strip i of `old` had
+# is given the ones strip i of `new` has. Any other record, and a view that
+# does not count the strips `old` and `new` do, is handed back as it is.
+proc wviewer::view_follow {view old new} {
+  if {[llength $view] != [llength $old] || [llength $old] != [llength $new]} { return $view }
+  set out {}
+  foreach rec $view a $old b $new {
+    if {![catch {dict size $rec}] && ![catch {dict size $a}] && ![catch {dict size $b}]
+        && [wviewer::dget $rec tr {}] eq [wviewer::dget $a traces {}]} {
+      set rec [dict replace $rec tr [wviewer::dget $b traces {}]]
+    }
+    lappend out $rec
+  }
+  return $out
+}
+# held_plain with the names to leave pinned first, for graphs_rewrite's prefix
+proc wviewer::held_plain_fn {keep gs} { return [wviewer::held_plain $gs $keep] }
+
+# How many traces of `token`, over every tab, show a run that was kept
+# (wviewer::hold_manual): the test and status seam.
+proc wviewer::held_traces {{token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} { return 0 }
+  return [wviewer::held_count [wviewer::all_graphs $token]]
+}
+
+# When the data kept under `name` was written, as clock seconds, or {} when no
+# window on record kept it or the window did not know (data it had loaded by
+# hand: the Location bar, Results > Select).
+proc wviewer::held_when {name} {
+  variable held
+  foreach tk [array names held] {
+    if {[dict exists $held($tk) $name]} {
+      set w [wviewer::dget [dict get $held($tk) $name] when {}]
+      if {[string is integer -strict $w]} { return $w }
+    }
+  }
+  return {}
+}
+
+# PURE-ish: the words a kept database is shown by where a database is named
+# (wviewer::db_label): `<file> of <HH:MM:SS>`, the time its data was written;
+# `<file>, earlier run` when that time is not known. Never the time of the
+# load that followed: that is the run the kept data is NOT.
+proc wviewer::held_label {name} {
+  set h [wviewer::held_parse $name]
+  if {$h eq {}} { return {} }
+  set tail [file tail [lindex $h 0]]
+  set w [wviewer::held_when $name]
+  if {$w ne {}} { return "$tail of [clock format $w -format %H:%M:%S]" }
+  return "$tail, earlier run"
+}
+
+# PURE-ish: what a trace pinned to a kept database adds to its legend name, so
+# a trace that did not follow the run says so: `@HH:MM:SS`, the time the data
+# it shows was written, `@earlier` when that is not known ({} for any other
+# trace).
+proc wviewer::held_cue {tr} {
+  if {[catch {dict size $tr}] || ![dict exists $tr rawfile]} { return {} }
+  set name [dict get $tr rawfile]
+  if {[wviewer::held_parse $name] eq {}} { return {} }
+  set w [wviewer::held_when $name]
+  if {$w ne {}} { return "@[clock format $w -format %H:%M:%S]" }
+  return "@earlier"
+}
+
+# WHAT A RELOAD OF `token` READS (issue 1766): `{rawfile sim_type vcdfiles}`,
+# or {} when there is nothing to read again.
+#   * the window of an ASE-L session: the result that session has in view, the
+#     latest run or a saved result chosen with Results > Select
+#     (ase::ui::reload_source);
+#   * a session that answers nothing: what the window attached last
+#     (wviewer::attach_record), else the database its context has current,
+#     when that was read from a file.
+proc wviewer::reload_source {token} {
+  variable windows
+  if {$token eq {} || ![dict exists $windows $token]} { return {} }
+  set src {}
+  if {[info commands ::ase::ui::reload_source] ne {}} {
+    catch {set src [::ase::ui::reload_source $token]}
+  }
+  if {[llength $src] >= 2 && [lindex $src 0] ne {} && [file isfile [lindex $src 0]]} {
+    return [list [lindex $src 0] [lindex $src 1] [lindex $src 2]]
+  }
+  set rec [wviewer::attach_record $token]
+  if {![catch {dict get $rec path} p] && $p ne {} && [file isfile $p]} {
+    return [list $p [wviewer::dget $rec sim_type {}] [wviewer::dget $rec vcds {}]]
+  }
+  set cur {}
+  set ticket [wviewer::enter_ctx $token]
+  if {[lindex $ticket 0]} {
+    catch {set cur [wviewer::dget [wviewer::attach_db] cur {}]}
+    wviewer::leave_ctx $token $ticket
+  }
+  if {[llength $cur] == 2} {
+    lassign $cur p t
+    set h [wviewer::held_parse $p]
+    if {$h ne {}} { set p [lindex $h 0] }
+    if {$t eq {<NULL>}} { set t {} }
+    if {$p ne {} && [file isfile $p]} { return [list $p $t {}] }
+  }
+  return {}
+}
+
+# File > Reload, Ctrl-R (issue 1766; the user, 2026-11-25: "add support for
+# Ctrl-R ... that will reload (from latest sim, or currently selected result in
+# ASE-L ...) the waveforms currently plotted").
+#
+# The result is read from its file again (wviewer::attach_raw, the load a run
+# and a Direct Plot use, so a zoom is kept by the same rules) and EVERY trace
+# shows it: a trace that was kept on an earlier run (wviewer::hold_manual) is
+# put back on the result first (wviewer::hold_release). No trace is added or
+# removed, and the strips, their order and the target stay.
+#
+# NOT WHILE THE SESSION'S RUN IS LIVE (ase::ui::reload_busy): the simulator is
+# writing that file, and what a read finds there is a header with no points,
+# the operating point alone, or half a transient. The key says so and reads
+# nothing.
+#
+# WHEN THE READ FINDS NOTHING (the file holds no such analysis, or no data)
+# the viewer is left as it was: the data stays loaded (ase::attach_dbs), the
+# traces kept on an earlier run stay on it (wviewer::hold_settle), the
+# sentence says the file could not be reloaded, and nothing is logged.
+#
+# One sentence says what was read, or why nothing was. One replayable log line
+# for a read. Returns 1 when the result was read, 0 when not, {} when no
+# viewer resolves.
+proc wviewer::reload {{token {}}} {
+  variable windows
+  set token [wviewer::resolve_token $token]
+  if {$token eq {} || ![dict exists $windows $token]} {
+    wviewer::echo "wviewer: no waveform viewer window to reload" error
+    return {}
+  }
+  set busy 0
+  if {[info commands ::ase::ui::reload_busy] ne {}} {
+    catch {set busy [::ase::ui::reload_busy $token]}
+  }
+  if {$busy eq {1}} {
+    wviewer::echo "wviewer: a simulation of this session is running; reload when it has finished" error
+    return 0
+  }
+  set src [wviewer::reload_source $token]
+  if {![llength $src]} {
+    wviewer::echo "wviewer: nothing to reload: no result file is attached to this window" error
+    return 0
+  }
+  lassign $src rf type vcds
+  set back [wviewer::hold_release $token]
+  wviewer::attach_raw $token $rf $type $vcds
+  if {![wviewer::hold_settle $token]} {
+    wviewer::echo "wviewer: could not reload [file tail $rf]: nothing was read[expr {$type ne {} ? " as its $type analysis" : {}}]; the viewer shows what it showed" error
+    return 0
+  }
+  set msg "wviewer: reloaded [wviewer::db_label $rf $type]"
+  if {$back > 0} {
+    append msg " ([wviewer::plural_traces $back] kept on an earlier run [expr {$back == 1 ? {shows} : {show}}] it again)"
+  }
+  wviewer::echo $msg
+  wviewer::log_action [list wviewer::reload $token]
+  return 1
+}
+proc wviewer::plural_traces {n} {
+  return "$n [expr {$n == 1 ? {trace} : {traces}}]"
+}
+proc wviewer::reload_at {W} {
+  set token [wviewer::token_for_canvas $W]
+  if {$token eq {}} { return {} }
+  return [wviewer::reload $token]
 }
 
 # Record that the vector `vec` of `token` was computed on analysis `type` (the
@@ -5934,6 +6825,11 @@ proc wviewer::display_raw {token rawfile sim_type node {color 4}} {
 proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}} {leave {}} {quiet 0}} {
   variable windows
   variable attached
+  # issue 1765: whether THIS call read data, for wviewer::hold_settle. The
+  # return value cannot say it (1 also when the read found nothing, as it
+  # always did), and the record of the last attach may be an earlier call's.
+  variable lastread
+  set lastread($token) 0
   if {![dict exists $windows $token]} { return 0 }
   if {$rawfile eq {} || ![file isfile $rawfile]} { return 0 }
   if {![wviewer::switch_ctx $token]} { return 0 }   ;# never clear a foreign ctx
@@ -5962,7 +6858,16 @@ proc wviewer::attach_raw {token rawfile sim_type {vcdfiles {}} {leave {}} {quiet
   }
   set now [wviewer::attach_db]
   if {[wviewer::dget $att n 0] > 0} {
+    set lastread($token) 1
     set attached($token) [dict replace $rec cur [wviewer::dget $now cur {}] same $same]
+    # issue 1765: when the data the window now shows was written (the result
+    # file's own time), for the legend of a trace a later run leaves on it
+    variable datawhen
+    catch {unset datawhen($token)}
+    catch {
+      set m_ [lindex [lindex [dict get $rec stamp] 0] 0]
+      if {[string is integer -strict $m_]} { set datawhen($token) $m_ }
+    }
     catch {wviewer::expr_remake $token $leave 0 $quiet}
   } else {
     set same 0
@@ -6058,20 +6963,31 @@ proc wviewer::tabs_serialize {token} {
   set out {}
   set i 0
   foreach r $recs {
+    # issue 1765: a trace kept on an earlier run is written as the plain trace
+    # it was (wviewer::held_plain); the kept data lives in memory only
     if {$i == $cur} {
       lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
-                     layout [wviewer::layout_for $token] \
+                     layout [wviewer::layout_held_plain [wviewer::layout_for $token]] \
                      mode   [wviewer::base_mode $token] \
                      target [wviewer::target_index $token]]
     } else {
       lappend out [dict create name [wviewer::dget $r name "Tab [wviewer::dget $r id $i]"] \
-                     layout [wviewer::dget $r layout [dict create sharedx 0 graphs {}]] \
+                     layout [wviewer::layout_held_plain [wviewer::dget $r layout [dict create sharedx 0 graphs {}]]] \
                      mode   [wviewer::dget $r mode single] \
                      target [wviewer::dget $r target 0]]
     }
     incr i
   }
   return $out
+}
+# PURE: layout dict `lay` with its strips' kept pins taken off (held_plain); a
+# layout that holds none is handed back as it is, byte for byte.
+proc wviewer::layout_held_plain {lay} {
+  if {[catch {dict size $lay}] || ![dict exists $lay graphs]} { return $lay }
+  set gs [dict get $lay graphs]
+  set new [wviewer::held_plain $gs]
+  if {$new eq $gs} { return $lay }
+  return [dict replace $lay graphs $new]
 }
 
 # ---------------------------------------------------------------------------
@@ -6160,6 +7076,12 @@ proc wviewer::selected_rawfile {token} {
         # registry hands back its verbatim spelling, which is relative whenever
         # the read was, and the state file's relative form means "under the
         # rundir" and nothing else.
+        # issue 1765: a database kept under a name of the viewer's own
+        # (wviewer::hold_manual) that a load which read nothing left current
+        # is the result it was read from, never `<file>@held<n>`, which is
+        # no file
+        set hp [wviewer::held_parse $p]
+        if {$hp ne {}} { set p [lindex $hp 0] }
         if {[string trim $p] ne {}} {
           if {[catch {file normalize $p} np] == 0 && [string trim $np] ne {}} { set p $np }
           set cur [list $p $t]
@@ -6208,7 +7130,7 @@ proc wviewer::snapshot {token prev} {
     set d [dict create open 1 \
                        sharedx [wviewer::dget $lay sharedx 0] \
                        rawfile $selraw \
-                       graphs  [wviewer::dget $lay graphs {}] \
+                       graphs  [wviewer::held_plain [wviewer::dget $lay graphs {}]] \
                        mode    [wviewer::base_mode $token] \
                        target  [wviewer::target_index $token]]
     # the window's OWN grid flag (SW25), GATED ON BEING NON-DEFAULT like the
@@ -6358,6 +7280,9 @@ proc wviewer::restore {token vdict rawfile sim_type {dbs {}}} {
     # stored `sim_type` propagated out of a session restore; the door returns a
     # dict and this catch is belt-and-braces on top of it.
     catch {results::select $rawfile $sim_type [list host none]}
+    # issue 1765: when that data was written, as wviewer::attach_raw records it
+    variable datawhen
+    catch {set datawhen($token) [file mtime $rawfile]}
     # every expression trace, of every tab, made again on what was read: the
     # one path a load takes too (wviewer::expr_remake, issue 1734). The window's
     # records go first: the model was replaced wholesale, and a record made for
@@ -6517,6 +7442,9 @@ proc wviewer::add_trace {token gi rpn {name {}} {color {}} {db {}} {sweep {}}} {
   # issue 1734: the armed display name, taken FIRST, before any return, so an
   # arm is spent by the one call it was made for (wviewer::expr_label_arm)
   set label [wviewer::expr_label_take $token]
+  # issue 1765: and whether this trace is ASE-L's own (wviewer::owner_arm), on
+  # the same terms
+  set own [wviewer::owner_take $token]
   variable windows
   if {![dict exists $windows $token]} { return "unknown viewer window" }
   set rpn [string trim $rpn]
@@ -6647,6 +7575,9 @@ cannot be carried in a graph node= token (it contains whitespace or one of % \" 
   # R419/R421: the trace's OWN X column, same "absent means absent" rule as the
   # two keys above — a trace on the database's own sweep carries no key at all.
   if {[string trim $sweep] ne {}} { dict set trd sweep [string trim $sweep] }
+  # issue 1765: ASE-L's own plot marks its traces, so a Replace takes out those
+  # and no trace plotted by hand. Absent for every other door.
+  if {$own} { dict set trd byase 1 }
   set fresh [expr {![llength $trs]}]
   lappend trs $trd
   set G [dict replace $G traces $trs]
@@ -8247,6 +9178,10 @@ proc wviewer::attach_is_same {prev rec cur} {
 # Returns 1 when there was one.
 proc wviewer::attach_forget {token} {
   variable attached
+  # issue 1765: and with it when the window's data was written; a load made
+  # by hand does not say, and a time that is not known is not shown
+  variable datawhen
+  catch {unset datawhen($token)}
   if {![info exists attached($token)]} { return 0 }
   unset attached($token)
   return 1
@@ -10197,6 +11132,11 @@ proc wviewer::state_snapshot {token} {
 proc wviewer::state_apply {token snap {view {}}} {
   variable target
   lassign $snap gs tgt
+  # issue 1765: a trace the snapshot holds pinned to an earlier run's data that
+  # is no longer loaded (a `~` or a reload has put every trace back on the
+  # result since) comes back as the plain trace it was; one whose kept data is
+  # still loaded stays on it
+  catch {set gs [wviewer::held_plain $gs [dict keys [wviewer::loaded_dbs]]]}
   # SW25: the per-subwindow settings are outside undo, like the window's own
   wviewer::set_graphs $token \
     [wviewer::sw_props_carry [dict get [wviewer::layout_for $token] graphs] $gs]
@@ -19196,7 +20136,7 @@ proc wviewer::wavehl_remap_apply {token new} {
 #
 # Remapping from an rc file (~/.xschem/xschemrc, cadence_style_rc, --script):
 #   bind WaveViewer <Control-Key-d> {break}                      ;# drop default
-#   bind WaveViewer <Control-Key-r> {wviewer::clear_all_at %W; break}
+#   bind WaveViewer <Control-Key-k> {wviewer::clear_all_at %W; break}
 #   bind WaveViewer <Control-Key-e> {break}                      ;# item 4 too
 #   bind WaveViewer <Key-e> {break}                              ;# item 5 too
 # An rc that binds a sequence itself WINS: defaults are installed once, at the
@@ -19242,6 +20182,14 @@ proc wviewer::install_default_binds {} {
   # drawn in this window. The `break` keeps the key from travelling further.
   if {[bind WaveViewer <Control-Key-g>] eq {}} {
     bind WaveViewer <Control-Key-g> {wviewer::grid_toggle_at %W; break}
+  }
+  # Reload (issue 1766): plain Ctrl-R, the lower-case keysym, so Ctrl-Shift-R is
+  # another sequence and stays free. In the SCHEMATIC Ctrl-R is nothing of the
+  # C dispatcher's that could reach here: keysym 114 is not in `graphkeys`, so
+  # key_filter forwards nothing, and the `break` keeps the key from travelling
+  # further whatever the tags below this one carry.
+  if {[bind WaveViewer <Control-Key-r>] eq {}} {
+    bind WaveViewer <Control-Key-r> {wviewer::reload_at %W; break}
   }
   # Signal Browser sidebar on/off (signal-browser PLAN item 8; the chord moved
   # Ctrl-L -> Ctrl-B in TWO-PANE item 16, R9).
@@ -24094,6 +25042,13 @@ proc wviewer::paste_traces_in_graphs {graphs groups sites colors} {
     set was_empty [expr {[llength $trs] == 0}]
     foreach tr $grp col $cols {
       if {$col ne {}} { dict set tr color $col }
+      # issue 1765: a pasted copy is the user's own, whoever plotted the
+      # original, so ASE-L's Replace leaves it
+      if {![catch {dict size $tr}] && [dict exists $tr byase]} { set tr [dict remove $tr byase] }
+      # ...and shows the result, not the earlier run the original may be kept
+      # on: the kept data may be gone by the time of the paste, or never have
+      # been in the window pasted into (wviewer::held_plain_trace)
+      set tr [wviewer::held_plain_trace $tr]
       lappend trs $tr
     }
     dict set D traces $trs
@@ -24428,6 +25383,9 @@ proc wviewer::build_menubar {token top} {
     -command [list wviewer::close_tab {} $token]
   $mb.file add command -label {Close Window} -accelerator Ctrl+Q \
     -command [list wviewer::close $token]
+  # issue 1766: read the result again and bring every trace to it
+  $mb.file add command -label {Reload} -accelerator Ctrl+R \
+    -command [list wviewer::reload $token]
   $mb.file add separator
   $mb.file add command -label {Copy Traces} -accelerator Ctrl+C \
     -command [list wviewer::copy_traces $token]

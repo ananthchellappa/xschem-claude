@@ -71,7 +71,7 @@ namespace eval ase {
                         save_op_params measurements
                         opstrategy opstate runhealth
                         options includes pre_commands cosim viewer sweep
-                        plot_dest results_dir}
+                        plot_dest results_dir plot_after_sim}
   # Schema keys the serializer OMITS when empty. Every v1 key is written even
   # when empty because every state file on disk already carries it; a key added
   # LATER must not rewrite files that predate it — `state_load` merges over
@@ -132,9 +132,14 @@ namespace eval ase {
   # written out, so a saved session restores its own value whatever the rc says.
   # `results_dir` (issue 1705, results_selection.md R901) is the ELEVENTH, for
   # the identical reason: `{}` means the default `<rundir>/saved`.
+  # `plot_after_sim` (issue 1765) is the TWELFTH, for the identical reason: an
+  # empty or absent value means the default (ase::plot_after_sim_default: the
+  # rc variable `ase_plot_after_sim`, yes when unset). A choice equal to that
+  # default is not stored at all (ase::ui::set_plot_after_sim), so choosing
+  # the default back never dirties a session; the other choice is written out.
   variable omit_if_empty {cosim save_op_params sim_entry measurements
                           opstrategy opstate runhealth sweep plot_dest
-                          results_dir}
+                          results_dir plot_after_sim}
   # simulator name -> hooks dict: the five REQUIRED hooks
   # {render_deck run_cmd log_file result_probe raw_file}, plus the OPTIONAL
   # `capabilities` (issue 0948).
@@ -652,6 +657,53 @@ proc ase::plot_dest_of {st} {
   set code [ase::plot_dest_norm $v]
   if {$code ne {}} { return $code }
   return [ase::plot_dest_default]
+}
+
+# WHETHER A FINISHED RUN PLOTS (issue 1765; ADE-L's "Auto Plot Outputs After
+# Simulation"). The user, 2026-11-25: "we need to insert an option item
+# somewhere in the menu like Cadence ADE-L has - saying WHETHER ASE-L should
+# automatically plot after simulation completes. Default can be yes."
+#
+# A session's own choice is the state key `plot_after_sim` (0 or 1), a schema
+# key that is omitted when empty. The key is ABSENT for a session with no
+# choice of its own, so no state file written before the option, and none at
+# the default, changes by a byte; such a session reads the default: the rc
+# variable `::ase_plot_after_sim` (`set_ne` in xschem.tcl), yes when empty,
+# unset or not a boolean.
+
+# A yes/no spelled any way Tcl reads a boolean -> 1 or 0; anything else -> {}.
+# PURE.
+proc ase::plot_after_sim_norm {v} {
+  set v [string trim $v]
+  if {$v eq {} || ![string is boolean -strict $v]} { return {} }
+  return [expr {[string is true -strict $v] ? 1 : 0}]
+}
+
+# The default: `::ase_plot_after_sim`, 1 when that says nothing usable. One CIW
+# warning per distinct bad value (ase::plot_dest_default's rule: it is read on
+# every status refresh).
+proc ase::plot_after_sim_default {} {
+  variable plot_after_sim_warned
+  set raw {}
+  if {[info exists ::ase_plot_after_sim]} { set raw $::ase_plot_after_sim }
+  if {[string trim $raw] eq {}} { return 1 }
+  set b [ase::plot_after_sim_norm $raw]
+  if {$b ne {}} { return $b }
+  if {![info exists plot_after_sim_warned] || $plot_after_sim_warned ne $raw} {
+    set plot_after_sim_warned $raw
+    catch {::ase::echo "ase: bad ase_plot_after_sim '$raw', using 1 (use 1 or 0)" error}
+  }
+  return 1
+}
+
+# The session's answer: its own `plot_after_sim` when that is a boolean, else
+# the default.
+proc ase::plot_after_sim_of {st} {
+  set v {}
+  catch {set v [dict get $st plot_after_sim]}
+  set b [ase::plot_after_sim_norm $v]
+  if {$b ne {}} { return $b }
+  return [ase::plot_after_sim_default]
 }
 
 # Load a state file -> dict merged OVER the defaults (loaded values win,
@@ -26054,13 +26106,39 @@ proc ase::attach_dbs {rawfile sim_type {vcdfiles {}} {keep {}}} {
   # from the FIRST run and plot last run's waveforms. (The old body was immune
   # only because it cleared the whole registry first, which is the behaviour the
   # read-before-clear order below is here to stop.)
-  catch {xschem raw clear $rawfile $sim_type}
+  #
+  # ISSUE 1766: THE STALE COPY IS SET ASIDE, NOT DROPPED, UNTIL THE READ HAS
+  # WORKED. It used to be cleared here, before the read. A read that then
+  # failed (the file holds no such analysis yet: a run is writing it, or the
+  # run died after `op`) left the registry WITHOUT the data the viewer was
+  # showing, which is the empty viewer the order below exists to prevent; the
+  # viewer's Reload made that one key press away. The copy is given another
+  # name (`xschem raw rekey`), so the read finds no entry of that path and
+  # reads the file; when the read fails the copy gets its own name back and
+  # is what the registry holds, current as before. When it works, the copy is
+  # one of the "others" the loop below drops.
+  set aside {}
+  set i_ 0
+  foreach s [ase::raw_slots] {
+    lassign $s si sp st
+    if {$sp eq $rawfile && ($sim_type eq {} || $st eq $sim_type)} {
+      set nm "${rawfile}@stale[incr i_]"
+      if {![catch {xschem raw rekey $si $nm} rk] && $rk eq {1}} { lappend aside [list $nm $st] }
+    }
+  }
+  if {![llength $aside]} { catch {xschem raw clear $rawfile $sim_type} }
   if {$sim_type ne {}} {
     set ok [expr {![catch {xschem raw read $rawfile $sim_type} r] && $r eq {1}}]
   } else {
     set ok [expr {![catch {xschem raw read $rawfile} r] && $r eq {1}}]
   }
   if {!$ok} {
+    foreach a $aside {
+      lassign $a nm st
+      foreach s [ase::raw_slots] {
+        if {[lindex $s 1] eq $nm && [lindex $s 2] eq $st} { catch {xschem raw rekey [lindex $s 0] $rawfile} }
+      }
+    }
     return [dict create n 0 current -1 vcds {} skipped $vcdfiles]
   }
   # drop everything that is not the DB just read and is not to be kept,

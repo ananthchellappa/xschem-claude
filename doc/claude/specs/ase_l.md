@@ -1175,6 +1175,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
     ⚠ **Amended by R-OUT15 (2026-10-15):** under the default Replace the TARGET SUBWINDOW is
     emptied first, hand-built strips in it included (Cadence's Replace); a strip in another
     subwindow or another tab is never touched, and Append touches nothing.
+    ⚠ **Amended again by issue 1765 (2026-11-25, the user's ruling): Replace takes out
+    ASE-L's own traces only.** What the user plotted by hand stays, in a strip of its own or
+    inside one of ASE-L's strips; see R-OUT15's Replace below.
   - **A Direct Plot never lands in any auto strip**: `wviewer::empty_graph_indices` skips every
     strip carrying the marker, and `wviewer::plot_signals` treats a target on any of them as
     unusable. For the same reason Delete Empty Strips (`e`) never deletes an auto strip, any of
@@ -1204,8 +1207,30 @@ They should not influence the input to the simulator."* ADE-L is the floor
     to that default is stored as `{}` too, so choosing it back leaves a saved session clean.
     Any other value is `append`, `replace`, `newsubwin` or `newtab` (`ase::plot_dest_of`;
     anything unknown reads the default). No committed `.state` file changes.
-  - **Replace**: the target subwindow is emptied (`wviewer::clear_subwin`, one undo step),
-    then R-OUT14's auto strips. A window the viewer's own zoom, View > Fit or a marker stored
+  - **Replace** (issue 1765, the user 2026-11-25: *"plotting should only replace the plots
+    that are specified to be plotted in the Saves pane of ASE-L ... we don't blank the canvas
+    ... Those plots that the user plotted manually after the sim should be retained"*):
+    ASE-L's own traces leave the target subwindow (`wviewer::owned_clear`, one undo step) and
+    the rows go into R-OUT14's auto strips. A trace is ASE-L's own when its plot added it
+    (the model key `byase`); every other trace, strip and view stays. A surplus auto strip is
+    removed only when it is empty. Before 1765 the whole subwindow was emptied
+    (`wviewer::clear_subwin`), which is still what the viewer's own Replace does (the Signal
+    Browser, the Calculator, Add Trace: there the user picks Replace for a plot of their own).
+    **Which run a plot made by hand shows** depends on who asked (`ase::ui::auto_plot`'s
+    `why`): after a **finished run** it goes on showing the run it was plotted from
+    (`wviewer::hold_manual`; its legend name ends in `@HH:MM:SS`, the time that run's data was
+    written), while ASE-L's rows are drawn from the new run; **`~`** brings every trace to
+    the result in view (`wviewer::hold_release`), under every destination, and so does the
+    viewer's Reload (Ctrl-R, issue 1766). Under Append, New SubWin and New Win a finished run
+    moves every trace to the new run, as before. Nothing is kept across a run of another
+    analysis than the viewer shows, for a trace with nothing to show on the earlier run, or
+    when the new file cannot be read (waveform_viewer.md, "An earlier run, kept for the
+    traces plotted by hand").
+    **Whether a finished run plots at all** is Results > Auto Plot Outputs After Simulation
+    (`ase::ui::set_plot_after_sim`): the state key `plot_after_sim`, written only when it is
+    not the default; the default is the rc variable `ase_plot_after_sim`, yes when unset. Off,
+    a finished run changes nothing in the viewer.
+    Then, as before, R-OUT14's auto strips. A window the viewer's own zoom, View > Fit or a marker stored
     on a strip goes back to the rows that strip held, by traces (`wviewer::sw_stored`,
     `wviewer::sw_stored_give`; issue 1736): in multi-plot each row finds its own strip's
     window, never the window of the strip the clear left in place, and a row that is new is
@@ -1222,9 +1247,11 @@ They should not influence the input to the simulator."* ADE-L is the floor
     second press adds a second copy. **New SubWin** / **New Win**: a new subwindow / viewer tab
     holds the run's auto strips and the previous plot stays where it was; a viewer the press
     had to OPEN is already new, so nothing more is made in it.
-  - **Nothing ticked**: under Replace an open viewer's target subwindow is emptied to one
-    empty auto strip, but only when it holds an auto strip (a subwindow `~` never plotted into
-    is not emptied by a press that plots nothing); under the other three nothing changes.
+  - **Nothing ticked**: under Replace ASE-L's own traces leave an open viewer's target
+    subwindow, which keeps one empty auto strip when nothing else is in it (a subwindow `~`
+    never plotted into is not touched by a press that plots nothing); under the other three
+    no trace changes. `~` then reads the result all the same, so what the user plotted by
+    hand follows it (issue 1765); a finished run reads nothing.
     Every other subwindow shows exactly what it showed, a zoom included (issue 1733, second
     review round: the rebuild after the clear was plain and fitted them again, measured on
     band PV6 of `test_ase_plot_outputs`; it now carries the live view).
@@ -3381,13 +3408,16 @@ its rows.
   that viewer had computed under the same vector name; and a restored difference of the
   AC analysis in a viewer that shows the transient is empty with the sentence for
   another analysis, never the one that says to save a net.
-  **The plot a run makes under Replace** removes a difference that stands in the target
-  subwindow, as it removes every trace there (R-OUT15). Nothing is said of a trace that
-  plot removes, nor of a row's earlier trace that the plot draws again: the sentences
-  above are said once the rows are in, of a trace that stays and is still empty, so a
-  difference in another subwindow, or in a tab that is not shown, is told of, and so is
-  one under Append. One `u` in the viewer brings the removed traces back, and a difference among
-  them is evaluated on the data the viewer then has; if it cannot be, it is told of
+  **The plot under Replace** leaves a difference where it is since issue 1765 (it was
+  plotted by hand; R-OUT15): after a finished run it goes on showing the run it was
+  plotted from and nothing is said of it, and `~` brings it to the result, where a
+  difference that cannot be evaluated is told of once (rows GG1, GG18 to GG20). Nothing
+  is said of one of ASE-L's own traces that the plot takes out, nor of a row's earlier
+  trace that the plot draws again: the sentences above are said once the rows are in, of
+  a trace that stays and is still empty, so a difference in another subwindow, or in a
+  tab that is not shown, is told of, and so is one under Append. A difference that LEFT
+  the strips (Graph > Clear SubWin, a delete) with a load of results in between comes
+  back by one `u` in the viewer and is evaluated on the data the viewer then has; if it cannot be, it is told of
   then. That holds when a later difference was computed into the name of its vector in
   the meantime, which the plot's load had left free: the difference that is back reads
   its own two nets under its own label, or is empty and told of, and never shows the
@@ -3460,9 +3490,10 @@ its rows.
   a run now leave every strip on one X window and each on its own Y window, and a
   difference plotted next is on that X window.
   Rows GZ2 to GZ4, GZ6 to GZ8.
-- **Limits.** Under the destination Replace the plot a finished run makes empties the
-  target subwindow, a difference in it included, as it empties every trace there
-  (R-OUT15); one `u` in the viewer brings it back (R-PD6). A difference is empty while
+- **Limits.** Since issue 1765 the plot under the destination Replace leaves a
+  difference where it is (it was plotted by hand, R-OUT15): after a finished run it goes
+  on showing the run it was plotted from, and `~` or the viewer's Ctrl-R brings it to the
+  result. A difference is empty while
   the viewer shows another analysis than its own
   (R-PD6). Nothing is coloured on the schematic for the two nets. Nothing is added
   to the session's outputs, so a net the run did not save is refused, not saved.

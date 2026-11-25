@@ -154,9 +154,10 @@ key after <kbd>Alt-Shift-D</kbd>, or <kbd>Alt-Shift-D</kbd> after one of them)
 switches the window to that analysis; the earlier difference draws again when
 the window is back on its own analysis. A run that no longer saves one of the
 two nets leaves it empty until the net is saved again. The plot that
-<kbd>~</kbd> or a finished run makes is another matter: under ASE-L's default
-destination, <b>Replace</b>, it empties the target subwindow, and a difference
-standing there goes with the other traces
+<kbd>~</kbd> or a finished run makes leaves a difference where it is: under
+ASE-L's default destination, <b>Replace</b>, only ASE-L's own plots are
+replaced, and after a finished run a difference goes on showing the run it was
+plotted from until <kbd>~</kbd> or <kbd>Ctrl-R</kbd>
 (<a href="#browser-menu">&sect;11.3</a>). One <kbd>u</kbd> in this window brings
 them back; choose <b>Append</b> to keep them across runs.
 </div>
@@ -255,8 +256,11 @@ draws <b>nothing</b>, and one line in the CIW names the trace and says what to
 do; it draws again when the data can answer it. A wave the Calculator plotted
 against its own X stays as it was made. A trace that <kbd>u</kbd> brings back
 after a re-run or a Direct Plot is evaluated on the data the window then has.
-The plot ASE-L makes under its <b>Replace</b> destination empties the target
-subwindow, expression traces included
+The plot ASE-L makes under its <b>Replace</b> destination replaces ASE-L's own
+plots only; a trace you plotted yourself stays, and after a finished run it
+goes on showing the run it was plotted from, its legend name ending in the
+time of that run (<code>v(out)@14:02:11</code>), until <kbd>~</kbd> in ASE-L or
+<kbd>Ctrl-R</kbd> here brings every trace to the result
 (<a href="#browser-menu">&sect;11.3</a>).
 </div>
 
@@ -554,6 +558,16 @@ back.</td>
 <code>~</code> button brings the window back.</td>
 <td class="where">whole window</td>
 <td><span class="menu">File &gt; Close Window</span></td></tr>
+<tr data-seq="Control-Key-r" data-menu="Reload" data-accel="Ctrl+R">
+<td><kbd>Ctrl-R</kbd></td>
+<td>Reload — read the result again and bring every trace in the window to it:
+the latest run, or the saved result selected in ASE-L (Results &gt; Select). A
+trace that a finished run left on an earlier run
+(<a href="#browser-menu">&sect;11.3</a>) shows the result again. No trace is
+added or removed, and a zoom is kept. While the simulation is running it reads
+nothing and says so.</td>
+<td class="where">whole window</td>
+<td><span class="menu">File &gt; Reload</span></td></tr>
 <tr data-seq="Control-Key-c" data-menu="Copy Traces" data-accel="Ctrl+C">
 <td><kbd>Ctrl-C</kbd></td>
 <td>Copy the selected traces to the viewer clipboard, remembering which strip
@@ -1022,7 +1036,7 @@ so an rc that binds first <b>wins</b>, even though it runs long before any viewe
 window exists.</p>
 
 <pre>bind WaveViewer &lt;Control-Key-d&gt; {break}                  ;# drop the default
-bind WaveViewer &lt;Control-Key-r&gt; {wviewer::clear_all_at %W; break}</pre>
+bind WaveViewer &lt;Control-Key-k&gt; {wviewer::clear_all_at %W; break}</pre>
 
 <p>The commands each key calls, all taking the event's own widget
 (<code>%W</code>) so the right window is edited even if the pointer and the
@@ -1357,8 +1371,18 @@ cleared plots back.</li>
 <p>ASE-L has its own drop-down for <kbd>~</kbd> and the after-run plot, at the
 right end of its status bar: <b>Append</b>, <b>Replace</b>, <b>New SubWin</b>,
 <b>New Win</b> (a new tab here). It is saved with the session state. Its
-default is <b>Replace</b>, so each <kbd>~</kbd> press and each finished run
-clears the target subwindow first; pick <b>Append</b> to add to it.
+default is <b>Replace</b>: each <kbd>~</kbd> press and each finished run
+replaces the plots ASE-L itself made in the target subwindow (the outputs
+ticked Plot) and leaves what you plotted yourself, strips and traces. After a
+<b>finished run</b> those plots of yours go on showing the run they were
+plotted from, and their legend names end in that run's time
+(<code>v(out)@14:02:11</code>); <kbd>~</kbd> brings every trace to the result,
+and so does <kbd>Ctrl-R</kbd> in this window. Pick <b>Append</b> to add to what
+ASE-L plotted before; under <b>Append</b>, <b>New SubWin</b> and <b>New Win</b>
+a finished run moves every trace to the new run. Whether a finished run plots
+at all is ASE-L's <b>Results &gt; Auto Plot Outputs After Simulation</b> (on
+unless you turn it off; <code>set ase_plot_after_sim 0</code> in an rc file
+starts every new session with it off).
 <b>Direct Plot</b> (<kbd>Ctrl-4</kbd> on the schematic) and <b>Plot
 Difference</b> (<kbd>Alt-Shift-D</kbd> on the schematic) do not use this
 drop-down: their signals are always added to the target subwindow. To start every

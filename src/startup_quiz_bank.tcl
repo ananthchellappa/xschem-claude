@@ -717,13 +717,14 @@ startup_quiz::add ase-results {
 startup_quiz::add ase-dest {
   type mc  kind howto  topic {ASE-L}
   q   {Where do the plots of ASE-L's ~ button go, unless you say otherwise?}
-  a   {{They replace what the viewer shows}
+  a   {{They replace the plots ASE-L made before}
        {They are added to what is already there}
        {Into a new sub-window}
        {Into a new viewer window}}
   ok  0
   why {The drop-down in ASE-L's status bar offers Append, Replace, New SubWin and New Win,
-       and starts at Replace. 'set ase_plot_dest append' in an rc file changes the start.}
+       and starts at Replace: ASE-L's own earlier plots are replaced, and what you plotted
+       yourself stays. 'set ase_plot_dest append' in an rc file changes the start.}
   proof {[P_proc ::ase::ui::plot_dest_labels]
          && [ase::ui::plot_dest_labels] eq {Append Replace {New SubWin} {New Win}}
          && [P_proc ::ase::plot_dest_default] && [P_default ase_plot_dest {}]}
@@ -1245,6 +1246,65 @@ startup_quiz::add ase-run-key-on-design {
          && [P_body ::ase::ui::run_for_window {ase::ui::do_run $key}]
          && [P_body ::ase::ui::run_for_window {set key [ase::ui::last_used $keys]}]
          && [P_has src/xschem.tcl {-accelerator Ctrl+Alt+Shift+R -command "ase::ui::run_for_current ${topwin}.drw"}]}
+}
+startup_quiz::add ase-replace-keeps-hand-plots {
+  type mc  kind howto  topic {Plots after a run}
+  q   {The viewer shows ASE-L's plotted outputs and a net you plotted yourself with Direct
+       Plot. The plot destination is Replace, and the simulation finishes again. What does
+       the net you plotted yourself show?}
+  a   {{It stays, still showing the earlier run, until you press ~ or Ctrl-R in the viewer}
+       {It is removed with everything else in the viewer}
+       {It stays and shows the new run at once}
+       {It stays, but empty, until you plot it again}}
+  ok  0
+  why {Replace takes out only the plots ASE-L made itself. After a finished run a plot of
+       your own goes on showing the run it was plotted from, and its legend name ends in
+       that run's time. The ~ button brings every trace to the result, and so does Ctrl-R
+       in the viewer.}
+  proof {[P_proc ::wviewer::owned_clear] && [P_proc ::wviewer::hold_manual]
+         && [P_proc ::wviewer::hold_release]
+         && [P_body ::ase::ui::auto_plot {replace   { wviewer::owned_clear $key }}]
+         && [P_body ::ase::ui::auto_plot {if {$dest eq {replace}} { wviewer::hold_manual $key $rf $sim_t $vcds }}]
+         && [P_body ::ase::ui::auto_plot_idle {ase::ui::auto_plot $key run}]
+         && [P_body ::wviewer::held_cue {return "@[clock format $w -format %H:%M:%S]"}]}
+}
+startup_quiz::add ase-auto-plot-after-sim {
+  type mc  kind howto  topic {Plots after a run}
+  q   {You want a finished simulation to leave the waveform viewer exactly as it is, and
+       to plot only when you ask. Where do you say so?}
+  a   {{Results > Auto Plot Outputs After Simulation, in the ASE-L window}
+       {Untick Plot on every output}
+       {Close the waveform viewer before each run}
+       {Set the plot destination to New Win}}
+  ok  0
+  why {The entry is a tick, on unless you turn it off, and it is saved with the session
+       state. Off, a finished run changes nothing in the viewer; the ~ button and Ctrl-R
+       in the viewer then bring it up to the new run. 'set ase_plot_after_sim 0' in an rc
+       file starts every new session with it off.}
+  proof {[P_proc ::ase::ui::set_plot_after_sim] && [P_default ase_plot_after_sim {}]
+         && [ase::ui::lbl_plot_after_sim_menu] eq {Auto Plot Outputs After Simulation}
+         && [P_body ::ase::ui::auto_plot_idle {if {![ase::ui::plot_after_sim $key]} { return }}]
+         && [P_has src/ase_window.tcl {$top.mb.results add checkbutton -label [ase::ui::lbl_plot_after_sim_menu]}]}
+}
+startup_quiz::add wave-reload-ctrl-r {
+  type mc  kind howto  topic {Plots after a run}
+  q   {A simulation has run again, or you selected a saved result in ASE-L, and the
+       waveform viewer still shows the earlier numbers. Which key in the viewer brings
+       every plotted trace to that result?}
+  a   {{Ctrl-R}
+       {Ctrl-D}
+       {f}
+       {Ctrl-Shift-R}}
+  ok  0
+  why {Ctrl-R is File > Reload: the result is read again and every trace shows it, the
+       ones a finished run left on an earlier run included. No trace is added or removed
+       and a zoom is kept. Ctrl-D clears the window, f fits it, and Ctrl-Shift-R does
+       nothing there.}
+  proof {[P_has src/wave_viewer.tcl {bind WaveViewer <Control-Key-r> {wviewer::reload_at %W; break}}]
+         && [P_proc ::wviewer::reload] && [P_proc ::ase::ui::reload_source]
+         && [P_has src/wave_viewer.tcl {$mb.file add command -label {Reload} -accelerator Ctrl+R}]
+         && [P_body ::wviewer::reload {set back [wviewer::hold_release $token]}]
+         && [P_body ::ase::ui::reload_source {set rf [ase::last_rawfile $key]}]}
 }
 # The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
 # so this one is asked where the others above are.

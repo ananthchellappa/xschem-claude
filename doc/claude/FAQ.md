@@ -14,6 +14,73 @@ Newest entries on top.
 
 ---
 
+## Q108. The simulation ran again and one trace in the viewer still shows the old numbers. How do I bring it up to date?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `ase-replot` on `fluid-editing` at `ce9da37b3`, issue 1766.
+
+**Ctrl-R in the Waveform Viewer (File > Reload), or the `~` button in ASE-L.**
+
+- **Ctrl-R** reads the result again and brings every trace in the window to it. No trace is
+  added or removed, the strips and the target stay, a zoom is kept, and it is not an undo
+  step. One sentence in the Command window says what was read.
+- **Which result:** the one the ASE-L session has in view. That is the latest run, or a
+  saved result you selected with Results > Select; go back to the latest run there and
+  Ctrl-R shows the run again.
+- **`~`** does the same for the traces and also plots the outputs ticked Plot again.
+- **Ctrl-Shift-R** is another key and does nothing in the viewer.
+- **While the simulation is running** Ctrl-R reads nothing and says so: the simulator is
+  writing that file. If the file cannot be read as the analysis the viewer shows, the
+  viewer is left as it was and the Command window says the file could not be reloaded.
+
+Why a trace can lag behind: under the plot destination Replace a finished run replaces
+only the plots ASE-L made itself, and leaves what you plotted yourself on the run it was
+plotted from (Q107). Such a trace's legend name ends in that run's time, for example
+`v(out)@14:02:11`.
+
+Rows: `tests/headless/test_wave_reload_1766.tcl`.
+
+---
+
+## Q107. I plotted a few nets by hand, ran again, and they are still there. What does Replace replace now, and what do my own plots show?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `ase-replot` on `fluid-editing` at `ce9da37b3`, issue 1765.
+
+**Replace replaces the plots ASE-L made itself (the outputs ticked Plot). What you plotted
+yourself stays.** Before, Replace emptied the viewer's target subwindow.
+
+What your own plots show afterwards depends on who asked for the plot:
+
+| who asked | ASE-L's outputs | what you plotted yourself |
+|---|---|---|
+| a finished run | the new run | the run it was plotted from; the legend name ends in that run's time |
+| the `~` button | the result in view | the result in view |
+| Ctrl-R in the viewer | the result in view (nothing is plotted again) | the result in view |
+
+- **"Plotted yourself"** is everything ASE-L's own plot did not add: Direct Plot, the
+  Signal Browser, the Calculator, Add Trace, a pasted copy, a difference of two nets. A
+  trace you add to one of ASE-L's strips stays in it.
+- **A finished run need not plot at all:** Results > Auto Plot Outputs After Simulation, a
+  tick that is on unless you turn it off, saved with the session state. Off, a finished run
+  changes nothing in the viewer. `set ase_plot_after_sim 0` in an rc file starts every new
+  session with it off; the Command window prints that line when you change the tick.
+- **Append, New SubWin and New Win** are as before: after a finished run every trace
+  follows the new run.
+- **A run of another analysis** (a transient, then AC) keeps nothing: every trace follows
+  the new run, as before. So does a trace that had nothing to show on the earlier run.
+- **The viewer's own Replace** (the Signal Browser's, the Calculator's, Add Trace's) still
+  empties the target subwindow: there you pick Replace for a plot of your own.
+
+How the earlier run is kept: its data stays in memory under another name while a trace
+shows it (`xschem raw rekey`, `wviewer::hold_manual`), beside the new run's. It goes when
+`~` or Ctrl-R has brought the last such trace to the result. Nothing of it is saved with
+the state.
+
+Rows: `tests/headless/test_ase_replace_keeps_1765.tcl`.
+
+---
+
 ## Q106. I am deep inside my test bench's schematic. Can I run the simulation without going back to the ASE-L window?
 
 - **Asked:** 2026-11-25 (the user's request)

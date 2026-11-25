@@ -20723,6 +20723,11 @@ set_ne calc_plot_dest {}
 ## status-bar drop-down prints the exact line in the CIW, e.g.
 ## `set ase_plot_dest append`.
 set_ne ase_plot_dest {}
+## Whether a finished ASE-L run plots the outputs ticked Plot (Results > Auto
+## Plot Outputs After Simulation; issue 1765). Empty = yes. A session's own
+## choice is saved with its state; this is what a session with none reads:
+## `set ase_plot_after_sim 0`.
+set_ne ase_plot_after_sim {}
 ## The rc file a CIW hint should name (`<name>: set <var> <value>`): the
 ## --script file this launch ran (C mirrors it as ::cli_opt_script), else
 ## `xschemrc`. Run from the source tree xschem sources neither ./xschemrc nor

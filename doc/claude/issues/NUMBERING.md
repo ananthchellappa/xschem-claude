@@ -5048,7 +5048,20 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   the port of 1761 and 1762 was not applied yet: **that clone can mint 1761 for a defect
   of its own before the port lands**. The port's README says what to do then.
 
-**The next free number is 1765.**
+~~**The next free number is 1765.**~~
+- **1765**: ASE-L's plot destination Replace emptied the viewer's target subwindow, the
+  plots the user made by hand included. It now takes out ASE-L's own traces only; after a
+  finished run what was plotted by hand goes on showing the run it was plotted from, until
+  `~`; and Results > Auto Plot Outputs After Simulation says whether a finished run plots
+  at all (the user's request of 2026-11-25). Added by the change that adds its issue file.
+- **1766**: Ctrl-R in the Waveform Viewer (File > Reload) reads the result in view again,
+  the latest run or a saved result selected in ASE-L, and brings every trace plotted there
+  to it (the user's request of 2026-11-25). Added by the change that adds its issue file.
+  Both minted 2026-11-25 after the two checks of CLAUDE.md and a look into every worktree:
+  no checkout holds 1765 or 1766. `~/private/xschem-private`'s worktrees had written
+  "1761 to 1769: skipped here, left to the public clone" and stood at 1773 that hour.
+
+**The next free number is 1767.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
