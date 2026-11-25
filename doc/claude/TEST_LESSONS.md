@@ -222,6 +222,16 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   label widget still held the text of its last repaint, which happened to be right. Only
   the row that repaints every bar first (`BS11`) saw it. Read a label after the repaint a
   user's next gesture causes, not only as it was left.
+- **An event the window manager sends can do the job of the code a row is about.** Three
+  of the four marks behind "the session used last" (issue 1764: opening a window, a launch
+  raising it, closing one) were each also made by the keyboard focus the window manager
+  hands over at that moment, so the row stayed green with any one of them taken out. Ask
+  before the event loop turns (the opening), take the binding off the window first (the
+  raise), or read the record itself (the close): rows `RK5` and `RK6`.
+- **A row that fails by ending the suite names nothing.** Helpers that ask about a window
+  answer a word for a missing one (`NOBROWSER`, `NOFORM`) instead of raising, so the row
+  that asked is the red one (five breaks of `test_ase_save_browse_1763` ended the suite
+  until its helpers did).
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -421,8 +431,26 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   `D59`).
 - **Never `font configure` a `Tk*Font`**: it resizes every other dialog (row `CF18`; row
   `FZ5` of `test_rdw_window_1245`).
+- **A binding that destroys its own widget needs a `break`.** Tk runs the class binding
+  for the same event afterwards, on a window that is gone, and that raises "bad window
+  path name" as a background error, whose dialog blocks. The first double click of
+  `test_ase_save_browse_1763` hung on it, with a user's screen the next place it would
+  have shown (the browser's `<Double-ButtonRelease-1>`, issue 1763). A suite that presses
+  such a gesture records background errors (`interp bgerror {} <recorder>`) and asks for
+  none (row `SB3`), so the next one is a red row and not a stall.
 
 ## 4. `xschem` command and data traps
+
+- **A command run from a key press runs inside the editor's event handler, where
+  `xschem go_back` and `xschem descend` do nothing** (`xctx->semaphore`). A row that
+  calls the action's proc directly passes on a product that fails from the key: the run
+  key of issue 1764 made no deck from two levels down until its work was moved behind
+  the key press with `after idle`. Press the key through the callback
+  (`xschem callback <canvas> 2 <x> <y> <keysym> 0 0 <state>`), and compare what it did
+  and said with the button it stands for, pressed in the same place (rows `RK1`, `RK2`).
+- **`xschem bindings dump` answers a list of rows, not lines**: iterate it as a list and
+  compare `lindex 4` with the action. A row skipped while the editor is busy has a sixth
+  word, `idle`.
 
 - `xschem object_bbox` does not exist; the readers are `xschem wire_coord` and `xschem
   instance_bbox`.

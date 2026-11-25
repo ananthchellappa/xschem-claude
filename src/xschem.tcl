@@ -19379,6 +19379,11 @@ proc build_widgets { {topwin {} } } {
   # does, because only a menu click knows which window it happened in.
   $topwin.menubar.tools add command -label "Show in Signal Browser" \
      -accelerator Ctrl+Alt+V -command "ase::show_in_browser_for_current ${topwin}.drw"
+  # issue 1764: the run key of an ASE-L design, as a menu entry. Action
+  # `ase.netlist_and_run` (src/callback.c, src/keybindings.csv); the window is
+  # passed for the reason given above.
+  $topwin.menubar.tools add command -label "Netlist and Run (ASE-L)" \
+     -accelerator Ctrl+Alt+Shift+R -command "ase::ui::run_for_current ${topwin}.drw"
   $topwin.menubar.tools add separator
   $topwin.menubar.tools add command -label "Insert text" -command "xschem place_text" -accelerator T
   $topwin.menubar.tools add command -label "Insert wire" -command "xschem wire" -accelerator W

@@ -64,6 +64,7 @@ key,100,0,graph,graph.forward,
 key,32,0,canvas,edit.add_pin_stubs,1
 key,65474,alt,canvas,tools.raise_ciw,
 key,118,ctrl+alt,canvas,wave.show_in_signal_browser,
+key,82,ctrl+alt,canvas,ase.netlist_and_run,1
 key,114,alt,canvas,edit.rotate_in_place,
 key,114,super,canvas,edit.rotate_in_place,
 key,102,alt,canvas,edit.flip_in_place,

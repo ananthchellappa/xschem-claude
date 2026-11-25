@@ -27194,6 +27194,8 @@ proc ase::open_state {lib cell view {ro 0}} {
     # issue 1762: the window the user came back to is the one whose simulator
     # is in force
     catch {ase::ui::sim_enter $key}
+    # issue 1764: and it is the session used last
+    catch {ase::ui::touch $key}
     return 1
   }
   ase::ui::open $key $lib $cell $view
@@ -27325,6 +27327,31 @@ proc ase::session_for_current {} {
     lassign $d lib cell view
     set key [ase::session_for_design $lib $cell $view]
     if {$key ne {}} { return [list $key $l $lib $cell $view] }
+  }
+  return {}
+}
+
+# EVERY session bound to the current schematic or, failing that, to its NEAREST
+# ancestor that has one (issue 1764): {level lib cell view key ?key ...?}, or {}.
+#
+# The same walk as `ase::session_for_current` above, on the plural lookup: the
+# run key has to tell "one session on this design" from "several", because a
+# run started on the wrong one of two states costs a simulation and replaces
+# that state's results. Which of several it takes is the caller's rule
+# (`ase::ui::run_for_current`), not this proc's: this one only reports them, in
+# registry order, so its first key is the one `session_for_current` answers.
+proc ase::sessions_for_current {} {
+  set lvl 0
+  catch {set lvl [xschem get currsch]}
+  if {![string is integer -strict $lvl] || $lvl < 0} { set lvl 0 }
+  for {set l $lvl} {$l >= 0} {incr l -1} {
+    set p {}
+    catch {set p [xschem get schname $l]}
+    if {$p eq {}} { continue }
+    if {[catch {ase::design_of_path [file normalize $p]} d]} { continue }
+    lassign $d lib cell view
+    set keys [ase::sessions_for_design $lib $cell $view]
+    if {[llength $keys]} { return [list $l $lib $cell $view {*}$keys] }
   }
   return {}
 }

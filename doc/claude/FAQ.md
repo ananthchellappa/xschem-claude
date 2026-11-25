@@ -14,6 +14,64 @@ Newest entries on top.
 
 ---
 
+## Q106. I am deep inside my test bench's schematic. Can I run the simulation without going back to the ASE-L window?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `ase-keyrun` on `fluid-editing` at `e5eb71262`, issue 1764.
+
+**Yes: Ctrl+Alt+Shift+R in the schematic window. Tools > Netlist and Run (ASE-L) is the same.**
+
+It is the command of the ASE-L window's own Netlist and Run entry, for the session whose
+design the schematic window stands in:
+
+- **From any level.** Two levels down, the netlist is still made from the test bench at
+  the top, and you are left on the level you were on.
+- **In a read-only design.** ASE-L opens the design read-only; the key works there.
+- **Two sessions on one bench** (two saved states, both open): the one you used last runs,
+  and a sentence in the Command window names it. "Used last" is the window you opened,
+  raised by a launch, clicked into, or ran from, whichever came last.
+- **No session on this schematic:** nothing runs, and the Command window says how to get
+  one.
+- **While a run is live:** the same refusal the button gives.
+
+The chord is a row of the key table (`key 82 ctrl+alt canvas ase.netlist_and_run`; the
+shift is in the key, a capital R), so `xschem bind` and `keybindings.csv` move it.
+
+Why it is not run inside the key press itself: while the editor is handling a key,
+`xschem go_back` and `xschem descend` do nothing, and a netlist made from depth has to
+climb to the bench and come back. The key notes its window and the work starts as soon as
+the key press has returned (`ase::ui::run_for_current`, `ase::ui::run_for_window`).
+
+Rows: `tests/headless/test_ase_run_key_1764.tcl`.
+
+---
+
+## Q105. Do I have to type the library, the cell and the view in Session > Save State?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `ase-keyrun` on `fluid-editing` at `e5eb71262`, issue 1763.
+
+**No: press Browse… in the form.**
+
+A browser of libraries, cells and each cell's saved states opens where the form stands.
+Its OK copies your pick into the form and closes; the form's own OK is what saves.
+
+- **Library and Cell picked, no View:** the View name you typed stays. That is the usual
+  save under a new name.
+- **A View picked:** it is a saved state you are about to replace. The form still asks
+  before it does.
+- **A double click on a state** is the pick and the OK in one.
+- **Cancel or Escape** in the browser changes nothing in the form.
+
+The View column lists saved states only. A View name that is the cell's schematic or
+symbol is refused, in the form and in `ase::ui::do_save_state_as` itself: before this,
+typing `schematic` there asked "State … exists. Overwrite?" and on OK wrote the state's
+text over the schematic file.
+
+Rows: `tests/headless/test_ase_save_browse_1763.tcl`.
+
+---
+
 ## Q104. The bottom bar of my ASE-L window named one simulator and the run started another. Which one is right, and what does the bar show now?
 
 - **Asked:** 2026-11-25 (the user's report)

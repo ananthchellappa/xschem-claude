@@ -166,6 +166,7 @@ tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, sto
 tools.net_hilight_style_editor,command,tools,Net highlight styles...,,net_hilight_style_editor,,,"Edit net highlight colors, dashes, blink and marching-ants without editing rc files",
 calc.open,command,tools,Calculator,,calc::open,,,Open the Calculator — build waveform expressions and plot or measure them,
 wave.show_in_signal_browser,command,tools,Show in Signal Browser,Ctrl+Alt+V,ase::show_in_browser_for_current,,,Reveal the schematic's hierarchy position (or the selected instance) in the waveform viewer's Signal Browser,
+ase.netlist_and_run,command,tools,Netlist and Run (ASE-L),Ctrl+Alt+Shift+R,ase::ui::run_for_current,,,Netlist and run the ASE-L session of the design this window stands in or has descended from,1
 view.redraw,command,view,Redraw,Esc,xschem redraw,,,Redraw,
 view.zoom_full,command,view,Zoom Full,F,xschem zoom_full,,,Zoom Full,
 view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In,

@@ -1203,6 +1203,49 @@ startup_quiz::add ase-bar-names-own-simulator {
          && [P_body ::ase::ui::open {ase::ui::sim_enter $key 1}]
          && [P_body ::ase::sim_session_label {ase::sim_apply_choice $st 0}]}
 }
+# Issue 1763.
+startup_quiz::add ase-save-state-browse {
+  type mc  kind howto  topic {ASE-L window}
+  q   {You want to save the state of an ASE-L session under another library and cell, and
+       you would rather not type their names. What does Session > Save State offer?}
+  a   {{A Browse button: pick the Library and the Cell in a browser, then name the View}
+       {Drag the cell from the Library Manager onto the form}
+       {Save the state first, then move the view in the Library Manager}
+       {Nothing: the three names have to be typed}}
+  ok  0  last 3
+  why {Browse opens a browser of libraries, cells and each cell's saved states. OK copies
+       your pick into the form. Library and Cell alone keep the View name you typed, which
+       is the usual save under a new name. A saved state picked there is one you are about
+       to replace, and the form still asks before it does. A View name that is the cell's
+       schematic or symbol is refused: a state is never written over a drawing.}
+  proof {[P_body ::ase::ui::save_state_dialog {-command [list ase::ui::saveas_browse $key]}]
+         && [P_proc ::ase::ui::saveas_browse_ok]
+         && [P_body ::ase::ui::saveas_browse_on_cell {ase::ui::state_views $lib $cell}]
+         && [P_body ::ase::ui::save_state_ok {ase::ui::save_as_not_a_state $l $c $v}]
+         && [P_body ::ase::ui::do_save_state_as {ase::ui::save_as_not_a_state $l $c $v}]}
+}
+# Issue 1764.
+startup_quiz::add ase-run-key-on-design {
+  type mc  kind howto  topic {ASE-L window}
+  q   {You are two levels down in the schematic of a test bench that has an ASE-L session
+       open, and you want its simulation run again. What is the shortest way?}
+  a   {{Press Ctrl+Alt+Shift+R in the schematic window}
+       {Go back up to the test bench, then press Netlist and Run in the ASE-L window}
+       {Close the schematic and open it again with Session > Design Window}
+       {Press N in the schematic to netlist, then Run in the ASE-L window}}
+  ok  0
+  why {In a schematic that belongs to an open ASE-L session, Ctrl+Alt+Shift+R is that
+       session's Netlist and Run; Tools > Netlist and Run (ASE-L) is the same. The netlist
+       is made from the test bench at the top wherever you stand, and you are left where
+       you were. It works in a design opened read-only. With two sessions open on one
+       bench it runs the one you used last and says which.}
+  proof {[P_bind key 82 ctrl+alt canvas ase.netlist_and_run]
+         && [P_palette ase.netlist_and_run]
+         && [P_body ::ase::ui::run_for_current {after idle [list ase::ui::run_for_window $win]}]
+         && [P_body ::ase::ui::run_for_window {ase::ui::do_run $key}]
+         && [P_body ::ase::ui::run_for_window {set key [ase::ui::last_used $keys]}]
+         && [P_has src/xschem.tcl {-accelerator Ctrl+Alt+Shift+R -command "ase::ui::run_for_current ${topwin}.drw"}]}
+}
 # The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
 # so this one is asked where the others above are.
 startup_quiz::add dblclick-labels {

@@ -71,6 +71,11 @@ namespace eval ase::ui {
   variable wnum [dict create]
   # session key -> {lib cell view}
   variable meta [dict create]
+  # issue 1764: session key -> the serial of the last time its window was
+  # opened, raised by a launch, given the keyboard focus, or started a run.
+  # The higher serial is the session used last (`ase::ui::last_used`).
+  variable used [dict create]
+  variable usedn 0
   # idlebg(key): status segment idle -background (the themed panel color),
   # captured after apply_theme at build
   variable idlebg;  array set idlebg {}
@@ -703,6 +708,9 @@ proc ase::ui::open {key lib cell view} {
   # window-activation logging, the CIW/LibMgr pattern ('+' keeps other
   # bindings; notify_window_active dedupes the FocusIn repeats)
   bind $top <FocusIn> "+[list notify_window_active $N "ASE-L $lib/$cell"]"
+  # issue 1764: and it is the session used last, for the run key on its design
+  bind $top <FocusIn> "+[list ase::ui::touch $key]"
+  ase::ui::touch $key
   # item 16: the real user close entry points route through close_request (the
   # dirty-session save prompt); ase::ui::close stays the teardown primitive
   wm protocol $top WM_DELETE_WINDOW [list ase::ui::close_request $key]
@@ -777,6 +785,8 @@ proc ase::ui::close {key} {
   dict unset wins $key
   dict unset wnum $key
   dict unset meta $key
+  variable used
+  dict unset used $key
   catch {unset idlebg($key)}
   catch {unset loglen($key)}
   catch {unset selclear($key)}
@@ -16478,7 +16488,11 @@ proc ase::ui::save_state_dialog {key} {
   set ve [ase::ui::dialog_row $w 2 View: view]
   $ce insert 0 $mcell
   $ve insert 0 [ase::session_getattr $key saveview $mview]
-  ase::ui::dialog_buttons $w 3 [list ase::ui::save_state_ok $key] \
+  # issue 1763: Browse… under the three fields, where File > Save As has it.
+  # The browser it opens fills them, so a library and a cell need no typing.
+  button $w.browse -text "Browse…" -command [list ase::ui::saveas_browse $key]
+  grid $w.browse -row 3 -column 1 -sticky e -padx {0 8} -pady {4 0}
+  ase::ui::dialog_buttons $w 4 [list ase::ui::save_state_ok $key] \
     [list ase::ui::saveas_cancel $key]
   foreach e [list $w.lib $ce $ve] {
     bind $e <Return> [list ase::ui::save_state_ok $key]
@@ -16500,6 +16514,216 @@ proc ase::ui::saveas_cancel {key} {
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].saveas}
   }
+}
+
+# --- Session > Save State > Browse… (issue 1763) ------------------------------
+#
+# The user, 2026-11-25: "That dialog pop-up SHOULD have a Browse button so user
+# doesn't have to type everything."
+#
+# A Library / Cell / View browser in the shape of Load State's, as a CHOOSER
+# for the Save State form: OK copies the pick into the form's fields and
+# closes the browser; the form's own OK is still what saves, through the same
+# confirm chain as a typed name. Cancel and Escape leave the form as it was.
+#
+#  * The View column lists the cell's saved states only (`state_views`, the
+#    list Load State shows). A cell's schematic or symbol view is not a place
+#    a state can go: see `ase::ui::save_as_not_a_state`.
+#  * OK takes what is picked and no more. Library alone, or Library and Cell,
+#    is a whole pick: the usual save is "this cell, a new state name", and
+#    the name the form already holds must survive the trip.
+#  * It is a child toplevel of the form, so it goes when the form goes (OK,
+#    Cancel, the session closing) and needs no record of its own.
+proc ase::ui::saveas_browse_win {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set w [dict get $wins $key].saveas.br
+  if {![winfo exists $w]} { return {} }
+  return $w
+}
+
+proc ase::ui::saveas_browse {key} {
+  variable wins
+  if {![dict exists $wins $key]} { return {} }
+  set d [dict get $wins $key].saveas
+  if {![winfo exists $d]} { return {} }
+  set w $d.br
+  catch {destroy $w}
+  toplevel $w
+  wm title $w {Save State: Browse}
+  catch {wm transient $w $d}
+  ttk::panedwindow $w.pw -orient horizontal
+  foreach {col title} {lib Library cell Cell view View} {
+    set f [ttk::frame $w.pw.$col]
+    ttk::label $f.h -text $title -anchor w -padding {4 2}
+    listbox $f.lb -exportselection 0 -activestyle dotbox \
+            -yscrollcommand [list $f.sb set] -width 16 -height 14 \
+            -background [ase::theme table] -font AseEntryFont
+    ttk::scrollbar $f.sb -orient vertical -command [list $f.lb yview]
+    grid $f.h  -row 0 -column 0 -columnspan 2 -sticky we
+    grid $f.lb -row 1 -column 0 -sticky nsew
+    grid $f.sb -row 1 -column 1 -sticky ns
+    grid rowconfigure $f 1 -weight 1
+    grid columnconfigure $f 0 -weight 1
+    $w.pw add $f -weight 1
+  }
+  label $w.status -anchor w -text [ase::ui::saveas_browse_hint {} {} {} 0]
+  frame $w.b
+  button $w.b.ok -text OK -command [list ase::ui::saveas_browse_ok $key]
+  button $w.b.cancel -text Cancel -command [list destroy $w]
+  pack $w.b.ok -side left -padx 5
+  pack $w.b.cancel -side right -padx 5
+  pack $w.b -side bottom -fill x -padx 8 -pady 6
+  pack $w.status -side bottom -fill x -padx 8
+  pack $w.pw -side top -fill both -expand 1
+  bind $w.pw.lib.lb  <<ListboxSelect>> [list ase::ui::saveas_browse_on_lib $key]
+  bind $w.pw.cell.lb <<ListboxSelect>> [list ase::ui::saveas_browse_on_cell $key]
+  bind $w.pw.view.lb <<ListboxSelect>> [list ase::ui::saveas_browse_on_view $key]
+  # a double click on a state is the pick and the OK in one gesture. Only in
+  # the View column: a double click on a library or a cell is how people ask
+  # to see what is inside, and closing the browser there would answer wrongly.
+  # On the RELEASE of the second click: OK destroys this window, and a
+  # release that arrived after it would have no listbox left to go to.
+  # ⚠ THE `break` IS LOAD-BEARING. Tk runs the Listbox class binding for the
+  # same release after this one, and on a listbox that OK has just destroyed
+  # it raises "bad window path name": a background error, whose dialog blocks
+  # (measured: the suite's first double click hung on it). `break` ends the
+  # event here, and only when OK did close the browser.
+  bind $w.pw.view.lb <Double-ButtonRelease-1> \
+    "if {\[[list ase::ui::saveas_browse_ok $key]\]} {break}"
+  bind $w <Return> [list ase::ui::saveas_browse_ok $key]
+  ase::ui::bind_dialog_esc $w [list destroy $w]
+  foreach n [lsort [libmgr::lib_names]] { $w.pw.lib.lb insert end $n }
+  ase::ui::apply_theme $w
+  ase::ui::saveas_browse_seed $key
+  return $w
+}
+
+# What the browser's status line says for a pick: it names what OK will copy
+# into the form. `nstates` is the count of saved states the picked cell has.
+proc ase::ui::saveas_browse_hint {lib cell view nstates} {
+  if {$lib eq {}} { return {pick a Library, then a Cell} }
+  if {$cell eq {}} { return "$lib: pick a Cell, or OK to take the Library alone" }
+  if {$view ne {}} {
+    return "$lib/$cell/$view: OK takes all three; saving there overwrites this state"
+  }
+  if {$nstates == 0} {
+    return "$lib/$cell has no saved state yet: OK takes Library and Cell, the View name stays as typed"
+  }
+  return "$lib/$cell: OK takes Library and Cell; pick a View to overwrite that state"
+}
+
+# Open the browser where the form stands: its Library and Cell selected, and
+# its View too when that names a saved state of the cell. One column at a
+# time, as Load State's default does: a name the lists do not hold leaves the
+# columns to its right empty and is no error. Answers how many columns it
+# selected.
+proc ase::ui::saveas_browse_seed {key} {
+  variable wins
+  set w [ase::ui::saveas_browse_win $key]
+  if {$w eq {}} { return 0 }
+  set d [dict get $wins $key].saveas
+  set l [string trim [$d.lib get]]
+  set c [string trim [$d.cell get]]
+  set v [string trim [$d.view get]]
+  if {![ase::ui::lb_select_value $w.pw.lib.lb $l]} { return 0 }
+  ase::ui::saveas_browse_on_lib $key
+  if {![ase::ui::lb_select_value $w.pw.cell.lb $c]} { return 1 }
+  ase::ui::saveas_browse_on_cell $key
+  if {[ase::ui::lb_select_value $w.pw.view.lb $v]} {
+    ase::ui::saveas_browse_on_view $key
+    return 3
+  }
+  return 2
+}
+
+proc ase::ui::saveas_browse_on_lib {key} {
+  set w [ase::ui::saveas_browse_win $key]
+  if {$w eq {}} { return }
+  set lib [ase::ui::lb_sel $w.pw.lib.lb]
+  $w.pw.cell.lb delete 0 end
+  $w.pw.view.lb delete 0 end
+  if {$lib ne {}} {
+    foreach c [lsort [xschem lib_cells $lib]] { $w.pw.cell.lb insert end $c }
+  }
+  $w.status configure -text [ase::ui::saveas_browse_hint $lib {} {} 0]
+}
+
+proc ase::ui::saveas_browse_on_cell {key} {
+  set w [ase::ui::saveas_browse_win $key]
+  if {$w eq {}} { return }
+  set lib  [ase::ui::lb_sel $w.pw.lib.lb]
+  set cell [ase::ui::lb_sel $w.pw.cell.lb]
+  $w.pw.view.lb delete 0 end
+  set sv {}
+  if {$lib ne {} && $cell ne {}} { set sv [ase::ui::state_views $lib $cell] }
+  foreach v $sv { $w.pw.view.lb insert end $v }
+  $w.status configure -text [ase::ui::saveas_browse_hint $lib $cell {} [llength $sv]]
+}
+
+proc ase::ui::saveas_browse_on_view {key} {
+  set w [ase::ui::saveas_browse_win $key]
+  if {$w eq {}} { return }
+  $w.status configure -text [ase::ui::saveas_browse_hint \
+    [ase::ui::lb_sel $w.pw.lib.lb] [ase::ui::lb_sel $w.pw.cell.lb] \
+    [ase::ui::lb_sel $w.pw.view.lb] [$w.pw.view.lb size]]
+}
+
+# OK: copy the pick into the form, close the browser, and leave the cursor in
+# the View field, the one a save usually still has to name. With no Library
+# picked there is nothing to copy; the browser stays and says so. Answers the
+# number of fields it filled.
+proc ase::ui::saveas_browse_ok {key} {
+  variable wins
+  set w [ase::ui::saveas_browse_win $key]
+  if {$w eq {}} { return 0 }
+  set d [dict get $wins $key].saveas
+  set lib  [ase::ui::lb_sel $w.pw.lib.lb]
+  set cell [ase::ui::lb_sel $w.pw.cell.lb]
+  set view [ase::ui::lb_sel $w.pw.view.lb]
+  if {$lib eq {}} {
+    $w.status configure -text [ase::ui::saveas_browse_hint {} {} {} 0]
+    return 0
+  }
+  set n 1
+  $d.lib set $lib
+  if {$cell ne {}} {
+    $d.cell delete 0 end
+    $d.cell insert 0 $cell
+    incr n
+    if {$view ne {}} {
+      $d.view delete 0 end
+      $d.view insert 0 $view
+      incr n
+    }
+  }
+  destroy $w
+  catch {focus $d.view}
+  catch {$d.view icursor end}
+  return $n
+}
+
+# THE VIEW NAME IS ALREADY A VIEW OF ANOTHER KIND (issue 1763, found on the
+# way). Answers the file that view holds (`tb.sch`), or {} when the target is
+# free or is a state.
+#
+# MEASURED before this proc existed, in a scratch library: Save State with the
+# View name `schematic` asked "State dlib/tb/schematic exists. Overwrite?" and
+# on OK wrote the state's text over `tb.sch`. `xschem cellview_path` answers
+# the view's own datafile, and the writer wrote whatever it answered. The test
+# is the one `ase::ui::state_views` lists by, so the browser, the form and the
+# writer agree on what a state is.
+proc ase::ui::save_as_not_a_state {l c v} {
+  set target {}
+  catch {set target [xschem cellview_path "$l/$c" $v]}
+  if {$target eq {} || [string match {*.state} $target]} { return {} }
+  return [file tail $target]
+}
+
+# The one sentence for it, for the form and for the writer.
+proc ase::ui::save_as_not_a_state_msg {l c v tail} {
+  return "ase: $l/$c/$v holds $tail, which is not a simulation state; the state\
+ was NOT saved. Choose another View name."
 }
 
 # D8: pure predicate — the Save-As target needs a confirmation iff it
@@ -16595,6 +16819,16 @@ proc ase::ui::save_state_ok {key} {
   set v [string trim [$w.view get]]
   if {$l eq {} || $c eq {} || $v eq {}} {
     catch {::ase::echo "ase: Library, Cell and View are all required" error}
+    return
+  }
+  # issue 1763: a View name that already is the cell's schematic or symbol is
+  # refused HERE, before any confirm: "State … exists. Overwrite?" would be
+  # asking about a file that is not a state. The form stays up for another name.
+  set other [ase::ui::save_as_not_a_state $l $c $v]
+  if {$other ne {}} {
+    catch {::ase::echo [ase::ui::save_as_not_a_state_msg $l $c $v $other] error}
+    catch {focus $w.view}
+    catch {$w.view selection range 0 end}
     return
   }
   # ONE confirm, EITHER reason, NEVER both. The two predicates are mutually
@@ -16943,6 +17177,15 @@ proc ase::ui::do_save_state_as {key l c v} {
   if {![ase::session_exists $key]} {
     catch {::ase::echo "ase: no ASE-L session is open under '$key'; the state\
  was NOT saved to $l/$c/$v." error}
+    return 0
+  }
+  ## issue 1763: THE WRITER'S OWN GUARD. The form refuses this before its
+  ## confirm (`ase::ui::save_state_ok`); a script or the Command window calls
+  ## this proc directly, and the write below goes to whatever file the view
+  ## name resolves to. A schematic is not overwritten with a state.
+  set other [ase::ui::save_as_not_a_state $l $c $v]
+  if {$other ne {}} {
+    catch {::ase::echo [ase::ui::save_as_not_a_state_msg $l $c $v $other] error}
     return 0
   }
   ase::ui::viewer_snapshot $key
@@ -18028,6 +18271,7 @@ proc ase::ui::run_started {key id} {
   catch {ase::ui::repair_confirm_cancel $key}
   ase::session_setattr $key run_id $id
   ase::session_setattr $key stopped 0
+  ase::ui::touch $key   ;# issue 1764: the session that ran is the one used last
   ase::ui::log_open $key
   ase::ui::log_clear $key
   ase::ui::attach_trace $key $id
@@ -18528,6 +18772,115 @@ proc ase::ui::do_run {key} {
     return
   }
   ase::ui::run_started $key $id
+}
+
+# --- the run key on the design (issue 1764) -----------------------------------
+#
+# The user, 2026-11-25: "in a linked schematic (i.e., the schematic that would
+# be opened from ASE-L : Session > Design Window) ensure that Ctrl-Alt-Shift-R
+# runs the simulation - i.e., - same as pressing the Netlist and Run button in
+# ASE-L. This should work even if user has descended in the schematic down
+# from the test-bench (top) level".
+#
+# Action `ase.netlist_and_run` of the C action table (src/callback.c; the chord
+# is a row of src/keybindings.csv, so it can be moved with `xschem bind`), and
+# Tools > Netlist and Run (ASE-L) of a schematic window.
+
+# Mark the session as the one used last: its window was opened, raised by a
+# launch, given the keyboard focus, or it started a run.
+proc ase::ui::touch {key} {
+  variable used; variable usedn
+  dict set used $key [incr usedn]
+}
+
+# Of `keys`, the session used last; the first of them when none was ever used.
+proc ase::ui::last_used {keys} {
+  variable used
+  set best [lindex $keys 0]
+  set bn -1
+  foreach k $keys {
+    set n -1
+    if {[dict exists $used $k]} { set n [dict get $used $k] }
+    if {$n > $bn} { set bn $n; set best $k }
+  }
+  return $best
+}
+
+# Netlist and Run for the design the schematic window stands in.
+#
+#  * WHICH SESSION. The one whose design is the schematic on screen or, when
+#    the user has descended, the nearest level above that has one
+#    (`ase::sessions_for_current`): the rule Direct Plot and Show in Signal
+#    Browser already resolve by. Of several sessions on that one design (two
+#    saved states of a bench, both open) it is the one used last, and a
+#    sentence names it, because the user is looking at the schematic and not
+#    at the window that is about to run.
+#  * WHAT IT DOES. `ase::ui::do_run`, the command of the Netlist and Run entry
+#    and of the `N&>` strip button, called with nothing in between: the same
+#    refusal while a run is live, the same netlist from the design's own top
+#    level, and the user is left on the level they were standing on.
+#  * IT IS NOT A MUTATING ACTION, so it works in a design ASE-L opened
+#    read-only (issue 1761), which is where it is pressed most.
+#  * `win` is the canvas of the window a MENU click happened in. The key
+#    passes none: a key press is already in its window.
+#
+# ⚠ IT DOES NOT RUN INSIDE THE KEY PRESS, AND THAT IS WHAT MAKES IT WORK FROM
+# DEPTH. A key reaches this proc from inside the editor's own event handler,
+# and while that handler is running `xschem go_back` and `xschem descend` do
+# nothing (`xctx->semaphore`, src/scheduler.c). The netlist of a run made two
+# levels down has to climb to the bench and come back
+# (`ase::with_design_current`), so run from in here it MEASURED as: no deck
+# from depth, and at the top level a deck with three "could not descend
+# (busy)" errors from the operating-point cards. So this proc only notes the
+# window the gesture happened in and hands the work to the event loop;
+# `ase::ui::run_for_window` does it once the handler has returned. Rows RK1
+# and RK2 of tests/headless/test_ase_run_key_1764.tcl press the real key.
+proc ase::ui::run_for_current {{win {}}} {
+  if {$win eq {}} { catch {set win [xschem get current_win_path]} }
+  after idle [list ase::ui::run_for_window $win]
+  return {}
+}
+
+# The work of `ase::ui::run_for_current`, for the schematic window whose
+# canvas is `win`. Answers the key of the session it pressed the button of, or
+# {} when it pressed none.
+proc ase::ui::run_for_window {win} {
+  variable wins; variable meta
+  set busy 1
+  catch {set busy [xschem get semaphore]}
+  if {$busy ne {0}} {
+    catch {::ase::echo "ase: the editor is busy; Netlist and Run was not\
+ started. Press the key again." error}
+    return {}
+  }
+  if {$win ne {}} {
+    set cur {}
+    catch {set cur [xschem get current_win_path]}
+    if {$cur ne $win} {
+      catch {xschem new_schematic switch $win}
+      set cur {}
+      catch {set cur [xschem get current_win_path]}
+      if {$cur ne $win} {
+        catch {::ase::echo "ase: could not switch to the design window $win" error}
+        return {}
+      }
+    }
+  }
+  set r [ase::sessions_for_current]
+  set keys {}
+  foreach k [lrange $r 4 end] {
+    if {[dict exists $wins $k]} { lappend keys $k }
+  }
+  if {![llength $keys]} { ase::no_session_notice ; return {} }
+  set key [ase::ui::last_used $keys]
+  if {[llength $keys] > 1} {
+    set name $key
+    if {[dict exists $meta $key]} { set name [join [dict get $meta $key] /] }
+    catch {::ase::echo "ase: [llength $keys] ASE-L sessions are open on\
+ [lindex $r 1]/[lindex $r 2]; Netlist and Run goes to the one used last, $name"}
+  }
+  ase::ui::do_run $key
+  return $key
 }
 
 # Simulation > Run: run on the EXISTING netlist artifact — never re-netlists

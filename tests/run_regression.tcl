@@ -91,6 +91,8 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_design_window_ro_1761" \
                  "headless/test_ase_bar_session_sim_1762" \
+                 "headless/test_ase_save_browse_1763" \
+                 "headless/test_ase_run_key_1764" \
                  "headless/test_ase_rundir_1704" \
                  "headless/test_ase_saved_results_1705" \
                  "headless/test_suite_watchdog_1403" \
@@ -1108,6 +1110,8 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_ase_simdlg_0937" \
                  "headless/test_ase_design_window_ro_1761" \
                  "headless/test_ase_bar_session_sim_1762" \
+                 "headless/test_ase_save_browse_1763" \
+                 "headless/test_ase_run_key_1764" \
                  "headless/test_ase_rundir_1704" \
                  "headless/test_ase_saved_results_1705" \
                  "headless/test_ase_optsheet_1441" \

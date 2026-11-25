@@ -267,10 +267,12 @@ check {BK20 (FILE) actions.csv carries EXACTLY ONE wave.show_in_signal_browser
 # leg 2 proves the file was not simply emptied to satisfy leg 1's absence twin.
 # MEASURED before the item: ZERO ctrl+alt rows and ZERO code-118 rows in the
 # shipped csv, so the row is unambiguous.
+# Issue 1764 gave the file a second ctrl+alt row, on another key (82, the run
+# key of an ASE-L design), so leg 2 counts this key's ctrl+alt rows.
 check {BK21 (FILE) the regenerated keybindings.csv row is spelled EXACTLY,
-       mods order included, and it is the file's only ctrl+alt row} \
+       mods order included, and it is that key's only ctrl+alt row} \
   [list [regexp -line {^key,118,ctrl\+alt,canvas,wave\.show_in_signal_browser,$} $kbcsv] \
-        [regexp -all -line {^key,[0-9]+,ctrl\+alt,} $kbcsv]] \
+        [regexp -all -line {^key,118,ctrl\+alt,} $kbcsv]] \
   {1 1}
 
 # ⚠ LEG 2 IS A BARE-NAME FILE-WIDE COUNT (the BD06 shape, on callback.c): the id

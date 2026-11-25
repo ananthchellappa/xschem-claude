@@ -6507,6 +6507,15 @@ static ActionDef action_registry[] = {
    * and doc/claude/signal_browser_2pane_batch/PLAN.md item 17. */
   { "wave.show_in_signal_browser", NULL, "ase::show_in_browser_for_current",
     "Show in Signal Browser" },
+  /* issue 1764: Netlist and Run of the ASE-L session whose design this window
+   * stands in (or has descended from), the command of the session window's own
+   * Netlist and Run entry. Tcl-backed (ase::ui::run_for_current, src/ase_window.tcl).
+   * mutates=0, and it has to be: ASE-L opens the design read-only (issue 1761),
+   * and a mutating action is refused there by dispatch_input_action's readonly
+   * gate. The Tcl command is a constant string, so the logged replay line is
+   * context-free like the row above. */
+  { "ase.netlist_and_run", NULL, "ase::ui::run_for_current",
+    "Netlist and Run the ASE-L session of this design" },
   /* In-place transforms, defaults Alt-R / Alt-F / Alt-V (plus the Super twins), migrated
    * out of the hardcoded switch so the chords are remappable -- see the block comment above
    * act_rotate_in_place and src/cadence_style_rc. mutates=1: dispatch_input_action's
@@ -6814,6 +6823,18 @@ static void init_input_bindings(void)
    * <Control-Mod1-Key-v> or `-state 12`. */
   set_input_binding(DEV_KEY, 'v', ControlMask|Mod1Mask, ACTX_CANVAS,
                     "wave.show_in_signal_browser");
+  /* issue 1764: Ctrl-Alt-Shift-R runs the ASE-L session of this design. A letter
+   * key reaches the table with ShiftMask stripped and the shift in the KEYSYM
+   * (kmods = rstate for key < 0xff00, in handle_key_press), so the chord is
+   * 'R' == keysym 82 with ControlMask|Mod1Mask. NOTHING COLLIDES: `case 'R'` of
+   * the C switch has arms for rstate == 0 only, and lower-case 'r' (Ctrl-R, the
+   * Alt-R and Super-R rows below) is a different keysym.
+   * The warning of the row above holds here too: a test drives
+   * <Control-Mod1-Key-R> or the callback with state 13, never Tk's `Alt`.
+   * IDLE-ONLY, as `toolbar.netlist` is: the command netlists, and a netlist
+   * started from inside another callback that is still running is not one. */
+  set_input_binding_idle(DEV_KEY, 'R', ControlMask|Mod1Mask, ACTX_CANVAS,
+                         "ase.netlist_and_run");
   /* In-place transforms: Alt-R rotate, Alt-F horizontal flip, Alt-V vertical flip.
    * These were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r'/'f'/'v';
    * EQUAL_MODMASK is `rstate == Mod1Mask || rstate == Mod4Mask`, so each key needs TWO

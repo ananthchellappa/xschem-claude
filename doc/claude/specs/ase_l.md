@@ -3487,7 +3487,16 @@ its rows.
   at a time: an unknown library leaves the browser as it was before the
   defaulting, a known library with an unknown cell keeps the library chosen
   and its Cell column filled); Save State (always Save-As: Library
-  dropdown + editable Cell/View text fields prefilled with current; OK
+  dropdown + editable Cell/View text fields prefilled with current;
+  **Browse…** under them, issue 1763, opens a Library / Cell / View browser
+  that stands where the form stands and lists, in its View column, the
+  cell's saved states only; its OK copies the pick into the form and closes
+  (Library alone, Library and Cell, or all three: a View name already typed
+  is kept when no state is picked), a double click on a state is that OK,
+  Cancel and Escape change nothing, and the browser goes when the form
+  goes; **a View name that is the cell's schematic or symbol is refused**
+  before any confirm, by the form and by the writer itself,
+  `ase::ui::save_as_not_a_state`; OK
   **confirms before it overwrites an existing state**, title `Overwrite
   State`, and the two reasons are answered by two mutually-exclusive
   predicates, never one flag with two meanings —
@@ -3518,7 +3527,14 @@ its rows.
   Design; Save All… (dialog: save all voltages?, all terminal currents?,
   levels, etc. — ngspice mapping v1: allv → `.save all`, alli →
   `.options savecurrents`).
-- **Simulation** — Netlist > Recreate; Netlist > Display; Netlist and Run;
+- **Simulation** — Netlist > Recreate; Netlist > Display; Netlist and Run
+  (**also from the design's own schematic window**, issue 1764:
+  Ctrl+Alt+Shift+R there, or Tools > Netlist and Run (ASE-L), is this entry's
+  command for the session whose design the window stands in or has descended
+  from; of several sessions on one design it is the one used last, named in
+  a sentence; action `ase.netlist_and_run`, a row of the key table, not a
+  changing action, so it works in a read-only design; the work is done after
+  the key press has returned, because hierarchy moves do nothing inside it);
   Run (uses EXISTING netlist — supports hand-edited decks); Stop; Log
   (reopen log window); Options… (the options sheet: a finder over the
   simulator's option catalogue, the bench's own rows, and a live deck preview

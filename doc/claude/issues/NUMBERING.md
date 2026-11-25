@@ -5034,7 +5034,21 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   1761 that hour (its port of 1760 moved it there), so **the two clones still mint from
   one stretch**: read that clone's pointer and worktrees first.
 
-**The next free number is 1763.**
+~~**The next free number is 1763.**~~
+- **1763**: the Save State form of an ASE-L window had no Browse button, so the library,
+  the cell and the view all had to be typed (the user's request of 2026-11-25). Added by
+  the change that adds its issue file, with a repair found in the same form: a View name
+  that is the cell's schematic was written over with the state's text.
+- **1764**: Ctrl-Alt-Shift-R in the schematic of an ASE-L session's design is that
+  session's Netlist and Run, from any level of the design (the user's request of
+  2026-11-25). Added by the change that adds its issue file.
+  Both minted 2026-11-25 after the two checks of CLAUDE.md and a look into every worktree:
+  no checkout holds 1763 or 1764. `~/private/xschem-private`'s pointer still read 1761
+  that hour and a batch of its own was live in three worktrees there, also at 1761, while
+  the port of 1761 and 1762 was not applied yet: **that clone can mint 1761 for a defect
+  of its own before the port lands**. The port's README says what to do then.
+
+**The next free number is 1765.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then
