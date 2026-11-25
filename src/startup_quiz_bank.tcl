@@ -450,6 +450,20 @@ startup_quiz::add wire-drag-junction {
          && [P_has src/cadence_style_rc {set fluid_editing 1}]
          && [P_has tests/headless/test_wire_drag_junction_1740.tcl {B1 the bare T in four orientations}]}
 }
+# Issue 1741. Same gate as the question above.
+startup_quiz::add wire-drag-escape {
+  type tf  kind shipped  topic {Wires}
+  q   {You start dragging a wire and press Escape before letting go. Afterwards only the wire
+       you dragged is selected, not the wires that were attached to its ends.}
+  ok  true
+  why {The attached wires follow the drag but are not yours: Escape puts every wire back and
+       leaves selected only what you had picked. The same holds after a finished drag.}
+  only  {[llength [info commands ::cadence::q_key]] > 0
+         && [info exists ::fluid_editing] && $::fluid_editing}
+  proof {[P_order src/move.c {issue 1741: an aborted connected drag leaves only} {my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);}]
+         && [P_has src/move.c {if(fluid_was_dirty || abort_sel_changed) draw();}]
+         && [P_has tests/headless/test_wire_drag_junction_1740.tcl {G7 click the bar's upper half, drag it, press Escape}]}
+}
 
 # ---------------------------------------------------------------- Labels and pins
 startup_quiz::add wire-label {

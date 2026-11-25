@@ -4985,7 +4985,22 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   1740 were left to this clone. The next number here is 1741, which that clone's
   `NUMBERING.md` names as skipped: read its entry for 1741 before minting it.
 
-**The next free number is 1741.**
+~~**The next free number is 1741.**~~
+- **1741**: dragging one half of a straight wire that another wire taps (the bar of a T) carried
+  the other half along when the drag was longer than it; a wire that runs straight through a
+  device pin lost the dragged part altogether on such a drag; and Escape in mid-drag left the
+  wires at the dragged wire's ends selected (the user's second report of 2026-11-24, on
+  `/tmp/before.sch`). Repaired by the change that adds its issue file. Minted 2026-11-24 after
+  both checks: no clone holds 1741 as an issue; `~/private/xschem-private`'s `NUMBERING.md`
+  says it skipped 1738 to 1741 and that 1741 "is free as an issue number", its other mentions
+  of the number being a line coordinate of `src/op_annot.tcl`.
+  **After this one the two clones point at the same number.** That clone holds 1742 to 1749
+  and its own pointer reads 1750, which is also the first number above its holdings here. The
+  pointer below is therefore a candidate only: run both checks of CLAUDE.md, read that clone's
+  pointer line, and take the number here only if that clone has moved past it or says it
+  leaves it.
+
+**The next free number is 1750.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

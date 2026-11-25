@@ -247,6 +247,12 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   false and whatever it guards silently never happens. Use `string is wideinteger`, and
   give the row a value the clock really produces, not `1000`.
 
+- **A command substitution cannot wrap inside its brackets.** In `expr {[P_order file {a}` /
+  newline / `{b}] && ...}` the newline ends the command, `P_order` is called with two
+  arguments, and the proof is simply false: the suite says "its proof holds" failed and
+  nothing about a wrong argument count (a quiz proof, 2026-11-24). Wrap between the `&&`
+  terms, never inside `[...]`.
+
 ## 3. Tk and event traps
 
 - **`winfo` and `font` do not exist under `--nogui`**: test `info commands winfo` before
@@ -446,6 +452,13 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   apart; a wire that ends on the middle of another splits it. Read the wire set back before
   trusting a fixture's shape (issue 1740: a "wire that continues the dragged one" could not
   be built that way).
+
+- **The overshoot pass of issue 0092 can delete the wire the user is dragging.** It trims a
+  "new dangling stub in line with a continuation at a junction with one perpendicular wire",
+  and it does not ask whose wire that is. A dragged wire with a free far end, next to a wire
+  the old placement carried, is exactly that shape: a wire through a device pin, one side
+  dragged farther than the other side is long, came back with the dragged side GONE (issue
+  1741, row H4). When a row's wire set is short by one, read the trace for `overshoot: TRIM`.
 
 ## 5. Registration, gates and flakes
 

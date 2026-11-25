@@ -2664,6 +2664,10 @@ typedef struct {
                             * were written by fluid_place_wire_junctions(), the WIRE case must not place
                             * the wire again. Set before the loop, freed right after it. */
   int     junc_nplaced;    /* entries of junc_placed (the wire count when it was built); 0 => none */
+  int     junc_frozen;     /* window: one ATTEMPT. issue 1741: the plan that was written holds a dragged
+                            * wire in place (no way to lay it without a short): 1, or 2 when that is
+                            * all the gesture would have moved. Read at the real END, which tells the
+                            * user and, for 2, treats the gesture as refused (no undo step, flag as it was). */
   int     junc_wrote;      /* window: one ATTEMPT. issue 1740: fluid_place_wire_junctions() wrote a plan in
                             * this attempt. Read by fluid_collapse_axis_overshoot_stub() (which must not
                             * "repair" a junction this pass placed) and by the attempt ladder (which keeps
@@ -3017,9 +3021,15 @@ static int point_on_any_pin(double x, double y)
  *   CARRY   one perpendicular riser with a clean far end: the riser goes where W's end goes. Its
  *           far end moves by the component along W, and the one or two wires that meet it there
  *           (parallel to W: a corner, or a rail the riser taps) have that endpoint moved with it.
- * An end that is neither shape (free, on a moving pin, a corner that sits on a pin, a wire that
- * continues W with no run across it, anything diagonal) gets no plan: W's end moves by the whole
- * drag and its followers are placed by place_moved_wire() as before.
+ *   HALF    (issue 1741) W is one half of a straight run and one perpendicular wire hangs on the
+ *           joint (the user drags a half of the BAR of a T). The other half stays. W's end keeps
+ *           to the perpendicular wire's line and moves along it by the drag across W; that wire
+ *           is made to reach it.
+ *   THROUGH (issue 1741) W is one half of a straight run through a fixed pin. The other half
+ *           stays on the pin; the point wire kissing minted there becomes the link to W's end.
+ * An end that is none of these (free, on a moving pin, a corner that sits on a pin, anything
+ * diagonal) gets no plan: W's end moves by the whole drag and its followers are placed by
+ * place_moved_wire() as before.
  *
  * Scope: wires the user had selected when the drag started (xctx->fluid_startsel_id), so the
  * follow set a moving PIN drives (compute_wire_slide, the shove, the exit stubs) is not touched.
@@ -3039,7 +3049,7 @@ static int point_on_any_pin(double x, double y)
  * Returns the number of dragged wires it placed. doc/claude/issues/1740-*.md.
  * --------------------------------------------------------------------------------------------- */
 typedef struct {
-  int mode;               /* 0 = no plan, 1 = ANCHOR, 2 = CARRY */
+  int mode;               /* 0 = no plan, 1 = ANCHOR, 2 = CARRY, 3 = HALF, 4 = THROUGH (issue 1741) */
   int nf, f[2], fe[2];    /* followers grabbed at this end; which of their endpoints (1|2) is here */
   int ff[2];              /* that follower is whole-selected: it was grabbed at BOTH its ends (see below) */
   int nr, r[2], re[2];    /* CARRY: the wires at the riser's far end; which of their endpoints is there */
@@ -3210,10 +3220,77 @@ static void fj_classify_end(int wd, int e, int level, Fluid_jend *je)
     je->mode = 1;
     return;
   }
+  /* issue 1741. wd is one HALF of a straight run: one wire continues it past the end, and
+   * (HALF) one perpendicular wire hangs on the joint, or (THROUGH) a fixed pin sits on it, for
+   * which connect_by_kissing() minted a point wire. The other half must stay where it is, however
+   * far the drag goes: wd's end stays on the perpendicular wire's line (HALF: that wire is made to
+   * reach it) or is joined to the pin by the point wire, stretched (THROUGH). At every level. */
+  if(je->nx == 1 && je->nf == 1 && !je->ff[0]) { je->mode = 3; return; }
+  if(je->nx == 1 && je->nf == 0 && je->nk >= 1 && fixedpin) { je->mode = 4; return; }
   /* a corner: exactly one perpendicular wire, grabbed here only, and nothing else at the end */
   if(je->nf != 1 || je->ff[0] || je->nx || je->nk || fixedpin || level >= 2) return;
   je->mode = 1;
   if(level == 0 && dw != 0.0 && fj_carry_ok(wd, je->f[0], je->fe[0], je)) je->mode = 2;
+}
+
+static int fj_set(double *nc, unsigned char *pl, int n, int e, double x, double y);
+
+/* issue 1741: is end e (1|2) of wire wd bare: no pin there, and no other wire's end or span? */
+static int fj_end_bare(int wd, int e)
+{
+  xWire * const wire = xctx->wire;
+  int m;
+  double ex = (e == 1) ? wire[wd].x1 : wire[wd].x2, ey = (e == 1) ? wire[wd].y1 : wire[wd].y2;
+  if(point_on_any_pin(ex, ey)) return 0;
+  for(m = 0; m < xctx->wires; m++) {
+    if(m == wd) continue;
+    if(wire[m].x1 == ex && wire[m].y1 == ey) return 0;
+    if(wire[m].x2 == ex && wire[m].y2 == ey) return 0;
+    if(fj_on_seg(ex, ey, wire[m].x1, wire[m].y1, wire[m].x2, wire[m].y2)) return 0;
+  }
+  return 1;
+}
+
+/* issue 1741, the last resort for a dragged HALF of a run. No plan that moves wd could be
+ * verified (the link or the grown wire would run over a pin, or onto another net), and the
+ * placement there was before this pass is the one thing that must not run for this shape: it
+ * carries the other half by the length rule, and the overshoot pass then deletes wd itself.
+ * So wd is held where it is: both its ends, and the grabbed end of every wire at them, get
+ * their own place as the target, and a point wire kissing minted there gets no length.
+ * Refused (returns 1, nothing set) when a moving pin or another whole-selected wire is at an
+ * end of wd: those move, and holding wd would tear it off them. */
+static int fj_freeze_wire(double *nc, unsigned char *pl, int wd)
+{
+  xWire * const wire = xctx->wire;
+  int e, m, bad = 0;
+  for(e = 1; e <= 2; e++) {
+    double ex = (e == 1) ? wire[wd].x1 : wire[wd].x2, ey = (e == 1) ? wire[wd].y1 : wire[wd].y2;
+    if(point_on_moving_pin(ex, ey)) return 1;
+    for(m = 0; m < xctx->wires; m++) {
+      int a1, a2;
+      if(m == wd) continue;
+      a1 = (wire[m].x1 == ex && wire[m].y1 == ey);
+      a2 = (wire[m].x2 == ex && wire[m].y2 == ey);
+      if(!a1 && !a2) continue;
+      if(wire[m].sel == SELECTED && !(a1 && a2)) return 1;
+    }
+  }
+  for(e = 1; e <= 2; e++) {
+    double ex = (e == 1) ? wire[wd].x1 : wire[wd].x2, ey = (e == 1) ? wire[wd].y1 : wire[wd].y2;
+    bad |= fj_set(nc, pl, wd, e, ex, ey);
+    for(m = 0; m < xctx->wires; m++) {
+      int a1, a2;
+      if(m == wd) continue;
+      a1 = (wire[m].x1 == ex && wire[m].y1 == ey);
+      a2 = (wire[m].x2 == ex && wire[m].y2 == ey);
+      if(!a1 && !a2) continue;
+      if(a1 && a2) {
+        if(wire[m].sel) { bad |= fj_set(nc, pl, m, 1, ex, ey); bad |= fj_set(nc, pl, m, 2, ex, ey); }
+      } else if(a1 && (wire[m].sel & SELECTED1)) bad |= fj_set(nc, pl, m, 1, ex, ey);
+      else if(a2 && (wire[m].sel & SELECTED2))   bad |= fj_set(nc, pl, m, 2, ex, ey);
+    }
+  }
+  return bad;
 }
 
 /* give endpoint e (1|2) of wire n the target (x,y); returns 1 on a second, different target */
@@ -3254,6 +3331,10 @@ static int fj_verify(const double *nc, const unsigned char *pl, int nw)
 
   for(n = 0; n < nw; n++) {                            /* (1) every reshaped wire keeps its axis */
     if(!pl[n]) continue;
+    if(wire[n].x1 == wire[n].x2 && wire[n].y1 == wire[n].y2) {   /* a point wire has none to keep: */
+      if(nc[4*n] != nc[4*n+2] && nc[4*n+1] != nc[4*n+3]) return 1; /* it may grow along either */
+      continue;
+    }
     if(wire[n].x1 == wire[n].x2 && nc[4*n] != nc[4*n+2]) return 1;
     if(wire[n].y1 == wire[n].y2 && nc[4*n+1] != nc[4*n+3]) return 1;
   }
@@ -3334,7 +3415,7 @@ static int fj_verify(const double *nc, const unsigned char *pl, int nw)
 
 static int fluid_place_wire_junctions(void)
 {
-  int nw = xctx->wires, w, e, k, n, level, ok = 0, nplan = 0;
+  int nw = xctx->wires, w, e, k, n, level, ok = 0, nplan = 0, frozen = 0;
   double dx = xctx->deltax, dy = xctx->deltay;
   double *nc = NULL;         /* planned endpoints, 4 per wire, pristine where not targeted */
   unsigned char *pl = NULL;  /* per wire: 1 = end 1 targeted, 2 = end 2 targeted, 4 = a dragged wire */
@@ -3344,10 +3425,12 @@ static int fluid_place_wire_junctions(void)
   nc = my_malloc(_ALLOC_ID_, 4 * nw * sizeof(double));
   pl = my_malloc(_ALLOC_ID_, nw * sizeof(unsigned char));
   /* level 0: a corner is carried where it can be, else anchored; 1: corners anchored only;
-   * 2: corners get no plan (the generic L places them), only straight runs are anchored. A level
-   * that would repeat the plan that just failed is skipped. */
-  for(level = 0; level < 3 && !ok; ) {
-    int bad = 0, used_carry = 0, used_corner = 0;
+   * 2: corners get no plan (the generic L places them), only straight runs are anchored;
+   * 3 (issue 1741): every dragged wire that is a half of a run is held where it is, the
+   * others get no plan. A level that would repeat the plan that just failed is skipped. */
+  for(level = 0; level < 4 && !ok; ) {
+    int bad = 0, used_carry = 0, used_corner = 0, used_half = 0;
+    frozen = 0;
     xWire * const wire = xctx->wire;
     nplan = 0;
     memset(pl, 0, nw * sizeof(unsigned char));
@@ -3356,21 +3439,83 @@ static int fluid_place_wire_junctions(void)
     }
     for(w = 0; w < nw && !bad; w++) {
       Fluid_jend je[2];
-      int whoriz;
+      int whoriz, held[2];
+      double t[2][2];
       if(wire[w].sel != SELECTED || !fj_user_wire(w)) continue;
       if((wire[w].x1 == wire[w].x2) == (wire[w].y1 == wire[w].y2)) continue; /* a point or a diagonal */
       whoriz = (wire[w].y1 == wire[w].y2);
-      fj_classify_end(w, 1, level, &je[0]);
-      fj_classify_end(w, 2, level, &je[1]);
+      fj_classify_end(w, 1, level > 2 ? 2 : level, &je[0]);
+      fj_classify_end(w, 2, level > 2 ? 2 : level, &je[1]);
       if(!je[0].mode && !je[1].mode) continue;
+      if(je[0].mode >= 3 || je[1].mode >= 3) used_half = 1;
+      if(level == 3) {                                 /* issue 1741: hold a dragged half in place */
+        if(je[0].mode < 3 && je[1].mode < 3) continue; /* the others: no plan at this level */
+        if(fj_freeze_wire(nc, pl, w)) { bad = 1; break; }
+        pl[w] |= 4;
+        nplan++;
+        frozen = 1;
+        continue;
+      }
+      for(e = 0; e < 2; e++) {
+        double ex = e ? wire[w].x2 : wire[w].x1, ey = e ? wire[w].y2 : wire[w].y1;
+        t[e][0] = ex + dx; t[e][1] = ey + dy;          /* no plan, or CARRY: the whole drag */
+        held[e] = (je[e].mode == 1 || je[e].mode >= 3);
+        if(held[e]) {                                  /* ANCHOR, HALF, THROUGH: only the component across wd */
+          if(whoriz) t[e][0] = ex; else t[e][1] = ey;
+        }
+      }
+      /* issue 1741: the dragged wire must not leave the plan with no length, and at a HALF or
+       * THROUGH end not turned around either (it would lie over the other half). A bare end
+       * opposite a held one gives way: it stops one grid short. Anything else at that end moves
+       * with it and cannot, so the plan fails. (A pillar pushed through its bar with a corner
+       * at its far end may still come out with no length: the corner then sits on the bar.) */
+      {
+        int ax = whoriz ? 0 : 1;                       /* stored wires are ordered: end 2 is the larger */
+        double len = t[1][ax] - t[0][ax];
+        int strict = (je[0].mode >= 3 || je[1].mode >= 3);
+        if(len == 0.0 || (strict && len < 0.0)) {
+          double g = tclgetcadsnap();
+          if(g <= 0.0) g = 10.0;
+          if(held[0] && !held[1] && fj_end_bare(w, 2))      t[1][ax] = t[0][ax] + g;
+          else if(held[1] && !held[0] && fj_end_bare(w, 1)) t[0][ax] = t[1][ax] - g;
+          else if(strict || (fj_end_bare(w, 1) || fj_end_bare(w, 2))) bad = 1;
+        }
+      }
       for(e = 0; e < 2 && !bad; e++) {
         double ex = e ? wire[w].x2 : wire[w].x1, ey = e ? wire[w].y2 : wire[w].y1;
-        double tx = ex + dx, ty = ey + dy;             /* no plan, or CARRY: the whole drag */
-        if(je[e].mode == 1) {                          /* ANCHOR: only the component across wd */
-          if(whoriz) tx = ex; else ty = ey;
-        }
+        double tx = t[e][0], ty = t[e][1];
         bad |= fj_set(nc, pl, w, e + 1, tx, ty);
         if(!je[e].mode) continue;
+        if(je[e].mode >= 3) {                          /* issue 1741: wd is a half of a run */
+          double d = whoriz ? dy : dx;                 /* the drag across wd */
+          bad |= fj_set(nc, pl, je[e].x, je[e].xe, ex, ey);          /* the other half stays */
+          if(je[e].mode == 3) {
+            /* the perpendicular wire p is made to hold both the joint and wd's new end: it
+             * grows at the joint when wd leaves on the side away from it, keeps its span when
+             * wd's end lands on it, and grows at its FAR end when wd goes past that */
+            int p = je[e].f[0], pe = je[e].fe[0];
+            double pfx = (pe == 1) ? wire[p].x2 : wire[p].x1, pfy = (pe == 1) ? wire[p].y2 : wire[p].y1;
+            double o = whoriz ? (pfy - ey) : (pfx - ex);            /* where p lies, seen from the joint */
+            if(d * o < 0.0)            bad |= fj_set(nc, pl, p, pe, tx, ty);
+            else {
+              bad |= fj_set(nc, pl, p, pe, ex, ey);
+              if(fabs(d) > fabs(o))    bad |= fj_set(nc, pl, p, pe == 1 ? 2 : 1, tx, ty);
+            }
+            for(k = 0; k < je[e].nk; k++) {            /* a pin on the joint keeps the run: no stub */
+              bad |= fj_set(nc, pl, je[e].k[k], 1, ex, ey);
+              bad |= fj_set(nc, pl, je[e].k[k], 2, ex, ey);
+            }
+          } else {
+            /* the first point wire becomes the link from the pin to wd's new end */
+            bad |= fj_set(nc, pl, je[e].k[0], 1, ex, ey);
+            bad |= fj_set(nc, pl, je[e].k[0], 2, tx, ty);
+            for(k = 1; k < je[e].nk; k++) {
+              bad |= fj_set(nc, pl, je[e].k[k], 1, ex, ey);
+              bad |= fj_set(nc, pl, je[e].k[k], 2, ex, ey);
+            }
+          }
+          continue;
+        }
         if(je[e].nf == 1) used_corner = 1;
         for(k = 0; k < je[e].nf; k++) bad |= fj_set(nc, pl, je[e].f[k], je[e].fe[k], tx, ty);
         if(je[e].mode == 1) {                          /* what stays on the run where it was */
@@ -3398,9 +3543,11 @@ static int fluid_place_wire_junctions(void)
     if(!bad) bad = fj_verify(nc, pl, nw);
     if(!bad) { ok = 1; break; }
     fltrace("FLTRACE junction: plan of %d dragged wire(s) DECLINED at level %d\n", nplan, level);
-    if(level == 0)      level = used_carry ? 1 : (used_corner ? 2 : 3);
-    else if(level == 1) level = used_corner ? 2 : 3;
-    else                level = 3;
+    /* the next level that is a different plan; level 3 holds a dragged half in place */
+    if(level == 0)      level = used_carry ? 1 : (used_corner ? 2 : (used_half ? 3 : 4));
+    else if(level == 1) level = used_corner ? 2 : (used_half ? 3 : 4);
+    else if(level == 2) level = used_half ? 3 : 4;
+    else                level = 4;
   }
   if(ok) {
     fluid_g.junc_placed = my_calloc(_ALLOC_ID_, nw, sizeof(unsigned char));
@@ -3419,6 +3566,13 @@ static int fluid_place_wire_junctions(void)
     xctx->prep_net_structs = 0;
     xctx->prep_hi_structs = 0;
     fluid_g.junc_wrote = 1;
+    /* 2 = the held wires are all the user dragged: the gesture moves nothing at all */
+    if(frozen) {
+      int i, others = 0, mine = 0;
+      for(i = 0; i < xctx->lastsel; i++) if(xctx->sel_array[i].type != WIRE) others = 1;
+      for(n = 0; n < nw; n++) if(xctx->wire[n].sel == SELECTED && fj_user_wire(n)) mine++;
+      fluid_g.junc_frozen = (!others && mine == nplan) ? 2 : 1;
+    } else fluid_g.junc_frozen = 0;
   }
   my_free(_ALLOC_ID_, &nc);
   my_free(_ALLOC_ID_, &pl);
@@ -10592,6 +10746,7 @@ void move_objects(int what, int merge, double dx, double dy)
     * preview-only drag would present; then drop the snapshot. Repaint at the block end because the
     * committed intermediate route was baked into the canvas. */
    int fluid_was_dirty = xctx->fluid_reroute_active && xctx->fluid_reroute_dirty;
+   int abort_sel_changed = 0;                        /* issue 1741: follow wires were deselected */
    if(xctx->fluid_reroute_active) {
      if(xctx->fluid_reroute_dirty) fluid_reroute_restore();
      fluid_reroute_discard();
@@ -10613,6 +10768,26 @@ void move_objects(int what, int merge, double dx, double dy)
     * would make a subsequent Shift+drag copy spuriously draw connecting wires.
     * move END already resets it unconditionally; mirror that here. */
    if(xctx->connect_by_kissing == 2) xctx->connect_by_kissing = 0;
+   /* issue 1741: an aborted connected drag leaves only what the user had selected. The wires
+    * select_attached_nets() grabbed for the drag are the tool's; the END path takes them out of
+    * the selection (ownership normalize, issues 0091/0093) and ABORT did not, so Escape in
+    * mid-drag left every wire at the dragged wire's ends selected (a plain click hid it: the
+    * Cadence release collapses the selection to the clicked object). By the same session-stable
+    * ids as END, read before they are freed below: every wire that is not the user's goes out. */
+   if(xctx->stretch_select && tclgetboolvar("fluid_editing")) {
+     int wi;
+     for(wi = 0; wi < xctx->wires; ++wi) {
+       if(!xctx->wire[wi].sel) continue;               /* never ADD a selection here: the pop_undo
+                                                        * above (a kissed drag) clears it all, and
+                                                        * what follows that is the callers' business */
+       /* the user's own wires keep the state they have (a wire held by one end with a stretch
+        * box stays held by that end: END makes it whole for the next grab, an abort changes
+        * nothing); every other wire goes out */
+       if(xctx->fluid_startsel_wires > 0 && fluid_wire_is_user_selected(wi)) continue;
+       xctx->wire[wi].sel = 0; abort_sel_changed = 1;
+     }
+     if(abort_sel_changed) { xctx->need_reb_sel_arr = 1; rebuild_selected_array(); }
+   }
    /* clear the stretch-move flag too, so an aborted stretch gesture does not leak
     * the Phase-5 cleanup trigger into the next move (mirror of move END). */
    xctx->stretch_select = 0;
@@ -10634,7 +10809,7 @@ void move_objects(int what, int merge, double dx, double dy)
     * own set_modify(1) calls on a live step; before the hold, insert_exit_stubs() alone dirtied the
     * sheet and rewrote the backup with the mid-drag geometry on every step, and nothing here undid
     * it. Rows A1-A3 and E1-E2 of tests/headless/test_drag_abort_backup_1716.tcl (R1-R4: refusal). */
-   if(fluid_was_dirty) draw();
+   if(fluid_was_dirty || abort_sel_changed) draw();
   }
   if(what & RUBBER)  /* draw objects while moving */
   {
@@ -10711,6 +10886,11 @@ void move_objects(int what, int merge, double dx, double dy)
    /* issue 1740: the attempt-0 result when the junction pass wrote it and it changed the pin
     * partition, with that partition, for the compare in the attempt-1 verdict below */
    Undo_slot j_snap;
+   int junc_frozen_end = 0;   /* issue 1741: fluid_g.junc_frozen of the attempt that was kept */
+   /* issue 1741: the ids of the wires the user had selected, kept past the END finalizers that
+    * free xctx->fluid_startsel_id, for the selection clean-up of a REFUSED move */
+   unsigned int *ref_uid = NULL;
+   int ref_nuid = 0;
    int j_snapped = 0, j_npart = 0, *j_part = NULL;
    unsigned int j_wid = 0, j_iid = 0, j_gid = 0, j_tid = 0;
    /* B3 (hardening sprint Track B): gesture-pristine snapshot for the END enforcement backstop.
@@ -10935,6 +11115,7 @@ void move_objects(int what, int merge, double dx, double dy)
    fluid_g.slide_pushthrough_on = (attempt == 0);
    fluid_g.junction_on = (attempt == 0);              /* issue 1740: same ladder, same reason */
    fluid_g.junc_wrote = 0;
+   fluid_g.junc_frozen = 0;
    for(leg = 0; leg < nlegs; ++leg) {
    /* issue 0085: attempt 2 runs the shared region with orthogonal relaying OFF (rigid diagonal
     * relay): place_moved_wire's else-branch just translates the moved endpoint, laying NO new
@@ -11733,7 +11914,9 @@ void move_objects(int what, int merge, double dx, double dy)
    fluid_g.leg_future_dx = fluid_g.leg_future_dy = 0.0;  /* issue 0086: never leak past the gesture */
    fluid_g.slide_pushthrough_on = 1;                   /* issue 0109: never leak past the gesture */
    fluid_g.junction_on = 0;                            /* issue 1740: read inside the attempt loop only */
+   junc_frozen_end = fluid_g.junc_frozen;              /* issue 1741: read by the END verdict below */
    fluid_g.junc_wrote = 0;
+   fluid_g.junc_frozen = 0;
    fluid_junction_clear();
    if(j_snapped) mem_snapshot_free(&j_snap);
    my_free(_ALLOC_ID_, &j_part);
@@ -11832,6 +12015,11 @@ void move_objects(int what, int merge, double dx, double dy)
      xctx->stretch_select = 0;
      xctx->stretch_grabbed_n = 0;
      my_free(_ALLOC_ID_, &xctx->stretch_grabbed_xy);
+     if(enf_snapped && xctx->fluid_startsel_nid > 0 && xctx->fluid_startsel_id) {  /* issue 1741 */
+       ref_nuid = xctx->fluid_startsel_nid;
+       ref_uid = my_malloc(_ALLOC_ID_, ref_nuid * sizeof(unsigned int));
+       memcpy(ref_uid, xctx->fluid_startsel_id, ref_nuid * sizeof(unsigned int));
+     }
      xctx->fluid_startsel_nid = 0;                     /* issue 0091: drop the user-selected id set */
      my_free(_ALLOC_ID_, &xctx->fluid_startsel_id);
 
@@ -11881,7 +12069,10 @@ void move_objects(int what, int merge, double dx, double dy)
        /* issue 1716: the verdict is in -- stop holding, so the accept arm's set_modify(1) declares
         * the edit (flag, modify_seq, backup of the FINAL geometry, title) exactly as before. */
        if(mod_held) { xctx->modify_hold--; mod_held = 0; }
-       if(enforce && enf_snapped && p2bad) {
+       /* issue 1741: a gesture whose every dragged wire was held in place (junc_frozen 2) moved
+        * nothing. It is refused the same way, so it leaves no undo step that undoes nothing and
+        * does not mark an untouched sheet modified. */
+       if((enforce && enf_snapped && p2bad) || (enf_snapped && junc_frozen_end == 2)) {
          /* REFUSE. Restore ritual mirrors the leg_snap rollback (:7171): preserve ui_state across
           * mem_restore_slot (which zeroes it via unselect_all), put the START id counters back
           * (deterministic tool-wire ids), rebuild sel_array + movelastsel (dce0bea6 overflow guard). */
@@ -11894,6 +12085,17 @@ void move_objects(int what, int merge, double dx, double dy)
          xctx->inst_id_counter = enf_iid;
          xctx->gfx_id_counter  = enf_gid;
          xctx->text_id_counter = enf_tid;
+         /* issue 1741: the snapshot was taken after the grab, so it brings back the followers'
+          * selection too. A refused move leaves only what the user had selected, as an aborted
+          * one does (the ABORT branch above has the same loop). */
+         {
+           int wi, k2;
+           for(wi = 0; wi < xctx->wires; ++wi) {
+             if(!xctx->wire[wi].sel) continue;
+             for(k2 = 0; k2 < ref_nuid; ++k2) if(ref_uid[k2] == xctx->wire[wi].id) break;
+             if(k2 >= ref_nuid) xctx->wire[wi].sel = 0;
+           }
+         }
          xctx->need_reb_sel_arr = 1; rebuild_selected_array();
          xctx->movelastsel = xctx->lastsel;
          /* drop the gesture's undo push: restore the pre-push counter triple (both undo backends
@@ -11910,18 +12112,27 @@ void move_objects(int what, int merge, double dx, double dy)
           * already dirtied the sheet and the passes had written the refused geometry to the ~. */
          if(enf_mod_before) set_modify(-1);
          else set_modify(0);
-         if(has_x)
+         if(has_x && junc_frozen_end == 2 && !(enforce && p2bad))
+           tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {"
+                      "wire not moved: it cannot be laid there without running over a pin "
+                      "or another net}}", NULL);
+         else if(has_x)
            tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {"
                       "move refused: would short/merge nets -- schematic left unchanged "
                       "(set fluid_enforce_invariants 0 to override; see FLUID_TRACE)}}", NULL);
-         fltrace("FLTRACE move: ENFORCE REFUSED (P2 shorts+dev_merges=%d) -- "
-                 "restored pristine, dropped undo push\n", p2bad);
+         fltrace("FLTRACE move: ENFORCE REFUSED (P2 shorts+dev_merges=%d, held=%d) -- "
+                 "restored pristine, dropped undo push\n", p2bad, junc_frozen_end);
        } else {
          set_modify(1); /* must be before draw() if floaters present, to force cached-value update */
+         if(has_x && junc_frozen_end)                  /* held, but something else did move */
+           tclvareval("if {[info procs ciw_echo] ne {}} {ciw_echo {"
+                      "a wire was not moved: it cannot be laid there without running over a pin "
+                      "or another net}}", NULL);
        }
      }
      draw();
      if(enf_snapped) mem_snapshot_free(&enf_snap);
+     my_free(_ALLOC_ID_, &ref_uid);
      xctx->rotatelocal=0;
    } else {
      /* incremental_wire_reroute.md Phase II live step: the reroute is committed into the live

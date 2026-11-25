@@ -1,10 +1,11 @@
 # 1740 — Dragging a wire that ends on another wire pulls that wire along on a long drag
 
-**STAMP:** `v1 claim=fixed tree=88309cdcf stamped=2026-11-24 fix=taken open=4 by=driver-1740`
+**STAMP:** `v1 claim=fixed tree=88309cdcf stamped=2026-11-24 fix=taken open=3 by=driver-1740`
 
 Reported by the user on 2026-11-24 and repaired the same day. Reproduced and tested on a
 private Xvfb with openbox, with real pointer events, on a scratch copy of the user's
-schematic. Four things are open, listed under "Open" below.
+schematic. Three things are open, listed under "Open" below (a fourth, dragging one half of
+the bar, was settled by the user's next report and is issue 1741).
 
 ## What the user wrote
 
@@ -226,9 +227,10 @@ out-and-back, two gestures in a row, undo and a rotated drag, and reported nothi
 
 ## Found on the way, not repaired
 
-- **Dragging one half of the bar** (the pillar hangs on the junction) still uses the
-  length rule: the other half is carried when the drag is longer than it. No plan was
-  built for that shape; row E1 holds today's result so a change shows.
+- **Dragging one half of the bar** (the pillar hangs on the junction) still used the
+  length rule when this issue closed: the other half was carried when the drag was longer
+  than it. The user reported exactly that next; it is repaired in issue 1741, and row E1,
+  which held the old result, went with it.
 - **The action log line of a connected drag does not replay it.** The drag is logged as
   `xschem move_objects dx dy kissing`; replayed, that moves the wire without its
   followers (`stretch` is not in the line). The user's log could not reproduce the
@@ -240,10 +242,12 @@ out-and-back, two gestures in a row, undo and a rotated drag, and reported nothi
 
 ## Open
 
-1. The user's look at the drag on their own screen and design.
-2. A ruling on the six choices above.
-3. Dragging one half of the bar: what should happen is not decided.
-4. The action log line of a connected drag.
+1. A ruling on the six choices above.
+2. The action log line of a connected drag.
+3. A drag with a rotation or a flip in it is not covered.
+
+The user's look is paid: "that which I complained about before has been resolved ok"
+(2026-11-24, in this tree's own xschem). Dragging one half of the bar is issue 1741.
 
 ## Not checked
 

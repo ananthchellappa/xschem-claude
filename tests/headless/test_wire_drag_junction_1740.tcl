@@ -32,10 +32,15 @@
 #      shrunk to nothing (the 0092 pass then moved the bar), the free end dropped on a pin, two
 #      pillars on one bar, a wire of another net crossed, trouble at the corner end, and a wire
 #      end resting on a wire inside the plan.
-#   E  what is not changed: dragging one HALF of the bar, and any drag with fluid_editing off.
+#   H  issue 1741: the dragged wire is one HALF of the bar (the other half stays, the pillar
+#      is made to reach the dragged half), a wire that runs straight through a device pin (the
+#      other side stays on the pin; before, a long drag DELETED the dragged wire), and the
+#      selection after an aborted drag (only what the user had selected).
+#   E  what is not changed: any drag with fluid_editing off.
 #   G  the real gesture (display arm): click then drag, drag with nothing selected, many
-#      motion steps against few, two zoom levels, Escape, one undo. Each prints one
-#      lowercase `skip:` line under --nogui.
+#      motion steps against few, two zoom levels, Escape, one undo; for issue 1741 the
+#      selection after Escape and the drag of a bar half. The band prints one lowercase
+#      `skip:` line under --nogui.
 #
 # Bands A to E drive the scripted release, `xschem move_objects dx dy stretch kissing`, the
 # form tests/headless/wireedit uses. Band G drives pointer events through `xschem callback`.
@@ -117,6 +122,16 @@ proc sel_wire_add {ax ay bx by} {
     return -1
 }
 proc stretch {dx dy} { xschem move_objects $dx $dy stretch kissing }
+# the selected wires as coordinates (any selection state), other objects by type
+proc sel_wires {} {
+    set o {}
+    foreach r [xschem selection] {
+        lassign $r t i c id
+        if {$t eq "wire"} { lappend o [norm [xschem wire_coord $i]] } else { lappend o $t }
+    }
+    return [lsort $o]
+}
+
 proc diagonals {} {
     set n 0
     foreach w [segset] { lassign $w a b c d; if {$a != $c && $b != $d} { incr n } }
@@ -549,18 +564,266 @@ group F {
     uplevel #0 {set autotrim_wires 1}
 }
 
-# ============================================================================= E
-group E {
-    # The dragged wire is one HALF of the bar (the pillar hangs on the joint): no plan. The row
-    # holds the wire set the tree before this issue gives for the same drag (measured there with
-    # this script), which is the old length rule: the other half, 40 long, stays for a drag of 30.
+# ============================================================================= H
+# Issue 1741. The user's second shape: the wire that is dragged is the upper half of the bar.
+#   upper half (810,-230)-(810,-170), dragged; its top turns right to the label at x=1040
+#   lower half (810,-170)-(810,-130), then a jog right to the capacitor pin at (880,-130)
+#   pillar (780,-170)-(810,-170) from the left, where a wire comes down from (780,-240)
+proc build_half {} {
     fresh
+    xschem instance devices/capa    880 -100 0 0 {name=Cc m=1 value=1p}
+    xschem instance devices/lab_pin 1040 -230 0 1 {name=l1 lab=a1}
+    foreach w {
+        {810 -230 810 -170} {810 -170 810 -130} {780 -170 810 -170} {810 -230 1040 -230}
+        {810 -130 880 -130} {780 -240 780 -170} {550 -240 780 -240}
+    } { xschem wire {*}$w }
+}
+# after the upper half was dragged by dx across (a drag along it changes nothing: both its ends
+# are held in that direction, the top by the label on the corner wire)
+proc half_after {dx} {
+    set x [expr {810 + $dx}]
+    set exp [list [list $x -230 $x -170] [list $x -230 1040 -230] {810 -170 810 -130} \
+                  {810 -130 880 -130} {780 -240 780 -170} {550 -240 780 -240}]
+    # the pillar's line: what it covered, and the way to the dragged half; cut where a wire rests
+    set lo [expr {min(780, $x)}]; set hi [expr {max(810, $x)}]
+    set cuts [lsort -integer -unique [list $lo $hi 780 810 $x]]
+    for {set i 0} {$i < [llength $cuts] - 1} {incr i} {
+        lappend exp [list [lindex $cuts $i] -170 [lindex $cuts [expr {$i + 1}]] -170]
+    }
+    return [want {*}$exp]
+}
+group H {
+    build_half
+    sel_wire 810 -230 810 -170
+    stretch 50 0
+    check "H1 the reported drag of the bar's upper half, 50 to the right (the lower half is 40 long): the lower half and its jog stay, the pillar reaches the dragged half, the top corner follows" \
+        [segset] [half_after 50]
+
+    set bad {}
+    set n 0
+    foreach dx {-50 -40 -20 10 40 50 120} {
+        foreach dy {0 20 -30} {
+            build_half
+            sel_wire 810 -230 810 -170
+            stretch $dx $dy
+            incr n
+            if {[segset] ne [half_after $dx]} { lappend bad [list $dx $dy [segset]] }
+        }
+    }
+    check "H2 the same for 21 drags, to both sides, shorter and longer than the lower half and than the pillar: the wire set is the computed one every time, and every wire stays on a1" \
+        [list $n $bad [nets_of_all_wires]] {21 {} a1}
+
+    # the bare shape in four orientations: bar halves 40 and 60, pillar 100; the 60 half is dragged
+    set bad {}
+    set n 0
+    foreach o {left right up down} {
+        foreach d {{30 0} {90 0} {-40 0} {-150 0} {70 20}} {
+            lassign $d dx dy
+            fresh
+            foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}[tfw $o $w] }
+            sel_wire {*}[tfw $o {0 0 0 60}]
+            stretch {*}[tf $o $dx $dy]
+            # the dragged half: joint end on the pillar's line at dx, free end by the whole drag
+            set exp [list [tfw $o [list $dx 0 $dx [expr {60 + $dy}]]] [tfw $o {0 -40 0 0}]]
+            # the pillar's line from its free end to the joint or the dragged half, whichever
+            # is farther; cut at the joint (the other half rests there) and where the dragged
+            # half lands inside it. The pillar's own far end is free, so it is no cut.
+            set lo [expr {min(-100, $dx)}]; set hi [expr {max(0, $dx)}]
+            set cuts [list $lo $hi]
+            if {$lo < 0 && 0 < $hi} { lappend cuts 0 }
+            if {$lo < $dx && $dx < $hi} { lappend cuts $dx }
+            set cuts [lsort -integer -unique $cuts]
+            for {set i 0} {$i < [llength $cuts] - 1} {incr i} {
+                lappend exp [tfw $o [list [lindex $cuts $i] 0 [lindex $cuts [expr {$i + 1}]] 0]]
+            }
+            incr n
+            if {[segset] ne [want {*}$exp]} { lappend bad [list $o $dx $dy [segset] [want {*}$exp]] }
+        }
+    }
+    check "H3 the bare shape in four orientations, five drags each: the other half never moves, and the pillar's line holds both the joint and the dragged half's end" \
+        [list $n $bad] {20 {}}
+
+    # a wire that runs straight through a device pin (R1's upper pin at (0,0)); the left part is dragged
+    set bad {}
+    foreach d {{0 -20} {0 -60} {0 60} {-30 -60} {30 -20}} {
+        lassign $d dx dy
+        fresh
+        xschem instance devices/res 0 30 0 0 {name=R1 m=1 value=1k}
+        foreach w {{-100 0 0 0} {0 0 40 0}} { xschem wire {*}$w }
+        sel_wire -100 0 0 0
+        stretch $dx $dy
+        set exp [want [list [expr {-100 + $dx}] $dy 0 $dy] [list 0 0 0 $dy] {0 0 40 0}]
+        if {[segset] ne $exp} { lappend bad [list $dx $dy [segset]] }
+    }
+    check "H4 a wire through a device pin, one side dragged five ways (two of them longer than the other side): the dragged wire is still there, the other side stays on the pin, one wire links the pin to the dragged wire" \
+        $bad {}
+
+    # a wire between two pins of a run: both its ends are held along it
+    fresh
+    xschem instance devices/res   0 30 0 0 {name=R1 m=1 value=1k}
+    xschem instance devices/res 100 30 0 0 {name=R2 m=1 value=1k}
+    foreach w {{-50 0 0 0} {0 0 100 0} {100 0 150 0}} { xschem wire {*}$w }
+    sel_wire 0 0 100 0
+    stretch 20 -70
+    check "H5 the piece between two pins of a run, dragged 70 across and 20 along: it moves across only, each pin keeps its side wire and gets a link, and the two pins are still on one net" \
+        [list [segset] [expr {[lindex [inst_nets R1] 0] eq [lindex [inst_nets R2] 0]}]] \
+        [list [want {-50 0 0 0} {0 -70 100 -70} {0 -70 0 0} {100 -70 100 0} {100 0 150 0}] 1]
+
+    # the joint of the dragged half sits on a device pin (R3 rotated: its pin M at (0,0)); the
+    # point wire kissing mints for that pin must not be left to stretch into a second route
+    fresh
+    xschem instance devices/res 30 0 1 0 {name=R3 m=1 value=1k}
     foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}$w }
     sel_wire 0 0 0 60
-    stretch 30 20
-    check "E1 dragging one half of the bar is placed as before this issue (no plan for that shape)" \
-        [segset] [want {-100 0 30 0} {0 -40 0 20} {0 20 30 20} {30 0 30 20} {30 20 30 80}]
+    stretch -20 50
+    check "H8 a dragged half whose joint sits on a device pin: the half lands on the pillar, the other half stays on the pin, and no second wire runs from the pin" \
+        [segset] [want {-100 0 -20 0} {-20 0 0 0} {-20 0 -20 110} {0 -40 0 0}]
 
+    # the selection after an aborted drag (the scripted start/step/abort is what Escape runs)
+    build_half
+    set before [segset]
+    sel_wire 810 -230 810 -170
+    xschem move_objects start 810 -200 kissing stretch
+    set during [llength [sel_wires]]
+    xschem move_objects step 840 -200
+    xschem move_objects abort
+    check "H6 a drag of the upper half, aborted: the wires are as before and only the dragged wire is selected (four were while it was dragged)" \
+        [list [expr {[segset] eq $before}] [sel_wires] $during] [list 1 [list [norm {810 -230 810 -170}]] 4]
+
+    # ---- what the review of the first 1741 build found (wf_94867d7c-2d2)
+    # H9: the dragged wire is never shrunk to nothing or turned round onto the other half. Its
+    # free end gives way and stops one grid short of the joint.
+    set got {}
+    foreach d {{0 -60} {0 -100} {30 -60}} {
+        fresh
+        foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}$w }
+        sel_wire 0 0 0 60
+        stretch {*}$d
+        lappend got [segset]
+    }
+    check "H9 a half with a free far end, dragged along itself by its own length, by more, and across as well: it is still there, one grid long, and nothing ends in the air beside it" \
+        $got [list [want {-100 0 0 0} {0 -40 0 0} {0 0 0 10}] [want {-100 0 0 0} {0 -40 0 0} {0 0 0 10}] \
+                   [want {-100 0 0 0} {0 -40 0 0} {0 0 30 0} {30 0 30 10}]]
+
+    set got {}
+    foreach d {{100 0} {150 0} {100 -20}} {
+        fresh
+        xschem instance devices/res 0 30 0 0 {name=R1 m=1 value=1k}
+        foreach w {{-100 0 0 0} {0 0 40 0}} { xschem wire {*}$w }
+        sel_wire -100 0 0 0
+        stretch {*}$d
+        lappend got [segset]
+    }
+    check "H10 the same for a wire through a pin, pushed along itself onto and past the pin: one grid of it is left on the pin, the other side is untouched" \
+        $got [list [want {-10 0 0 0} {0 0 40 0}] [want {-10 0 0 0} {0 0 40 0}] \
+                   [want {-10 -20 0 -20} {0 -20 0 0} {0 0 40 0}]]
+
+    fresh
+    foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}$w }
+    sel_wire -100 0 0 0
+    stretch 100 0
+    set exact [segset]
+    fresh
+    foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}$w }
+    sel_wire -100 0 0 0
+    stretch 120 0
+    check "H11 the pillar of issue 1740 with a free end, pushed exactly its length into the bar: one grid of it is left (it was deleted); pushed farther it comes out on the other side" \
+        [list $exact [segset]] [list [want {-10 0 0 0} {0 -40 0 0} {0 0 0 60}] [want {0 -40 0 0} {0 0 0 60} {0 0 20 0}]]
+
+    # H12: a wire held by ONE end (a stretch box) stays held by that end across an aborted drag
+    proc one_end_then_move {abort_first} {
+        fresh
+        foreach w {{0 0 100 0} {100 0 100 80}} { xschem wire {*}$w }
+        xschem unselect_all
+        xschem select_inside -10 -10 10 10
+        if {$abort_first} {
+            xschem move_objects start 0 0 kissing stretch
+            xschem move_objects step 0 30
+            xschem move_objects abort
+        }
+        xschem move_objects 0 50
+        return [segset]
+    }
+    check "H12 a wire selected by one end, a drag started and aborted, then moved: the same wires as with no aborted drag in between (only that end moves)" \
+        [one_end_then_move 1] [one_end_then_move 0]
+
+    # H13: a drag that cannot be laid without running over a pin holds the wire where it is.
+    # R1 stands under the pin at (0,0), its other pin at (0,60); the link from the pin to a wire
+    # dragged 70 down would cross that pin.
+    set got {}
+    foreach d {{0 70} {200 70} {140 90}} {
+        fresh
+        xschem instance devices/res 0 30 0 0 {name=R1 m=1 value=1k}
+        foreach w {{-40 0 0 0} {0 0 150 0}} { xschem wire {*}$w }
+        set before [segset]
+        sel_wire -40 0 0 0
+        stretch {*}$d
+        lappend got [expr {[segset] eq $before}]
+    }
+    fresh
+    xschem instance devices/res 0 30 0 0 {name=R1 m=1 value=1k}
+    foreach w {{-40 0 0 0} {0 0 150 0}} { xschem wire {*}$w }
+    sel_wire -40 0 0 0
+    stretch 0 -90
+    check "H13 a wire through a pin, dragged across the device to where its link would run over the device's other pin, three drags: nothing moves (before: the other side carried, the device shorted, or every wire deleted); dragged the other way it moves" \
+        [list $got [segset]] [list {1 1 1} [want {-40 -90 0 -90} {0 -90 0 0} {0 0 150 0}]]
+
+    # H14: the piece between two device pins, the run going on past one of them, dragged so that
+    # its link would cross the second device
+    fresh
+    xschem instance devices/res 50 -50 1 0 {name=R1 m=1 value=1k}
+    xschem instance devices/res 20 -90 0 0 {name=R2 m=1 value=1k}
+    xschem instance devices/lab_pin 20 100 0 0 {name=l1 lab=a1}
+    foreach w {{20 -50 20 100} {20 -60 20 -50}} { xschem wire {*}$w }
+    set before [segset]
+    sel_wire 20 -60 20 -50
+    stretch 150 -180
+    check "H14 the piece between two pins, dragged where it cannot be laid: nothing moves and no wire is diagonal (before: three diagonal wires and the label's wire pulled off its pin)" \
+        [list [expr {[segset] eq $before}] [diagonals] [nets_of_all_wires]] {1 0 a1}
+
+    # H15: a dragged half taken past the pillar's far end, which is a pin of a device lying in
+    # line with the pillar: growing the pillar would run it over that device's other pin
+    fresh
+    xschem instance devices/res -10 -200 0 0 {name=R1 m=1 value=1k}
+    xschem instance devices/res 50 -90 1 0 {name=R2 m=1 value=1k}
+    xschem instance devices/lab_pin -10 30 0 0 {name=l1 lab=a1}
+    foreach w {{-10 -170 -10 -90} {-10 -90 -10 30} {-10 -90 20 -90}} { xschem wire {*}$w }
+    set before [segset]
+    sel_wire -10 -170 -10 -90
+    stretch 110 110
+    check "H15 a dragged half taken past a pillar that ends on a device in line with it: nothing moves, the other half is on its line (before: it was carried)" \
+        [list [expr {[segset] eq $before}] [diagonals]] {1 0}
+
+    # H16: a drag that was held in place leaves no undo step: the next undo takes back the edit
+    # made before it. Here the pillar would have to grow past its far end onto the end of a
+    # wire of another net (named by a label), and no pin is at the dragged half's ends.
+    fresh
+    xschem instance devices/lab_pin -130 50 0 0 {name=l2 lab=other}
+    foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0} {-130 0 -130 50}} { xschem wire {*}$w }
+    xschem wire 300 300 400 300
+    set before [segset]
+    sel_wire 0 0 0 60
+    stretch -150 0
+    set held [expr {[segset] eq $before}]
+    set selafter [sel_wires]
+    xschem undo
+    check "H16 a dragged half that would have to run its pillar onto another net's wire end: nothing moves, the two nets stay two, and one undo after it removes the wire drawn before the drag (the held drag left no step of its own)" \
+        [list $held [segset]] [list 1 [want {0 -40 0 0} {0 0 0 60} {-100 0 0 0} {-130 0 -130 50}]]
+    check "H17 ...and after that refused drag only the dragged wire is selected, not the wires at its ends" \
+        $selafter [list [norm {0 0 0 60}]]
+
+    build_half
+    xschem unselect_all
+    xschem select instance [inst_by_name Cc]
+    xschem move_objects start 880 -100 kissing stretch
+    xschem move_objects step 900 -100
+    xschem move_objects abort
+    check "H7 a drag of the capacitor, aborted: the capacitor is still selected and no wire is" \
+        [sel_wires] {instance}
+}
+
+# ============================================================================= E
+group E {
     # fluid_editing off: the pass does not run; the old length rule carries a short bar half
     fresh 0
     foreach w {{0 -40 0 0} {0 0 0 60} {-100 0 0 0}} { xschem wire {*}$w }
@@ -573,7 +836,7 @@ group E {
 # ============================================================================= G
 group G {
     if {!$have_tk} {
-        puts "skip: G1-G6 need a display (the click and the drag are pointer events on the schematic window)"
+        puts "skip: G1-G9 need a display (the click and the drag are pointer events on the schematic window)"
     } else {
         set WIN .drw
         catch { set w [xschem get current_win_path]; if {$w ne {}} { set WIN $w } }
@@ -650,6 +913,38 @@ group G {
                             {780 -240 780 -190} {550 -240 780 -240} {880 -230 1040 -230}]]
         catch { g_rel 750 -170 }
         update
+
+        build_half; g_view 0
+        xschem unselect_all
+        g_press 810 -200; g_rel 810 -200; update
+        set clicked [sel_wires]
+        g_press 810 -200
+        g_move 830 -200; update idletasks
+        g_move 850 -200; update idletasks
+        xschem callback $WIN 2 0 0 65307 0 0 0   ;# Escape
+        update
+        catch { g_rel 850 -200 }
+        update
+        check "G7 click the bar's upper half, drag it, press Escape: what is selected is what the click selected, that one wire" \
+            [list $clicked [sel_wires]] [list [list [norm {810 -230 810 -170}]] [list [norm {810 -230 810 -170}]]]
+
+        build_half; g_view 0
+        xschem unselect_all
+        g_press 810 -200
+        g_move 830 -200; update idletasks
+        g_move 850 -200; update idletasks
+        xschem callback $WIN 2 0 0 65307 0 0 0
+        update
+        catch { g_rel 850 -200 }
+        update
+        check "G8 the same with nothing selected before the press: only the pressed wire is selected after Escape, none of the three at its ends" \
+            [sel_wires] [list [norm {810 -230 810 -170}]]
+
+        build_half; g_view 0
+        xschem unselect_all
+        g_drag 810 -200 50 0 8
+        check "G9 the reported drag with the pointer: the wire set of row H1" \
+            [segset] [half_after 50]
 
         build_T; g_view 0
         xschem unselect_all
