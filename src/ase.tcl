@@ -919,7 +919,9 @@ namespace eval ase {
   #                    reaches disk only when the user saves.
   #
   # `sim_use` is what is in force RIGHT NOW, i.e. a cache of the active
-  # session's choice, refreshed by ase::sim_apply_choice at every run. Every
+  # session's choice, refreshed by ase::sim_apply_choice at every run and,
+  # since issue 1762, when a session window opens, is raised by a launch, or
+  # takes up a loaded or reverted state (ase::ui::sim_enter). Every
   # ase::sim_status caller keeps reading it and none of them changed.
   variable sim_use {}
   # THE INSTALLATION DEFAULT: what a session that expresses no choice of its
@@ -2261,10 +2263,12 @@ proc ase::sim_choice_set {state kind {name {}}} {
 # resolver reads it, so with two ASE-L windows open on two benches there is one
 # answer for two questions. The run is the moment the question stops being
 # rhetorical: whichever session is being RUN decides which program starts, so
-# the window the user clicked in wins the thing that actually executes. (The
-# bar or dialog in the other window may still name the other choice for a
+# the window the user clicked in wins the thing that actually executes. (A
+# dialog in the other window may still answer about the other choice for a
 # moment; per-window registries are a separate feature and were not asked for.
-# Recorded in doc/claude/ase_simchoice_batch/DECISIONS.md as D5.)
+# Recorded in doc/claude/ase_simchoice_batch/DECISIONS.md as D5. The bottom
+# BAR no longer does: since issue 1762 it asks about its own session,
+# ase::sim_session_label.)
 #
 # THE FALL-THROUGH IS THE POINT: a state that says nothing runs
 # ase::sim_default, the installation default, which is what every one of the
@@ -4458,6 +4462,35 @@ proc ase::sim_session_view {st} {
       dict set out file [dict get $s resolved]
       dict set out args [dict get $s args]
     }
+  }
+  set sim_use $keep
+  return $out
+}
+
+# WHAT A ONE-LINE SURFACE CALLS THE PROGRAM A RUN OF SESSION STATE `st` WOULD
+# START (issue 1762): ase::sim_label's answer, asked with the session's own
+# choice in force and the choice that was in force put back.
+#
+# The bottom bar of a session window asked ase::sim_label, which reads the
+# choice in force for the whole process, and a session's choice went in force
+# only when it was run or picked.  MEASURED 2026-11-25 with two entries
+# registered and the first in force: a state view whose `sim_entry` names the
+# second opened with the first one's name on its bar, and showed its own only
+# after the first run.  The user's report: "the simulator to be used is not
+# matching what is shown on the status bar ... after the first run, it
+# displays correctly".
+#
+# A state naming an entry nobody has registered is labelled with what is in
+# force, because that is what its run starts (ase::sim_apply_choice leaves
+# the choice alone and the run says so).  NEVER RAISES and changes nothing.
+proc ase::sim_session_label {st} {
+  variable sim_use
+  set sim [ase::state_get $st simulator]
+  set keep $sim_use
+  set out $sim
+  catch {
+    ase::sim_apply_choice $st 0
+    set out [ase::sim_label $sim]
   }
   set sim_use $keep
   return $out
@@ -27158,6 +27191,9 @@ proc ase::open_state {lib cell view {ro 0}} {
     catch {wm deiconify $w}
     catch {raise $w}
     catch {focus $w}
+    # issue 1762: the window the user came back to is the one whose simulator
+    # is in force
+    catch {ase::ui::sim_enter $key}
     return 1
   }
   ase::ui::open $key $lib $cell $view

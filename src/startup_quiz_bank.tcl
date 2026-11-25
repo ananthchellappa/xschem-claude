@@ -1167,6 +1167,42 @@ startup_quiz::add ase-pane-dividers {
          && [P_body ::ase::ui::build {ase::ui::pane_layout $key $top}]
          && ![P_bodyre ::ase::ui::close {unset\s+panesplit}]}
 }
+# Issue 1761.
+startup_quiz::add ase-design-window-readonly {
+  type mc  kind howto  topic {ASE-L window}
+  q   {You opened your design from an ASE-L window with Session > Design Window and now
+       want to change a device in it. What do you do first?}
+  a   {{Edit > Make Editable in the schematic window}
+       {Close the ASE-L window: the design is locked while its session is open}
+       {Save the state and open the design again from the Library Manager}
+       {Nothing: the design opens ready to edit}}
+  ok  0  last 3
+  why {A design that ASE-L opens for you comes up read-only, and the Command window says
+       so: you opened it to simulate, pick nets and read annotations, and a stray key must
+       not change it. Edit > Make Editable (Ctrl-2) lifts that for the window. A design
+       that was already open is raised as it is, editable if you were editing it.}
+  proof {[P_body ::ase::ui::design_window {xschem load -gui -readonly $dpath}]
+         && [P_has src/xschem.tcl {"Make Editable" : "Make Read Only"}]
+         && [P_proc ::toggle_readonly]
+         && [P_has src/xschem.tcl {Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed}]}
+}
+# Issue 1762.
+startup_quiz::add ase-bar-names-own-simulator {
+  type tf  kind shipped  topic {ASE-L window}
+  q   {The Simulator name on the bottom bar of an ASE-L window is the program a run of that
+       window's own state will start, from the moment the window opens, whichever
+       simulator another window ran last.}
+  ok  true
+  why {Each state can ask for a registered simulator of its own (Setup > Simulators, "Use
+       this one"), and that choice is saved with the state. The bar of a window reads the
+       choice of its own state, and the choice is in force as soon as the window opens. A
+       state that makes no choice names the installation default, and a name followed by
+       "will not run" is a program that cannot be started.}
+  proof {[P_proc ::ase::sim_session_label]
+         && [P_body ::ase::ui::refresh_status {ase::sim_session_label $st}]
+         && [P_body ::ase::ui::open {ase::ui::sim_enter $key 1}]
+         && [P_body ::ase::sim_session_label {ase::sim_apply_choice $st 0}]}
+}
 # The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
 # so this one is asked where the others above are.
 startup_quiz::add dblclick-labels {

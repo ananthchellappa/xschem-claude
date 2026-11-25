@@ -8131,6 +8131,7 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       int keep_symbols = 0, first, readonly_open = 0;
       int lastclosed = 0, lastopened = 0;
       int first_loaded = 0;
+      int loaded_any = 0;           /* a file was really loaded by this call (issue 1761) */
       int inplace = 0;              /* -inplace: force legacy in-place load (opt out of routing) */
       const char *target_win = NULL; /* -window <winpath>: reuse a specific existing window */
       int i;
@@ -8327,11 +8328,13 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(first_loaded) {
               int dr = nofullzoom * 2 + !nodraw;
               ret = new_schematic("create", "noconfirm", f, dr);
+              loaded_any = 1;
               if(undo_reset) {
                 tcl_call("update_recent_file", f, NULL, NULL);
               }
             } else {
               first_loaded = 1;
+              loaded_any = 1;
               ret = load_schematic(load_symbols, f, undo_reset, !force);
               /* action-log (file-menu plan): -gui marks the interactive menu
                * invocations (recent / last-closed / most-recent / context
@@ -8366,7 +8369,11 @@ static int xschem_cmds_l(Tcl_Interp *interp, int argc, const char *argv[], int *
       /* -readonly (reopen shortcuts: Open Most Recent / Last Closed / Recent menu): force the freshly
        * loaded buffer into read mode regardless of file writability, so reopening defaults to a safe
        * browse view. Edit it with Ctrl-2 / View > Toggle Read Only (mirrors descend_readonly). */
-      if(readonly_open && first_loaded) {
+      /* issue 1761: `loaded_any`, not `first_loaded`. An open routed to a new window presets
+       * first_loaded before anything is loaded, so a file that was then skipped (it cannot be
+       * opened, or the "already open" question was answered Cancel) left the context on the
+       * window the user was in, and that window was made read-only and announced as opened. */
+      if(readonly_open && loaded_any) {
         if(!xctx->readonly) {
           xctx->readonly = 1;
           set_modify(-1); /* refresh window title to show the read-only marker */

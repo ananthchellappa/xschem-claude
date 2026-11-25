@@ -209,6 +209,20 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   words and the row stayed green. One literal a user reads, beside the built comparands,
   turned the break red (row `EVA6`).
 
+- **A row can hold a known limitation as its expected value.** Three rows of
+  `test_ase_simdlg_0937` (`S22`, `S32`, `S45`) expected the bottom bar of one session window
+  to name the simulator picked in another, or picked from the Command window; `S45`'s own
+  comment called that "the known limitation recorded as D5" and added "the run resolves it".
+  They went red the day the bar was made to name what its own run starts (issue 1762), and
+  were right to. When a surface is supposed to predict something, assert it against the
+  thing it predicts (here: what the run's own step puts in force), and when a repair closes
+  a limitation, look for the rows that were written against it.
+- **A refresh nobody asked for hides a stale label.** With the per-session bar taken out
+  again, the rows that read a bar straight after another window opened stayed green: the
+  label widget still held the text of its last repaint, which happened to be right. Only
+  the row that repaints every bar first (`BS11`) saw it. Read a label after the repaint a
+  user's next gesture causes, not only as it was left.
+
 ## 2. Text scans, names and Tcl parse traps
 
 - **Never put a comment between two `switch` patterns.** The trailing argument is parsed
@@ -477,6 +491,15 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   the old placement carried, is exactly that shape: a wire through a device pin, one side
   dragged farther than the other side is long, came back with the dragged side GONE (issue
   1741, row H4). When a row's wire set is short by one, read the trace for `overshoot: TRIM`.
+
+- **A fixture schematic with no instance is loaded in symbol mode, and netlisting it stops
+  on a question.** `load_schematic()` switches the netlisting mode for a sheet that has no
+  instance; `ase::netlist` on it then pops "Please Set netlisting mode (Options menu)" and a
+  suite sits there until its timeout, with the last `ok:` line two rows earlier (issue 1761,
+  band `DW3`; `test_ase_core`'s round-trip fixture carries one label pin for the same
+  reason). Give a fixture sheet one instance, resolved or not. A label symbol that does not
+  resolve names no net: read the net's name off the wire (`xschem getprop wire 0 lab`)
+  rather than predict it.
 
 ## 5. Registration, gates and flakes
 

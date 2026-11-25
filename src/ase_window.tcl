@@ -708,6 +708,10 @@ proc ase::ui::open {key lib cell view} {
   wm protocol $top WM_DELETE_WINDOW [list ase::ui::close_request $key]
   bind $top <Control-w> [list ase::ui::close_request $key]
   bind $top <Control-W> [list ase::ui::close_request $key]
+  # issue 1762: the state's own simulator is in force from the first paint,
+  # not from the first run.  With its sentence: a state naming a simulator
+  # nobody has registered is told so when it opens, before Run is pressed.
+  ase::ui::sim_enter $key 1
   ase::ui::build $key $top
   # issue 1498: the Outputs Value column reads whatever this session's rundir
   # already holds, BEFORE the first paint, so `populate` renders the numbers in
@@ -721,6 +725,38 @@ proc ase::ui::open {key lib cell view} {
   # closed)
   ase::ui::viewer_restore $key
   return $top
+}
+
+# PUT SESSION `key`'S OWN SIMULATOR CHOICE IN FORCE (issue 1762).
+#
+# The choice in force is one value for the whole process (ase::sim_use) and
+# everything that asks which program a run starts reads it: the case mode a
+# pick on the design resolves names in, what Choose Analyses and the Options
+# sheet know the program can do, the status line of the Simulators window.
+# It followed a session only when that session was RUN or its choice was
+# PICKED, so a window that had just opened answered all of those about
+# whatever the process started with, or about the last session that ran.
+#
+# Called where a session window takes up a state: when the window opens
+# (`say 1`: a state naming an entry nobody has registered says so, in
+# ase::sim_apply_choice's own sentence), when a launch raises a window
+# already open, and when a state is loaded into it or reverted.  The bottom
+# bar does not depend on it: it asks about its own session
+# (ase::sim_session_label).
+#
+# NOT when one of its dialogs opens.  With two session windows open, a dialog
+# of the one that did not open, run or pick last still answers about the
+# other's program: that is decision D5 of
+# doc/claude/ase_simchoice_batch/DECISIONS.md, and the Simulators window's
+# rows about removing the entry in use are written against it.
+# NEVER RAISES.
+proc ase::ui::sim_enter {key {say 0}} {
+  catch {
+    if {[ase::session_exists $key]} {
+      ase::sim_apply_choice [ase::session_state $key] $say
+    }
+  }
+  return
 }
 
 # Session > Close / WM close: drop trace bookkeeping, unregister the session
@@ -15122,8 +15158,10 @@ proc ase::ui::simdlg_remove {key} {
 #   2. ase::session_update, the one write path the panes share, whose notify
 #      is what repaints both of those;
 #   3. ase::sim_apply_choice, so what is IN FORCE this instant agrees with what
-#      the user just picked -- the bottom bar and the next run read that, and a
-#      dialog whose combobox and whose bar disagreed would be issue 1370 again.
+#      the user just picked -- this dialog's own status line and everything
+#      that asks which program a run starts read that. (The bottom bar asks
+#      about its own session since issue 1762, so step 2's notify is what
+#      repaints it.)
 #
 # `key` IS LOAD-BEARING NOW. It always named the session whose widgets are
 # being refreshed; as of 1395 it also names the session whose state is being
@@ -16367,6 +16405,9 @@ proc ase::ui::do_load_state_from {key path} {
   ## repopulating panes from a session that is gone would blank a live window
   ## as a side effect of a REFUSED import.
   if {![ase::ui::load_state_commit $key $st]} { return 0 }
+  # issue 1762: the loaded state's simulator is the one in force, and a
+  # choice naming an entry nobody has registered says so here
+  ase::ui::sim_enter $key 1
   ase::ui::populate $key
   # item 14 (D7): an imported state with `viewer open 1` relaunches/rebuilds
   # the viewer; open 0 / absent leaves an already-open viewer exactly as it
@@ -16991,6 +17032,11 @@ proc ase::ui::refresh_title {key} {
 # `ngspice-ver50` selected, with the choice cleared, and with it re-selected.
 # ase::sim_label is the one place that decides what to call it; no sentence and
 # no marker text is written in this file (ruling D5-4, row R9).
+#
+# ⚠ AND IT IS WHAT A RUN OF THIS SESSION WILL START (issue 1762): the label is
+# asked through ase::sim_session_label, with this session's own choice, so a
+# window that has not run yet, and a window beside one that just ran, each
+# name their own.
 proc ase::ui::refresh_status {key} {
   variable wins; variable wnum; variable meta
   if {![dict exists $wins $key]} { return }
@@ -17000,8 +17046,7 @@ proc ase::ui::refresh_status {key} {
   lassign [dict get $meta $key] lib cell view
   $top.status.win   configure -text [dict get $wnum $key]
   $top.status.temp  configure -text "T=[ase::state_get $st temperature 27] C"
-  $top.status.sim   configure -text \
-    "Simulator: [ase::sim_label [ase::state_get $st simulator]]"
+  $top.status.sim   configure -text "Simulator: [ase::sim_session_label $st]"
   $top.status.state configure -text "State: $view[ase::ui::result_view_suffix $key]"
   # R-OUT15: Load State / Revert move the drop-down with the state
   if {[winfo exists $top.status.dest]} {
@@ -17088,6 +17133,7 @@ proc ase::ui::load_state {key} {
 }
 proc ase::ui::revert_state {key} {
   ase::session_revert $key
+  ase::ui::sim_enter $key   ;# issue 1762
   ase::ui::populate $key
   ase::ui::outputs_tab $key measures
 }
@@ -17189,6 +17235,17 @@ proc ase::ui::raise_window_entry {e {raise_mode always}} {
   return 1
 }
 
+# Is the current editor window holding `dpath`, read-only? 1 or 0, never
+# raises (issue 1761).
+proc ase::ui::design_is_current_ro {dpath} {
+  set ok 0
+  catch {
+    if {[file normalize [xschem get schname]] eq [file normalize $dpath]
+        && [xschem get readonly]} { set ok 1 }
+  }
+  return $ok
+}
+
 # Session > Design Window: raise the editor window already holding the design,
 # else open it via the libmgr::open_view `-gui` load precedent (gated action
 # log + deferred WSLg repaint) AND raise the window the load landed in — the
@@ -17202,6 +17259,15 @@ proc ase::ui::raise_window_entry {e {raise_mode always}} {
 # particular IS the user's documented recovery when a window has gone missing,
 # so it must keep re-mapping. do_run passes `ifhidden`. The post-load re-scan
 # below always raises, for the v1 reason above.
+#
+# A DESIGN THIS PROC OPENS IS OPENED READ-ONLY (issue 1761, the user's request
+# of 2026-11-25). ASE-L opens the design to simulate it, pick on it and
+# annotate it; a window nobody asked to edit in must not take an edit by
+# accident. `xschem load -readonly` is the door the reopen shortcuts already
+# use: it sets the mode only when the file was really loaded, and says so
+# (reopen_readonly_notice names Edit > Make Editable). A design that is
+# ALREADY open is raised in whatever mode its window has: the user may be
+# editing there.
 proc ase::ui::design_window {key {raise_mode always}} {
   set dpath [ase::ui::design_path $key]
   if {$dpath eq {}} {
@@ -17212,9 +17278,16 @@ proc ase::ui::design_window {key {raise_mode always}} {
   # not open anywhere: interactive open (reuses a pristine untitled window,
   # else opens a new one — load_window_routing), action-log dedup-gated
   xschem log_action -reset
-  xschem load -gui $dpath
+  xschem load -gui -readonly $dpath
   if {![xschem log_action -emitted]} {
     xschem log_action "xschem load -gui {$dpath}"
+  }
+  # The mode is a line of its own in the action log, as libmgr::open_view_ro
+  # writes it: neither load line above carries it, and a replay must end in
+  # the same mode. Only when the window now current really holds the design
+  # read-only, so a load that was refused logs nothing about another window.
+  if {[ase::ui::design_is_current_ro $dpath]} {
+    xschem log_action "xschem set readonly 1"
   }
   # the design now lives in the reused untitled window or a routed new
   # window: re-scan + raise it above the ASE window

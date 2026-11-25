@@ -2091,6 +2091,19 @@ Design Window does not raise/open the schematic — fix in this rework.
     registered nothing. It never names an entry nobody registered: a choice
     naming a missing entry shows the backend word, and the Simulators dialog's
     status line is what names the typo.
+  - **It is what a run of THIS window's state will start, from the moment the
+    window opens** (issue **1762**, the user's report of 2026-11-25). The
+    label is asked through `ase::sim_session_label`, with the session's own
+    choice (`sim_entry`, else the installation default), so a window that has
+    not run yet and a window beside one that just ran each name their own. A
+    state's choice also goes **in force** when its window opens, when a
+    launch raises a window already open, and when a state is loaded into it
+    or reverted (`ase::ui::sim_enter`), so everything else that asks which
+    program a run starts (the case mode a pick resolves names in, what Choose
+    Analyses knows the program can do) agrees from the first paint and not
+    from the first run. A state naming an entry nobody has registered says so
+    when it opens, in the run's own sentence, and its bar names what is in
+    force, because that is what its run starts.
   - When that simulator **cannot start** — the program was deleted or lost its
     executable bit, the entry was registered for another kind of run, the
     choice names nothing, the state asks for a kind of simulator this program
@@ -3457,7 +3470,12 @@ its rows.
 ### Menu tree (v2)
 - **Launch** — placeholder menu, ignore for now.
 - **Session** — Design Window (raise-or-open the attached schematic window —
-  FIX the v1 bug); Load State (library browser like Create Instance,
+  FIX the v1 bug; **a design this opens is opened READ-ONLY**, issue 1761:
+  the load goes through `xschem load -gui -readonly`, the Command window says
+  "Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed", and a
+  design that is already open is raised in the mode its window has. The same
+  holds for every other door that opens the design for the session: Run,
+  Select On Design, Direct Plot, the viewer's browser); Load State (library browser like Create Instance,
   filtered to simulation-state views, **opening defaulted to the session's
   own Library and Cell** — the states worth loading are nearly always the
   other states of the cell being simulated, so the View column is the only

@@ -1208,18 +1208,30 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
     [list $S21WAS $S21B $S21A $S21D [ase::session_dirty $key]] \
     [list alpha20 beta20 alpha20 0 1]
 
-  # --- S22: EVERY OPEN SESSION FOLLOWS IT -------------------------------
-  # The registry is process-global; the dialog is per-session (0937's own
-  # known-issues note). A second window still showing the old name would be
-  # telling the user something untrue about what ITS run would start.
+  # --- S22: THE OTHER OPEN SESSION KEEPS ITS OWN -------------------------
+  # REVERSED BY ISSUE 1762, AND THE REVERSAL IS THE ROW. It used to expect the
+  # second window's bar to follow a pick made in the first, "because the choice
+  # is one choice for the whole program". Since issue 1395 it is not: the pick
+  # is written into the FIRST bench's state, and a run of the second bench
+  # puts its own choice in force (none of its own here, so the installation
+  # default, alpha20). The old expectation had the second bar name beta20
+  # while its run would start alpha20, which is decision D5's limitation, and
+  # issue 1762 closes the bar's half of it.
+  #
+  # THE LAST TERM IS THE WITNESS, FROM THE RUN'S OWN STEP: what
+  # ase::sim_apply_choice (the call ase::run_deck makes) puts in force for the
+  # second bench. The first bench's is put back after it.
   set S22W1 [barsim $key]
   set S22W2 [barsim $key2]
   dlg_use $key beta20
   set S22A1 [barsim $key]
   set S22A2 [barsim $key2]
-  check {S22 a simulator picked in one session window is what EVERY open session window's bar says, because the choice is one choice for the whole program} \
-    [list $S22W1 $S22W2 $S22A1 $S22A2] \
-    [list alpha20 alpha20 beta20 beta20]
+  pcall ase::sim_apply_choice [pcall ase::session_state $key2] 0
+  set S22RUN2 [pcall ase::sim_selected]
+  pcall ase::sim_apply_choice [pcall ase::session_state $key] 0
+  check {S22 a simulator picked in one session window is on that window's bar and not on the other's: each bar names what a run of its own bench starts} \
+    [list $S22W1 $S22W2 $S22A1 $S22A2 $S22RUN2 [pcall ase::sim_selected]] \
+    [list alpha20 alpha20 beta20 alpha20 alpha20 beta20]
 
   # --- S23: A NAME THE BAR SHOWS IS NEVER A PROMISE ---------------------
   # The user's own rule: "It must never silently print a name for a simulator
@@ -1262,6 +1274,22 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
   # a later registration never steals the choice (ase::sim_register's own
   # rule) -- so a refresh that fired and rendered something arbitrary reds
   # here rather than passing on the last term alone.
+  #
+  # ⚠ MOVED BY ISSUE 1762, AND WHAT MOVED IS WHICH GESTURE CHANGES A BAR. A
+  # bar names what a run of ITS OWN bench starts. `ase::sim_select` typed into
+  # the Command window changes what is in force and writes no bench's state,
+  # and a run puts the running bench's own choice in force before it starts
+  # anything (ase::run_deck -> ase::sim_apply_choice): the first bench here
+  # asks for alpha20 and the second asks for nothing, so the installation
+  # default, alpha20. Neither run would start ciw32, so neither bar may name
+  # it. The old expectation had both bars name ciw32 there.
+  #
+  # THE GESTURE OF THIS DOOR THAT DOES CHANGE WHAT A RUN STARTS IS A REMOVAL,
+  # and that is where the refresh 1370's repair added is still measured: with
+  # the dialog shut, taking alpha20 off the list from the Command window must
+  # stop both bars naming it there and then. What they say INSTEAD depends on
+  # what this machine has on its PATH, so the term is that the gone name is
+  # gone, not a literal.
   set S32DLG [expr {[winfo exists $top20.simdlg] ? 1 : 0}]
   set S32W1 [barsim $key]
   set S32W2 [barsim $key2]
@@ -1271,25 +1299,30 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
   set S32R2 [barsim $key2]
   pcall ase::sim_select ciw32
   update
+  set S32INF [pcall ase::sim_selected]
   set S32A1 [barsim $key]
   set S32A2 [barsim $key2]
-  ## AND THE REMOVAL, the other Command-window gesture. Taking out the entry in
-  ## force with more than one left picks nothing at all, so the bar must stop
-  ## naming it. What it says INSTEAD depends on what this machine has on its
-  ## PATH, so the term is that the gone name is gone -- not a literal.
   pcall ase::sim_unregister ciw32
   update
   set S32X1 [barsim $key]
   set S32X2 [barsim $key2]
-  check {S32 a simulator registered and picked from the Command window -- the\
- registry's other door, with the Simulators dialog shut -- changes every open\
- window's bar there and then, and removing it stops every bar naming it} \
-    [list $S32DLG $S32W1 $S32W2 $S32R1 $S32R2 $S32A1 $S32A2 \
-          [expr {[string first ciw32 $S32X1] < 0 ? 1 : 0}] \
-          [expr {[string first ciw32 $S32X2] < 0 ? 1 : 0}] \
-          [pcall ase::sim_selected]] \
-    [list 0 alpha20 alpha20 alpha20 alpha20 ciw32 ciw32 1 1 {}]
+  set S32SEL [pcall ase::sim_selected]
+  pcall ase::sim_unregister alpha20
+  update
+  set S32G1 [barsim $key]
+  set S32G2 [barsim $key2]
+  check {S32 a simulator picked from the Command window -- the registry's other\
+ door, with the Simulators dialog shut -- is in force and is on no bar, because\
+ no bench's run would start it; and one taken off the list from that door is\
+ gone from every open window's bar there and then} \
+    [list $S32DLG $S32W1 $S32W2 $S32R1 $S32R2 $S32INF $S32A1 $S32A2 \
+          $S32X1 $S32X2 $S32SEL \
+          [expr {[string first alpha20 $S32G1] < 0 ? 1 : 0}] \
+          [expr {[string first alpha20 $S32G2] < 0 ? 1 : 0}]] \
+    [list 0 alpha20 alpha20 alpha20 alpha20 ciw32 alpha20 alpha20 \
+          alpha20 alpha20 {} 1 1]
 
+  pcall ase::sim_register alpha20 $STUB
   pcall ase::sim_select alpha20
   ase::ui::close $key2
   update
@@ -1961,11 +1994,15 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
   ## force without touching any bench at all.
   ##
   ## THE SECOND TERM IS THE WITNESS that they are genuinely two different
-  ## sources: the bottom bar names what is in force, so it says the OTHER one.
-  ## That divergence is the known limitation recorded as D5 in
-  ## doc/claude/ase_simchoice_batch/DECISIONS.md -- the run resolves it, because
-  ## ase::run_deck applies the running bench's own choice before it starts
-  ## anything.
+  ## sources: what is in force is the OTHER one.
+  ##
+  ## THE THIRD TERM MOVED WITH ISSUE 1762. The bottom bar used to name what
+  ## is in force, so it said the other one too -- the limitation recorded as
+  ## D5 in doc/claude/ase_simchoice_batch/DECISIONS.md, which the run resolved
+  ## because ase::run_deck applies the running bench's own choice before it
+  ## starts anything. The bar now asks about its own bench
+  ## (ase::sim_session_label), so it says what the box says and what the run
+  ## starts.
   pcall ase::session_update $key \
     [pcall ase::sim_choice_set [pcall ase::session_state $key] entry one41]
   pcall ase::sim_select two41
@@ -1975,7 +2012,7 @@ if {$FIXOK && [info exists ::has_x] && [info commands winfo] ne {}} {
   catch {set S45BOX $::ase::ui::simuse($key)}
   check {S45 the "Use this one:" box shows the simulator THIS bench asks for, not whichever one the program happens to be running for somebody else} \
     [list $S45BOX [pcall ase::sim_selected] [barsim $key]] \
-    [list one41 two41 two41]
+    [list one41 two41 one41]
 
   # --- S46: THE REFUSAL ARM STILL REFUSES -------------------------------
   ## A name the registry does not know must not become this bench's choice.

@@ -5020,7 +5020,21 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   **The two clones still mint from one stretch.** The pointer below is a candidate only:
   run both checks of CLAUDE.md, worktrees included, and read that clone's pointer first.
 
-**The next free number is 1761.**
+~~**The next free number is 1761.**~~
+- **1761**: Session > Design Window of an ASE-L window opened the design in edit mode (the
+  user's request of 2026-11-25: read-only). Repaired by the change that adds its issue
+  file: every door through which ASE-L opens the design for a session loads it read-only,
+  and a read-only open that loads nothing no longer marks the window the user is in.
+- **1762**: the bottom bar of an ASE-L window named the simulator in force for the whole
+  process, not the one its own state asks for, until the first run (the user's report of
+  2026-11-25). Repaired by the change that adds its issue file: the bar asks about its own
+  state, and a state's choice is in force from the moment its window opens.
+  Both minted 2026-11-25 after the two checks of CLAUDE.md and a look into every worktree:
+  no checkout holds 1761 or 1762 as an issue; `~/private/xschem-private`'s pointer read
+  1761 that hour (its port of 1760 moved it there), so **the two clones still mint from
+  one stretch**: read that clone's pointer and worktrees first.
+
+**The next free number is 1763.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

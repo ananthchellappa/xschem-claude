@@ -14,6 +14,55 @@ Newest entries on top.
 
 ---
 
+## Q104. The bottom bar of my ASE-L window named one simulator and the run started another. Which one is right, and what does the bar show now?
+
+- **Asked:** 2026-11-25 (the user's report)
+- **Project state:** branch `ase-launch` on `fluid-editing` at `e763db235`, issue 1762.
+
+**The run was right, and the bar now agrees with it from the moment the window opens.**
+
+Which registered simulator a bench runs is part of its state (the `sim_entry` key, set with
+Setup > Simulators, "Use this one"). A run puts the running state's choice in force before it
+starts anything. The bar, though, asked which program was in force for the whole xschem
+process, and a state's choice went in force only at its first run or pick. So a window
+opened on a state that asks for `ver_53` showed whatever the process started with, or the
+simulator of the last bench that ran, until its own first run.
+
+Now the bar of a window asks about its own state: its choice, else the installation default.
+The choice is also put in force when the window opens, when a launch raises a window that
+is already open, and when a state is loaded into it or reverted, so a pick on the design
+resolves names in the right case mode before the first run too.
+
+**What the bar says in the corner cases.** A state that asks for a simulator nobody has
+registered says so in the Command window when it opens (the sentence a run says), and its bar
+names the program its run will start instead. A name followed by "will not run" is a
+registered program that cannot be started. `ase::sim_select <name>` typed into the Command
+window changes what is in force but writes no state, so it changes no bar: the next run of a
+bench puts that bench's own choice back.
+
+**Still shared between two open windows:** Choose Analyses, the Options sheet and the status
+line of the Simulators window answer about the window that opened, ran or picked last
+(decision D5 of `doc/claude/ase_simchoice_batch/DECISIONS.md`).
+
+---
+
+## Q103. I pressed Session > Design Window and the schematic will not take an edit. Why?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `ase-launch` on `fluid-editing` at `e763db235`, issue 1761.
+
+**ASE-L opens the design read-only.** The title bar says "(read-only)" and the Command
+window says "Opened Read-Only. Use Edit > Make Editable (Ctrl-2) if needed". Press that when
+you mean to edit; the window stays editable until you close it or make it read-only again.
+
+It applies to every way ASE-L opens the design for a session: Session > Design Window, and
+Run, Select On Design, Direct Plot and the viewer's browser when the design is not open yet.
+A design that is **already open** is raised as it is, so a window you were editing in stays
+editable. Netlisting, running, highlighting, picking nets and annotation all work on a
+read-only design.
+
+---
+
 ## Q102. I gate a current with `(time>t0)*(time<t1)` and integrate it, and I get half the charge ngspice's `INTEG` reports. What do I write?
 
 - **Asked:** 2026-11-24 (a designer's hand-off of 2026-11-21)

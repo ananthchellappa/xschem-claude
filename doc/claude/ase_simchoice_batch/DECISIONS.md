@@ -60,3 +60,12 @@ The run path applying the running session's `sim_entry` makes "the window you
 clicked in wins" for the run, which is the half that decides what actually
 executes. A bar or dialog in the other window may momentarily name the other
 choice. Per-window registries are a separate feature and were not asked for.
+
+**2026-11-25, issue 1762: the bar's half is closed.** The bottom bar of a
+session window now asks about its own state (`ase::sim_session_label`), so it
+names what a run of that window starts whichever window opened, ran or picked
+last; and a state's choice goes in force when its window opens, not only when
+it runs. What is still carried is the dialogs: with two windows open, Choose
+Analyses, the Options sheet and the status line of the Simulators window of
+the window that did not open, run or pick last answer about the other's
+program.
