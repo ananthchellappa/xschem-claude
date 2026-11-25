@@ -112,17 +112,23 @@ xschem move_objects step  -440 50
 xschem move_objects step  -440 40
 xschem move_objects end
 
+# Issue 1740 changed WHERE the rail riser ends up, not whether the net holds. The second drag is
+# (+20,-30). The riser at the rung's left end taps the top rail, so it is a corner that follows the
+# rung's end: +20 with the drag, its tap sliding along the rail to x=-490. Before 1740 it kept
+# x=-510 on a push toward it (the old elbow rule's length comparison) and these rows held that.
+# The rung's right end stays on the pin riser, as before.
 # ---- P1 (connectivity, the HARD invariant) : R18.M must still reach the top rail on ONE net --------
-check "g2: R18.M STILL reaches top rail (-550,140)-(-510,140)" [r18_reaches -550 140 -510 140]
+check "g2: R18.M STILL reaches top rail (-550,140)-(-490,140)" [r18_reaches -550 140 -490 140]
 check "g2: R18 and v8 share a net (staircase intact)" [share_net R18 v8]
 check "g2: rung NOT on an isolated #net3" [expr {[lsearch -glob [inst_nets R18] {#net3}] < 0}]
 # ---- the rail riser followed the drag (was orphaned+deleted pre-fix) --------------------------------
-check "g2: rail riser followed to (-510,40)-(-510,140)" [wire_exists -510 40 -510 140]
-check "g2: rung followed to (-510,40)-(-360,40)"        [wire_exists -510 40 -360 40]
+check "g2: rail riser followed to (-490,40)-(-490,140)" [wire_exists -490 40 -490 140]
+check "g2: rung followed to (-490,40)-(-360,40)"        [wire_exists -490 40 -360 40]
 check "g2: pin riser followed to (-360,20)-(-360,40)"   [wire_exists -360 20 -360 40]
 # ---- no disconnect debris ---------------------------------------------------------------------------
 check "g2: NO orphan down-stub at (-490,40)-(-490,70)"  [expr {![wire_exists -490 40 -490 70]}]
-check "g2: no dangling tip at (-490,40)"                [expr {![has_endpoint -490 40]}]
+check "g2: nothing left at the old corner (-510,40) or its column on the rail (-510,140)" \
+  [expr {![has_endpoint -510 40] && ![has_endpoint -510 140]}]
 check "g2: manhattan"                                    [all_manhattan]
 check "g2: P2 no short"                                  [p2_no_short]
 

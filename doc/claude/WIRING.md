@@ -144,6 +144,17 @@ snapshots grabbed endpoint coords into `stretch_grabbed_xy` (consumed by
 for pristine-anchor reasoning, move.c:2904-2907; use `fluid_start_endpoint_at`/
 `fluid_start_deg_at` instead).
 
+**What a wire-driven grab means downstream (issue 1740).** The WIRE arm above grabs every
+endpoint coincident with an end of a whole-selected wire, with no through-run skip (that skip
+is the ELEMENT arm's). Until 1740 those followers were laid by `place_moved_wire()`'s generic
+L, whose orientation `recompute_orthogonal_manhattanline()` picks by the LONGER component:
+for a follower perpendicular to the dragged wire that is drag distance against follower
+length, so the bar under a T moved on a long drag and stayed on a short one (0014's result
+held only for short drags), and a corner was carried on a long drag and overshot on a short
+one (0092). `fluid_place_wire_junctions()` (§3 step 3b, §4) now decides those two shapes by
+shape. A follower shape it does not plan (a dragged HALF of a bar, a corner on a pin, a
+continuation with no run across) still takes the length rule.
+
 ### 2.3 START snapshots (`fluid_snapshot_partition`, move.c:2262)
 Four snapshots, all position-indexed by an instance×pin walk that must be replicated
 byte-identically in every consumer (§7.5):
@@ -206,6 +217,17 @@ Ordered passes per leg (gates in brackets):
  1. pre-commit: dirty rollback + push_undo (END only)
  2. update_symbol_bboxes
  3. compute_wire_slide + fluid_slide_push_through      [ortho, pure-axis, rot-free]
+ 3b. fluid_place_wire_junctions                         [fluid+stretch, ortho, rot-free, attempt 0;
+    issue 1740] writes BOTH endpoints of each wire the USER dragged and of the wires at its two
+    ends (ANCHOR / CARRY, §4); the WIRE case of step 4 skips every wire it wrote
+    (`fluid_junction_placed`). Wires it gives no plan go through step 4 unchanged.
+    Two consumers of `fluid_g.junc_wrote` (set when it wrote, cleared at each attempt top):
+    `fluid_collapse_axis_overshoot_stub` (step 9f) returns at once, because the only tail it
+    could find is one the drag made on purpose and its shove would move the BAR to that
+    tail's tip; and the attempt verdict keeps the attempt-0 result aside (`j_snap`, `j_part`)
+    when it changed the pin partition. If attempt 1 (generic route) changes the partition to
+    the SAME vector, the change is the user's (a wire end dropped on a pin) and `j_snap`
+    takes `alt_snap`'s place as the result kept when the relay is not clean either.
  4. per-object commit loop: WIRE→place_moved_wire (elbow: hazards>future>P6),
     0102 axis-degenerate relay bend; then ELEMENT commit (AFTER wires!)
  5. fluid_shove_connected_wire                          [fluid+stretch, rot==flip==0]
@@ -279,6 +301,7 @@ Hard ordering edges (all documented in-code, all discovered by bugs):
 |---|---|---|---|---|
 | `place_moved_wire` elbow flip :1173 | Ph-III/0085 | partial-sel, snapshot present | pick less-hazardous L (BRIDGE/MOVPIN/FPIN/STRAY/SPANLOSS via `fluid_ml_hazards` :4709) | severity compare only |
 | P6 bias `fluid_p6_bias_ml` :2179 | P6 | many declines (see :2183-2215) | prefer along-normal exit L | veto-based |
+| `fluid_place_wire_junctions` (`fj_classify_end`, `fj_carry_ok`, `fj_verify`) | **1740** | wires in `fluid_startsel_id` (the user's own), whole-selected, axis-aligned; per END of such a wire: no moving pin there, every other wire there a plain follower grabbed at that point | **ANCHOR** (two perpendicular followers forming a straight run, a fixed pin and one wire continuing the dragged one allowed with them; or a corner wire that cannot be carried): the followers keep their line, the shared point moves by the drag's component ALONG that line, the dragged wire stretches. **CARRY** (one perpendicular follower, nothing else, no pin; far end free or met only by one or two stationary wires parallel to the dragged one; no pin and no other wire's end on it): the follower goes with the dragged wire's end and the wires at its far end have that endpoint moved. Endpoints are written directly: no elbow, no jog, nothing for an END pass to tidy, so it holds on named nets | whole plan before any write: axis kept and no endpoint with two targets; nothing stationary (pin, end of an unplanned wire) left off the copper; no NEW bbox or exact contact with stationary other-net copper (union of old spans and the rigid translation grandfathered). A pin a reshaped wire would newly land on fails the plan too. Contact with other-net copper is `fluid_seg_exact_touch` only: a plain crossing must NOT fail the plan (it did in the first build, and every drag across another net lost its plan). Fail: retry without CARRY, then with straight runs only (corners left to `place_moved_wire`), then no plan. Attempt 0 only (`fluid_g.junction_on`), so the leg_snap ladder rolls a partition change back to the old placement, except the same-vector case of §3 step 3b. A follower that is whole-selected without being the user's (grabbed at both ends: the bar piece between two dragged pillars) counts as a half of a run only when the plan targets BOTH its ends |
 | `fluid_slide_push_through` :1456 | 0109/0112 | pure-axis, pin dragged past anchor | promote stub+legs to translate | future-hazard + NEW-foreign-wire-contact decline (0112: bbox touch, pre-existing pair contact grandfathered — the leg_snap verify is label-blind and cannot catch these) |
 | `fluid_shove_connected_wire` :5709 | shove decision | pure-axis, rot-free | shove perpendicular stub/riser | partition |
 | `fluid_reroute_around_obstacles` :5148 | 0083 | one moving-pin endpoint, straddle detected | 3-leg detour outside body, outward row search | 9 guards/candidate, declines to baseline |
@@ -423,6 +446,14 @@ move.c:3671-3672). Don't "unify" them without preserving the domains.
     gated on `commit_now` at the tail of the shared commit block. The END call cannot be hoisted to
     the live site — it must also precede the refuse block — and the live call must not free the
     rider set.
+
+18. **`fluid_g.junc_placed` is keyed by wire INDEX and lives for one commit loop (issue 1740).**
+    `fluid_place_wire_junctions()` builds it on pristine geometry right before the loop;
+    `place_moved_wire()` only appends, so the indices hold until the loop ends, and the first
+    trim after it invalidates them. It is cleared at the top of every leg and after the attempt
+    loop. Never read it from an END pass. The pass itself reads `wire[].sel` as START left it
+    (it runs after `compute_wire_slide()`, which may promote), and decides scope by wire **id**
+    (`fluid_startsel_id`), never by index: a live step restores the whole wire array.
 
 17. **`sel_array` is NOT the delete set.** `rebuild_selected_array()` admits any object with a
     non-zero `sel`, but `delete()` (and `delete_wires`, `del_rect_line_arc_poly`) removes only

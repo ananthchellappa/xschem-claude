@@ -125,19 +125,27 @@ check "L manhattan"                             [all_manhattan]
 check "L P1: #net1 staircase intact to top rail (-550,140)-(-490,140)" [r18_reaches -550 140 -490 140]
 check "L P2: no short (nets not merged)"        [p2_no_short]
 
-# ================= Case R: RIGHT drag past the PIN column -> TRIM the dangling stub ================
+# ================= Case R: RIGHT drag past the PIN column -> the rung stops at the pin riser ======
 # The rung's right junction sits on the PIN riser V_R (far end = R18.M, a fixed pin): the riser cannot
-# shove, so the overshoot stub (-360,60)-(-340,60) is simply trimmed; the rung stays (-470,60)-(-360,60).
+# shove, so the rung's right end stays on it and nothing runs past it to (-340,60).
+# Issue 1740 changed the LEFT end of this case. The riser V_L there has a clean far end (it taps the
+# top rail), so it is a corner that follows the rung's end in BOTH directions: it moves +20 with the
+# drag and its tap slides along the rail. Before 1740 it stood still on a push toward it (the rung
+# kept its length) and was shoved only on a pull away from it (case L), which is the old elbow rule's
+# length comparison showing through; these three rows held that.
 build_before6
 check "R pre: middle rung selected" [expr {[sel_wire -470 50 -360 50] >= 0}]
 we_move_stretch 20 10
 check "R no stub past pin: (-360,60)-(-340,60) is GONE" [expr {![wire_exists -360 60 -340 60]}]
 check "R no dangling tip at (-340,60)"                  [expr {![has_endpoint -340 60]}]
-check "R rung stays (-470,60)-(-360,60)"                [wire_exists -470 60 -360 60]
-check "R riser left leg intact (-470,60)-(-470,140)"    [wire_exists -470 60 -470 140]
+check "R rung follows at its left end, stops at the pin riser: (-450,60)-(-360,60)" \
+  [wire_exists -450 60 -360 60]
+check "R left riser follows the corner to x=-450: (-450,60)-(-450,140)" [wire_exists -450 60 -450 140]
+check "R nothing left at the old corner column (-470,60)" [expr {![has_endpoint -470 60]}]
 check "R pin riser intact (-360,20)-(-360,60)"          [wire_exists -360 20 -360 60]
 check "R manhattan"                                     [all_manhattan]
-check "R P1: #net1 staircase intact to top rail (-550,140)-(-470,140)" [r18_reaches -550 140 -470 140]
+check "R P1: #net1 staircase intact to top rail (-550,140)-(-450,140)" [r18_reaches -550 140 -450 140]
+check "R top-rail right leg (-450,140)-(-390,140)"      [wire_exists -450 140 -390 140]
 check "R P2: no short"                                  [p2_no_short]
 
 # ================= Case N: a PURE perpendicular drag has NO overshoot -> strict no-op ==============

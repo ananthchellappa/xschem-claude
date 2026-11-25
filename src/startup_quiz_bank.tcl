@@ -432,6 +432,25 @@ startup_quiz::add hover-outline {
          && [P_has src/callback.c {tclgetboolvar("hover_highlight")}]}
 }
 
+# Issue 1740. Asked where the connected drag is what a plain drag does (the Cadence
+# profile) and fluid editing is on, which is where the answer holds.
+startup_quiz::add wire-drag-junction {
+  type tf  kind myth  topic {Wires}
+  q   {A wire ends on the middle of another wire, with a solder dot where they meet. If you
+       drag the first wire far enough to one side, the wire it ends on is pulled along.}
+  ok  false
+  why {The wire it ends on stays where it is, however far you drag: the dot slides along it
+       and the dragged wire stretches or shrinks. A corner at the dragged wire's other end
+       follows it. Options > Fluid editing switches this on; the Cadence profile has it on.}
+  only  {[llength [info commands ::cadence::q_key]] > 0
+         && [info exists ::fluid_editing] && $::fluid_editing}
+  proof {[P_has src/move.c {static int fluid_place_wire_junctions(void)}]
+         && [P_hasre src/move.c {tclgetboolvar\("fluid_editing"\)\) \{\n\s+fluid_place_wire_junctions\(\);}]
+         && [P_has src/move.c {if(k == 0 && fluid_junction_placed(n)) break;}]
+         && [P_has src/cadence_style_rc {set fluid_editing 1}]
+         && [P_has tests/headless/test_wire_drag_junction_1740.tcl {B1 the bare T in four orientations}]}
+}
+
 # ---------------------------------------------------------------- Labels and pins
 startup_quiz::add wire-label {
   type mc  kind howto  topic {Labels and pins}

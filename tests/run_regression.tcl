@@ -188,7 +188,14 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_ase_plot_difference_1727" \
                   "headless/test_wave_expr_reattach_1734" \
                   "headless/test_ase_pane_dividers_1737" \
-                  "headless/test_libmgr_raise_1738"]
+                  "headless/test_libmgr_raise_1738" \
+                  "headless/test_wire_drag_junction_1740"]
+## `headless/test_wire_drag_junction_1740` IS IN BOTH LISTS, registered in the change that
+## creates it (issue 1740: the junctions at the two ends of a wire the user drags are placed
+## by their shape, so a bar under a T stays where it is whatever the drag distance). This arm
+## drives the scripted release (`xschem move_objects dx dy stretch kissing`) on wire sets
+## built in memory and compares the whole wire set. The band that drags with pointer events
+## prints one LOWERCASE `skip:` line.
 ## `headless/test_libmgr_raise_1738` IS IN BOTH LISTS, registered in the change that
 ## creates it (issue 1738: Ctrl-Alt-S brings the Library Manager forward also when there
 ## is nothing to locate). This arm has no window to look at: it runs the key's command on
@@ -1164,7 +1171,13 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_ase_plot_difference_1727" \
                   "headless/test_wave_expr_reattach_1734" \
                   "headless/test_ase_pane_dividers_1737" \
-                  "headless/test_libmgr_raise_1738"]
+                  "headless/test_libmgr_raise_1738" \
+                  "headless/test_wire_drag_junction_1740"]
+## `headless/test_wire_drag_junction_1740` IS ALSO IN `hcases` (see the note there): this
+## entry is its display arm. It runs the same scripted rows and then the gesture itself on
+## the schematic window: a click and a drag of the wire with button and motion events, the
+## drag with nothing selected, many motion steps against one, two zoom levels, Escape in
+## mid-drag and one undo.
 ## `headless/test_libmgr_raise_1738` IS ALSO IN `hcases` (see the note there): this entry
 ## is its display arm. With the Library Manager behind the schematic window it presses
 ## the Cadence profile's Ctrl-Alt-S on an untitled schematic, and with a wire, two wires,

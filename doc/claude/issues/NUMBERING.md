@@ -4975,7 +4975,17 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   skipped; it holds 1742 to 1749 and its pointer reads 1750, so read its entry for 1741
   before minting it here.
 
-**The next free number is 1740.**
+~~**The next free number is 1740.**~~
+- **1740**: dragging a wire that ends on another wire (a T) pulled that wire along when the
+  drag was longer than one of its halves, and a corner at the dragged wire's other end was
+  left behind by a short drag (the user's report of 2026-11-24, on `fast_buf3`). Repaired by
+  the change that adds its issue file: the junctions at the two ends of a dragged wire are
+  placed by their shape. Minted 2026-11-24 after both checks: no clone held 1740 as an
+  issue, and `~/private/xschem-private`'s `NUMBERING.md` names it only to say that 1739 and
+  1740 were left to this clone. The next number here is 1741, which that clone's
+  `NUMBERING.md` names as skipped: read its entry for 1741 before minting it.
+
+**The next free number is 1741.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

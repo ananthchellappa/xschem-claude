@@ -424,6 +424,29 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   A fixture for those comments must netlist a subcircuit; a primitive emits no
   `sym_path:` line.
 
+- **A drag that changes which pins are connected takes a different road through
+  `move_objects()`, and a suite with no such drag never walks it.** The attempt ladder rolls
+  the first route back when the pin partition changes and, when every attempt changes it (the
+  user dropped a wire's end on a pin), keeps the SECOND attempt's result. A new placement
+  that runs on the first attempt only was therefore silently replaced by the old one in
+  exactly the drags that make a connection (issue 1740, row F2 of
+  `test_wire_drag_junction_1740.tcl`). Give a wiring suite one drag that lands on a pin.
+- **A later pass will "repair" what a new placement leaves on purpose.** The overshoot pass
+  of issue 0092 is the one END pass that does not ask whose copper it reshapes; on the result
+  of issue 1740's junction pass it took the rest of a wire for an overshoot tail and moved
+  the BAR to its tip. It needs a START pin snapshot, so a fixture with no instance at all
+  never shows it: rows F1 and F1b carry one label that touches nothing for that reason.
+- **A guard copied from another pass brings that pass's purpose with it.** The push-through
+  slide counts a new overlap of bounding boxes with another net as a contact, crossings
+  included, because it must not park copper near a foreign riser. The same rule in the
+  junction pass dropped the plan for every drag across another net's wire, which in a real
+  schematic is most of them, and the suite's fixtures had no second net in the way (row F4).
+- **`xschem wire` merges and splits as it stores when `autotrim_wires` is on.** Two wires in
+  a straight line with nothing at the joint come back as one, and a label does not keep them
+  apart; a wire that ends on the middle of another splits it. Read the wire set back before
+  trusting a fixture's shape (issue 1740: a "wire that continues the dragged one" could not
+  be built that way).
+
 ## 5. Registration, gates and flakes
 
 - **Derive a registration's trailer delta before the gate; never predict it from the
