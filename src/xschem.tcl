@@ -11911,6 +11911,44 @@ proc select_layers {} {
   # xschem set semaphore [expr {[xschem get semaphore] -1}]
 }
 
+# selection dim (doc/claude/specs/selection_dim.md): set how far everything that is not selected
+# moves towards the background. A number from 0 to 100, kept as a whole percent; anything else
+# is refused in the status line and the amount stays. Returns 1 when it was set. The status line
+# is written through an xschem command, and a dim frame is repainted at the new amount when that
+# command is done (sel_dim_sync() in xinit.c), so no redraw is asked for here.
+proc selection_dim_percent_set {v} {
+  global selection_dim_percent
+  set t [string trim $v]
+  if {![string is double -strict $t] || !($t >= 0 && $t <= 100)} {
+    catch {xschem statusmsg -hold "Dimming amount: \"$v\" is not a number from 0 to 100.\
+ It stays at $selection_dim_percent%"}
+    return 0
+  }
+  set selection_dim_percent [expr {int(round($t))}]
+  set how {}
+  if {$selection_dim_percent == 0} { set how {: nothing is dimmed} }
+  if {$selection_dim_percent == 100} { set how {: what is not selected is not drawn} }
+  catch {xschem statusmsg -hold "Dimming amount: $selection_dim_percent%$how"}
+  # the action log gets the amount that was set, whichever door it came through (a menu entry,
+  # the dialog, the palette): a line that sets the same amount when it is replayed
+  catch {xschem log_action "selection_dim_percent_set $selection_dim_percent"}
+  return 1
+}
+
+# View > Dimming amount > Other..., and the command palette's "Dimming amount": ask for it.
+# The dialog's OK runs selection_dim_percent_set, which writes its own line to the action log;
+# a dialog that is cancelled or refused leaves a comment there, so that the menu's logger does
+# not record the bare name of this proc, which replayed would open the dialog again.
+proc selection_dim_percent_ask {} {
+  global selection_dim_percent
+  catch {xschem log_action -reset}
+  input_line {Dimming of what is not selected, percent (0 to 100):} \
+    selection_dim_percent_set $selection_dim_percent
+  set emitted 1
+  catch {set emitted [xschem log_action -emitted]}
+  if {!$emitted} { catch {xschem log_action "# selection_dim_percent_ask: the amount was not changed"} }
+}
+
 proc color_dim {} {
   global dim_bg dim_value enable_dim_bg
   xschem set semaphore [expr {[xschem get semaphore] +1}]
@@ -19203,6 +19241,25 @@ proc build_widgets { {topwin {} } } {
     $topwin.menubar.view.sellook add radiobutton -label $sl_lab -variable selection_style \
       -value $sl_val -selectcolor $selectcolor -command {xschem build_colors; xschem redraw}
   }
+  # selection dim (doc/claude/specs/selection_dim.md). The checkbutton goes through
+  # `xschem toggle_selection_dim` as Options > Enable stretch goes through its toggle: Tk has
+  # flipped the variable already, so it is flipped back and the command then makes the one
+  # net flip, says which way in the status line and logs the state reached.
+  $topwin.menubar.view add checkbutton -label "Dim unselected objects" -variable selection_dim \
+     -selectcolor $selectcolor -accelerator {Ctrl+Alt+Shift+D} \
+     -command {
+       set selection_dim [expr {!$selection_dim}]
+       xschem toggle_selection_dim
+     }
+  $topwin.menubar.view add cascade -label "Dimming amount" -menu $topwin.menubar.view.seldim
+  menu $topwin.menubar.view.seldim -tearoff 0 -takefocus 0
+  foreach sd_val {10 20 30 40 50 60 70 80 90} {
+    $topwin.menubar.view.seldim add radiobutton -label "$sd_val %" \
+      -variable selection_dim_percent -value $sd_val -selectcolor $selectcolor \
+      -command [list selection_dim_percent_set $sd_val]
+  }
+  $topwin.menubar.view.seldim add separator
+  $topwin.menubar.view.seldim add command -label "Other..." -command selection_dim_percent_ask
   $topwin.menubar.view add checkbutton -label "Toggle variable line width" -variable change_lw \
      -selectcolor $selectcolor -accelerator {_} -command {xschem set change_lw $change_lw}
   # Off by default: the automatic line width and the junction/pin dot radius then
@@ -19406,7 +19463,7 @@ proc build_widgets { {topwin {} } } {
   $topwin.menubar.tools add command -label "Remove wires running through selected inst. pins" \
      -command "xschem break_wires 1" -accelerator {Ctrl-!}
   $topwin.menubar.tools add command -label "Break wires at mouse position" \
-     -command "xschem wire_cut noalign" -accelerator {Alt-Shift-Right Butt.}
+     -command "xschem wire_cut noalign" -accelerator {Super-Shift-Right Butt.}
   $topwin.menubar.tools add command -label "Break wires at mouse position, align cut point" \
      -command "xschem wire_cut" -accelerator {Alt-Right Butt.}
   $topwin.menubar.tools add command -label "Select all connected wires/labels/pins" \
@@ -20881,6 +20938,41 @@ set_ne selection_halo_width 3
 ## band text read heavy).
 set_ne selection_text_style auto
 set_ne selection_text_own_px 16
+## selection dim (doc/claude/specs/selection_dim.md), read in C (sel_dim_wanted() and
+## sel_dim_percent() in xinit.c):
+##   selection_dim 1       = while anything is selected, everything that is not is painted in
+##                           colours moved towards the background, so the selection is what
+##                           the eye finds;
+##   selection_dim 0       = never (the default), except while Alt-Shift-RightButton is held:
+##                           that peek dims whatever this says, until the button comes up.
+## Ctrl-Alt-Shift-D and View > Dim unselected objects flip it. selection_dim_percent is how far
+## the colours move: 0 not at all, 100 into the background; the default 30 is MIRRORED IN C
+## (SEL_DIM_PERCENT), and a word that is no number means the default too. View > Dimming amount
+## sets it. Both are read when an xschem command or a canvas event is done, so a `set` typed in
+## the CIW shows with the next pointer motion.
+set_ne selection_dim 0
+set_ne selection_dim_percent 30
+## An rc file may write `set selection_dim true` (or yes, on): C takes any boolean word. The View
+## menu's check entry shows a variable as on only when it holds exactly 1, and its command undoes
+## the flip Tk makes, which is only a flip between 0 and 1. So a word that is not 0 or 1 is
+## rewritten as 1 or 0 (a word that is no boolean is off, as C reads it). Not inside the write
+## trace: Tk's own trace of the variable, which keeps the entry's tick, does not see a write made
+## from within a trace. As soon as the event loop is idle instead; until then C reads the word.
+proc selection_dim_normalise {} {
+  global selection_dim selection_dim_normalise_pending
+  set selection_dim_normalise_pending 0
+  if {![info exists selection_dim]} { return }
+  set b [expr {[string is boolean -strict $selection_dim] && $selection_dim ? 1 : 0}]
+  if {$selection_dim ne $b} { set selection_dim $b }
+}
+proc selection_dim_written {args} {
+  global selection_dim selection_dim_normalise_pending
+  if {$selection_dim eq {0} || $selection_dim eq {1}} { return }
+  if {[info exists selection_dim_normalise_pending] && $selection_dim_normalise_pending} { return }
+  set selection_dim_normalise_pending 1
+  after idle selection_dim_normalise
+}
+trace add variable selection_dim write selection_dim_written
 ## ASE waveform viewer active-strip marker (issue 0151,
 ## doc/claude/specs/waveform_viewer_modes.md): the bar drawn down the right edge
 ## of the viewer's TARGET strip while more than one strip is up. Color is an X

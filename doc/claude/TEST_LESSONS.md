@@ -232,6 +232,15 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   answer a word for a missing one (`NOBROWSER`, `NOFORM`) instead of raising, so the row
   that asked is the red one (five breaks of `test_ase_save_browse_1763` ended the suite
   until its helpers did).
+- **A reference read through the code under test moves with the break.** Row `I3c` of
+  `test_selection_dim_1769` compared a highlight's pixel with "its own colour", read a few
+  lines earlier by highlighting the same net: a break that dimmed every highlight dimmed
+  the reference too, and the row stayed green. Tie the reference to something the code
+  under test does not paint (here: the colour must be one of the palette's own, row `I3`).
+- **"The canvas equals a fresh redraw" says nothing when both are wrong the same way.** It
+  catches a painter that left something stale; it cannot catch a rule the redraw itself
+  breaks. Sample a pixel against a colour the suite computes itself as well (rows `F3`,
+  `U1` to `U3` of `test_selection_dim_1769`: the dim colour is the suite's own arithmetic).
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -438,6 +447,26 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   have shown (the browser's `<Double-ButtonRelease-1>`, issue 1763). A suite that presses
   such a gesture records background errors (`interp bgerror {} <recorder>`) and asks for
   none (row `SB3`), so the next one is a red row and not a stall.
+- **Two generated presses with no `-time` are a double click.** Tk tells a double click by
+  the events' time stamps, and `event generate` gives every event the same one. The second
+  `<ButtonPress-3>` of a suite then runs the canvas's `<Double-Button-3>` line (`xschem
+  callback %W -3 ...`) and never the press: rows silently test nothing. Give each press a
+  `-time` a second later than the last (`press` in `test_selection_dim_1769`), and a
+  smaller step when a double click is what is wanted (row `H9`). A real second press
+  arrives the same way: Tk hands a double click over as press, release, the double,
+  release.
+- **A Tk sequence matches a key that carries MORE modifiers than it names.** `<Alt-Key-D>`
+  takes Ctrl-Alt-Shift-D, and `<Control-Shift-Key-D>` takes it too. A new chord with three
+  modifiers is checked against every two-modifier line on the same letter, on the canvas
+  and on every bind tag a window of the session carries (`WaveViewer`), and gets a closer
+  match beside each (issue 1769; rows `C1`, `C2`, `W1`).
+- **The canvas's `<Enter>` line hands its event over with a state of 0** (`xschem callback
+  %W %T %x %y 0 0 0 0`), whatever button or key is held. C code that reads the state of an
+  EnterNotify reads nothing. `<Leave>` and `<Motion>` pass `%s`.
+- **A write made inside a variable trace is not seen by the other traces.** A trace that
+  put `selection_dim` right (true to 1) left the menu's check entry showing the old word:
+  Tk's own trace of the variable keeps the tick and did not run for the nested write. Do
+  the write when the event loop is idle (`selection_dim_written`, row `M4`).
 
 ## 4. `xschem` command and data traps
 
@@ -543,6 +572,18 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   named `<file>@held1` as its result. A release before a load had the mirror defect.
   Give the pair one settling step after the load (`wviewer::hold_settle`) and a row
   whose file cannot be read (RK17, RL11).
+- **`my_snprintf()` has no `%%`.** It is the tree's own small formatter (`src/util.c`): a
+  doubled percent sign ends the output there. Pass the sign as a `%s` argument
+  (`sel_dim_toggle()`; row `T2` of `test_selection_dim_1769` reads the whole sentence).
+- **`xschem print png|svg` of a selection prints the selection's area and drops the
+  selection**; only Ctrl-* prints the window with the selection kept, and it asks for the
+  file in a dialog (answer it by replacing `save_file_dialog` for the key press, row
+  `X2`). **`xschem undo` after a wire cut does not repaint**: the cut's cue stays on the
+  canvas until the next redraw, so load the fixture afresh before reading pixels.
+- **A redraw started from the end of `xschem()` must run before the depth returns to 0.**
+  `draw()` evaluates Tcl (a symbol's `tcleval()` text), that Tcl runs `xschem` commands,
+  and each of them would otherwise reach the same line and start the redraw again
+  (`sel_dim_sync()`, issue 1769: found as a suite that never ended, in the only-probes view).
 - **Traces pointed at other data make "the same data" false.** A load of a file the
   window attached already is carried as the same data, view and all. After traces were
   moved from an earlier run's data onto that file, a strip zoomed in X kept the earlier

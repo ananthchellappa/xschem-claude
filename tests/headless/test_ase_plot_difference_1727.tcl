@@ -2194,14 +2194,20 @@ group GC {
     at_top
     to_design
     set got {}
-    foreach {ks st} [list D [expr {$::LOCK | $::ALT}]  d $::ALT  d [expr {$::LOCK | $::SHIFT | $::ALT}]  D [expr {$::SHIFT | $::ALT | $::CTRL}]] {
+    ## 64 is Super (Mod4). Control is the one further modifier that is spoken for: issue 1769
+    ## made Ctrl-Alt-Shift-D the selection dim's toggle, and the profile carries a
+    ## <Control-Alt-Key-D> line that hands that chord to the canvas (the last leg).
+    set ::selection_dim 0
+    foreach {ks st} [list D [expr {$::LOCK | $::ALT}]  d $::ALT  d [expr {$::LOCK | $::SHIFT | $::ALT}]  D [expr {$::SHIFT | $::ALT | 64}]  D [expr {$::SHIFT | $::ALT | $::CTRL}]] {
         end_mode
         key $ks $st
         lappend got [armed]
     }
+    lappend got $::selection_dim
+    set ::selection_dim 0
     end_mode
-    check "GC1 the case of the letter as typed decides: Caps Lock with Alt types the capital and runs the key, a small d with Alt does not, Caps Lock with Shift and Alt types the small letter and does not, and a further modifier does not stop the key" \
-        $got {diff {} {} diff}
+    check "GC1 the case of the letter as typed decides: Caps Lock with Alt types the capital and runs the key, a small d with Alt does not, Caps Lock with Shift and Alt types the small letter and does not, and a further modifier (Super) does not stop the key; with Control it is another key, the selection dim's toggle, and arms nothing" \
+        $got {diff {} {} diff {} 1}
     xschem unselect_all
 }
 

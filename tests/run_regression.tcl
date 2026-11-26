@@ -186,6 +186,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                   "headless/test_drag_tclvar_reads" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_plumbing" \
+                  "headless/test_selection_dim_1769" \
                   "headless/test_startup_quiz" \
                   "headless/test_copy_retarget" \
                   "headless/test_pin_at_1724" \
@@ -1173,6 +1174,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                   "headless/test_wave_subwindows" \
                   "headless/test_drag_abort_backup_1716" \
                   "headless/test_selection_look_pixels" \
+                  "headless/test_selection_dim_1769" \
                   "headless/test_grid_toggle_sel_gc" \
                   "headless/test_startup_quiz" \
                   "headless/test_copy_form" \

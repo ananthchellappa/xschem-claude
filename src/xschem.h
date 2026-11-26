@@ -376,6 +376,23 @@ typedef int Tcl_Size;
  * (worst on the light scheme) and recommended 16; the user approved that (2026-11-15,
  * doc/claude/selection_look_batch/PLAN.md, "Rulings during the batch"). */
 #define SEL_TEXT_OWN_PX 16.0
+/* selection_dim_percent default, MIRRORED IN TCL (xschem.tcl): how far everything that is not
+ * selected moves towards the background colour while the selection dim is in force
+ * (doc/claude/specs/selection_dim.md). The user's figure, 2026-11-25. */
+#define SEL_DIM_PERCENT 30.0
+/* For the drawing primitives (draw.c). One that paints the frame's backing pixmap while the frame
+ * in the window is a dim one and the dim colours are not in is being called from outside draw()
+ * by a painter that does not bring them in itself (sel_dim_enter(), xinit.c): a shape placed by
+ * a command, say. Its strokes are undimmed in a dim frame. This notes it, and sel_dim_sync()
+ * repaints the frame when the command is done. The selection overlay's own-colour pass paints
+ * the window only (draw_pixmap 0) and is not noted. */
+#define SEL_DIM_NOTE() do { \
+  if(xctx->sel_dim_drawn && !xctx->sel_dim_applied && !xctx->sel_dim_only && xctx->draw_pixmap) \
+    xctx->sel_dim_stale = 1; \
+} while(0)
+/* For draw()'s loops over the document: 1 when the object, whose selection flag is `sel`, is not
+ * this pass's to paint (xctx->sel_dim_only above). Always 0 outside a dim frame's two passes. */
+#define SEL_DIM_SKIP(sel) ((xctx->sel_dim_only == 1 && (sel) != 0) || (xctx->sel_dim_only == 2 && (sel) == 0))
 /* capacity of the per-context list of damaged screen rectangles the styled overlay repairs
  * (sel_pend_add() in move.c); one more rectangle merges the list into its bounding box */
 #define SEL_PEND_MAX 16
@@ -2157,6 +2174,30 @@ typedef struct {
   int sel_text_style;   /* resolved selection_text_style, SEL_TEXT_*; sel_style_sync() */
   double sel_text_own_px; /* resolved selection_text_own_px; sel_style_sync() */
   int sel_drag_cheap, sel_drag_probed, sel_drag_slow; /* a drag's measured look, move.c */
+  /* selection dim (doc/claude/specs/selection_dim.md): while something is selected, a full
+   * draw() paints what is not selected in colours moved towards the background, then what is
+   * selected in its own, and the selection overlay on top. The dim colours are in the layer
+   * GCs and in color_index / xcolor_array ONLY inside draw() (sel_dim_apply(), xinit.c). */
+  int sel_dim_hold;     /* the peek button is down: dim whatever the selection_dim setting says */
+  int sel_dim_drawn;    /* the frame in the window was painted dim */
+  int sel_dim_applied;  /* the dim colours are in the layer GCs and colour tables right now */
+  int sel_dim_stale;    /* a painter put undimmed strokes into the dim frame: SEL_DIM_NOTE() */
+  int sel_dim_only;     /* nonzero ONLY while a painter that has settled its colours itself is
+                         * at work on a dim frame: draw() from the grid to the pin markers, or
+                         * draw_graph() on a selected graph. 1 = draw()'s pass over what is not
+                         * selected (dim colours), 2 = its pass over what is (own colours),
+                         * 3 = the rest. While it is set, SEL_DIM_NOTE() notes nothing and
+                         * sel_dim_enter() brings nothing in. */
+  int sel_dim_export;   /* > 0 while an export paints into the backing pixmap (print_image(),
+                         * svg_embedded_graph(), ps_embedded_graph()): never dim */
+  int sel_dim_frame_pct; /* the percent the frame in the window was painted with */
+  unsigned int sel_dim_sig; /* the selection that frame was painted for: sel_dim_signature() */
+  int sel_dim_built;    /* the tables below hold the dim colours for sel_dim_pct */
+  int sel_dim_pct;      /* the percent the tables were built for */
+  unsigned int sel_dim_index[256];   /* a layer's dim pixel */
+  XColor sel_dim_xcolor[256];        /* and its r,g,b, for cairo */
+  unsigned int sel_undim_index[256]; /* a layer's own pixel and r,g,b, kept while the dim */
+  XColor sel_undim_xcolor[256];      /* ones stand in for them */
   int sel_own_fillmax;  /* > 0 ONLY inside the halo own-colour pass: a fill wider than this many
                          * screen px in both directions is skipped (filledrect, drawarc,
                          * drawpolygon), so a re-painted fill never leaves the halo band */
@@ -3197,6 +3238,18 @@ extern void draw_selection(GC g, int interruptable);
 extern int sel_style_eff(void);             /* selection_style in force for the overlay */
 extern void sel_mark_object(int type, int n, int c); /* styled select/deselect of one object */
 extern void sel_style_sync(void);           /* resolve selection_style/_halo_width (xinit.c) */
+/* selection dim (doc/claude/specs/selection_dim.md), xinit.c */
+extern int sel_dim_percent(void);           /* selection_dim_percent, 0..100 */
+extern int sel_dim_wanted(void);            /* this context's next full draw is a dim one */
+extern unsigned int sel_dim_signature(void); /* which objects are selected, as one number */
+extern void sel_dim_apply(int on);          /* dim colours into the layer GCs and tables, or out */
+extern int sel_dim_enter(void);             /* a document painter outside draw(): dim colours in */
+extern void sel_dim_leave(int entered);     /* and out again, when sel_dim_enter() put them in */
+extern void sel_dim_sync(void);             /* repaint when the frame on screen is not the one wanted */
+extern void sel_dim_toggle(void);           /* flip the selection_dim setting */
+extern void sel_dim_peek(int on);           /* the peek button went down or came up */
+extern unsigned int sel_dim_pixel(unsigned int pix); /* a pixel as painted inside a dim draw */
+extern void sel_dim_rgb16(unsigned short *r, unsigned short *g, unsigned short *b);
 extern void draw_selection_base(GC g);      /* draw()'s overlay paint: no overlay re-stamp */
 extern void sel_pend_add(double x1, double y1, double x2, double y2); /* damaged screen rect */
 extern void sel_pend_clear(void);

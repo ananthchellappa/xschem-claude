@@ -151,7 +151,9 @@ void print_image()
   save = xctx->do_copy_area;
   xctx->do_copy_area=0;
   draw_no_ui_decorations = 1; /* issue 0151: no active-strip marker in exported images */
+  xctx->sel_dim_export++;     /* selection dim: an export is never dim */
   draw();
+  xctx->sel_dim_export--;
   draw_no_ui_decorations = 0;
 
 
@@ -564,6 +566,7 @@ void draw_string(int layer, int what, const char *str, short rot, short flip, in
                  double x, double y, double xscale, double yscale)
 {
   (void)what; /* UNUSED in cairo version, avoid compiler warning */
+  SEL_DIM_NOTE();
   draw_string_cairo(layer, NULL, xctx->draw_window, xctx->draw_pixmap,
                     str, rot, flip, hcenter, vcenter, x, y, xscale, yscale);
 }
@@ -1949,6 +1952,7 @@ void draw_xhair_line(GC gc, int size, double linex1, double liney1, double linex
 void drawline(int c, int what, double linex1, double liney1, double linex2, double liney2,
               double bus, int dash, void *ct)
 {
+  if(!ct) SEL_DIM_NOTE(); /* a ct is another surface (an export), not the frame */
   drawline_duty(c, what, linex1, liney1, linex2, liney2, bus, dash, dash, ct);
 }
 
@@ -2108,6 +2112,7 @@ static void hilight_cairo_set_source(cairo_t *ct, NetHilightStyle *st, unsigned 
   } else if(st) {
     resolve_hilight_style_rgb(st);     /* resolve the custom pixel once, then reuse */
     r = st->cr; g = st->cg; b = st->cb;
+    sel_dim_rgb16(&r, &g, &b);         /* no layer's table holds this colour: dim it here */
   } else {
     XColor xc;
     xc.pixel = fg;
@@ -2582,6 +2587,7 @@ void filledarc(int c, int what, double x, double y, double r, double a, double b
  double x1, y1, x2, y2; /* arc bbox */
  double xx1, yy1, xx2, yy2; /* complete circle bbox in screen coords */
 
+ SEL_DIM_NOTE();
  if(!has_x) return;
  if(what & ADD)
  {
@@ -2648,6 +2654,7 @@ void drawarc(int c, int what, double x, double y, double r, double a, double b, 
  int width;
 
  /* the band strokes only the curve, so a pie is inside it only if the whole circle is */
+ SEL_DIM_NOTE();
  if(arc_fill && (what & (ADD | NOW)) && sel_own_fill_skip(x - r, y - r, x + r, y + r)) arc_fill = 0;
 
  if(bus == -1.0) {
@@ -2767,6 +2774,7 @@ void filledrect(int c, int what, double rectx1,double recty1,double rectx2,doubl
  double xx1,yy1,xx2,yy2;
  GC gc;
 
+ SEL_DIM_NOTE();
  if(!has_x) return;
  if(!xctx->fill_pattern) return;
  if(fill != 2 && !xctx->fill_type[c]) return;
@@ -3005,6 +3013,7 @@ void drawpolygon(int c, int what, double *x, double *y, int points, int poly_fil
   int width = 0;
   short sx, sy;
   GC gc;
+   SEL_DIM_NOTE();
   if(!has_x) return;
   if(bus == -1.0) what = THICK;
 
@@ -3140,6 +3149,7 @@ void drawrect(int c, int what, double rectx1,double recty1,double rectx2,double 
  char dash_arr[2];
  int width;
 
+ SEL_DIM_NOTE();
  if(!has_x) return;
 
  if(bus == -1.0) {
@@ -10556,6 +10566,7 @@ void graph_marker_notify(void)
  */
 void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
 {
+  int dimmed, own;
   int wc = 4, wave_color = 4;
   char *node = NULL, *color = NULL, *sweep = NULL;
   int sweep_idx = 0;
@@ -10587,6 +10598,17 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
   if(xctx->only_probes) return;
   if(RECT_OUTSIDE( gr->sx1, gr->sy1, gr->sx2, gr->sy2,
       xctx->areax1, xctx->areay1, xctx->areax2, xctx->areay2)) return;
+  /* selection dim: a graph repainted on its own (a cursor moved, a zoom inside it) over a frame
+   * that was painted dim is part of that frame and takes its colours; sel_dim_leave() at the end
+   * of this function puts the layers' own back. A graph that is itself selected is painted in
+   * its own colours, and says so (sel_dim_only) so that its strokes are not taken for a
+   * painter's that did not know the frame is dim. Inside draw() neither does anything. An
+   * export surface (ct) is not the frame. */
+  dimmed = 0; own = 0;
+  if(!ct && has_x && xctx->sel_dim_drawn && !xctx->sel_dim_only && !xctx->sel_dim_export) {
+    if(xctx->rect[GRIDLAYER][i].sel) { own = 1; xctx->sel_dim_only = 3; }
+    else dimmed = sel_dim_enter();
+  }
 
   /* viewer plan item 6: arm the mid-drag SHRINK PREVIEW for this graph. Done
    * here rather than in setup_graph_data because this is the only place that
@@ -11159,6 +11181,8 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
 
     }
   }
+  sel_dim_leave(dimmed);
+  if(own) xctx->sel_dim_only = 0;
 }
 
 /* flags:
@@ -11195,6 +11219,7 @@ static void draw_graph_all(int flags)
     if(xctx->draw_single_layer==-1 || GRIDLAYER == xctx->draw_single_layer) {
       if(xctx->enable_layer[GRIDLAYER]) for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
         xRect *r = &xctx->rect[GRIDLAYER][i];
+        if(SEL_DIM_SKIP(r->sel)) continue; /* selection dim: not this pass's (draw()) */
         if(r->flags & 1) {
           int flags2;
           setup_graph_data(i, 0, &xctx->graph_struct);
@@ -11671,6 +11696,9 @@ int draw_image(int dr, xRect *r, double *x1, double *y1, double *x2, double *y2,
     }
   }
   dbg(1, "draw_image() : rectangle coords: %g %g %g %g\n", *x1, *y1, *x2, *y2);
+  /* selection dim: a picture has no layer colour to move towards the background, so it is
+   * painted that much more transparent over it */
+  if(xctx->sel_dim_applied) alpha *= 1.0 - xctx->sel_dim_pct / 100.0;
   if(dr) {
     cairo_save(xctx->cairo_ctx);
     cairo_save(xctx->cairo_save_ctx);
@@ -11720,6 +11748,7 @@ static void draw_images_all(void)
   if(xctx->draw_single_layer==-1 || GRIDLAYER == xctx->draw_single_layer) {
     if(xctx->enable_layer[GRIDLAYER]) for(i = 0; i < xctx->rects[GRIDLAYER]; ++i) {
       xRect *r = &xctx->rect[GRIDLAYER][i];
+      if(SEL_DIM_SKIP(r->sel)) continue; /* selection dim: not this pass's (draw()) */
       if(r->flags & 1024) {
         draw_image(1, r, &r->x1, &r->y1, &r->x2, &r->y2, 0, 0);
       }
@@ -11784,7 +11813,9 @@ void svg_embedded_graph(FILE *fd, int i, double rx1, double ry1, double rx2, dou
   save = xctx->do_copy_area;
   xctx->do_copy_area=0;
   setup_graph_data(i, 0, &xctx->graph_struct);
+  xctx->sel_dim_export++; /* selection dim: the graph goes into an export, never dim */
   draw_graph(i, 8 + (xctx->graph_flags & (4 | 2 | 128 | 256)), &xctx->graph_struct, NULL);
+  xctx->sel_dim_export--;
 
 #ifdef __unix__
   png_sfc = cairo_xlib_surface_create(display, xctx->save_pixmap, visual,
@@ -12475,10 +12506,32 @@ void draw(void)
   rebuild_selected_array();
   if(has_x) {
     Iterator_ctx ctx;
+    int dim, pass, npass;
 
     if(xctx->only_probes) {
       if(tclgetboolvar("dark_colorscheme")) build_colors(-1.5, 0);
       else build_colors(1.5, 0);
+    }
+    /* selection dim (doc/claude/specs/selection_dim.md): when something is selected and the
+     * setting or the peek asks, the document is painted in two passes, what is not selected in
+     * the dim colours and then what is selected in its own; the grid before them and the net
+     * highlights and pin markers after them are dim. A redraw limited to a bbox keeps the look
+     * the rest of the frame was painted in, as it keeps the selection style above. An export
+     * (print_image()) is never dim, and it does not change what the window is known to show.
+     * Every other full draw records what it paints (the look, the percent, the selection):
+     * sel_dim_sync() repaints for as long as the record differs from what is wanted. */
+    if(xctx->sel_dim_export) dim = 0;
+    else if(xctx->bbox_set) dim = xctx->sel_dim_drawn;
+    else {
+      dim = xctx->sel_dim_drawn = sel_dim_wanted(); /* 0 in the only_probes view */
+      xctx->sel_dim_frame_pct = sel_dim_percent();
+      xctx->sel_dim_sig = sel_dim_signature();
+      xctx->sel_dim_stale = 0; /* a whole frame: nothing older is left in it */
+    }
+    npass = (dim == 1) ? 2 : 1; /* dim == 2 (around the highlights): one pass, all of it dim */
+    if(dim) {
+      xctx->sel_dim_only = 3; /* until the pin markers are painted: the colours are settled here */
+      sel_dim_apply(1);
     }
     if(xctx->draw_pixmap) {
       XFillRectangle(display, xctx->save_pixmap, xctx->gc[BACKLAYER], xctx->areax1, xctx->areay1,
@@ -12491,6 +12544,16 @@ void draw(void)
     if(!xctx->only_probes) drawgrid();
     /* 2: draw cursor 1
      * 4: draw cursor 2 */
+    /* selection dim: the document, once (plain frame) or twice (dim frame: pass 0 what is not
+     * selected, pass 1 what is). SEL_DIM_SKIP() in each loop below, in draw_graph_all() and in
+     * draw_images_all() leaves out what is not the pass's. The body of this loop is not indented
+     * a level further on purpose: it is draw()'s body as it always was, and the loop ends after
+     * the texts. */
+    for(pass = 0; pass < npass; ++pass) {
+    if(dim == 1) {
+      xctx->sel_dim_only = pass + 1;
+      sel_dim_apply(pass == 0);
+    }
     /* +16: on-screen draw -> the ASE viewer active-strip marker (issue 0151);
      * dropped while print_image() renders an export drawable */
     draw_graph_all((xctx->graph_flags & (2 | 4)) + 8 +
@@ -12512,11 +12575,13 @@ void draw(void)
       cc = c; if(xctx->only_probes) cc = GRIDLAYER;
       if(draw_layer) for(i=0;i<xctx->lines[c]; ++i) {
         xLine *l = &xctx->line[c][i];
+        if(SEL_DIM_SKIP(l->sel)) continue;
         if(l->bus == -1.0) drawline(cc, THICK, l->x1, l->y1, l->x2, l->y2, l->bus, l->dash, NULL);
         else       drawline(cc, ADD, l->x1, l->y1, l->x2, l->y2, l->bus, l->dash, NULL);
       }
       if(draw_layer) for(i=0;i<xctx->rects[c]; ++i) {
         xRect *r = &xctx->rect[c][i];
+        if(SEL_DIM_SKIP(r->sel)) continue;
         #if HAS_CAIRO==1
         if(c != GRIDLAYER || !(r->flags & (1 + 1024)))
         #else
@@ -12529,12 +12594,14 @@ void draw(void)
       }
       if(draw_layer) for(i=0;i<xctx->arcs[c]; ++i) {
         xArc **arc = xctx->arc;
+        if(SEL_DIM_SKIP(arc[c][i].sel)) continue;
         drawarc(cc, ADD, arc[c][i].x, arc[c][i].y, arc[c][i].r, arc[c][i].a, arc[c][i].b,
                 arc[c][i].fill, arc[c][i].bus, arc[c][i].dash);
       }
       if(draw_layer) for(i=0;i<xctx->polygons[c]; ++i) {
         int bezier;
         xPoly *p = &xctx->poly[c][i];
+        if(SEL_DIM_SKIP(p->sel)) continue;
         bezier = 2 + !strboolcmp(get_tok_value(p->prop_ptr, "bezier", 0), "true");
         drawpolygon(cc, NOW, p->x, p->y, p->points, p->fill, p->dash, p->bus, bezier);
       }
@@ -12550,6 +12617,7 @@ void draw(void)
           if(i >= xctx->instances) break;
         }
         if(xctx->inst[i].ptr == -1 || (c > 0 && (xctx->inst[i].flags & 1)) ) continue;
+        if(SEL_DIM_SKIP(xctx->inst[i].sel)) continue;
         symptr = (xctx->inst[i].ptr+ xctx->sym);
         /* S9: the OP-annotation overlay, once per instance per frame, OUTSIDE the
          * `symptr->texts` guard below (decision D3 -- see draw_annot_overlay()) */
@@ -12589,7 +12657,7 @@ void draw(void)
           ++i;
           if(i >= xctx->wires) break;
         }
-
+        if(SEL_DIM_SKIP(xctx->wire[i].sel)) continue;
 
         if(tclgetboolvar("auto_set_wire_bus")) auto_set_wire_bus(i, i + 1);
 
@@ -12608,13 +12676,15 @@ void draw(void)
           drawline(cc, ADD, xctx->wire[i].x1,xctx->wire[i].y1,
             xctx->wire[i].x2,xctx->wire[i].y2, xctx->wire[i].bus, 0, NULL);
       }
-      update_conn_cues(cc, 1, xctx->draw_window);
+      /* the junction dots belong to no one wire: once, with what is not selected */
+      if(pass == 0) update_conn_cues(cc, 1, xctx->draw_window);
       filledrect(cc, END, 0.0, 0.0, 0.0, 0.0, 2, -1, -1); /* fill parameter must be 2! */
       drawline(cc, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
     }
     for(i=0;i<xctx->texts; ++i)
     {
       const char *txt_ptr;
+      if(SEL_DIM_SKIP(xctx->text[i].sel)) continue;
       /* hidden, the annotation layer (0615), the layer gates: text_draw_layer() */
       if((textlayer = text_draw_layer(i)) < 0) continue;
       #if HAS_CAIRO==1
@@ -12657,6 +12727,14 @@ void draw(void)
       drawline(textlayer, END, 0.0, 0.0, 0.0, 0.0, 0.0, 0, NULL);
       #endif
     } /* for(i=0;i<xctx->texts; ++i) */
+    } /* for(pass ...) */
+    /* selection dim: the net highlights and the pin markers are the document's, not the
+     * selection's: dim, like what is not selected. In a frame that is dim around the highlights
+     * (dim == 2, sel_dim_wanted()) the highlights are what is brought out: their own colours. */
+    if(dim) {
+      xctx->sel_dim_only = 3;
+      sel_dim_apply(dim == 1);
+    }
     if(xctx->only_probes) build_colors(1.0, 0);
     if(xctx->only_probes) {
       xctx->save_lw = xctx->lw;
@@ -12672,7 +12750,14 @@ void draw(void)
      * restore above, before the pixmap reaches the window. Its own call and not
      * part of draw_hilight_net(), which returns at once when no net is
      * highlighted. No-op when this context has no marker. */
+    if(dim) sel_dim_apply(1);
     draw_pin_markers();
+    /* selection dim: the document is painted; what follows (the selection, the scope and hover
+     * outlines, the crosshair) is painted in the layers' own colours */
+    if(dim) {
+      sel_dim_apply(0);
+      xctx->sel_dim_only = 0;
+    }
     /* do_copy_area is zero only when doing png hardcopy to avoid video flickering */
     if(xctx->do_copy_area) {
       if(!xctx->draw_window && xctx->draw_pixmap) {

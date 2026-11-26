@@ -14,6 +14,40 @@ Newest entries on top.
 
 ---
 
+## Q111. I selected something (or a Find did) and cannot see it in a busy schematic. Can the rest be dimmed?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `sel-dim` on `fluid-editing` at `da1e6b380`, issue 1769
+  (`doc/claude/specs/selection_dim.md`).
+
+**Yes, two ways.**
+
+| you want | do |
+|---|---|
+| a quick look, then back | hold **Alt-Shift-RightButton**: everything that is not selected is dimmed while the button is down. With nothing selected it brings out what is highlighted, which is what a Find in its default Highlight mode leaves |
+| dimming whenever something is selected | **Ctrl-Alt-Shift-D**, or View > Dim unselected objects, or "Dim unselected objects" in the Command Palette (Ctrl-Shift-P) |
+| more or less dimming | View > Dimming amount (10 % to 90 %, or Other...); the default is 30 % |
+| the same from an rc file | `set selection_dim 1` and `set selection_dim_percent 30` (`src/cadence_style_rc` has both commented out) |
+
+- **What "30 %" means.** Every colour moves 30 % of the way to the background colour. 0 is no
+  dimming, 100 makes what is not selected disappear.
+- **With nothing selected the setting dims nothing:** the schematic looks as usual until
+  the next selection. The peek, with nothing selected and nothing highlighted, says so in
+  the status line.
+- **What is dimmed:** everything that is not selected: shapes, wires, symbols, texts, the
+  grid, embedded graphs and pictures, net highlights and pin markers. What is selected keeps
+  its own colours under the selection overlay; the hover outline and the crosshair are not
+  dimmed either.
+- **Printing** (PNG, PDF, SVG) is never dimmed, and neither is a waveform viewer window.
+- **Two windows side by side:** the one the pointer is in follows at once; the other when
+  the pointer enters it.
+- **Alt-Shift-RightButton used to cut the wire under the pointer** without aligning the cut
+  to the snap grid. That cut is still Tools > Break wires at mouse position and
+  Super-Shift-RightButton; `xschem unbind button 3 alt+shift canvas` gives it the chord back.
+- **Off by default.** Nothing changes for a session that never presses either chord.
+
+---
+
 ## Q110. I set up a measurement in Outputs > Measurements. Where is its value, and how do I tell it from a Calculator measure?
 
 - **Asked:** 2026-11-25 (the user's request)

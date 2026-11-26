@@ -1386,6 +1386,299 @@ void sel_style_sync(void)
   }
 }
 
+/* ---- selection dim (doc/claude/specs/selection_dim.md) ----
+ * While something is selected, everything else is painted in colours moved towards the
+ * background, so the selection is what the eye finds. Asked for by the selection_dim setting
+ * (always, while a selection exists) or by the peek button (while it is down).
+ *
+ * The dim colours are a second colour table per context. draw() paints the document in two
+ * passes: what is not selected with the dim table swapped into the layer GCs, color_index[] and
+ * xcolor_array[], then what is selected with the layers' own colours back. Net highlights and
+ * pin markers follow, dim, and then the overlays (selection, scope outline, hover, crosshair) in
+ * the layers' own colours. Outside draw() the GCs always hold the layers' own colours, so nothing
+ * else that paints has to know. The frame goes to save_pixmap as painted, which is what the
+ * overlay's erase copies back; a frame painted for one selection is therefore repainted when the
+ * selection changes (sel_dim_sync()). */
+
+/* selection_dim_percent: how far a colour moves towards the background's, 0 (not at all) to 100
+ * (the background itself). A number (sel_num()), else SEL_DIM_PERCENT; clamped. */
+int sel_dim_percent(void)
+{
+  double v;
+  if(!sel_num(Tcl_GetVar(interp, "selection_dim_percent", TCL_GLOBAL_ONLY), &v)) v = SEL_DIM_PERCENT;
+  if(v < 0.0) v = 0.0;
+  if(v > 100.0) v = 100.0;
+  return (int)(v + 0.5);
+}
+
+/* The selection_dim setting. Read with no error message left behind: sel_dim_sync() asks at the
+ * end of every xschem command, the ones run before xschem.tcl has set the variable included, and
+ * the command's own result is the interpreter's result by then. Unset, empty and a word that is
+ * no boolean are off. */
+static int sel_dim_setting(void)
+{
+  int b = 0;
+  const char *s = Tcl_GetVar(interp, "selection_dim", TCL_GLOBAL_ONLY);
+  if(!s || !s[0]) return 0;
+  if(Tcl_GetBoolean(NULL, s, &b) != TCL_OK) return 0;
+  return b;
+}
+
+/* What this context's next full draw paints: 0 a plain frame; 1 a dim one around the selection
+ * (the setting or the peek asks for it, the amount is not zero and something is selected); 2 a
+ * dim one around the net and instance highlights (the peek only, with nothing selected: a Find
+ * in its default mode highlights what it finds and selects nothing, and the peek is there to
+ * show what the last command picked out). The only_probes view recolours every layer by its own
+ * rule and is left alone. So is a waveform viewer window: nothing there is looked for by
+ * selecting it, and a strip that is selected to be moved must not lose its traces to the dim. */
+int sel_dim_wanted(void)
+{
+  if(!has_x || !xctx) return 0;
+  if(xctx->only_probes || xctx->wave_viewer) return 0;
+  if(!xctx->sel_dim_hold && !sel_dim_setting()) return 0;
+  if(sel_dim_percent() <= 0) return 0;
+  rebuild_selected_array();
+  if(xctx->lastsel > 0) return 1;
+  if(xctx->sel_dim_hold && xctx->hilight_nets) return 2;
+  return 0;
+}
+
+/* The selection as one number: which objects are selected, not how (a wire end counts as its
+ * wire). A dim frame is painted for one selection, what is selected in its own colours and the
+ * rest dim, so sel_dim_sync() repaints it when this number is no longer the one it was painted
+ * for. FNV-1a over the selected array. */
+unsigned int sel_dim_signature(void)
+{
+  unsigned int h = 2166136261u;
+  int i;
+  if(!xctx) return 0;
+  rebuild_selected_array();
+  for(i = 0; i < xctx->lastsel; ++i) {
+    h = (h ^ (unsigned int)xctx->sel_array[i].type) * 16777619u;
+    h = (h ^ (unsigned int)xctx->sel_array[i].n) * 16777619u;
+    h = (h ^ xctx->sel_array[i].col) * 16777619u;
+  }
+  return (h ^ (unsigned int)xctx->lastsel) * 16777619u;
+}
+
+static unsigned int sel_dim_mix(unsigned int c, unsigned int bg, int pct)
+{
+  return (c * (unsigned int)(100 - pct) + bg * (unsigned int)pct + 50u) / 100u;
+}
+
+/* The dim tables for pct, from the layers' own colours: call only while those are in
+ * xcolor_array[] (sel_dim_apply() does). find_best_color() uses xcolor_array[] as scratch when the
+ * colormap is full, so the table is put back after the loop. */
+static void sel_dim_build(int pct)
+{
+  int i;
+  unsigned int br, bg, bb;
+  XColor own[256];
+  memcpy(own, xctx->xcolor_array, sizeof(own));
+  br = own[BACKLAYER].red >> 8; bg = own[BACKLAYER].green >> 8; bb = own[BACKLAYER].blue >> 8;
+  for(i = 0; i < cadlayers && i < 256; ++i) {
+    char s[16];
+    unsigned int r, g, b;
+    r = sel_dim_mix(own[i].red >> 8, br, pct);
+    g = sel_dim_mix(own[i].green >> 8, bg, pct);
+    b = sel_dim_mix(own[i].blue >> 8, bb, pct);
+    my_snprintf(s, S(s), "#%02x%02x%02x", r, g, b);
+    xctx->sel_dim_index[i] = find_best_color(s);
+    xctx->sel_dim_xcolor[i] = own[i];
+    xctx->sel_dim_xcolor[i].pixel = xctx->sel_dim_index[i];
+    xctx->sel_dim_xcolor[i].red = (unsigned short)(r * 257u);
+    xctx->sel_dim_xcolor[i].green = (unsigned short)(g * 257u);
+    xctx->sel_dim_xcolor[i].blue = (unsigned short)(b * 257u);
+  }
+  memcpy(xctx->xcolor_array, own, sizeof(own));
+  xctx->sel_dim_pct = pct;
+  xctx->sel_dim_built = 1;
+}
+
+/* Put the dim colours into the layer GCs and the two colour tables (on), or the layers' own back
+ * (off). The background layer keeps its colour. Whoever turns it on turns it off again before it
+ * returns: draw(), and the painters that join a dim frame from outside it (sel_dim_enter()).
+ * The colours are the ones of the percent the FRAME was painted with (draw() sets it on a full
+ * redraw), not of the percent as it reads now: a painter that repairs or adds to a frame must
+ * match it, and the frame is repainted whole when the amount has changed (sel_dim_sync()). */
+void sel_dim_apply(int on)
+{
+  int i, pct;
+  if(!has_x || !xctx) return;
+  on = on ? 1 : 0;
+  if(on == xctx->sel_dim_applied) return;
+  if(on) {
+    pct = xctx->sel_dim_frame_pct;
+    if(!xctx->sel_dim_built || xctx->sel_dim_pct != pct) sel_dim_build(pct);
+  }
+  for(i = 0; i < cadlayers && i < 256; ++i) {
+    if(i == BACKLAYER) continue;
+    if(on) {
+      xctx->sel_undim_index[i] = xctx->color_index[i];
+      xctx->sel_undim_xcolor[i] = xctx->xcolor_array[i];
+      xctx->color_index[i] = xctx->sel_dim_index[i];
+      xctx->xcolor_array[i] = xctx->sel_dim_xcolor[i];
+    } else {
+      xctx->color_index[i] = xctx->sel_undim_index[i];
+      xctx->xcolor_array[i] = xctx->sel_undim_xcolor[i];
+    }
+    XSetForeground(display, xctx->gc[i], xctx->color_index[i]);
+    XSetForeground(display, xctx->gcstipple[i], xctx->color_index[i]);
+  }
+  xctx->sel_dim_applied = on;
+}
+
+/* For a painter of the document that runs outside draw(): a net highlighted just now, a wire or
+ * a shape just placed, a graph repainted on its own. Over a frame that was painted dim it must
+ * use the dim colours, or it stands out until the next redraw. sel_dim_enter() puts them in when
+ * the frame is dim and they are not in already, and says whether it did; sel_dim_leave() takes
+ * that answer and puts the layers' own colours back. Inside draw() both do nothing. */
+int sel_dim_enter(void)
+{
+  if(!has_x || !xctx || !xctx->sel_dim_drawn || xctx->sel_dim_applied) return 0;
+  /* draw(), or a painter of something selected, has settled the colours itself (sel_dim_only,
+   * xschem.h); an export is never dim */
+  if(xctx->sel_dim_only || xctx->sel_dim_export) return 0;
+  sel_dim_apply(1);
+  return 1;
+}
+
+void sel_dim_leave(int entered)
+{
+  if(entered) sel_dim_apply(0);
+}
+
+/* r,g,b (16 bit) as painted inside a dim draw: moved towards the background by the percent the
+ * tables were built for. Unchanged outside one. For the colours that are not a layer's: a net
+ * highlight style with a colour of its own. */
+void sel_dim_rgb16(unsigned short *r, unsigned short *g, unsigned short *b)
+{
+  const XColor *bk;
+  int pct;
+  if(!xctx || !xctx->sel_dim_applied) return;
+  pct = xctx->sel_dim_pct;
+  bk = &xctx->xcolor_array[BACKLAYER];
+  *r = (unsigned short)(sel_dim_mix(*r >> 8, bk->red >> 8, pct) * 257u);
+  *g = (unsigned short)(sel_dim_mix(*g >> 8, bk->green >> 8, pct) * 257u);
+  *b = (unsigned short)(sel_dim_mix(*b >> 8, bk->blue >> 8, pct) * 257u);
+}
+
+/* one 8 bit channel out of a TrueColor pixel, and back into its place */
+static unsigned int sel_dim_chan(unsigned long p, unsigned long mask)
+{
+  int shift = 0, bits = 0;
+  unsigned long v;
+  if(!mask) return 0;
+  while(!(mask & 1UL)) { mask >>= 1; ++shift; }
+  while(mask & 1UL) { mask >>= 1; ++bits; }
+  v = (p >> shift) & ((1UL << bits) - 1UL);
+  if(bits >= 8) return (unsigned int)(v >> (bits - 8));
+  return (unsigned int)(v * 255UL / ((1UL << bits) - 1UL));
+}
+
+static unsigned long sel_dim_unchan(unsigned int v, unsigned long mask)
+{
+  int shift = 0, bits = 0;
+  unsigned long m = mask;
+  if(!mask) return 0;
+  while(!(m & 1UL)) { m >>= 1; ++shift; }
+  while(m & 1UL) { m >>= 1; ++bits; }
+  if(bits >= 8) return ((unsigned long)v << (bits - 8)) << shift;
+  return ((unsigned long)v >> (8 - bits)) << shift;
+}
+
+/* A pixel as painted inside a dim draw; unchanged outside one, and on a visual that is not
+ * TrueColor, where a pixel is an index and says nothing about its colour. */
+unsigned int sel_dim_pixel(unsigned int pix)
+{
+  const XColor *bk;
+  unsigned int r, g, b;
+  int pct;
+  if(!has_x || !xctx || !xctx->sel_dim_applied || !visual || visual->class != TrueColor) return pix;
+  pct = xctx->sel_dim_pct;
+  bk = &xctx->xcolor_array[BACKLAYER];
+  r = sel_dim_mix(sel_dim_chan(pix, visual->red_mask), bk->red >> 8, pct);
+  g = sel_dim_mix(sel_dim_chan(pix, visual->green_mask), bk->green >> 8, pct);
+  b = sel_dim_mix(sel_dim_chan(pix, visual->blue_mask), bk->blue >> 8, pct);
+  return (unsigned int)(sel_dim_unchan(r, visual->red_mask) | sel_dim_unchan(g, visual->green_mask) |
+                        sel_dim_unchan(b, visual->blue_mask) |
+                        (pix & ~(visual->red_mask | visual->green_mask | visual->blue_mask)));
+}
+
+/* Repaint this context when the frame in its window is not the one wanted now: dim and nothing
+ * is selected any more, plain and something is, or dim for another selection or by another
+ * percent than the ones it was painted with. Called when an xschem
+ * command has finished (xschem() in scheduler.c, which every canvas event comes through as
+ * `xschem callback`), so a selection made by a click, a key, a menu or a script is followed by its
+ * frame without any of them asking. With the setting off and no peek it returns on three tests.
+ * So is a dim frame that a painter outside draw() put undimmed strokes into (SEL_DIM_NOTE(),
+ * xschem.h). A redraw limited to a bbox keeps the look the rest of the frame has (draw()), so it
+ * is not asked for one. The command's result is the interpreter's result when this runs, and
+ * draw() evaluates Tcl: the result is put back. */
+void sel_dim_sync(void)
+{
+  static int busy = 0; /* the repaint below must never start another one */
+  int want;
+  Tcl_Obj *res;
+  if(busy || !has_x || !xctx || !xctx->window || xctx->no_draw || xctx->bbox_set) return;
+  if(!xctx->sel_dim_drawn && !xctx->sel_dim_hold && !sel_dim_setting()) return;
+  want = sel_dim_wanted();
+  if(want == xctx->sel_dim_drawn && !xctx->sel_dim_stale &&
+     (!want || (xctx->sel_dim_frame_pct == sel_dim_percent() &&
+                xctx->sel_dim_sig == sel_dim_signature()))) return;
+  res = Tcl_GetObjResult(interp);
+  Tcl_IncrRefCount(res);
+  busy = 1;
+  draw();
+  busy = 0;
+  Tcl_SetObjResult(interp, res);
+  Tcl_DecrRefCount(res);
+}
+
+/* Flip the selection_dim setting (the key, the menu entry, `xschem toggle_selection_dim`) and
+ * say in the status line which way it went. The frame follows in sel_dim_sync(). The action log
+ * gets the state reached, not the flip, as toggle_stretch_cmd() gives it (callback.c). */
+void sel_dim_toggle(void)
+{
+  char msg[200];
+  int on = !sel_dim_setting();
+  int pct = sel_dim_percent();
+  int nsel = 0;
+  tclsetboolvar("selection_dim", on);
+  log_action("xschem set selection_dim %d", on);
+  if(xctx) {
+    rebuild_selected_array();
+    nsel = xctx->lastsel;
+  }
+  /* my_snprintf() (util.c) has no "%%": the percent sign goes in as a %s argument */
+  if(!on) my_snprintf(msg, S(msg), "Dim unselected objects: OFF");
+  else if(pct <= 0)
+    my_snprintf(msg, S(msg), "Dim unselected objects: ON, but the amount is 0%s"
+                " (View > Dimming amount)", "%");
+  else if(nsel > 0)
+    my_snprintf(msg, S(msg), "Dim unselected objects: ON (%d%s)", pct, "%");
+  else /* short: the status field cuts a longer line off in a window of the default size */
+    my_snprintf(msg, S(msg), "Dim unselected objects: ON (%d%s). It shows with the next selection",
+                pct, "%");
+  statusmsg_hold(msg, 1);
+}
+
+/* The peek: dim while the button is down, whatever the setting says. on = 1 at the press, 0 at
+ * the release. The frame follows in sel_dim_sync(). It brings out the selection, or, with nothing
+ * selected, what is highlighted (sel_dim_wanted()). With neither there is nothing to bring out,
+ * and the status line says so instead of a frame that does not change. */
+void sel_dim_peek(int on)
+{
+  if(!xctx) return;
+  xctx->sel_dim_hold = on ? 1 : 0;
+  if(!on) return;
+  rebuild_selected_array();
+  if(xctx->lastsel <= 0 && !xctx->hilight_nets)
+    statusmsg_hold("Dim: nothing is selected or highlighted, so there is nothing to bring out", 1);
+  else if(sel_dim_percent() <= 0)
+    statusmsg_hold("Dim: the amount is 0% (View > Dimming amount)", 1);
+}
+
 /* Clip every GC a window-only overlay paints through to xr[0..n-1], for the styled overlay
  * repair (sel_overlay_flush() in move.c); undone by sel_reset_clip_rects(), which puts back a
  * bbox-limited redraw's clip if one is in force. Text glyphs, the one thing the overlay paints
@@ -1449,6 +1742,10 @@ int build_colors(double dim, double dim_bg)
 {
     int i;
     dbg(1, "build_colors(): dim=%g, dim_bg=%g\n", dim, dim_bg);
+    /* selection dim: every layer colour is set afresh below, so the dim tables made from the old
+     * ones are void, and the GCs hold the layers' own colours again */
+    xctx->sel_dim_built = 0;
+    xctx->sel_dim_applied = 0;
     if(tclgetboolvar("dark_colorscheme")) {
       tcleval("llength $dark_colors");
       if(atoi(tclresult())>=cadlayers){

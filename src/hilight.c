@@ -852,7 +852,9 @@ int hilight_custom_rgb8(int value, unsigned char *r, unsigned char *g, unsigned 
 static unsigned int hilight_pixel_of(int value, NetHilightStyle *st)
 {
   if(value < 0) return xctx->color_index[(-value) % cadlayers];
-  return (st->color_layer >= 0) ? xctx->color_index[st->color_layer] : st->color;
+  /* a layer's pixel is the dim one inside a dim draw (sel_dim_apply(), xinit.c); a style's own
+   * colour is in no layer's table and is dimmed here */
+  return (st->color_layer >= 0) ? xctx->color_index[st->color_layer] : sel_dim_pixel(st->color);
 }
 
 /* Resolve a net hilight value to its X pixel color (used for both the wire body and
@@ -4301,8 +4303,14 @@ void draw_hilight_net(int on_window)
  Instentry *instanceptr;
  Hilight_hashentry *entry;
  Iterator_ctx ctx;
+ int dimmed;
 
  if(!xctx->hilight_nets) return;
+ /* called on its own (a net just highlighted) over a frame that was painted dim: the highlight
+  * is part of that frame and takes its colours (selection dim, sel_dim_enter() in xinit.c).
+  * Inside draw() the dim colours are in already and this does nothing. A frame that is dim
+  * around the highlights keeps them in their own colours, inside draw() and here. */
+ dimmed = (xctx->sel_dim_drawn == 2) ? 0 : sel_dim_enter(); /* 2: dim AROUND the highlights */
  dbg(3, "draw_hilight_net(): xctx->prep_hi_structs=%d\n", xctx->prep_hi_structs);
  prepare_netlist_structs(0);
  /* Pass 2a blink gate: a style's OFF-phase nets are skipped so the (already-redrawn) underlying
@@ -4411,13 +4419,19 @@ void draw_hilight_net(int on_window)
        * (cairo text) to the style's exact pixel so the symbol takes the style COLOR. Only
        * the color is applied; width/dash/angle are wire-only (symbols are not striped). */
       if(st && st->color_layer < 0 && has_x) {
+        /* inside a dim draw the style's colour is dimmed as the layers' are (selection dim,
+         * sel_dim_pixel() and sel_dim_rgb16() in xinit.c; both leave it alone outside one) */
+        unsigned int cpix = sel_dim_pixel(st->color);
+        unsigned short cr, cg, cb;
         resolve_hilight_style_rgb(st);
+        cr = st->cr; cg = st->cg; cb = st->cb;
+        sel_dim_rgb16(&cr, &cg, &cb);
         save_xc = xctx->xcolor_array[col];
-        XSetForeground(display, xctx->gc[col], st->color);
-        xctx->xcolor_array[col].pixel = st->color;
-        xctx->xcolor_array[col].red   = st->cr;
-        xctx->xcolor_array[col].green = st->cg;
-        xctx->xcolor_array[col].blue  = st->cb;
+        XSetForeground(display, xctx->gc[col], cpix);
+        xctx->xcolor_array[col].pixel = cpix;
+        xctx->xcolor_array[col].red   = cr;
+        xctx->xcolor_array[col].green = cg;
+        xctx->xcolor_array[col].blue  = cb;
         custom = 1;
       }
       symptr = (xctx->inst[i].ptr+ xctx->sym);
@@ -4472,6 +4486,7 @@ void draw_hilight_net(int on_window)
  if(xctx->draw_pixmap && xctx->cairo_save_ctx) cairo_surface_flush(xctx->cairo_save_sfc);
 #endif
  xctx->draw_window = save_draw;
+ sel_dim_leave(dimmed);
 }
 
 /* show == 0   ==> create pins from highlight nets */

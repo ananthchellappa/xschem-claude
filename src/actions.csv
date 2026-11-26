@@ -159,7 +159,7 @@ tools.execute_tcl_command,command,tools,Execute TCL command,=,tclcmd,,,Execute T
 tools.join_trim_wires,command,tools,Join/Trim wires,&,xschem trim_wires,,,Join/Trim wires,
 tools.break_wires_at_selected_instance_pins,command,tools,Break wires at selected instance pins,!,xschem break_wires,,,Break wires at selected instance pins,
 tools.remove_wires_running_through_selected_inst_pins,command,tools,Remove wires running through selected inst. pins,Ctrl-!,xschem break_wires 1,,,Remove wires running through selected inst. pins,
-tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Alt-Shift-Right Butt.,xschem wire_cut noalign,,,Break wires at mouse position,
+tools.break_wires_at_mouse_position,command,tools,Break wires at mouse position,Super-Shift-Right Butt.,xschem wire_cut noalign,,,Break wires at mouse position,
 tools.break_wires_at_mouse_position_align_cut_point,command,tools,"Break wires at mouse position, align cut point",Alt-Right Butt.,xschem wire_cut,,,"Break wires at mouse position, align cut point",
 tools.select_all_connected_wires_labels_pins,command,tools,Select all connected wires/labels/pins,Shift-Right Butt.,xschem connected_nets,,,Select all connected wires/labels/pins,
 tools.select_conn_wires_stop_at_junctions,command,tools,"Select conn. wires, stop at junctions",Ctrl-Right Butt.,xschem connected_nets 1,,,"Select conn. wires, stop at junctions",
@@ -173,6 +173,9 @@ view.zoom_in,command,view,Zoom In,Shift+Z,xschem zoom_in,,,Zoom In,
 view.zoom_out,command,view,Zoom Out,Ctrl+Z,xschem zoom_out,,,Zoom Out,
 view.zoom_box,command,view,Zoom box,Z,xschem zoom_box,,,Zoom box,,1
 view.toggle_colorscheme,command,view,Toggle colorscheme,Shift+O,xschem toggle_colorscheme,,,Toggle colorscheme,
+view.toggle_selection_dim,command,view,Dim unselected objects,Ctrl+Alt+Shift+D,xschem toggle_selection_dim,,,Dim everything that is not selected so the selection stands out (toggle),
+view.selection_dim_percent,command,view,Dimming amount,,selection_dim_percent_ask,,,Set how far the unselected objects are dimmed (percent),,1
+view.selection_dim_peek,command,view,Dim unselected objects while held,Alt+Shift+Right Butt.,,,,Hold to dim everything that is not selected; release to restore,
 view.dim_colors,command,view,Dim colors,,color_dim,,,Dim colors,
 view.change_current_layer_color,command,view,Change current layer color,,change_color,,,Change current layer color,
 view.reset_all_colors_to_default,command,view,Reset all colors to default,,reset_colors 1,,,Reset all colors to default,

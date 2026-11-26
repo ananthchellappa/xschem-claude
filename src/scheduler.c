@@ -5609,6 +5609,54 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
               xctx->sel_halo_px, xctx->sel_box_px);
             Tcl_SetResult(interp, s, TCL_VOLATILE);
           }
+          else if(!strcmp(argv[2], "selection_dim")) {
+            /* The selection dim as this context has it (doc/claude/specs/selection_dim.md):
+             * "wanted <0|1|2> drawn <0|1|2> applied <0|1> hold <0|1> percent <n> built <-1|n>
+             * selected <n> stale <0|1>". wanted: what the next full draw would paint (0 plain,
+             * 1 dim around the selection, 2 dim around the highlights); drawn: what the frame in
+             * the window was painted as; applied: the dim colours are in the layer GCs right
+             * now (1 only inside draw()); hold: the peek button is down; percent:
+             * selection_dim_percent as read now; built: the percent the dim colour tables
+             * were made for, -1 when there are none; stale: a painter outside draw() put
+             * undimmed strokes into the dim frame and the repaint is still to come (always 0
+             * by the time a command has returned). Introspection for
+             * tests/headless/test_selection_dim_1769.tcl. */
+            char s[200];
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            rebuild_selected_array();
+            my_snprintf(s, S(s),
+              "wanted %d drawn %d applied %d hold %d percent %d built %d selected %d stale %d",
+              sel_dim_wanted(), xctx->sel_dim_drawn, xctx->sel_dim_applied, xctx->sel_dim_hold,
+              sel_dim_percent(), xctx->sel_dim_built ? xctx->sel_dim_pct : -1, xctx->lastsel,
+              xctx->sel_dim_stale);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
+          else if(!strcmp(argv[2], "selection_dim_color")) {
+            /* xschem get selection_dim_color <layer>: the colour layer <layer> is painted in
+             * inside a dim draw, as #rrggbb, from the tables as they would be built for the
+             * percent read now. Does not build or change them. For the same suite. */
+            char s[32];
+            int l, pct;
+            unsigned int c[3], k[3], j;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc < 4 || (l = atoi(argv[3])) < 0 || l >= cadlayers) {
+              Tcl_SetResult(interp, "xschem get selection_dim_color: give a layer number", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            if(!has_x) {
+              Tcl_SetResult(interp, "xschem get selection_dim_color: needs a display", TCL_STATIC);
+              return TCL_ERROR;
+            }
+            pct = sel_dim_percent();
+            c[0] = xctx->xcolor_array[l].red >> 8; c[1] = xctx->xcolor_array[l].green >> 8;
+            c[2] = xctx->xcolor_array[l].blue >> 8;
+            k[0] = xctx->xcolor_array[BACKLAYER].red >> 8; k[1] = xctx->xcolor_array[BACKLAYER].green >> 8;
+            k[2] = xctx->xcolor_array[BACKLAYER].blue >> 8;
+            if(l != BACKLAYER) for(j = 0; j < 3; ++j)
+              c[j] = (c[j] * (unsigned int)(100 - pct) + k[j] * (unsigned int)pct + 50u) / 100u;
+            my_snprintf(s, S(s), "#%02x%02x%02x", c[0], c[1], c[2]);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "semaphore")) { /* used for debug */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, my_itoa(xctx->semaphore),TCL_VOLATILE);
@@ -13886,6 +13934,13 @@ static int xschem_cmds_s(Tcl_Interp *interp, int argc, const char *argv[], int *
           else if(!strcmp(argv[2], "text_svg")) { /* set to 1 to use svg <text> elements */
             text_svg=atoi(argv[3]);
           }
+          else if(!strcmp(argv[2], "selection_dim")) { /* dim everything that is not selected */
+            /* the absolute form of `xschem toggle_selection_dim`, and what that command writes
+             * to the action log (sel_dim_toggle(), xinit.c). Only the Tcl variable is set: the
+             * frame follows when this command returns (sel_dim_sync()). A view setting, so no
+             * read-only guard and no log line of its own, as `set enable_stretch` above. */
+            tclsetboolvar("selection_dim", atoi(argv[3]) ? 1 : 0);
+          }
           else if(!strcmp(argv[2], "semaphore")) { /* debug */
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             dbg(1, "scheduler(): set semaphore to %s\n", argv[3]);
@@ -15202,6 +15257,16 @@ static int xschem_cmds_t(Tcl_Interp *interp, int argc, const char *argv[], int *
       Tcl_ResetResult(interp);
     }
 
+    /* toggle_selection_dim
+     *   Toggle the dimming of everything that is not selected (the selection_dim
+     *   setting; doc/claude/specs/selection_dim.md). Default key Ctrl-Alt-Shift-D. */
+    else if(!strcmp(argv[1], "toggle_selection_dim"))
+    {
+      if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+      sel_dim_toggle();
+      Tcl_ResetResult(interp);
+    }
+
     /* toggle_show_netlist
      *   Toggle showing the netlist window when netlisting */
     else if(!strcmp(argv[1], "toggle_show_netlist"))
@@ -16474,6 +16539,12 @@ int xschem(ClientData clientdata, Tcl_Interp *interp, int argc, const char * arg
   } /* switch */
   /* issue 1716: the verb is done -- did it orphan a live fluid drag and leave its document in place?
    * Before the cache drop below, so any read the declaration makes cannot outlive this command. */
+  /* selection dim (doc/claude/specs/selection_dim.md): the outermost verb is done; if it emptied
+   * the selection, made one, or changed the setting, the frame in the window is repainted to
+   * match. Three tests and out while the feature is not in use (sel_dim_sync(), xinit.c).
+   * BEFORE the depth goes to 0: the repaint evaluates Tcl (a symbol's tcleval() text), that Tcl
+   * runs xschem commands, and each of them must come back to a depth of 1 and not to this line. */
+  if(xschem_depth == 1) sel_dim_sync();
   if(--xschem_depth == 0) fluid_reroute_orphan_check();
   cadsnap_cache_ok = 0; /* invalidation 4 of tclgetcadsnap(), above: on the way out as well */
   if(retcode != TCL_OK) return retcode;

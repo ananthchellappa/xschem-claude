@@ -40,8 +40,14 @@ Alt + RightButton       Cut wire at mouse position (creates 2 adjacent wires)
                         aligns the cut point to current snap setting.
 
 Alt + Shift + RightButton
+                        Held down: dim everything that is not selected, so the
+                        selection stands out; released: back to normal.
+                        (see also Ctrl + Alt + Shift 'D')
+
+Super + Shift + RightButton
                         Cut wire at mouse position (creates 2 adjacent wires)
                         does not align cut point to current snap setting.
+                        (also Tools -> Break wires at mouse position)
 
 
 Mouse Wheel             Zoom in / out
@@ -113,6 +119,7 @@ shift+ctrl  'C'         Start circle placement
 ctrl        'd'         Delete files
 -           'd'         Unselect selected object under the mouse pointer
 shift       'D'         Unselect selected objects by area
+ctrl+alt+shift 'D'      Toggle dimming of everything that is not selected (View -> Dim unselected objects)
 ctrl        'e'         Back to parent schematic
 -           'e'         Descend to schematic
 alt+shift   'E'         Edit selected schematic in a new window, new xschem process

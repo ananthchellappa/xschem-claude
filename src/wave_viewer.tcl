@@ -20349,10 +20349,25 @@ proc wviewer::install_default_binds {} {
   # case; what Caps Lock does to them is decided by wviewer::case_key below,
   # not by how they are spelled. Collision
   # check (2026-10-15): no `bind` of either chord in src/*.tcl or
-  # cadence_style_rc; src/keybindings.csv has no row for keysym 68 or 71; and
+  # cadence_style_rc; src/keybindings.csv had no row for keysym 68 or 71 (it has
+  # one for 68 since issue 1769, Ctrl-Alt-Shift-D, which the lines after this
+  # bind keep away from it); and
   # neither is in key_filter's `graphkeys`, so nothing is forwarded to C.
   if {[bind WaveViewer <Control-Shift-Key-D>] eq {}} {
     bind WaveViewer <Control-Shift-Key-D> {wviewer::clear_target_subwin_at %W; break}
+  }
+  # Ctrl-Alt-Shift-D is the schematic editor's toggle for dimming what is not selected
+  # (doc/claude/specs/selection_dim.md). A Tk sequence matches a key that carries MORE
+  # modifiers than it names, so the line above would take that chord in a viewer and
+  # clear the target strip. These name the Alt as well, which makes them the closer
+  # match: the chord flips the editor's setting here as it does there, and a viewer
+  # window itself is never dimmed. The letter as typed decides, as for every chord of
+  # this file (wviewer::case_pairs): the capital D is typed with Shift, or with Caps
+  # Lock on and no Shift, and a server gives that second one either keysym.
+  foreach wv_seq {<Control-Alt-Shift-Key-D> <Control-Alt-Lock-Key-D> <Control-Alt-Lock-Key-d>} {
+    if {[bind WaveViewer $wv_seq] eq {}} {
+      bind WaveViewer $wv_seq {xschem toggle_selection_dim; break}
+    }
   }
   if {[bind WaveViewer <Control-Shift-Key-G>] eq {}} {
     bind WaveViewer <Control-Shift-Key-G> {wviewer::grid_toggle_subwin_at %W; break}

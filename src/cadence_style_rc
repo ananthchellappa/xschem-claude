@@ -443,6 +443,13 @@ bind .drw <Control-Shift-Key-4> {ase::plot_mode_for_current invert; break}
 # here does, so the key goes no further. Like every bind in this file these are
 # invisible to keybindings.csv: remap by editing the chord on the line.
 bind .drw <Alt-Key-D>           {ase::plot_difference_for_current tran; break}
+# Ctrl-Alt-Shift-D switches the dimming of what is not selected on and off
+# (built in; see "Dim what is not selected" further down). A Tk sequence also
+# matches a key that carries MORE modifiers than it names, so the Alt-Shift-D
+# line above would take that chord as well and plot a difference instead. This
+# line names the Control too, which makes it the closer match, and it hands the
+# key on to the canvas, where the toggle is bound.
+bind .drw <Control-Alt-Key-D>   {xschem callback %W %T %x %y %N 0 0 %s; break}
 # bind .drw <Alt-Key-A>           {ase::plot_difference_for_current ac;   break}
 # bind .drw <Alt-Key-S>           {ase::plot_difference_for_current dc;   break}
 # 6 / Ctrl-6 / Alt-6 : OPERATING-POINT ANNOTATION MODE (doc/claude/specs/op_annotation.md
@@ -836,6 +843,32 @@ source [file join $_ut display.tcl]
 bind .drw <Key-F5> {if {%s & 8} {xschem callback %W %T %x %y %N 0 0 %s} \
                     else {apply_hilight {color purple thickness 3 pattern {20 20}}}; break}
 unset _ut
+
+# --- Dim what is not selected -------------------------------------------------
+# With this on, as soon as anything is selected the rest of the schematic is
+# drawn dimmer, so the selection is what the eye finds; with nothing selected
+# the schematic looks as usual. It is OFF by default. Ctrl-Alt-Shift-D switches
+# it on and off while you work, and so do View > Dim unselected objects and the
+# Command Palette (Ctrl-Shift-P, type "dim"). To start with it on, uncomment:
+# set selection_dim 1
+#
+# How much dimmer, in percent: 0 leaves everything as it is, 100 makes what is
+# not selected disappear. The default is 30. View > Dimming amount changes it
+# for the session; to start with another amount, uncomment and edit:
+# set selection_dim_percent 30
+#
+# Whatever the setting above says, holding Alt-Shift-RightButton dims for as
+# long as the button is down: the quick way to find what a Find, or any other
+# command, has just selected. With nothing selected it brings out what is
+# highlighted instead, which is what a Find in its Highlight mode leaves.
+# Let go and the schematic is back.
+# That chord used to cut the wire under the pointer without aligning the cut
+# to the snap grid. The cut is still Tools > Break wires at mouse position; to
+# give it its chord back (the hold-to-dim then has none), uncomment:
+# xschem unbind button 3 alt+shift canvas
+#
+# Use `set`, not `set_ne`, as everywhere in this file: xschem.tcl has already
+# run set_ne on both variables by the time this rc is sourced.
 
 # ASE-L shows values in engineering notation (e.g. 104u). To recover
 # scientific notation, uncomment:

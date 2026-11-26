@@ -5078,7 +5078,18 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   worktree: no checkout holds 1768, and `~/private/xschem-private` leaves 1768 and 1769 to
   this clone (its pointer stands at 1773).
 
-**The next free number is 1769.**
+~~**The next free number is 1769.**~~
+- **1769**: the schematic editor could not dim what is not selected. It can now: a setting
+  (`selection_dim`, off by default, Ctrl-Alt-Shift-D) that dims everything else whenever
+  something is selected, an amount (`selection_dim_percent`, 30), and a peek that dims while
+  Alt-Shift-RightButton is held (the user's request of 2026-11-25). Added by the change that
+  adds its issue file. Minted 2026-11-25 after the two checks of CLAUDE.md and a look into
+  every worktree: no checkout holds 1769, the last of the numbers `~/private/xschem-private`
+  left to this clone. That clone holds 1770 to 1772 and its own pointer read 1773 that hour,
+  the number this clone's pointer now reads too: whichever clone mints next takes it after
+  the two checks, and the other skips it.
+
+**The next free number is 1773.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

@@ -326,7 +326,9 @@ static int ps_embedded_graph(int i, double rx1, double ry1, double rx2, double r
   tclsetboolvar("dark_colorscheme", 0);
   build_colors(0, 0);
   setup_graph_data(i, 0, &xctx->graph_struct);
+  xctx->sel_dim_export++; /* selection dim: the graph goes into an export, never dim */
   draw_graph(i, 8 + (xctx->graph_flags & (4 | 2 | 128 | 256)), &xctx->graph_struct, NULL);
+  xctx->sel_dim_export--;
 
   dbg(1, "width=%d, rwi=%d height=%d rhi=%d\n", xctx->xrect[0].width, rwi, xctx->xrect[0].height, rhi);
   #ifdef __unix__

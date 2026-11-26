@@ -5994,6 +5994,12 @@ static int act_toggle_colorscheme(const ActionEvent *e) {
   draw();
   return 1;
 }
+/* selection dim (doc/claude/specs/selection_dim.md). The toggle flips the selection_dim
+ * setting; the peek dims while its button is down, whatever the setting says, and ends in
+ * handle_button_release(). Neither paints: the frame follows when the `xschem callback` that
+ * brought the event returns (sel_dim_sync(), xinit.c). */
+static int act_toggle_selection_dim(const ActionEvent *e) { (void)e; sel_dim_toggle(); return 1; }
+static int act_selection_dim_peek(const ActionEvent *e) { (void)e; sel_dim_peek(1); return 1; }
 /* Phase 3d.2 batch 3 — clean canvas-only command keys. Each replicates its switch
  * branch verbatim (multi-statement tcl-var toggle / C-flag toggle), reading the
  * source of truth rather than any handle_key_press parameter. */
@@ -6377,6 +6383,14 @@ static ActionDef action_registry[] = {
   { "view.toggle_show_netlist", act_toggle_show_netlist, NULL, "Toggle the show-netlist window" },
   { "edit.toggle_orthogonal_wiring", act_toggle_orthogonal_wiring, NULL, "Toggle orthogonal (manhattan) wiring" },
   { "view.toggle_draw_pixmap", act_toggle_draw_pixmap, NULL, "Toggle pixmap (off-screen) drawing" },
+  /* selection dim (doc/claude/specs/selection_dim.md). Both C-backed and neither mutates: a
+   * read-only window dims too. The toggle logs the state it reaches (sel_dim_toggle()); the
+   * peek changes nothing a replay could want, and its csv row has no command, so it is not
+   * logged. Default chords Ctrl-Alt-Shift-D and Alt-Shift-RightButton, init_input_bindings(). */
+  { "view.toggle_selection_dim", act_toggle_selection_dim, NULL,
+    "Dim everything that is not selected (toggle)" },
+  { "view.selection_dim_peek", act_selection_dim_peek, NULL,
+    "Dim everything that is not selected while the button is held" },
   { "tools.execute_tcl_command", NULL, "tclcmd", "Open the Tcl command console" },
   /* tools.raise_ciw: raise (or open) the CIW command window. Tcl-backed -- ciw_create
    * builds the CIW, or deiconifies + raises it if it already exists. Default chord
@@ -6636,6 +6650,12 @@ static void init_input_bindings(void)
   /* Ctrl+Middle-click cycles the pin direction/type while placing (schematic_add_pin.md).
    * Button2-pan requires state==0, so this exact-Ctrl chord never collides with the pan. */
   set_input_binding(DEV_BUTTON, Button2,   ControlMask, ACTX_CANVAS, "edit.cycle_pin_type");
+  /* selection dim (doc/claude/specs/selection_dim.md): Alt-Shift-RightButton held is the
+   * peek. The chord was upstream's "cut the wire under the pointer, cut point not aligned",
+   * hard-coded in handle_button_press(); that branch now asks this table first, so the row
+   * below is what moved the cut off the chord, and `xschem unbind button 3 alt+shift canvas`
+   * is what puts it back. The cut keeps its menu entry (Tools) and its Super-Shift chord. */
+  set_input_binding(DEV_BUTTON, Button3, Mod1Mask|ShiftMask, ACTX_CANVAS, "view.selection_dim_peek");
   /* ⚠ THESE FOUR ROWS ARE UNREACHABLE, and the claim they used to carry
    * ("Ctrl-wheel never did, so it has no over_graph row and stays canvas pan")
    * was wrong over a graph -- landmine 48 in
@@ -6835,6 +6855,17 @@ static void init_input_bindings(void)
    * started from inside another callback that is still running is not one. */
   set_input_binding_idle(DEV_KEY, 'R', ControlMask|Mod1Mask, ACTX_CANVAS,
                          "ase.netlist_and_run");
+  /* selection dim (doc/claude/specs/selection_dim.md): Ctrl-Alt-Shift-D toggles the
+   * selection_dim setting. As the row above: the shift is in the keysym, so the chord is
+   * 'D' == keysym 68 with ControlMask|Mod1Mask, and a test drives <Control-Mod1-Key-D> or
+   * the callback with state 13. In C nothing collides: `case 'D'` of the switch has an arm for
+   * rstate == 0 only (deselect by area), and Ctrl-d (delete files) is the lower-case keysym.
+   * In Tk two sequences would take the chord before it gets here, since a sequence matches a
+   * key that carries more modifiers than it names: the Cadence profile's <Alt-Key-D> on the
+   * canvas and the waveform viewer's <Control-Shift-Key-D>. Each has a closer match beside it
+   * now (src/cadence_style_rc; wviewer::install_default_binds in src/wave_viewer.tcl).
+   * Not idle-only: the setting can change at any moment, a move in progress included. */
+  set_input_binding(DEV_KEY, 'D', ControlMask|Mod1Mask, ACTX_CANVAS, "view.toggle_selection_dim");
   /* In-place transforms: Alt-R rotate, Alt-F horizontal flip, Alt-V vertical flip.
    * These were hardcoded `else if(EQUAL_MODMASK)` arms of the switch cases 'r'/'f'/'v';
    * EQUAL_MODMASK is `rstate == Mod1Mask || rstate == Mod4Mask`, so each key needs TWO
@@ -6966,6 +6997,13 @@ static int dispatch_button_chord(int button, int state, int mx, int my)
   ae.mx = mx; ae.my = my; ae.state = state;
   ae.xevent = 0; ae.key = 0; ae.button = button; ae.aux = 0;
   return dispatch_input_action(&ae);
+}
+
+/* 1 when the binding table has a row for this button chord on the canvas */
+static int button_chord_bound(int button, int state)
+{
+  ensure_input_bindings();
+  return find_binding(DEV_BUTTON, button, state, ACTX_CANVAS) != NULL;
 }
 
 /* --- string <-> int helpers for the `xschem bind/unbind/bindings` commands - */
@@ -9442,11 +9480,19 @@ static void handle_button_press(int event, int state, int rstate, KeySym key, in
    {
      break_wires_at_point(xctx->mousex_snap, xctx->mousey_snap, 1);
    }
-   /* break wire at mouse coordinates */
-   else if(!excl && button == Button3 && EQUAL_MODMASK &&
-           (state & ShiftMask) && xctx->semaphore <2)
+   /* break wire at mouse coordinates.
+    * The binding table is asked first: Alt-Shift-RightButton is the selection dim's peek by
+    * default (view.selection_dim_peek, init_input_bindings()), and any action a user binds to
+    * the chord goes the same way. With no row for the chord (Super-Shift, or Alt-Shift after
+    * an `xschem unbind`) it is the cut, as it always was.
+    * A bound chord is taken while a wire or a shape is being drawn too (excl), where the cut
+    * never was: the peek changes nothing in the document, and the Cadence profile leaves the
+    * wire tool armed after every wire (persistent_command). */
+   else if(button == Button3 && EQUAL_MODMASK && (state & ShiftMask) && xctx->semaphore <2 &&
+           (!excl || button_chord_bound(button, state)))
    {
-     break_wires_at_point(xctx->mousex_snap, xctx->mousey_snap, 0);
+     if(!dispatch_button_chord(button, state, mx, my) && !excl)
+       break_wires_at_point(xctx->mousex_snap, xctx->mousey_snap, 0);
    }
    /* select instance and connected nets NOT stopping at wire junctions */
    else if(!excl && button == Button3 && state == ShiftMask && xctx->semaphore <2)
@@ -9874,6 +9920,13 @@ static void handle_button_release(int event, KeySym key, int state, int button, 
      xctx->dblgrow_level_save = xctx->dblgrow_level;
      xctx->dblgrow_level = 0;
    }
+   /* selection dim: the right button that began a peek ends it, whatever is still held with it
+    * and wherever the pointer is by now, and is nothing else: with Alt and Shift let go first
+    * the release would otherwise be a plain one and open the context menu. */
+   if(button == Button3 && xctx->sel_dim_hold) {
+     sel_dim_peek(0);
+     return;
+   }
    if(waves_selected(event, key, state, button)) {
      waves_callback(event, mx, my, key, button, aux, state);
      return;
@@ -10108,6 +10161,17 @@ static void handle_double_click(int event, int state, KeySym key, int button,
     } else {
      if(xctx->semaphore >= 2) return;
      dbg(1, "callback(): DoubleClick  ui_state=%d state=%d\n",xctx->ui_state,state);
+     /* selection dim: Tk hands a double click over as press, release, the double, release,
+      * with no second press, so the second of two quick Alt-Shift-RightButton presses arrives
+      * here and nowhere else. It is a second peek, not a double click: give it the chord's
+      * binding, as the press has it in handle_button_press(). Only a row of the binding table
+      * is run; with the chord unbound a double does what it did, nothing. */
+     if(button == Button3) {
+       int st = state & ~(Button1Mask | Button2Mask | Button3Mask | Button4Mask | Button5Mask);
+       int rst = st & ~ShiftMask;
+       if((rst == Mod1Mask || rst == Mod4Mask) && (st & ShiftMask) &&
+          dispatch_button_chord(button, st, mx, my)) return;
+     }
      if(button==Button1) {
        Selected sel;
        /* Cadence double-click incremental connected-select
@@ -10629,6 +10693,16 @@ int callback(const char *win_path, int event, int mx, int my, KeySym key, int bu
    * size feedback during a move/copy/stretch (issue 0248 landmine 1). Placed AFTER the readout
    * above so the press event itself still shows the message. */
   if(event == ButtonPress) statusmsg_hold_clear();
+
+  /* selection dim: a peek whose release never reached this window (the button came up over a
+   * menu or another application's grab) must not leave the frame dim. The next press or pointer
+   * motion that carries the right button as UP shows it is over. A wheel step, or another button
+   * pressed while the right one is down, carries it as down and leaves the peek alone. The
+   * pointer coming back into the canvas says nothing either way: the <Enter> binding hands its
+   * event over with a state of 0 whatever is held (set_bindings, xschem.tcl), and the motion
+   * that follows it carries the truth. */
+  if(xctx->sel_dim_hold && (event == ButtonPress || event == MotionNotify) &&
+     !(state & Button3Mask)) sel_dim_peek(0);
 
   dbg(2, "key=%d EQUAL_MODMASK=%d, SET_MODMASK=%d\n", key, SET_MODMASK, EQUAL_MODMASK);
 

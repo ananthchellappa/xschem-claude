@@ -331,6 +331,30 @@ startup_quiz::add sel-same-net {
          && [P_sub select_same_net]}
 }
 
+startup_quiz::add sel-dim {
+  type mc  kind howto  topic {Selection}
+  q   {A Find has just selected something somewhere in a busy schematic. Which gesture dims
+       everything else for as long as you hold it, so that the selection stands out?}
+  a   {{Hold Alt-Shift and the right mouse button}
+       {Hold Ctrl and the right mouse button}
+       {Press and hold the D key}
+       {Double-click an empty spot of the canvas}}
+  ok  0
+  why {Alt-Shift-RightButton held down dims what is not selected until the button comes up;
+       with nothing selected it brings out what is highlighted, as a Find in Highlight mode
+       leaves it. Ctrl-Alt-Shift-D, or View > Dim unselected objects, keeps the dimming on whenever
+       something is selected. View > Dimming amount sets how much (30 percent by default).
+       In an rc file: set selection_dim 1.}
+  proof {[P_bind button 3 shift+alt canvas view.selection_dim_peek]
+         && [P_bind key 68 ctrl+alt canvas view.toggle_selection_dim]
+         && [P_action view.selection_dim_peek] && [P_palette view.toggle_selection_dim]
+         && [P_label view.toggle_selection_dim {Dim unselected objects}]
+         && [P_sub toggle_selection_dim]
+         && [P_default selection_dim 0] && [P_default selection_dim_percent 30]
+         && [P_has src/xschem.tcl {add checkbutton -label "Dim unselected objects" -variable selection_dim}]
+         && [P_has src/xschem.tcl {add cascade -label "Dimming amount"}]}
+}
+
 # ---------------------------------------------------------------------- Highlight
 startup_quiz::add nh-save {
   type mc  kind howto  topic {Net highlight}
