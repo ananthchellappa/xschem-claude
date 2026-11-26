@@ -929,8 +929,15 @@ foreach p {switch_ctx capture_live_view_state regenerate} {
 set awf [file join $repo src ase_window.tcl]
 if {[file isfile $awf]} {
   set f [open $awf r]; set awtxt [read $f]; close $f
+  # Issue 1765: ase::ui::auto_plot needs the session's VCDs twice (the keep of an
+  # earlier run asks for them before the load), so it reads them once into `vcds`
+  # and hands that to attach_raw. The pin holds each site by its own spelling:
+  # dp_finish's call with the reader inline, auto_plot's with the variable, and
+  # the one line that fills the variable from the reader.
   eqcheck WV9-both-call-sites-pass-vcds \
-    [regexp -all {wviewer::attach_raw \$key \$rf \$sim_t \[ase::last_vcdfiles \$key\]} $awtxt] 2
+    [list [regexp -all {wviewer::attach_raw \$key \$rf \$sim_t \[ase::last_vcdfiles \$key\]} $awtxt] \
+          [regexp -all {wviewer::attach_raw \$key \$rf \$sim_t \$vcds \$leave 1} $awtxt] \
+          [expr {[regexp -all {set vcds \[ase::last_vcdfiles \$key\]} $awtxt] >= 1}]] {1 1 1}
 } else {
   puts "SKIPPED: WV9 (src/ase_window.tcl not found from $repo)"
 }

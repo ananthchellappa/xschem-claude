@@ -373,9 +373,11 @@ check {BX12 ...exactly once, and right after Launch ASE-L (Tools stays one ASE b
 # plot mode of the target subwindow) and its Options > Plot Mode twin.
 set bx_fp [open [file join $repo tests headless test_wave_grid.tcl] r]
 set bx_gsrc [read $bx_fp]; close $bx_fp
-check {BX13 test_wave_grid's GH0 literals are 21/16 (item 12 added none)} \
-  [list [regexp {\[llength \$gh_seqs\] 21} $bx_gsrc] \
-        [regexp {\[llength \$gh_menus\] 16} $bx_gsrc]] \
+# ⚠ WIDENED IN PLACE again 2026-11-25 (issue 1766): 21/16 -> 22/17, for Ctrl-R
+# (Reload) and its File > Reload twin.
+check {BX13 test_wave_grid's GH0 literals are 22/17 (item 12 added none)} \
+  [list [regexp {\[llength \$gh_seqs\] 22} $bx_gsrc] \
+        [regexp {\[llength \$gh_menus\] 17} $bx_gsrc]] \
   [list 1 1]
 set bx_fp [open [file join $repo doc waveform_viewer_guide.html] r]
 set bx_gd [read $bx_fp]; close $bx_fp

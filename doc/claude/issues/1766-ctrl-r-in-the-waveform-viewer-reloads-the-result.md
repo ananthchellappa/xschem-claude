@@ -76,7 +76,9 @@ Ctrl-R was the example key of an rc remap (bound to Clear All) in the viewer's c
 the user guide, the spec, and rows CG6 of `test_wave_clear_all` and KM19 of
 `test_wave_viewer`, which bound it as a key of their own and removed it afterwards. All
 of them now use Ctrl-K. The guide's key table has the row for Reload, so its counts moved
-(GH0 of `test_wave_grid`, BT09 of `test_wave_sigbrowser`: 22 keys, 17 accelerators).
+(GH0 of `test_wave_grid`, BT09 of `test_wave_sigbrowser`, and in two suites the
+regression does not run, BX13 of `test_wave_sigbrowser_i12` and BK10 of
+`test_wave_sigbrowser_keys`: 22 keys, 17 accelerators).
 
 ## Breaks
 
@@ -85,8 +87,8 @@ with `--nogui` (2026-11-25).
 
 | | what was broken | rows that turn red |
 |---|---|---|
-| b16 | the reload does not put kept traces back | RL3, RL4, RL5, RL6, RL7 |
-| b17 | Ctrl-R is not bound | RL1, RL2, RL3, RL4, RL5, RL7, RL8, RL9 |
+| b16 | the reload does not put kept traces back | RL3, RL4, RL5, RL6, RL7, RL12 |
+| b17 | Ctrl-R is not bound | RL1 to RL5, RL7 to RL12 |
 | b18 | the reload reads what the window attached last, not the session's result | RL7 |
 | b19 | the reload is not logged | RL2, RL6 |
 | b24 | the File menu has no Reload | RL1, RL6 |
@@ -95,6 +97,10 @@ with `--nogui` (2026-11-25).
 | c11 | the reload reads while a run is live | RL10 |
 | c12 | the reload says "reloaded" whatever was read | RL11 |
 | c13 | a failed read drops the copy that was loaded | RLP3, RL11 |
+
+Breaks of issue 1765's suite that also turn rows of this one red: a finished run that
+keeps nothing, a load that drops the kept data, and a finished run plotted as the user's
+(RL3, RL11, RL12 each).
 
 ## The builder's choices (not ruled by the user)
 

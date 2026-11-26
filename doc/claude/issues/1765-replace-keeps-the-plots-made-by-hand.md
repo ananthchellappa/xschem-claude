@@ -189,6 +189,16 @@ Rows of other suites that stated the rule this replaces were rewritten:
   nothing ticked.
 - `test_ase_saved_results_1705` SVR-D1 classifies `ase::ui::reload_source` (issue 1766) as
   a reader that follows the result in view.
+- `test_ase_cosim` WV9, a suite the regression does not run (found when the change was
+  carried to the other tree, where it is run): the pin on "both call sites hand the
+  session's VCDs to the load" counted one spelling of the call; `ase::ui::auto_plot` now
+  hands them through a variable, and the pin holds each site by its own spelling.
+
+The suites the regression does not run were then compared, the ones that name anything
+this change touched (37 of them), in this tree and in a clone of the commit before it:
+one more row had moved, with its twin (BX13 of `test_wave_sigbrowser_i12`, BK10 of
+`test_wave_sigbrowser_keys`: the guide's key counts, issue 1766). Eight of those suites
+are red or time out in both trees and were left as they are.
 
 The bank questions are `ase-replace-keeps-hand-plots` and `ase-auto-plot-after-sim`;
 `ase-dest` was corrected.
@@ -200,20 +210,20 @@ with `--nogui` (2026-11-25). Rows are this suite's unless another suite is named
 
 | | what was broken | rows that turn red |
 |---|---|---|
-| b1 | Replace empties the subwindow again | RK2, RK3, RK4, RK5, RK6, RK7, RK8, RK12 |
-| b2 | ASE-L's traces are not marked | RK1, RK2, RK3, RK5, RK6, RK7, RK11, RK12 |
+| b1 | Replace empties the subwindow again | RK2 to RK8, RK12 to RK19 |
+| b2 | ASE-L's traces are not marked | RK1, RK2, RK3, RK5, RK6, RK7, RK11, RK12, RK14, RK15, RK16, RK17, RK19 |
 | b3 | an auto strip from before the marks keeps its traces | RP1, RP3 |
-| b4 | a finished run keeps nothing | RK3, RK4, RK6, RK7, RK12 |
-| b5 | `~` does not put kept traces back | RK5, RK6, RK7, RK12 |
-| b6 | a load drops the kept data | RK3, RK4, RK6, RK7, RK12 |
+| b4 | a finished run keeps nothing | RK3, RK4, RK6, RK7, RK12 to RK17, RK19 |
+| b5 | `~` does not put kept traces back | RK5, RK6, RK7, RK12, RK13, RK14, RK16, RK19 |
+| b6 | a load drops the kept data | RK3, RK4, RK6, RK7, RK12 to RK17 |
 | b7 | the state is saved with the kept names | RK3 |
 | b8 | undo brings back a pin to data that is gone | RK7 |
 | b9 | a finished run plots whatever the option says | RP5, RK8 |
-| b10 | a finished run plots as the user | RP5, RK3, RK4, RK6, RK7, RK11, RK12 |
+| b10 | a finished run plots as the user | RP5, RK3, RK4, RK6, RK7, RK11 to RK17, RK19 |
 | b11 | a surplus auto strip is removed with its hand trace | RP3 |
 | b12 | a target on a removed strip is carried to the next strip | RP3 |
 | b13 | a strip left empty keeps its stored Y | RP3 |
-| b14 | a kept trace's legend says nothing | RK3 |
+| b14 | a kept trace's legend says nothing | RK3, RK19 |
 | b15 | a pasted copy keeps the mark | RP7 |
 | b20 | the option is written at its default | RP4, RK9 |
 | b21 | `~` with nothing ticked reads nothing | RK11 |
@@ -233,7 +243,9 @@ with `--nogui` (2026-11-25). Rows are this suite's unless another suite is named
 | c15 | the run-end plot does not settle after its load | RK17 |
 
 b22 and b25 turned no row red at first; rows were added (RK2's same-data row, RK9's
-status-refresh row) and the breaks run again.
+status-refresh row) and the breaks run again. The b breaks were measured twice: on the
+first cut, and again on the tree as committed, after the review's repairs and their rows;
+the table is the second measurement.
 
 ## The builder's choices (not ruled by the user)
 

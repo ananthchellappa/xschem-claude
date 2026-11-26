@@ -217,14 +217,16 @@ check {BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
 # `bind WaveViewer` defaults with Graph-menu twins.
 # ⚠ WIDENED IN PLACE again 2026-11-21: 20/15 -> 21/16, for Ctrl-Shift-M (the
 # plot mode of the target subwindow) and its Options > Plot Mode twin.
+# ⚠ WIDENED IN PLACE again 2026-11-25 (issue 1766): 21/16 -> 22/17, for Ctrl-R
+# (Reload) and its File > Reload twin.
 check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide has
-       twenty-one data-seq rows and sixteen menu/accel pairs, and
+       twenty-two data-seq rows and seventeen menu/accel pairs, and
        test_wave_grid pins exactly those two numbers} \
   [list [regexp -all {data-seq="} $gsrc] \
         [regexp -all {data-menu="[^"]*" data-accel="[^"]*"} $gsrc] \
-        [regexp {\[llength \$gh_seqs\] 21} $gridsrc] \
-        [regexp {\[llength \$gh_menus\] 16} $gridsrc]] \
-  {21 16 1 1}
+        [regexp {\[llength \$gh_seqs\] 22} $gridsrc] \
+        [regexp {\[llength \$gh_menus\] 17} $gridsrc]] \
+  {22 17 1 1}
 
 # ============================================================================
 # BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the
