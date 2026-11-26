@@ -14,6 +14,33 @@ Newest entries on top.
 
 ---
 
+## Q109. I double-click a transistor and the net label sitting right on its pin is not selected. Should it be?
+
+- **Asked:** 2026-11-25 (the user's report)
+- **Project state:** branch `dblgrow-pin-labels` on `fluid-editing` at `540e4e56a`, issue 1767
+  (`doc/claude/specs/dblclick_connected_select.md`, "Ruling of 2026-11-25").
+
+**Yes, and it is now.** Under the Cadence-style profile a double click on a device selects
+the device, the wires at its pins and the net-name labels on those wires (Q96). A net-name
+label placed straight on one of the device's pins, with no wire in between, was left out.
+It is taken now, from the first double click on, and `xschem select_grow_connected` does
+the same.
+
+- **Which labels:** the ones Q96 lists (`lab_pin`, `lab_wire`, `lab_generic`,
+  `bus_connect`, and any `label` symbol that is not a global). The power symbols (`vdd`,
+  `gnd`) and ports on a pin are still left, as they are on a wire.
+- **Exactly on the pin.** A label that is only near the pin, on no wire, is not connected
+  and is not taken.
+- **Only the pins of what is selected.** Double-click a wire that ends on one pin of a
+  device: the device is not selected (the grow never selects a device), so a label on
+  another of its pins is not taken. Double-click the device for that.
+- **Two labels on one point** with no wire under them go together, whichever you
+  double-click.
+- **Delete** after the double click removes the device, its wires and those labels; one
+  undo brings them back. A move takes the label along with the pin it sits on. `q` still
+  opens the device's form.
+- An action log recorded earlier replays with these labels selected too.
+
 ## Q108. The simulation ran again and one trace in the viewer still shows the old numbers. How do I bring it up to date?
 
 - **Asked:** 2026-11-25 (the user's request)
@@ -483,6 +510,7 @@ select_grow_connected x y` and the form without coordinates do the same.
     select_same_net`).
   - **a label that sits directly on a device pin with no wire under it**, when you
     double-click the device: the rule is about wires.
+    (Changed 2026-11-25: that label is taken now, Q109.)
   - **a wire that only crosses** a selected wire without sharing an end point,
     even when a label sits on the crossing: the label is taken, the crossing wire
     is not.

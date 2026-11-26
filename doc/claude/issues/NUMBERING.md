@@ -5061,7 +5061,15 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   no checkout holds 1765 or 1766. `~/private/xschem-private`'s worktrees had written
   "1761 to 1769: skipped here, left to the public clone" and stood at 1773 that hour.
 
-**The next free number is 1767.**
+~~**The next free number is 1767.**~~
+- **1767**: the double-click grow of the Cadence profile left out a net-name label that
+  sits straight on a pin of the device that was double-clicked, with no wire between
+  them; it is taken now, at every level (the user's report of 2026-11-25). Added by the
+  change that adds its issue file. Minted 2026-11-25 after the two checks of CLAUDE.md and
+  a look into every worktree: no checkout holds 1767. `~/private/xschem-private` wrote
+  "1767 to 1769 stay left to that clone" when it took 1765 and 1766, and stood at 1773.
+
+**The next free number is 1768.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

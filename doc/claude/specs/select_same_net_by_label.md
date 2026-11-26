@@ -26,7 +26,7 @@ This feature is the other answer, on its own chord, so both are available:
 
 | | walks | reaches |
 |---|---|---|
-| `select_grow_connected` (LMB double-click) | copper | segments that touch, and the net-name labels on them |
+| `select_grow_connected` (LMB double-click) | copper | segments that touch, and the net-name labels on them and on the pins of the seed |
 | `select_same_net` (Ctrl+Alt+Shift+LMB) | the netlist | every segment with the same net name, touching or not |
 
 ## Behaviour

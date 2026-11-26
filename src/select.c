@@ -166,9 +166,12 @@ void select_connected_nets(int stop_at_junction)
  * The RINGS are wires: each ring adds the wire segments that touch the selection.
  * The LABELS are leaves: after the rings of a step, every net-name label whose pin
  * touches a wire the step selected is selected too (ruling of 2026-11-21, which
- * replaced decision O2 "rings are wires only" for these labels), and a label taken
- * that way never carries the grow onto another wire. Three helpers say what that
- * means; the ring routine and the label pass below share them. */
+ * replaced decision O2 "rings are wires only" for these labels), and so is one whose
+ * pin sits exactly on a pin of a selected instance: the label put straight on a pin
+ * of the device that was double-clicked, with no wire between them (ruling of
+ * 2026-11-25). A label taken either way never carries the grow onto another wire.
+ * The helpers below say what that means; the ring routine and the label pass share
+ * them. */
 
 /* Is (x, y) on a wire that is selected whole and has a length? A zero-length wire is
  * left out on purpose: touch() answers yes for every point of such a wire's row, so
@@ -206,37 +209,94 @@ static int dblgrow_is_netname_label(int i)
   return 1;
 }
 
-/* Is instance i a net-name label whose pin sits on a selected wire? The symbol's type
- * is asked first (most instances are no label and leave here), then the pin count,
- * because get_inst_pin_coord() answers the origin for a pin that does not exist, then
- * where the pin is, and the `global` attribute last. */
-static int dblgrow_label_on_selected_wire(int i)
+/* The pins of the selected instances, as places a label can sit on with no wire under
+ * it: x, y pairs in a list the caller frees (NULL when there is none); the return value
+ * is the number of pairs. A device, a port or a power symbol gives every pin it has. A
+ * net-name label gives its FIRST pin only, the pin the label rule itself reads, and
+ * only when `labels` is set. An instance whose symbol is not bound has no pins to give.
+ *
+ * The list is read off the selection flags, not off the instance spatial table: what a
+ * step selects must not depend on whether that table is up to date. It is taken BEFORE
+ * the caller selects anything, so what the caller selects cannot change the answer. */
+static int dblgrow_selected_pins(int labels, double **pt)
+{
+  int i, p, rects, pass, n = 0;
+  double x, y;
+
+  *pt = NULL;
+  for(pass = 0; pass < 2; pass++) {
+    if(pass) {
+      if(!n) return 0;
+      *pt = my_malloc(_ALLOC_ID_, 2 * n * sizeof(double));
+      n = 0;
+    }
+    for(i = 0; i < xctx->instances; ++i) {
+      if(xctx->inst[i].sel != SELECTED || xctx->inst[i].ptr < 0) continue;
+      rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
+      if(dblgrow_is_netname_label(i)) {
+        if(!labels) continue;
+        if(rects > 1) rects = 1;
+      }
+      for(p = 0; p < rects; p++) {
+        if(pass) {
+          get_inst_pin_coord(i, p, &x, &y);
+          (*pt)[2 * n] = x;
+          (*pt)[2 * n + 1] = y;
+        }
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+/* Is (x, y) one of the n places of that list? Exact compare, as wherever a pin is
+ * asked whether it sits on a pin: both are on the grid. */
+static int dblgrow_on_selected_pin(double x, double y, const double *pt, int n)
+{
+  int k;
+
+  for(k = 0; k < n; k++) if(pt[2 * k] == x && pt[2 * k + 1] == y) return 1;
+  return 0;
+}
+
+/* Is instance i a net-name label that the selection carries: its pin sits on a selected
+ * wire, or on one of the n places of pt (dblgrow_selected_pins())? The symbol's type is
+ * asked first (most instances are no label and leave here), then the pin count, because
+ * get_inst_pin_coord() answers the origin for a pin that does not exist, then where the
+ * pin is, and the `global` attribute last. */
+static int dblgrow_label_carried(int i, const double *pt, int n)
 {
   double x0, y0;
 
   if(!inst_is_netlabel(i)) return 0;
   if((xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER] < 1) return 0;
   get_inst_pin_coord(i, 0, &x0, &y0);
-  if(!dblgrow_on_selected_wire(x0, y0)) return 0;
+  if(!dblgrow_on_selected_wire(x0, y0) && !dblgrow_on_selected_pin(x0, y0, pt, n)) return 0;
   return dblgrow_is_netname_label(i);
 }
 
 /* The label pass of one grow step: select, quietly, every net-name label that is not
- * selected yet and whose pin touches a selected wire. A locked label is taken as a
- * locked wire is by the ring routine (both override the lock). Selects no wire and
- * is not a ring: it runs once, after the rings, and what it adds is counted in the
- * selection count the step stores. Returns the number of labels it selected. */
+ * selected yet and whose pin touches a selected wire or sits on a pin of an instance
+ * that is selected when the pass begins (the seed device, and a label that is selected
+ * already: two labels on one point go together). A locked label is taken as a locked
+ * wire is by the ring routine (both override the lock). Selects no wire and is not a
+ * ring: it runs once, after the rings, and what it adds is counted in the selection
+ * count the step stores. Returns the number of labels it selected. */
 static int dblgrow_select_labels(void)
 {
-  int i, added = 0;
+  int i, npt, added = 0;
+  double *pt;
 
   hash_wires();
+  npt = dblgrow_selected_pins(1, &pt);
   for(i = 0; i < xctx->instances; ++i) {
     if(xctx->inst[i].sel == SELECTED) continue;
-    if(!dblgrow_label_on_selected_wire(i)) continue;
+    if(!dblgrow_label_carried(i, pt, npt)) continue;
     select_element(i, SELECTED, 3, 1); /* fast: quiet + nodraw; override_lock, as the wires */
     added++;
   }
+  if(pt) my_free(_ALLOC_ID_, &pt);
   if(added) xctx->need_reb_sel_arr = 1;
   return added;
 }
@@ -251,13 +311,14 @@ static int dblgrow_select_labels(void)
  * multi-object selections grow all their nets together.
  *
  * A selected instance expands onto the wires at its pins, with one exception: a
- * net-name label whose pin already sits on a selected wire is a LEAF and expands
- * onto nothing. That is what keeps a label the grow took from carrying the next
- * bare step across a crossing of two wires that share no end point. A label with no
- * selected wire under it (a label the user double-clicked, or selected by hand) is
- * a seed like any other and does expand. Which labels are leaves is decided for the
- * whole snapshot BEFORE the first wire of this ring is selected, so the answer does
- * not depend on the order of the selection array.
+ * net-name label whose pin already sits on a selected wire, or on a pin of a selected
+ * instance that is not such a label, is a LEAF and expands onto nothing. That is what
+ * keeps a label the grow took from carrying the next bare step across a crossing of
+ * two wires that share no end point, or out of a pin of its own that the grow did not
+ * reach it by. A label with neither under it (a label the user double-clicked, or
+ * selected by hand) is a seed like any other and does expand. Which labels are leaves
+ * is decided for the whole snapshot BEFORE the first wire of this ring is selected,
+ * so the answer does not depend on the order of the selection array.
  * Returns the number of wires newly selected. */
 static int grow_one_ring_wires(void)
 {
@@ -267,16 +328,21 @@ static int grow_one_ring_wires(void)
   Wireentry *wptr, *wireptr;
   Iterator_ctx ctx;
   unsigned char *leaf = NULL; /* per snapshot entry: 1 = a label that is a leaf in this ring */
+  double *pt = NULL;          /* the pins of the selected instances that are no net-name label */
+  int npt = -1;               /* -1: not read yet; read for the first label of the snapshot */
 
   hash_wires();
   hash_instances();
   rebuild_selected_array();
   for(n = 0; n < xctx->lastsel; ++n) {
     if(xctx->sel_array[n].type != ELEMENT) continue;
-    if(!dblgrow_label_on_selected_wire(xctx->sel_array[n].n)) continue;
+    if(!inst_is_netlabel(xctx->sel_array[n].n)) continue;
+    if(npt < 0) npt = dblgrow_selected_pins(0, &pt);
+    if(!dblgrow_label_carried(xctx->sel_array[n].n, pt, npt)) continue;
     if(!leaf) leaf = my_calloc(_ALLOC_ID_, xctx->lastsel, sizeof(unsigned char));
     leaf[n] = 1;
   }
+  if(pt) my_free(_ALLOC_ID_, &pt);
   for(n = 0; n < xctx->lastsel; ++n) {
     i = xctx->sel_array[n].n;
     switch(xctx->sel_array[n].type) {
@@ -304,7 +370,7 @@ static int grow_one_ring_wires(void)
         }
         break;
       case ELEMENT:
-        if(leaf && leaf[n]) break;          /* a label on a selected wire: a leaf */
+        if(leaf && leaf[n]) break;          /* a label the selection carries: a leaf */
         if(xctx->inst[i].ptr < 0) break;    /* unbound symbol: no pins to ask about */
         rects = (xctx->inst[i].ptr + xctx->sym)->rects[PINLAYER];
         for(p = 0; p < rects; p++) {
@@ -332,7 +398,8 @@ static int grow_one_ring_wires(void)
 
 /* Apply level N to the current selection: level 1 -> ring1, 2 -> ring2, ...,
  * >=3 -> whole-net geometric flood (O4 cap). Rings only: the labels on the wires
- * are taken by the caller, once, after the rings (dblgrow_select_labels). */
+ * and on the seed's pins are taken by the caller, once, after the rings
+ * (dblgrow_select_labels). */
 static void dblgrow_apply_level(int level)
 {
   int i;
@@ -359,7 +426,8 @@ static void dblgrow_apply_level(int level)
  *   was changed externally since the last step (sel_sig). Used for scripting.
  *
  * Both modes then share one tail: the label pass (every net-name label whose pin
- * touches a selected wire is selected with it), the selection count the bare form
+ * touches a selected wire, or sits on a pin of a selected instance, is selected with
+ * it), the selection count the bare form
  * compares on its next call, the log line and the draw. THE LABEL PASS COMES BEFORE
  * THE COUNT IS STORED: the labels are part of what the step selected, and a count
  * taken without them would make every following bare call look like an external
@@ -406,7 +474,7 @@ int select_grow_connected_step(double mx, double my, int pick_seed)
     dblgrow_apply_level(xctx->dblgrow_level >= 3 ? 3 : 1); /* incremental: one more ring */
   }
 
-  dblgrow_select_labels(); /* the labels on the selected wires; before the count below */
+  dblgrow_select_labels(); /* the labels on the selected wires and pins; before the count below */
   xctx->need_reb_sel_arr = 1;
   rebuild_selected_array();
   xctx->dblgrow_sel_sig = xctx->lastsel;

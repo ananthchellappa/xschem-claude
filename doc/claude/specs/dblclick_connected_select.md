@@ -23,6 +23,11 @@ every step also takes the **net-name labels** whose pin touches a wire it select
 See "Ruling of 2026-11-21" below; it is the authority wherever an older sentence of
 this file still says "wires only".
 
+**Ruled 2026-11-25 (by the user, issue 1767):** a net-name label that sits straight on
+a pin of the object that was double-clicked, with no wire between them, is taken too.
+See "Ruling of 2026-11-25" below; it overrules decision 5 of the list under the first
+ruling.
+
 ## Motivation
 
 Virtuoso lets you double-click an object to **grow the selection outward along
@@ -43,7 +48,7 @@ double-click; see §"Trigger & bindability"). Successive double-clicks on the
 | **1st** | select the wire **+ its immediately adjacent connected wire segments** (one ring). If the wire was not selected, this first double-click both selects it and grows the ring — identical to the result had it been pre-selected. | select the object **+ the wire segments immediately touching its pins/anchor** (one ring). |
 | **2nd** | for **each** wire segment selected by click 1, add **its** immediately adjacent wire segments (ring 2). | same — ring 2 from the ring-1 set. |
 | **3rd** | **select all** connected wire segments (whole net). | same. |
-| **every click** (since 2026-11-21) | **+ every net-name label whose pin touches one of the wires selected so far.** | same. |
+| **every click** (since 2026-11-21) | **+ every net-name label whose pin touches one of the wires selected so far.** | same, **+ every net-name label whose pin sits on a pin of the object that was double-clicked** (since 2026-11-25). |
 
 - A single (non-double) click anywhere behaves exactly as today (plain select /
   deselect).
@@ -254,7 +259,8 @@ After the rings of a step, every instance that passes this test is selected with
 2. its `global` attribute, read from the instance first and then from the symbol (the
    netlister's own two steps), is neither `ground` nor a true boolean, and
 3. the symbol has at least one pin, and its first pin touches a wire that is selected
-   whole and is not zero-length.
+   whole and is not zero-length, or (since 2026-11-25) sits exactly on a pin of an
+   instance that is selected when the label pass begins ("Ruling of 2026-11-25").
 
 So `lab_pin` and `lab_wire` are taken, which is what the product itself places as a
 wire label (Add Wire Label, key `l`; `xschem net_label`; the stubs of the Space key
@@ -283,9 +289,9 @@ placed. It orders before it stores now (rows L12i and L12j).
 
 | level | wires | labels |
 |---|---|---|
-| 1 | the seed (or the wires at the seed's pins) and one ring | every net-name label touching one of them |
-| 2 | one more ring | every net-name label touching one of them |
-| 3 | every wire that touches, to a fixed point | every net-name label touching the flooded copper |
+| 1 | the seed (or the wires at the seed's pins) and one ring | every net-name label touching one of them, or on a pin of the seed |
+| 2 | one more ring | every net-name label touching one of them, or on a pin of the seed |
+| 3 | every wire that touches, to a fixed point | every net-name label touching the flooded copper, or on a pin of the seed |
 | 4+ | nothing new | nothing new |
 
 After the third double click, Delete removes the whole touching net with its labels.
@@ -295,7 +301,7 @@ coordinates) take the same labels.
 ### How
 
 `dblgrow_select_labels()` in `src/select.c`: one pass over the instances after the
-rings, in the tail both forms of `select_grow_connected_step()` share, BEFORE the
+rings (since 2026-11-25 it also reads the pins of the selected instances first), in the tail both forms of `select_grow_connected_step()` share, BEFORE the
 selection count is stored. The order is load-bearing: the bare form compares that
 count on its next call, and a count taken without the labels would make every
 following bare call look like an external change and restart at level 1. No new log
@@ -307,7 +313,8 @@ line, no change to the log format, the escalation state or undo.
    not across a crossing of two wires that share no end point, and not by name to
    another island (the name-wise select has its own chord, Ctrl+Alt+Shift+LMB). In
    `grow_one_ring_wires()` a net-name label whose pin already sits on a selected wire
-   expands onto nothing. The set of WIRES at every level is what it was before the
+   expands onto nothing (since 2026-11-25 also one whose pin sits on a pin of a selected
+   instance that is no such label: item 7 of the second ruling). The set of WIRES at every level is what it was before the
    ruling, with one exception: in the bare form, a label that the caller selected
    beforehand and that sits on such a crossing used to pull the crossing wire in;
    with a selected wire already under it, it no longer does. A label with no selected
@@ -328,8 +335,9 @@ line, no change to the log format, the escalation state or undo.
    and L10b.
 5. **A device as the seed:** a label that sits directly on a pin of that device, with
    no wire under it, is NOT taken: the rule is about wires. The older one-shot
-   (`xschem connected_nets`, Shift-RMB, Ctrl-RMB) does take it. A stated limit. Rows
-   L13a and L13b.
+   (`xschem connected_nets`, Shift-RMB, Ctrl-RMB) does take it. A stated limit.
+   **OVERRULED BY THE USER 2026-11-25:** that label is taken ("Ruling of 2026-11-25"
+   below, where the rows are).
 6. **Locked labels** follow the wires: the ring routine selects a locked wire, and the
    label pass takes a locked label the same way. Delete then removes both. Rows LK
    and LKb.
@@ -359,6 +367,63 @@ line, no change to the log format, the escalation state or undo.
     The command `xschem select_grow_connected` is the same engine under either
     profile and takes the labels with `cadence_compat` 0 as well: the L rows of the
     suite run with it off.
+
+## Ruling of 2026-11-25 — a label straight on a pin of the seed is taken
+
+The user, 2026-11-25: "wire-labels DON'T get selected if they are connected to the
+instance being double-clicked on directly (i.e., without an intervening wire segment).
+Could you fix?" This overrules decision 5 of the list above and nothing else. Issue
+1767.
+
+**The rule.** The label pass takes a net-name label (items 1 and 2 of "What is taken",
+unchanged) whose first pin
+
+- touches a selected wire, as before, or
+- sits exactly on a pin of an instance that is selected when the pass begins.
+
+"Selected when the pass begins" is the seed of the double click, every instance of the
+selection the bare form grows, and a net-name label that is selected already. A device,
+a port or a power symbol offers every pin it has. A net-name label offers its first pin
+only: the pin every rule of this file reads.
+
+`dblgrow_selected_pins()` in `src/select.c` reads those pins off the selection flags
+before the pass selects anything, so what the pass selects cannot change the answer,
+and it does not read the instance spatial table. `dblgrow_label_carried()` is the one
+test the label pass and the ring routine share.
+
+What follows, each with the rows that hold it:
+
+1. **A device as the seed.** The label on its bare pin is taken from the first level
+   on, with the wires at its other pins and the labels on them. Delete after one double
+   click removes the device, those wires and those labels; one undo brings them back.
+   Rows L13a, L13c, L13d; as gestures G13a (the stream Tk sends), G13b (the stream with
+   a second press) and G13c (a real Tk double click, then Delete).
+2. **The bare form** takes the same sets after a pick of the device. Row L13e.
+3. **The WIRES of every level are what they were.** The ring routine selects no wire it
+   did not select before; the new labels come from the label pass. Rows L13a and L13e
+   name the wires of each level beside the labels.
+4. **A pin of a device that is not selected offers nothing.** Seeded on the wire at the
+   device's other pin, the grow never selects the device (devices are never taken), so
+   the label on its bare pin stays out. Row L13f.
+5. **What is taken from a pin is what is taken from a wire.** The scope table of the
+   first ruling, each symbol with its first pin on a pin of a seed device and no wire on
+   the sheet: `lab_pin`, `lab_wire`, `lab_generic`, `bus_connect` and the `label` symbols
+   that carry no `global` are in; the power symbols, ports, `lab_show`, a probe and a bus
+   tap are out. Rows L13s.
+6. **Two labels on one point** with no wire under them are taken together, seeded on
+   either: a selected label offers its first pin. Rows L13t, L13u. Two labels picked by
+   hand on one point of a wire that is not selected are still two seeds (neither makes
+   the other a leaf), and their wire comes. Row L13v.
+7. **Labels are leaves, from a pin too.** In `grow_one_ring_wires()` a net-name label
+   whose first pin sits on a pin of a selected instance that is not such a label
+   expands onto nothing, like one on a selected wire. With the label symbols of the
+   libraries (one pin each) this changes no selection. It is what keeps a `label`
+   symbol with two pins, taken by its first, from carrying the next bare step out of
+   its second: neither onto a wire there nor to a label there. Rows L13w (the form with
+   coordinates) and L13x (the bare form), on a two-pin label the suite writes.
+8. **`q` after the grow** stays on the device (decision 7 above). Row G13c.
+9. **Replay** is decision 9 above: the log line is unchanged, so a log recorded before
+   this ruling replays with these labels selected too.
 
 Two limits that are not new: the bare form tells an external change of the selection
 only by its COUNT, so a change that keeps the count is taken for a continuation; and

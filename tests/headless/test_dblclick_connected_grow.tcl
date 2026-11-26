@@ -306,6 +306,8 @@ proc bare_restart {x y} {
   xschem unselect_all
   xschem select_at $x $y
 }
+# the ways of moving a selection that the move rows (L13m, L17) go through
+set ::MOVES {{} kissing {stretch kissing}}
 set ::S1 {{W0 W1} LA}
 set ::S2 {{W0 W1 W2} {LA LB}}
 set ::S3 {{W0 W1 W2 W3 W4} {LA LB LC}}
@@ -686,24 +688,184 @@ same "L12i every wire the merged file brought is on the sheet, is stored with it
 same "L12j one step on each merged stub: that stub and the label at its end" \
   [lsort $step] {{ST_LLF LLF} {ST_LUP LUP}}
 
-# --- L13: a label directly on a pin of the seed device, with no wire there ---
-# The rule is about wires: such a label is not taken. The older one-shot
-# (`xschem connected_nets`) does take it, which is the leg that shows it sits there.
-build_net
-eval [list xschem instance devices/lab_pin.sym] [pinxy R1 M] [list 0 0 {name=LP lab=NP}]
-done_building
-same "LF8 the label is exactly on the device's other pin, on no wire, and the seed point picks the device" \
-  [list [expr {[pinxy LP] eq [pinxy R1 M]}] [eval on_wire [pinxy LP]] [lindex [xschem object_at 300 230] 0]] \
-  {1 0 instance}
+# --- L13: a label directly on a pin of a selected instance, with no wire there ---
+# Ruling of 2026-11-25 (issue 1767): such a label is taken with the instance, at every
+# level, like a label on a wire. Until then the rule read wires only and the label on
+# the bare pin of the double-clicked device was left out.
+# LP is on the device's free pin M. LPB is a decoy one grid pitch beside that pin, on no
+# wire and on no pin, turned so that its text runs away from the device: it is in no set
+# of this band, and every row that names a whole set says so.
+proc build_pinlab {} {
+  build_net
+  lassign [pinxy R1 M] mx my
+  xschem instance devices/lab_pin.sym $mx $my 0 0 {name=LP lab=NP}
+  xschem instance devices/lab_pin.sym [expr {$mx + 10}] $my 0 1 {name=LPB lab=NP}
+  done_building
+}
+set ::D1 {W4 {LC LP R1}}
+set ::D2 {{W3 W4} {LC LP R1}}
+set ::D3 {{W0 W1 W2 W3 W4} {LA LB LC LP R1}}
+build_pinlab
+same "LF8 the label is exactly on the device's other pin, on no wire; the decoy is one grid pitch beside that pin, on no wire; the seed point picks the device" \
+  [list [expr {[pinxy LP] eq [pinxy R1 M]}] [eval on_wire [pinxy LP]] \
+        [list [expr {[lindex [pinxy LPB] 0] - [lindex [pinxy R1 M] 0]}] [expr {[lindex [pinxy LPB] 1] - [lindex [pinxy R1 M] 1]}]] \
+        [eval on_wire [pinxy LPB]] [expr {double($::cadsnap)}] \
+        [lindex [xschem object_at 300 230] 0] [xschem getprop instance [lindex [xschem object_at 300 230] 1] name]] \
+  {1 0 {10 0} 0 10.0 instance R1}
 set got {}
-foreach k {1 2 3} { lappend got [list [grow 300 230] [selw] [seli]] }
-same "L13a seeded on the device: its wire and the labels on the wires, never the label on its bare pin" $got \
-  {{1 W4 {LC R1}} {2 {W3 W4} {LC R1}} {3 {W0 W1 W2 W3 W4} {LA LB LC R1}}}
+foreach k {1 2 3 4} { lappend got [list [grow 300 230] [selw] [seli]] }
+same "L13a seeded on the device: the label on its bare pin is taken from the first level on, with the wire at its other pin and the labels on the wires, never the label beside the pin; a fourth step changes nothing" $got \
+  [list [concat 1 $::D1] [concat 2 $::D2] [concat 3 $::D3] [concat 3 $::D3]]
 xschem unselect_all
 xschem select instance R1 fast
 xschem connected_nets
-same "L13b the older one-shot from the same device does take that label" \
+same "L13b the older one-shot from the same device takes that label too" \
   [expr {[lsearch -exact [seli] LP] >= 0}] 1
+build_pinlab
+grow 300 230
+xschem delete
+same "L13c Delete after one step on the device removes it, its wire, the label on that wire and the label on its bare pin, and nothing else" \
+  [list [allw] [alli]] {{W0 W1 W2 W3 WD} {LA LB LD LE LPB}}
+xschem undo
+same "L13d one undo brings all four back" \
+  [list [allw] [alli]] {{W0 W1 W2 W3 W4 WD} {LA LB LC LD LE LP LPB R1}}
+# the bare form: the device picked by hand, then one more ring per call
+build_pinlab
+xschem select_all ; xschem select_grow_connected ; xschem unselect_all
+xschem select instance R1 fast
+set got {}
+foreach k {1 2 3 4} { lappend got [list [xschem select_grow_connected] [selw] [seli]] }
+same "L13e the bare form after a pick of the device: levels 1 2 3 3 with the sets of L13a" $got \
+  [list [concat 1 $::D1] [concat 2 $::D2] [concat 3 $::D3] [concat 3 $::D3]]
+# The pin of a device that is NOT selected is no place to be taken from: seeded on the
+# wire at the device's other pin, the grow reaches neither the device nor that label.
+build_pinlab
+set got {}
+foreach k {1 2 3} { lappend got [list [grow 225 200] [selw] [seli]] }
+same "L13f seeded on the wire at the device's other pin: the device is not selected and the label on its bare pin is taken at no level" $got \
+  {{1 {W3 W4} LC} {2 {W2 W3 W4} {LB LC}} {3 {W0 W1 W2 W3 W4} {LA LB LC}}}
+# moving what one step on the device selected: the label goes with the pin it sits on
+set ran 0
+foreach mode $::MOVES {
+  build_pinlab
+  grow 300 230
+  eval [list xschem move_objects 40 30] $mode
+  same "L13m one step on the device, moved by (40,30) [expr {$mode eq {} ? {plain} : $mode}]: the label on its bare pin went along and is still on that pin; the label beside the pin stayed" \
+    [list [pinxy R1 M] [pinxy LP] [pinxy LPB]] {{340 290} {340 290} {310 260}}
+  incr ran
+}
+same "L13mn the move loop ran once for every way of moving in the list" [list [expr {$ran > 0}] $ran] [list 1 [llength $::MOVES]]
+
+# --- L13s: the scope, by name, on the pin of the seed device ---------------------
+# The table of L11 again, with no wire on the sheet: each symbol sits with its first pin
+# on pin P of a resistor of its own, and each resistor is the seed of one step. What is
+# taken from a pin is what is taken from a wire.
+set ::WN [dict create]
+xschem clear force
+set k 0 ; set ::PINSEED {}
+foreach {nm sym x y attrs want} $::SCOPE {
+  xschem instance [symref $sym] [expr {$k * 400}] 0 0 0 "name=$nm $attrs"
+  lassign [pinxy $nm] qx qy
+  xschem instance devices/res.sym $qx [expr {$qy + 30}] 0 0 "name=RS$k value=1k"
+  lappend ::PINSEED $nm RS$k $qx [expr {$qy + 30}]
+  incr k
+}
+done_building
+set onpin {} ; set picks {}
+foreach {nm rs cx cy} $::PINSEED {
+  lappend onpin [expr {[pinxy $nm] eq [pinxy $rs P]}]
+  set o [xschem object_at $cx $cy]
+  lappend picks [expr {[lindex $o 0] eq {instance} && [xschem getprop instance [lindex $o 1] name] eq $rs}]
+}
+same "LF18 every symbol of the scope table has its first pin on pin P of its own resistor, the sheet holds no wire, and each seed point picks that resistor" \
+  [list [xschem get wires] [lsort -unique $onpin] [lsort -unique $picks] [expr {[llength $::PINSEED] / 4}]] \
+  [list 0 1 1 [expr {[llength $::SCOPE] / 6}]]
+set asked 0
+foreach {nm sym x y attrs want} $::SCOPE {nm2 rs cx cy} $::PINSEED {
+  xschem unselect_all
+  set lv [grow $cx $cy]
+  same "L13s $nm ($sym $attrs) on the pin of the seed device is $want" \
+    [list $lv [selw] [seli]] [list 1 {} [expr {$want eq {in} ? [lsort [list $rs $nm]] : $rs}]]
+  incr asked
+}
+same "L13sn every symbol of the table was asked about on a pin" [expr {$asked * 2}] [xschem get instances]
+
+# --- L13t: two labels on one point ------------------------------------------------
+# A label that is selected is a place too: a second label whose pin is on the first
+# one's pin, with no wire under them, is taken with it.
+set ::WN [dict create]
+xschem clear force
+w WF 200 0 300 0
+lab LE1 0 0 {} NA
+lab LE2 0 0 {} NB
+done_building
+lassign [lrange [lindex [split [xschem instance_bbox LE1] \n] 0] 1 4] bx1 by1 bx2 by2
+set lex [expr {$bx1 + 3.0}] ; set ley [expr {($by1 + $by2) / 2.0}]
+same "LF19 the two labels have their pins on one point, on no wire, and the seed point picks one of them" \
+  [list [pinxy LE1] [pinxy LE2] [on_wire 0 0] [lindex [xschem object_at $lex $ley] 0]] {{0 0} {0 0} 0 instance}
+set got {}
+foreach k {1 2 3} { lappend got [list [grow $lex $ley] [selw] [seli]] }
+same "L13t seeded on one of two labels that share a point with no wire under them: both, at every level" \
+  $got {{1 {} {LE1 LE2}} {2 {} {LE1 LE2}} {3 {} {LE1 LE2}}}
+xschem select_all ; xschem select_grow_connected ; xschem unselect_all
+xschem select instance LE2 fast
+set lv [xschem select_grow_connected]
+same "L13u the bare form after a pick of the other one: both again" [list $lv [selw] [seli]] {1 {} {LE1 LE2}}
+# ... and two labels picked by hand on one point of a wire that is not selected are
+# still two seeds: neither makes the other a leaf, and their wire comes.
+set ::WN [dict create]
+xschem clear force
+w P 0 0 200 0
+lab LE1 100 0 {} NA
+lab LE2 100 0 {} NB
+done_building
+xschem select_all ; xschem select_grow_connected ; xschem unselect_all
+xschem select instance LE1 fast
+xschem select instance LE2 fast
+set lv [xschem select_grow_connected]
+same "L13v two hand-picked labels on one point of an unselected wire: one bare call takes the wire" \
+  [list $lv [selw] [seli]] {1 P {LE1 LE2}}
+
+# --- L13w: a label taken from a pin is a leaf --------------------------------------
+# A `label` symbol with TWO pins, written here (the libraries have none). Its first pin
+# is where the label is; its second pin is a place the grow must not leave it by. T2 and
+# T3 each sit with the first pin on a pin of the resistor. A wire X starts on T2's second
+# pin; a lab_pin LQ sits on T3's second pin. Neither is reached, by the form that
+# recomputes from the seed or by the bare form that grows what is selected.
+set twopin [file join $::SCR twopin_label.sym]
+set fd [open $twopin w]
+puts $fd "v {xschem version=3.4.4 file_version=1.2}\nG {}\nK {type=label\nformat=\"*.alias @lab\"\ntemplate=\"name=p1 lab=xxx\"\n}\nV {}\nS {}\nE {}\nL 4 0 0 40 0 {}\nB 5 -2.5 -2.5 2.5 2.5 {name=p dir=inout}\nB 5 37.5 -2.5 42.5 2.5 {name=q dir=inout}\nT {@lab} 5 -12 0 0 0.33 0.33 {}"
+close $fd
+proc build_twopin {} {
+  set ::WN [dict create]
+  xschem clear force
+  xschem instance devices/res.sym 0 0 0 0 {name=R1 value=1k}
+  eval [list xschem instance $::twopin] [pinxy R1 P] [list 0 0 {name=T2 lab=NA}]
+  eval [list xschem instance $::twopin] [pinxy R1 M] [list 0 0 {name=T3 lab=NB}]
+  lassign [pinxy T2 q] qx qy
+  w X $qx $qy [expr {$qx + 60}] $qy
+  eval [list xschem instance devices/lab_pin.sym] [pinxy T3 q] [list 0 0 {name=LQ lab=NQ}]
+  done_building
+}
+build_twopin
+same "LF20 the two-pin symbol is a label with two pins; T2 and T3 have the first on the resistor's pins; the wire starts on T2's second pin and the lab_pin sits on T3's; the seed point picks the resistor" \
+  [list [xschem getprop instance T2 cell::type] [llength [xschem pinlist T2 name]] \
+        [expr {[pinxy T2 p] eq [pinxy R1 P]}] [expr {[pinxy T3 p] eq [pinxy R1 M]}] \
+        [expr {[lrange [lindex [allwc] 0] 0 1] eq [pinxy T2 q]}] [expr {[pinxy LQ] eq [pinxy T3 q]}] \
+        [expr {[pinxy T2 q] eq [pinxy R1 P]}] \
+        [xschem getprop instance [lindex [xschem object_at 0 0] 1] name]] \
+  {label 2 1 1 1 1 0 R1}
+set got {}
+foreach k {1 2 3} { lappend got [list [grow 0 0] [selw] [seli]] }
+same "L13w seeded on the device: both two-pin labels at every level, never the wire on the second pin of one nor the label on the second pin of the other" \
+  $got {{1 {} {R1 T2 T3}} {2 {} {R1 T2 T3}} {3 {} {R1 T2 T3}}}
+build_twopin
+xschem select_all ; xschem select_grow_connected ; xschem unselect_all
+xschem select instance R1 fast
+set got {}
+foreach k {1 2 3} { lappend got [list [xschem select_grow_connected] [selw] [seli]] }
+same "L13x the bare form after a pick of the device: the same three sets" \
+  $got {{1 {} {R1 T2 T3}} {2 {} {R1 T2 T3}} {3 {} {R1 T2 T3}}}
 
 # --- LK: locked labels follow locked wires ------------------------------------
 # The wire walk selects a locked wire; a locked label on it is taken the same way.
@@ -824,7 +986,6 @@ same "LM2 Delete after level 3 removes every one of them with the net" [list [al
 # --- L17: moving and copying the grown selection ------------------------------
 # A selected label is placed by the move itself. What must hold: every label the grow
 # selected still has its pin on a wire afterwards.
-set ::MOVES {{} kissing {stretch kissing}}
 set ::RAN_A 0 ; set ::RAN_B 0
 foreach mode $::MOVES {
   build_net
@@ -884,7 +1045,7 @@ foreach {tag verb lv labels off} {
 # THE GESTURE BANDS -- they send events to the canvas, so they need one.
 # ===========================================================================
 if {!$::XWIN} {
-  puts "skip: gesture rows T7-T10, G12, G14-G18 and GQ -- they send events to a canvas window and this arm has none; the display arm of this suite runs them"
+  puts "skip: gesture rows T7-T10, G12-G18 and GQ -- they send events to a canvas window and this arm has none; the display arm of this suite runs them"
 } else {
 
 # ---------------------------------------------------------------------------
@@ -1308,6 +1469,31 @@ same "LF16 that point picks the label LC and is on no wire, and LC is not the fi
 stream_tk $lcx $lcy ; stream_tk $lcx $lcy ; stream_tk $lcx $lcy
 same "GQ4 after three double clicks on a label, Edit Properties stays on that label" \
   [list [selw] [seli] [q_target]] {{W0 W1 W2 W3 W4} {LA LB LC} LC}
+
+# --- G13: a label straight on a pin of the double-clicked device ---------------
+# Issue 1767, as gestures: the sets of L13a from both streams, one real Tk double
+# click, Delete after it, and where Edit Properties goes.
+foreach {tag stream} {G13a stream_tk G13b stream_2p} {
+  build_pinlab
+  show_net
+  set w0 [xschem get wires] ; set i0 [xschem get instances] ; set p0 [label_pins]
+  set got {}
+  foreach k {1 2 3} { $stream 300 230 ; lappend got [list [selw] [seli]] }
+  same "$tag three double clicks on the device ($stream): the label on its bare pin is in all three sets" \
+    $got [list $::D1 $::D2 $::D3]
+  same "$tag ... and afterwards no wire or instance was made or lost, no label moved, nothing is left armed" \
+    [list [expr {[xschem get wires] - $w0}] [expr {[xschem get instances] - $i0}] \
+          [expr {[label_pins] eq $p0}] [armed]] {0 0 1 0}
+}
+build_pinlab
+show_net
+set ::POPALL {}
+tk_dblclick 300 230
+set s1 [sel2]
+set qt [q_target]
+xschem delete
+same "G13c one real Tk double click on the device takes the label on its bare pin with it and opens no window; Edit Properties stays on the device; Delete then removes the device, its wire and both labels" \
+  [list $s1 $::POPALL $qt [allw] [alli]] [list $::D1 {} R1 {W0 W1 W2 W3 WD} {LA LB LD LE LPB}]
 
 profile_off
 

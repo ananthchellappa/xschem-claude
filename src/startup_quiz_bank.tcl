@@ -1323,6 +1323,24 @@ startup_quiz::add dblclick-labels {
          && [P_has src/select.c {static int dblgrow_is_netname_label(int i)}]
          && [P_has src/callback.c {select_grow_connected_step(xctx->mousex, xctx->mousey, 1);}]}
 }
+startup_quiz::add dblclick-pin-label {
+  type tf  kind myth  topic {Selection}
+  q   {In the Cadence profile, double-clicking a device selects it with the wires at its
+       pins, but a net-name label placed straight on one of its pins, with no wire in
+       between, has to be picked separately.}
+  ok  false
+  why {The double click takes that label too, from the first one on: a net-name label
+       whose pin sits on a pin of the device you double-clicked is selected with it, like
+       the labels on the wires the grow reaches. Delete then removes the device, those
+       wires and those labels. Ports and the global power symbols (vdd, gnd) on a pin
+       are left, and so is a label that is only near the pin.}
+  only  {[llength [info commands ::cadence::q_key]] > 0}
+  proof {[P_has src/cadence_style_rc {set cadence_compat 1}] && [P_sub select_grow_connected]
+         && [P_has src/select.c {static int dblgrow_selected_pins(int labels, double **pt)}]
+         && [P_has src/select.c {npt = dblgrow_selected_pins(1, &pt);}]
+         && [P_has src/select.c {if(!dblgrow_on_selected_wire(x0, y0) && !dblgrow_on_selected_pin(x0, y0, pt, n)) return 0;}]
+         && [P_has src/select.c {if(pt[2 * k] == x && pt[2 * k + 1] == y) return 1;}]}
+}
 
 # ---------------------------------------------------------------- ASE-L run checks
 startup_quiz::add rename-correction {
