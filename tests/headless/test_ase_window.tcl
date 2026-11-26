@@ -1151,7 +1151,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     incr w1f_ncols [llength [$top.body.$pane.tv cget -columns]]
   }
   check "W1f6 every pane column's -minwidth is the derived floor of its own heading's ink in the heading font, its width is at least that, and no heading clips -- the RELATION against font measure, never a pixel" \
-    [list $w1f_colbad $w1f_ncols] {{} 11}
+    [list $w1f_colbad $w1f_ncols] {{} 12}
   check "W1f6b exactly one column per pane stretches and it is the CONTENT column: ttk hands slack out in absolute pixels across every -stretch 1 column and clamps on the way down at -minwidth, but never gives the clamped pixels back on the way up, so an all-stretch table RATCHETS (measured on the shipped code: four drags took `#` from 32 px to 60 permanently and left `Save Options` clipped for the rest of the session)" \
     $w1f_stretch {value args value}
 
@@ -2009,7 +2009,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
   check "W1p analyses columns" [$top.body.ana.tv cget -columns] \
     {num type enable args}
   check "W1p outputs columns" [$top.body.outs.tv cget -columns] \
-    {name value plot save saveopts}
+    {name value by plot save saveopts}
   set nums {}
   foreach it [$top.body.ana.tv children {}] {
     lappend nums [$top.body.ana.tv set $it num]
@@ -4123,7 +4123,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
       puts "SKIPPED: D1398g (this window manager never resized the toplevel; a ratchet cannot be measured without a drag)"
     } else {
       check "D1398g NOTHING RATCHETS: four full 560x360 <-> 900x600 cycles leave every FIXED column byte-identical, so the slack lands on the one content column per table and a drag can no longer cost `Save Options` its heading for the session" \
-        [list $d_drift $d_moved [expr {[llength $d_cols0] / 2}]] {{} 1 8}
+        [list $d_drift $d_moved [expr {[llength $d_cols0] / 2}]] {{} 1 9}
     }
 
     ase::ui::close $dkey
@@ -4212,7 +4212,10 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     check "UX open_state -> 1" [ase::open_state aselib nfet_clean ngspice_state_ux1499] 1
     update
     set uxtop [ase::ui::window_for $uxkey]
-    catch {wm geometry $uxtop 798x520}
+    ## The width these rows were measured at, plus the Outputs pane's `By`
+    ## column (issue 1768), which the panes did not have to share it with then.
+    set ux_geo [expr {798 + [$uxtop.body.outs.tv column by -width]}]x520
+    catch {wm geometry $uxtop $ux_geo}
     update ; after 150 ; update
 
     proc ux_cell {tv nm col} {
@@ -4327,7 +4330,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     catch {wm geometry $uxtop 520x520}
     update ; after 250 ; update
     set ux_narrow [ase::ui::label_tip_text $uxtop.status.state]
-    catch {wm geometry $uxtop 798x520}
+    catch {wm geometry $uxtop $ux_geo}
     update ; after 150 ; update
     if {$ux_narrow eq {} } {
       puts "SKIPPED: UX1499a9 (this window manager never squeezed the status segment; a clip cannot be measured without one)"
@@ -4412,7 +4415,7 @@ if {[info exists ::has_x] && [info commands winfo] ne {}} {
     update ; after 250 ; update
     check "PD6 squeezed to 520px the drop-down keeps its full width (the text segments clip first)" \
       [list [winfo ismapped $uxd] [expr {[winfo width $uxd] >= [winfo reqwidth $uxd]}]] {1 1}
-    catch {wm geometry $uxtop 798x520}
+    catch {wm geometry $uxtop $ux_geo}
     update ; after 150 ; update
     ## the Simulators dialog's Program column: a real ngspice path measured
     ## 371px of ink in a 324px column

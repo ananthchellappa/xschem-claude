@@ -398,7 +398,7 @@ if {![info exists ::has_x] || [info commands winfo] eq {}} {
         check "TW1 the Measures tree holds the measures, the Saves tree the saves, by state index" \
             [list [tw_ids $mtv] [tw_ids $stv]] {{0 2 3 4} {1 5}}
         check "TW1 the Saves tree shows no Value column" [$stv cget -columns] {name plot save saveopts}
-        check "TW1 the Measures tree keeps its columns" [$mtv cget -columns] {name value plot save saveopts}
+        check "TW1 the Measures tree's columns: `by` says who computes a row (issue 1768)" [$mtv cget -columns] {name value by plot save saveopts}
         $top.body.outs.tabs.s invoke
         update
         check "TW1 the Saves tab button shows the saves and hides the measures" \

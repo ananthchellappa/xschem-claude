@@ -14,6 +14,73 @@ Newest entries on top.
 
 ---
 
+## Q110. I set up a measurement in Outputs > Measurements. Where is its value, and how do I tell it from a Calculator measure?
+
+- **Asked:** 2026-11-25 (the user's request)
+- **Project state:** branch `meas-in-measures` on `fluid-editing` at `55f0bf938`, issue 1768
+  (`doc/claude/specs/ase_l.md` R-OUT18).
+
+**In the Measures tab of the Outputs pane, under the Outputs rows; the `By` column says
+which kind each row is.** Until this change the simulator's numbers were only in the
+Measurements dialog's own Value column and in the run log.
+
+There are two kinds of measure (Q92), and they are made in two dialogs:
+
+| | made in | computed by | when |
+|---|---|---|---|
+| a **measurement** | Outputs > Measurements… | the simulator (ngspice `meas`) | during the run |
+| an **Output** | Add Output, or the Calculator | the Calculator, from the results | after the run, and again on `~` |
+
+- **By.** `ngspice` for a measurement, `Calculator` for an Outputs row.
+- **Each dialog says which kind it makes**, in a line of its own, and names the door to the
+  other kind.
+- **Editing.** Double-click a row: a measurement opens the Measurements dialog on that row,
+  an Outputs row opens the output editor. The context menu's Edit does the same. A
+  Measurements dialog that is already open keeps what you typed and goes to that row.
+- **Delete** removes the selected rows, each from its own list. With the Measurements
+  dialog open, the deleted measurements leave its list too.
+- **Which measurements are listed:** the ones that answer with one number. A row that makes
+  a plot (Resample, FFT, PSD, Spectrum) or a working vector (Unwrapped phase) stays in the
+  dialog only.
+- **What the Value cell reads:**
+  - the simulator's number, in the column's own format;
+  - `disabled` for a row that is switched off;
+  - the refusal's sentence for a row that cannot be measured (it reads an analysis that is
+    off, a field is missing). This shows before any run;
+  - `not measured in this run` for a measurement added, edited or renamed since the run,
+    and for a measure computed from one (`pm = 180 + pmph` after `pmph` was edited). The
+    old definition's number is not shown under the new one. Run again; `~` cannot compute
+    it, because the simulator makes the number. The same cell reads when the results in
+    the run directory are another state's: states of one cell share a run directory
+    unless Setup > Run Directory gives a state its own, and a measurement the other state
+    does not hold in the same words was not in its run;
+  - the simulator's own complaint when it was asked and reported nothing (the condition
+    never occurred in the run);
+  - what every other row reads after a failed run, and nothing when there are no results.
+- **Plot and Save** are empty for a measurement: it is one number.
+- **The Value header's sort** puts the numbers of both kinds first.
+
+**How "not measured in this run" is known.** Every run writes a copy of the state it was
+launched from beside its deck (`<cell>_ase.runstate`). A measurement's number is shown only
+when that copy holds the same row: the same name, kind and analysis, and the same fields as
+the netlist carries them. A field left at its default is the same as a field not stored, so
+opening a measurement and pressing OK with nothing typed changes no number. With two
+analyses of one type the row must also still read the same one. A run directory from before
+that file existed has none, and its numbers are shown by name, as before.
+
+**After a run you stopped**, a measurement the simulator had not reached reads `not
+reported: the run was stopped`.
+
+**Not built:** the reason of a measurement's caution in the tab (it is in the dialog and
+the log), and reordering measurements from the tab (the dialog's Up and Down do it).
+
+Code: `ase::meas_shown`, `ase::meas_was_run`, `ase::meas_number_rows` (`src/ase.tcl`);
+`ase::ui::meas_tab_rows`, `ase::ui::meas_tab_value`, `ase::ui::measures_by`,
+`ase::ui::edit_measures_item` (`src/ase_window.tcl`). Suite:
+`tests/headless/test_ase_meas_in_measures_1768.tcl`.
+
+---
+
 ## Q109. I double-click a transistor and the net label sitting right on its pin is not selected. Should it be?
 
 - **Asked:** 2026-11-25 (the user's report)

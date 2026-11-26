@@ -960,7 +960,8 @@ They should not influence the input to the simulator."* ADE-L is the floor
   *"vt(netname) is NOT a save! It's a fetch of the time-domain waveform. All the user can do
   with it is plot it."* *"an expression, created by user, can be in the Measures tab."* The
   Outputs pane is two tabs over the ONE `outputs` list; **Measures is shown on open and after a
-  state loads** (Load State, Revert). A row's tab is a pure function of its TEXT,
+  state loads** (Load State, Revert). (Since R-OUT18 the Measures tab also shows the rows of the
+  `measurements` list that answer with a number, under the Outputs rows.) A row's tab is a pure function of its TEXT,
   `ase::output_tab` (no Tk; counted arm): **Saves** = a plain `v(<node>)`, `v(<a>,<b>)` or
   `i(<source>)`, either case, Cadence quotes allowed, no sign (`ase::output_is_save`; a
   terminal current `i(<path>:<tname>)` has that shape and sorts here too, R-OUT17);
@@ -1118,7 +1119,9 @@ They should not influence the input to the simulator."* ADE-L is the floor
     the new one when a rename and a new expression arrive together.
   - **After a failed run** it says the run failed instead (R-OUT13).
   - The Measurements dialog is not repainted by `~`: its Values are the simulator's own
-    measurement output, which only a run changes.
+    measurement output, which only a run changes. The Measures tab's own measurement rows
+    (R-OUT18) are re-read with the other Values; a measurement that was not in the run
+    still reads `not measured in this run`.
   - The tip reads **Plot outputs and update values (Ctrl-click: values only)** (R-OUT16); `Tools > Waveform Viewer` stays the
     raise-or-open door that plots nothing.
   - The Value and the Calculator window's Eval of the same text are the same double
@@ -1742,6 +1745,129 @@ They should not influence the input to the simulator."* ADE-L is the floor
     design variable: said, in the plural, when not, which rows it leaves to the sweep's
     advice, the asking body, and PA8h on the real simulator); PN11 (`i(v1)` equals
     `i(v1:n1)` and is the negative of `i(v1:n2)`).
+- **R-OUT18 — the simulator's measurements are in the Measures tab, and every row says who
+  computes it (issue 1768; user 2026-11-25; BUILT 2026-11-25).** The user: *"ensure that
+  measurements set up in Outputs > Measurements, which generate numeric values, are visible
+  in the Measures pane of ASE-L. What's the point of having these measures if the values
+  are not visible to the user? There needs to be a way for the user to distinguish (when
+  creating/editing) between a simulator (ngspice .meas) measure and a measure (output) that
+  is based on a Calculator function."* Until this the simulator's numbers were in the
+  Measurements dialog's own Value column and in the run log, and nowhere on the window.
+  - **Which rows.** Every row of the state's `measurements` list whose kind answers with
+    one number (`ase::meas_number_rows`, from the adapter's `yields`), switched on or off.
+    A row that makes a plot (Resample, FFT, PSD, Spectrum) or a working vector (Unwrapped
+    phase) is not shown; it stays in the dialog. The measurements follow the Outputs rows,
+    in the list's own order. An Outputs row's item id is still its index into `outputs`;
+    a measurement's is `m<index>` into `measurements` (`ase::ui::meas_item_index`). **The
+    state format is unchanged**: the tab is a view over the two lists.
+  - **Value** (`ase::ui::meas_tab_value`, over `ase::meas_shown`), in the column's own
+    format (`ase::format_value`):
+
+    | the row | its Value cell |
+    |---|---|
+    | switched off | `disabled` |
+    | cannot be measured (`ase::meas_verdict` refuses it) | the refusal's own sentence. It is known without a run and names what to fix |
+    | the last run failed (R-OUT13) | what every other Value cell reads: `Run failed (exit N); see the log` |
+    | no results, or results older than the deck | nothing, as every other Value cell |
+    | the run did not measure the row as it stands now | `not measured in this run` |
+    | the run measured it and the simulator reported nothing | the sentence the dialog and the log already give |
+    | measured | the simulator's number |
+
+  - **A number belongs to the row as it was run.** The measurement file is read by NAME, so
+    by name alone a row edited after the run, or renamed onto that name, would be handed
+    the old definition's number. `ase::meas_shown` asks what the run measured: the
+    run-state snapshot `ase::run_deck` writes beside the deck (R906; a launch deletes it
+    and the measurement file together). `ase::meas_was_run` takes a row as measured when:
+    1. that run's list holds **the same row** and that run's own state did not refuse it.
+       Two rows are the same when they give the simulator the same thing
+       (`ase::meas_row_canon`): name, kind, analysis, id, row, on, whether it is switched
+       on, and each field of the kind as the deck carries it, the stored value or else the
+       kind's default. So a key that holds its default, or nothing, is the row without the
+       key: a template writes such keys and the dialog drops them when it reads its form,
+       and a look at a row followed by OK changes no number. A key that is no field of the
+       kind is not compared;
+    2. **it reads the same analysis.** Where either state holds two analyses of the row's
+       type, the analysis row the measurement binds to is compared
+       (`ase::meas_reads_analysis`): a handle is a position among the rows of its type,
+       and a type alone means the first one switched on. With one analysis of the type
+       the row can read no other, and a change to that analysis after the run keeps the
+       number, as it keeps an Outputs row's Value;
+    3. a row that makes a plot **stands behind the same plot-making rows**
+       (`ase::meas_feed`): a resampled record is what every transform after it reads;
+    4. the same holds for **every measurement the row is computed from**
+       (`ase::meas_ref_words`): the row it is measured `on`, a `$&name` in any field, and
+       a word of an expression field that is a measurement's name. `pm = 180 + pmph` reads
+       `not measured in this run` when `pmph` was edited, switched off, deleted or renamed.
+       A node is not a measurement: the argument of `v(...)`, `i(...)` and their two- and
+       three-letter forms, and a device quantity `@m1[gm]`, are not looked at, so a
+       measurement called `out` is not read by every row that measures the node `out`.
+       The answers are kept by name while a list is walked, so rows that read the rows
+       above them cost one walk.
+
+    Under a saved result in view (R913) the snapshot is the saved one. With no snapshot (a
+    run directory from before R906, or a saved result whose snapshot was made from the
+    current state) nothing says what the run measured, and the number is shown by name as
+    before. **The Measurements dialog's Value column follows the same rule**
+    (`ase::ui::meas_results_list`), so a row edited in the form reads `not measured in this
+    run` there as soon as the form is read. **States of one cell that share a run
+    directory** (a state with no run directory of its own) read each other's results, as
+    their Outputs rows always did: a measurement the other state holds in the same words
+    shows that run's number, one it holds differently or not at all reads `not measured in
+    this run`.
+  - **After a run the user stopped** a measure the simulator said nothing about reads `not
+    reported: the run was stopped`, in the tab and in the dialog, and no longer that its
+    condition may never occur (`ase::run_stopped`, the mark R-OUT13 reads).
+  - **By.** A new column between Value and Plot. `ngspice` (the session's simulator, by its
+    own name) for a measurement, `Calculator` for an Outputs row (`ase::ui::measures_by`). It
+    opens wide enough for both words.
+  - **Editing.** A double click, or the context menu's Edit, on a measurement opens the
+    Measurements dialog **on that row**; on an Outputs row it opens the output editor, as
+    before (`ase::ui::edit_measures_item`). When the dialog is already standing it is not
+    built again: what was typed into it is kept, and it goes to the row of that name
+    (`ase::ui::meas_goto`); picking Outputs > Measurements… while it stands keeps it too.
+    **A row that names its analysis by type alone** (`analysis tran`, no handle) opens
+    with the analysis it reads shown in the Analysis box, and the dialog writes a row's
+    analysis words only when another line is picked. Before this the box was empty for
+    such a row, and a look at it followed by OK removed its `analysis` key, leaving a
+    measurement that named no analysis (`ase::ui::meas_show`, `ase::ui::meas_row_vals`). The context menu's Add still adds an Outputs row; a
+    measurement is added in the dialog.
+  - **Delete** removes each selected row from its own list, in one state change
+    (`ase::ui::selection_split`). No confirmation, as for an Outputs row. A standing
+    Measurements dialog loses the deleted measurements from its own list too
+    (`ase::ui::meas_forget`), so its OK does not bring them back. A measure computed from
+    a deleted one reads `not measured in this run`.
+  - **Plot, Save, Save Options** are empty for a measurement, and a click there flips
+    nothing and selects the row. A measurement is one number: there is nothing to plot.
+  - **The Value header's sort** (R-OUT9) ranks both kinds together: a measurement's number
+    sits with the numbers (`ase::ui::measures_items`).
+  - **When they are re-read.** With every other Value: at the end of a run, on `~` and
+    Ctrl-click `~`, on open, on a state load, on a change of the result in view, and
+    whenever the pane is repainted (the dialog's OK included). `~` cannot compute a
+    measurement that was not in the run; only a run can.
+  - **The two dialogs say which kind they make.** The Measurements dialog opens with
+    *"Measured by the simulator (ngspice) during the run. A measure the Calculator computes
+    from the results is an Output: Add… in the right-click menu of the Measures tab."* The output editor, under the
+    Measures door, ends with *"Computed by the Calculator from the results, after the run.
+    For a measurement the simulator (ngspice) makes during the run: Outputs >
+    Measurements…"* (`ase::ui::lbl_meas_what`, `ase::ui::lbl_output_what`; the simulator's
+    name is the session's, the menu path is composed from the menu's own labels, and the
+    right-click entry is the pane menu's own label and opens the Measures door whichever
+    tab is in front). The
+    Saves door says nothing of the kind: a save computes nothing.
+  - **Not built.** A measurement's caution (its number is shown; the reason is in the
+    dialog and in the run log). A second number per sweep point or per corner: the cell
+    holds the one number the measurement file holds. Reordering measurements from the tab
+    (the dialog's Up and Down do it). The Saves tab is unchanged.
+  - Fenced by `tests/headless/test_ase_meas_in_measures_1768.tcl`, registered on both arms:
+    bands MC, MR, MS, MN, MV, MI, MD, MK, ML and MX without a display (MR holds each of
+    the four points above with a control; MK reads a session's rows never run, run, edited
+    and added after the run, on another state's results, after a failed run, with results
+    older than the deck, with no snapshot, and with a saved result in view; MX launches
+    the simulator found on PATH), MW1 to MW9 on the window (a real double click on each
+    kind of row, with the dialog standing too, a real click on a measurement's Plot cell,
+    the dialog's OK with and without an edit, the refresh a finished run makes, Delete
+    over both lists with the dialog standing, both dialogs' lines, the context menu's
+    Edit).
 
 ### A Stop keeps what the run had (⚖ R1's always-salvage requirement)
 

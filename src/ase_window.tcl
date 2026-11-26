@@ -1434,10 +1434,12 @@ proc ase::ui::build {key top} {
   ase::ui::build_pane $key $top ana {num type enable args} \
     [list # Type Enable Arguments] \
     {num {3 0 e} type {6 0 w} enable {3 0 center} args {28 1 w}}
-  ase::ui::build_pane $key $top outs {name value plot save saveopts} \
-    [list Name Value Plot Save {Save Options}] \
-    [list name {12 0 w} value {11 1 w} plot {3 0 center} save {3 0 center} \
-          saveopts {10 0 w}]
+  # issue 1768: `By` says who computes a row's Value -- the simulator, for a
+  # row of Outputs > Measurements, or the Calculator (ase::ui::measures_by).
+  ase::ui::build_pane $key $top outs {name value by plot save saveopts} \
+    [list Name Value [ase::ui::lbl_out_by] Plot Save {Save Options}] \
+    [list name {12 0 w} value {11 1 w} by {10 0 w} plot {3 0 center} \
+          save {3 0 center} saveopts {10 0 w}]
   # R-OUT7: a save shows no value -- it is not a computation
   ase::ui::build_pane $key $top saves {name plot save saveopts} \
     [list Name Plot Save {Save Options}] \
@@ -2114,7 +2116,7 @@ proc ase::ui::build_pane {key top pane columns headings policy} {
         -command [list ase::ui::edit_analysis_first $key]
     }
     outs {
-      $pf.ctx add command -label "Add\u2026" \
+      $pf.ctx add command -label [ase::ui::lbl_ctx_add] \
         -command [list ase::ui::output_editor $key -1 measures]
       $pf.ctx add command -label "Edit\u2026" \
         -command [list ase::ui::edit_output_first $key]
@@ -2171,10 +2173,114 @@ proc ase::ui::pane_click {key pane x y} {
     return 1
   }
   if {$pane in {outs saves} && ($cname eq {plot} || $cname eq {save})} {
+    # issue 1768: a simulator measurement has no Plot and no Save to flip; the
+    # click falls through and selects the row
+    if {[ase::ui::meas_item_index $item] >= 0} { return 0 }
     ase::ui::toggle_flag $key outputs $item $cname
     return 1
   }
   return 0
+}
+
+# ─── THE SIMULATOR'S MEASUREMENTS IN THE MEASURES TAB (issue 1768) ──────────
+#
+# The user: "ensure that measurements set up in Outputs > Measurements, which
+# generate numeric values, are visible in the Measures pane of ASE-L. What's
+# the point of having these measures if the values are not visible to the
+# user?"  Until this the numbers were in the Measurements dialog's own Value
+# column and in the run log, and nowhere on the window the user reads.
+#
+# The Measures tree now holds two kinds of row over two state lists: the
+# Outputs rows, whose item id is the row's index into `outputs` (an integer,
+# as before), and the simulator's measurements, whose item id is `m<index>`
+# into `measurements`. Every reader of an item id asks
+# ase::ui::meas_item_index which of the two it holds.
+
+# The `measurements` index a Measures-tree item names, or -1 for an Outputs
+# row (or anything else).
+proc ase::ui::meas_item_index {item} {
+  if {[regexp {^m(0|[1-9][0-9]*)$} $item -> i]} { return $i }
+  return -1
+}
+proc ase::ui::meas_item_id {idx} { return m$idx }
+
+# One measurement's Value in the Measures tab, from ase::meas_shown's record
+# `e`.  `failed` is ase::run_failed's answer, `has` ase::has_results', `ran`
+# whether the run left a measurement file at all.  Pure.
+#   a row that is switched off        the word saying so
+#   a row that cannot be measured     the refusal's own sentence: it is known
+#                                     without a run, and names what to fix
+#   the last run failed               what every other Value cell reads
+#   no results, or results older
+#   than the deck                     nothing, as every other Value cell
+#   the run did not measure this row
+#   as it stands now                  that sentence, never another row's number
+#   the simulator reported nothing    its sentence (an empty cell reads as
+#                                     zero); after a run the user stopped,
+#                                     that the run was stopped
+proc ase::ui::meas_tab_value {e failed has ran {stopped 0}} {
+  lassign $e nm verdict val why
+  switch -exact -- $verdict {
+    off     { return [ase::ui::lbl_meas_off] }
+    refused -
+    fatal   { return $why }
+  }
+  if {$failed ne {}} { return [ase::ui::lbl_run_failed_value $failed] }
+  if {!$has} { return {} }
+  switch -exact -- $verdict {
+    ok      -
+    caution { return $val }
+    notrun  { return [ase::ui::lbl_meas_notrun] }
+    failed  {
+      if {$stopped} { return [ase::ui::lbl_meas_stopped] }
+      if {$ran} { return $why }
+    }
+  }
+  return {}
+}
+
+# The session's measurements that answer with one number, as the Measures tab
+# shows them: `{index name value}` per row, in stored order, `index` into the
+# state's `measurements`.  The rows are the SESSION's (never the Measurements
+# dialog's working copy); the numbers are the result in view's (R913).
+proc ase::ui::meas_tab_rows {key} {
+  set st {}
+  if {[catch {ase::session_state $key} st] || $st eq {}} { return {} }
+  set rows [ase::meas_rows $st]
+  if {![llength $rows]} { return {} }
+  set sim [ase::ui::chana_sim $key]
+  set idxs [ase::meas_number_rows $sim $st]
+  if {![llength $idxs]} { return {} }
+  set vst $st
+  catch {dict set vst rundir [ase::state_get [ase::result_state $key] rundir]}
+  set res {}
+  catch {set res [ase::meas_shown $sim $vst [ase::result_runstate $key]]}
+  set failed {}
+  catch {set failed [ase::run_failed $key]}
+  set has 0
+  catch {set has [ase::has_results $key]}
+  set ran [ase::ui::meas_ran $key]
+  set stopped 0
+  catch {set stopped [ase::run_stopped $key]}
+  set out {}
+  foreach i $idxs {
+    set nm [ase::meas_name [lindex $rows $i]]
+    set e [lindex $res $i]
+    set val {}
+    # the answer's own name is checked, for ase::ui::meas_fill's reason
+    if {$i < [llength $res] && [lindex $e 0] eq $nm} {
+      set val [ase::ui::meas_tab_value $e $failed $has $ran $stopped]
+    }
+    lappend out [list $i $nm $val]
+  }
+  return $out
+}
+
+# Who computes a Measures row's Value: the session's simulator for a row of
+# Outputs > Measurements, the Calculator for an Outputs row.
+proc ase::ui::measures_by {key item} {
+  if {[ase::ui::meas_item_index $item] >= 0} { return [ase::ui::chana_sim $key] }
+  return [ase::ui::lbl_by_calc]
 }
 
 # Flip a 0/1 flag of row `idx` in the state list `skey`, preserving every
@@ -2206,7 +2312,7 @@ proc ase::ui::pane_dblclick {key pane x y} {
   if {$item eq {}} { return }
   switch -- $pane {
     vars { ase::ui::variable_editor $key $item }
-    outs  { ase::ui::output_editor $key $item }
+    outs  { ase::ui::edit_measures_item $key $item }
     saves { ase::ui::output_editor $key $item }
     ana  {
       set rows [ase::state_get [ase::session_state $key] analyses]
@@ -2252,18 +2358,85 @@ proc ase::ui::delete_selection {key} {
     if {$sel eq {}} { continue }
     set skey [dict get $panekeys $pane]
     set st [ase::session_state $key]
-    set rows [ase::state_get $st $skey]
-    foreach i [lsort -integer -decreasing $sel] {
-      if {[string is integer -strict $i] && $i >= 0 && $i < [llength $rows]} {
-        set rows [lreplace $rows $i $i]
-      }
-    }
+    # issue 1768: the Measures tree holds rows of two lists; each selected
+    # item is removed from its own
+    lassign [ase::ui::selection_split $sel] own meas
+    set rows [ase::ui::rows_without [ase::state_get $st $skey] $own]
     dict set st $skey $rows
+    set gone {}
+    if {$pane eq {outs} && [llength $meas]} {
+      set mall [ase::meas_rows $st]
+      foreach i $meas {
+        if {$i >= 0 && $i < [llength $mall]} { lappend gone [ase::meas_name [lindex $mall $i]] }
+      }
+      dict set st measurements [ase::ui::rows_without $mall $meas]
+    }
     ase::session_update $key $st
+    # a standing Measurements dialog holds its own copy of the list, and its OK
+    # writes the whole copy: the rows just deleted leave it too
+    if {[llength $gone]} { ase::ui::meas_forget $key $gone }
     ase::ui::populate $key
     return
   }
   catch {::ase::echo "ase: nothing selected"}
+}
+
+# The Measures tab deleted the measurements called `names` while the
+# Measurements dialog is standing (issue 1768): the dialog's working copy
+# loses them too -- the first row of each name, the one the simulator keeps --
+# or the dialog's OK would write them back. What is in the form is read into
+# the copy first, and the row that was selected stays selected when it is
+# still there. -> the number of rows the copy lost.
+proc ase::ui::meas_forget {key names} {
+  variable wins; variable dlg
+  if {![dict exists $wins $key] || ![info exists dlg($key,mrows)]} { return 0 }
+  if {![winfo exists [dict get $wins $key].meas]} { return 0 }
+  ase::ui::meas_harvest $key
+  set rows $dlg($key,mrows)
+  set sel $dlg($key,msel)
+  set n 0
+  foreach nm $names {
+    set i -1
+    foreach r $rows {
+      incr i
+      if {[ase::meas_name $r] ne $nm} { continue }
+      set rows [lreplace $rows $i $i]
+      if {$i < $sel} { incr sel -1 }
+      incr n
+      break
+    }
+  }
+  if {$sel >= [llength $rows]} { set sel [expr {[llength $rows] - 1}] }
+  set dlg($key,mrows) $rows
+  set dlg($key,msel) $sel
+  ase::ui::meas_show $key
+  return $n
+}
+
+# A pane selection as `{<row indices> <measurement indices>}` (issue 1768):
+# integer item ids, and the Measures tree's `m<index>` ids.  Anything else is
+# dropped.  Pure.
+proc ase::ui::selection_split {sel} {
+  set own {}
+  set meas {}
+  foreach it $sel {
+    set m [ase::ui::meas_item_index $it]
+    if {$m >= 0} {
+      lappend meas $m
+    } elseif {[string is integer -strict $it]} {
+      lappend own $it
+    }
+  }
+  return [list $own $meas]
+}
+
+# `rows` without the rows at `idxs`; an index outside the list is ignored.
+# Pure.
+proc ase::ui::rows_without {rows idxs} {
+  foreach i [lsort -integer -decreasing -unique $idxs] {
+    if {$i >= 0 && $i < [llength $rows]} { set rows [lreplace $rows $i $i] }
+  }
+  return $rows
 }
 
 # --- pure cell helpers (Tk-free — headless tests drive these directly) -------
@@ -2926,11 +3099,26 @@ proc ase::ui::populate {key} {
   set rows [ase::state_get $st outputs]
   set tv $top.body.outs.tv
   $tv delete [$tv children {}]
-  foreach i [ase::ui::measures_order $rows $results $srt] {
+  # issue 1768: the simulator's measurements follow the Outputs rows, under
+  # `m<index>` item ids; a measurement has no Plot, no Save and no Save Options
+  # (caught: a `measurements` list that cannot be read -- a state edited by
+  # hand -- costs the pane its measurement rows and nothing else)
+  set mrows {}
+  catch {set mrows [ase::ui::meas_tab_rows $key]}
+  set mcell [dict create]
+  foreach m $mrows { dict set mcell [ase::ui::meas_item_id [lindex $m 0]] $m }
+  foreach i [ase::ui::measures_items $rows $results $srt $mrows] {
+    if {[dict exists $mcell $i]} {
+      lassign [dict get $mcell $i] _mi _mn _mv
+      $tv insert {} end -id $i -values \
+        [list $_mn [ase::format_value $_mv] [ase::ui::measures_by $key $i] {} {} {}]
+      continue
+    }
     set row [lindex $rows $i]
     $tv insert {} end -id $i -values \
       [list [ase::ui::output_display_name $row] \
         [ase::format_value [ase::ui::output_value $row $results]] \
+        [ase::ui::measures_by $key $i] \
         [ase::ui::chk_glyph [ase::state_get $row plot 0]] \
         [ase::ui::chk_glyph [ase::state_get $row save 0]] \
         [ase::ui::save_options_cell $st $row]]
@@ -2969,7 +3157,18 @@ proc ase::ui::refresh_output_values {key} {
   set st [ase::session_state $key]
   set results [ase::session_getattr $key results]
   set rows [ase::state_get $st outputs]
+  # issue 1768: the simulator's measurements are re-read with the rest -- a
+  # finished run, `~`, a state load and a change of the result in view all
+  # come through here
+  set mrows {}
+  catch {set mrows [ase::ui::meas_tab_rows $key]}
+  set mval [dict create]
+  foreach m $mrows { dict set mval [ase::ui::meas_item_id [lindex $m 0]] [lindex $m 2] }
   foreach i [$tv children {}] {
+    if {[dict exists $mval $i]} {
+      catch {$tv set $i value [ase::format_value [dict get $mval $i]]}
+      continue
+    }
     if {![string is integer -strict $i] || $i >= [llength $rows]} { continue }
     catch {$tv set $i value \
       [ase::format_value [ase::ui::output_value [lindex $rows $i] $results]]}
@@ -2977,7 +3176,7 @@ proc ase::ui::refresh_output_values {key} {
   # R-OUT9: a sorted view re-sorts on new values; `move` keeps the selection
   if {[info exists outsort($key)] && $outsort($key)} {
     set pos 0
-    foreach i [ase::ui::measures_order $rows $results 1] {
+    foreach i [ase::ui::measures_items $rows $results 1 $mrows] {
       if {[$tv exists $i]} { $tv move $i {} $pos ; incr pos }
     }
   }
@@ -3036,6 +3235,25 @@ proc ase::ui::measures_order {rows results sorted} {
   }
   # lsort is a merge sort, so equal ranks keep the user's order
   return [lmap e [lsort -integer -index 0 $keyed] {lindex $e 1}]
+}
+
+# The Measures tab's ITEMS in display order (issue 1768): the Outputs rows by
+# state index, then the simulator's measurements `mrows`
+# (ase::ui::meas_tab_rows' `{index name value}`) as `m<index>`.  Sorted, the
+# two lists are one, stable by ase::ui::value_rank: a measurement's number
+# sits with the numbers.  Pure.
+proc ase::ui::measures_items {rows results sorted mrows} {
+  set keyed {}
+  foreach i [ase::ui::measures_order $rows $results 0] {
+    lappend keyed [list [ase::ui::value_rank \
+      [ase::ui::output_value [lindex $rows $i] $results]] $i]
+  }
+  foreach m $mrows {
+    lappend keyed [list [ase::ui::value_rank [lindex $m 2]] \
+      [ase::ui::meas_item_id [lindex $m 0]]]
+  }
+  if {$sorted} { set keyed [lsort -integer -index 0 $keyed] }
+  return [lmap e $keyed {lindex $e 1}]
 }
 
 # Show (or, with no `tab`, answer) the Outputs tab of session `key`.
@@ -3390,7 +3608,15 @@ proc ase::ui::output_editor {key idx {tab {}}} {
   button $w.fromdes -text "From Design…" \
     -command [list ase::ui::output_editor_from_design $key]
   grid $w.fromdes -row 2 -column 0 -rowspan 2 -sticky w -padx {8 6} -pady 2
-  ase::ui::dialog_buttons $w 4 [list ase::ui::output_editor_ok $key] \
+  # issue 1768: under the Measures door the dialog says who computes the row
+  # and names the door to the simulator's own measurements (a save computes
+  # nothing, so the Saves door says nothing)
+  if {$tab eq {measures}} {
+    label $w.what -text [ase::ui::lbl_output_what [ase::ui::chana_sim $key]] \
+      -anchor w -justify left
+    grid $w.what -row 4 -column 0 -columnspan 2 -sticky w -padx 8 -pady {4 0}
+  }
+  ase::ui::dialog_buttons $w 5 [list ase::ui::output_editor_ok $key] \
     [list ase::ui::output_editor_cancel $key]
   bind $ne <Return> [list ase::ui::output_editor_ok $key]
   bind $xe <Return> [list ase::ui::output_editor_ok $key]
@@ -8912,7 +9138,18 @@ proc ase::ui::edit_output_first {key} {
     catch {::ase::echo "ase: nothing selected"}
     return
   }
-  ase::ui::output_editor $key [lindex $sel 0]
+  ase::ui::edit_measures_item $key [lindex $sel 0]
+}
+
+# The editor of one item of an Outputs tree (issue 1768): the Measurements
+# dialog, opened on that row, for a simulator measurement (`m<index>`); the
+# output editor for an Outputs row.  The two are different things to edit --
+# a measurement is a set of fields the simulator is given, an output is one
+# expression the Calculator evaluates -- so each row opens its own.
+proc ase::ui::edit_measures_item {key item} {
+  set m [ase::ui::meas_item_index $item]
+  if {$m >= 0} { return [ase::ui::measurements_dialog $key $m] }
+  return [ase::ui::output_editor $key $item]
 }
 
 # Context Edit… on the analyses pane: Choose Analyses preselected on the
@@ -12481,14 +12718,21 @@ proc ase::ui::meas_ran {key} {
 # and the simulator reported nothing) from `produced` (a row that was never
 # going to answer with a number, such as a Resample); only the first has
 # anything to say.
-proc ase::ui::meas_value_cell {e ran} {
+proc ase::ui::meas_value_cell {e ran {stopped 0}} {
   lassign $e nm verdict val why
   switch -exact -- $verdict {
     ok      -
     caution { return $val }
     refused -
     fatal   { return $why }
-    failed  { if {$ran} { return $why } ; return {} }
+    failed  {
+      ## ISSUE 1768: after a run the user stopped, the simulator's silence has
+      ## another reason than a condition that never occurred.
+      if {$stopped} { return [ase::ui::lbl_meas_stopped] }
+      if {$ran} { return $why }
+      return {}
+    }
+    notrun  { return [ase::ui::lbl_meas_notrun] }
   }
   return {}
 }
@@ -12512,7 +12756,11 @@ proc ase::ui::meas_results_list {key} {
     ## form's (meas_state), only `rundir` follows the view.
     set _ms [ase::ui::meas_state $key]
     dict set _ms rundir [ase::state_get [ase::result_state $key] rundir]
-    set out [ase::meas_results [ase::ui::meas_sim $key] $_ms]
+    ## ISSUE 1768: a row the run did not measure as it stands -- edited in the
+    ## form, renamed, or added since -- answers `notrun`, never the number the
+    ## sidecar holds under its name (ase::meas_shown).
+    set out [ase::meas_shown [ase::ui::meas_sim $key] $_ms \
+               [ase::result_runstate $key]]
   }
   return $out
 }
@@ -12564,13 +12812,61 @@ proc ase::ui::lbl_meas_tpl_title   {} { return {Measurement Template} }
 proc ase::ui::lbl_meas_tpl_pick    {} { return {Template} }
 proc ase::ui::lbl_meas_report      {} { return "[ase::ui::lbl_measurements]:" }
 
-# Outputs > Measurements…
-proc ase::ui::measurements_dialog {key} {
+# ── ISSUE 1768: WHICH OF THE TWO KINDS OF MEASURE THIS IS ───────────────────
+# The user: "There needs to be a way for the user to distinguish (when
+# creating/editing) between a simulator (ngspice .meas) measure and a measure
+# (output) that is based on a Calculator function."  The two are made in two
+# dialogs, and until this neither said which it was.  Each now says who
+# computes its rows and names the door to the other kind, and the Measures
+# tab's `By` column says it per row.  The simulator is named by the session's
+# own word for it, never a typed one.
+# The pane context menus' first entry (ase::ui::build_pane), named by the
+# Measurements dialog's line as the door to an Output.
+proc ase::ui::lbl_ctx_add     {} { return "Add\u2026" }
+proc ase::ui::lbl_out_by      {} { return {By} }
+proc ase::ui::lbl_by_calc     {} { return {Calculator} }
+proc ase::ui::lbl_meas_off    {} { return {disabled} }
+proc ase::ui::lbl_meas_stopped {} { return {not reported: the run was stopped} }
+# `this run` is the run the results in view are from. The row was added or
+# changed after it, or the results in the run directory are another state's.
+proc ase::ui::lbl_meas_notrun {} { return {not measured in this run} }
+proc ase::ui::menu_path_measurements {} {
+  return "[ase::ui::lbl_outputs] > [ase::ui::lbl_measurements_menu]"
+}
+# The line at the top of the Measurements dialog.
+proc ase::ui::lbl_meas_what {sim} {
+  return "Measured by the simulator ($sim) during the run.\nA measure the\
+ [ase::ui::lbl_by_calc] computes from the results is an Output:\
+ [ase::ui::lbl_ctx_add] in the right-click menu of the Measures tab."
+}
+# The line in the output editor, under the Measures door.
+proc ase::ui::lbl_output_what {sim} {
+  return "Computed by the [ase::ui::lbl_by_calc] from the results, after the\
+ run.\nFor a measurement the simulator ($sim) makes during the run:\
+ [ase::ui::menu_path_measurements]"
+}
+
+# Outputs > Measurements…  `sel` (issue 1768) is the row to open on -- the
+# Measures tab hands the row the user double-clicked; without it the first.
+proc ase::ui::measurements_dialog {key {sel {}}} {
   variable wins; variable dlg
   if {![dict exists $wins $key]} { return {} }
+  # issue 1768: asked for while it is standing (by the tab, for a row, or by
+  # the menu), the dialog is not built again from the session -- that would
+  # drop what was typed into it
+  if {[winfo exists [dict get $wins $key].meas] && [info exists dlg($key,mrows)]} {
+    return [ase::ui::meas_goto $key $sel]
+  }
   set w [ase::ui::dialog_frame [dict get $wins $key].meas [ase::ui::lbl_measurements]]
   set dlg($key,mrows) [ase::meas_rows [ase::session_state $key]]
   set dlg($key,msel)  [expr {[llength $dlg($key,mrows)] ? 0 : -1}]
+  if {[string is integer -strict $sel] && $sel >= 0
+      && $sel < [llength $dlg($key,mrows)]} {
+    set dlg($key,msel) $sel
+  }
+  label $w.what -text [ase::ui::lbl_meas_what [ase::ui::meas_sim $key]] \
+    -anchor w -justify left
+  grid $w.what -row 0 -column 0 -columnspan 2 -sticky w -padx 8 -pady {8 0}
   set _rh [llength $dlg($key,mrows)]
   if {$_rh < 3} { set _rh 3 }
   if {$_rh > 8} { set _rh 8 }
@@ -12588,7 +12884,7 @@ proc ase::ui::measurements_dialog {key} {
                        -anchor $_an -stretch [expr {$_c eq {value}}]
   }
   bind $w.rows <<TreeviewSelect>> [list ase::ui::meas_pick $key]
-  grid $w.rows -row 0 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady {8 2}
+  grid $w.rows -row 1 -column 0 -columnspan 2 -sticky nsew -padx 8 -pady {8 2}
   frame $w.bar
   button $w.bar.add -text Add -command [list ase::ui::meas_add $key]
   button $w.bar.del -text Delete -command [list ase::ui::meas_del $key]
@@ -12600,12 +12896,12 @@ proc ase::ui::measurements_dialog {key} {
     -command [list ase::ui::meas_tpl_dialog $key]
   pack $w.bar.add $w.bar.del $w.bar.up $w.bar.down -side left -padx 2
   pack $w.bar.tpl -side left -padx {14 2}
-  grid $w.bar -row 1 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
+  grid $w.bar -row 2 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   checkbutton $w.enable -text Enable -variable ::ase::ui::dlg($key,men) \
     -command [list ase::ui::meas_enable_changed $key]
-  grid $w.enable -row 2 -column 0 -sticky w -padx 8 -pady 2
+  grid $w.enable -row 3 -column 0 -sticky w -padx 8 -pady 2
   label $w.status -text {} -anchor w -justify left
-  grid $w.status -row 2 -column 1 -sticky w -padx 8 -pady 2
+  grid $w.status -row 3 -column 1 -sticky w -padx 8 -pady 2
   # THE VERDICT ROW IS RESERVED WHETHER OR NOT IT HAS TEXT, so the button bar
   # does not jump as a refusal appears and goes -- issue 1435's `$w.note` rule,
   # inherited rather than re-derived.
@@ -12613,9 +12909,32 @@ proc ase::ui::measurements_dialog {key} {
   grid $w.note -row 7 -column 0 -columnspan 2 -sticky w -padx 8 -pady 2
   ase::ui::dialog_buttons $w 9 [list ase::ui::meas_ok $key] \
     [list ase::ui::meas_cancel $key]
-  grid rowconfigure $w 0 -weight 1
+  grid rowconfigure $w 1 -weight 1
   ase::ui::meas_show $key
   ase::ui::apply_theme $w
+  return $w
+}
+
+# THE STANDING DIALOG, TAKEN TO A ROW OF THE SESSION'S LIST (issue 1768: a
+# double click in the Measures tab while the dialog is up). The working copy is
+# kept, with what is in the form read into it first, and the row of the same
+# NAME is selected -- the first of that name, the one the simulator keeps. A
+# working copy that no longer holds such a row keeps its selection.
+proc ase::ui::meas_goto {key sel} {
+  variable wins; variable dlg
+  set w [dict get $wins $key].meas
+  ase::ui::meas_harvest $key
+  set srows [ase::meas_rows [ase::session_state $key]]
+  if {[string is integer -strict $sel] && $sel >= 0 && $sel < [llength $srows]} {
+    set nm [ase::meas_name [lindex $srows $sel]]
+    set i -1
+    foreach r [ase::ui::meas_rows $key] {
+      incr i
+      if {[ase::meas_name $r] eq $nm} { set dlg($key,msel) $i ; break }
+    }
+  }
+  ase::ui::meas_show $key
+  catch {raise $w}
   return $w
 }
 
@@ -12630,6 +12949,8 @@ proc ase::ui::meas_fill {key} {
   set sim [ase::ui::meas_sim $key]
   set res [ase::ui::meas_results_list $key]
   set ran [ase::ui::meas_ran $key]
+  set stopped 0
+  catch {set stopped [ase::run_stopped $key]}
   $tv delete [$tv children {}]
   set i -1
   foreach r [ase::ui::meas_rows $key] {
@@ -12643,7 +12964,7 @@ proc ase::ui::meas_fill {key} {
     ## blank is the only honest thing to show if the two ever disagree.
     set e [lindex $res $i]
     if {$i < [llength $res] && [lindex $e 0] eq $nm} {
-      set val [ase::ui::meas_value_cell $e $ran]
+      set val [ase::ui::meas_value_cell $e $ran $stopped]
     }
     $tv insert {} end -id $i -values \
       [list [ase::ui::chk_glyph [ase::meas_enabled $r]] $nm \
@@ -12754,7 +13075,7 @@ proc ase::ui::meas_show {key} {
   set sim [ase::ui::meas_sim $key]
   catch {destroy $w.form}
   frame $w.form
-  grid $w.form -row 3 -column 0 -columnspan 2 -sticky we
+  grid $w.form -row 4 -column 0 -columnspan 2 -sticky we
   grid columnconfigure $w.form 1 -weight 1
   grid columnconfigure $w.form 3 -weight 1
   set sel $dlg($key,msel)
@@ -12822,8 +13143,31 @@ proc ase::ui::meas_show {key} {
   label $w.form.lanalysis -text "[ase::ui::lbl_meas_analysis]:" \
     -font AseLabelFont -anchor w
   ttk::combobox $w.form.analysis -values $_avals -state readonly -width 30
+  ## ISSUE 1768: A ROW THAT NAMES ITS ANALYSIS BY TYPE ALONE SHOWS THE ONE IT
+  ## READS. `{name x analysis tran kind max ...}` carries no handle; the box was
+  ## left empty for it, which said "no analysis" of a row that reads one, and
+  ## the harvest then took the empty box at its word and removed the row's
+  ## `analysis` key -- a look at the row and OK left a measurement that "names
+  ## no analysis". The line of the analysis the row binds to is shown instead
+  ## (ase::meas_binding, over the list the dialog is editing).
+  if {$_cur eq {}} {
+    set _b {}
+    catch {set _b [ase::meas_binding $sim [ase::ui::meas_state $key] $row]}
+    if {$_b ne {}} {
+      foreach c [ase::meas_analysis_choices $sim [ase::session_state $key]] {
+        if {[lindex $c 2] == [lindex $_b 1]} { set _cur [lindex $c 0] ; break }
+      }
+    }
+  }
+  ## WHAT THE BOX SHOWS WHEN THE FORM IS BUILT. The harvest writes the row's
+  ## analysis keys only when the user picked another line: a row that was only
+  ## looked at keeps the words it was stored with.
+  set dlg($key,manshown) {}
   foreach a $_alines {
-    if {[lindex $a 0] eq $_cur} { catch {$w.form.analysis set [lindex $a 1]} }
+    if {[lindex $a 0] eq $_cur} {
+      catch {$w.form.analysis set [lindex $a 1]}
+      set dlg($key,manshown) [lindex $a 1]
+    }
   }
   bind $w.form.analysis <<ComboboxSelected>> [list ase::ui::meas_an_changed $key]
   grid $w.form.lanalysis -row $r -column 0 -sticky w -padx {8 6} -pady 2
@@ -12908,7 +13252,8 @@ proc ase::ui::meas_row_vals {key} {
     }
   }
   set kind [string trim [ase::state_get $row kind]]
-  if {[winfo exists $w.analysis] && [info exists dlg($key,manmap)]} {
+  if {[winfo exists $w.analysis] && [info exists dlg($key,manmap)]
+      && !([info exists dlg($key,manshown)] && [$w.analysis get] eq $dlg($key,manshown))} {
     set l [$w.analysis get]
     if {$l eq {}} {
       set row [dict remove $row id analysis]
@@ -13083,6 +13428,7 @@ proc ase::ui::meas_cancel {key} {
   array unset dlg $key,men
   array unset dlg $key,mkindmap
   array unset dlg $key,manmap
+  array unset dlg $key,manshown
   array unset dlg $key,mtpl
   if {[dict exists $wins $key]} {
     catch {destroy [dict get $wins $key].meas.tpl}
@@ -18020,7 +18366,8 @@ proc ase::ui::evaluate_outputs {key} {
 # Value reads that the run failed, and nothing is plotted.
 # The Measurements dialog is not repainted here: its Values are the
 # simulator's own measurement output, which only a run changes, and
-# run_finished repaints it then.
+# run_finished repaints it then.  The Measures tab's own measurement rows
+# (issue 1768) are re-read with the other Values, by refresh_output_values.
 # -> 1 when it evaluated, 0 when there was nothing to evaluate against.
 proc ase::ui::plot_outputs {key} {
   if {![ase::ui::evaluate_outputs $key]} { return 0 }

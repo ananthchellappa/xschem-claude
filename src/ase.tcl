@@ -9856,6 +9856,254 @@ proc ase::meas_report {sim state {text {}}} {
   return $out
 }
 
+# ─── WHAT A SURFACE SHOWS FOR EACH MEASUREMENT (issue 1768) ──────────────────
+#
+# ase::meas_results answers by NAME from the sidecar, so it hands a number to a
+# row that was edited, renamed onto that name or added after the run: the
+# answer of another definition, under this one's name. ase::meas_shown asks one
+# question more when something can answer it: what did the run that wrote the
+# sidecar measure? The run-state snapshot ase::run_deck writes beside the deck
+# (ase::runstate_path) is that run's own list, and a launch deletes the
+# snapshot and the sidecar together, so the two always describe one run.
+
+# A measurement row as a value two rows can be compared by: WHAT THE ROW GIVES
+# THE SIMULATOR, and nothing of how it happens to be stored.
+#   - its name, kind, analysis, id, row and on, trimmed (an absent key reads
+#     as an empty one), and whether it is switched on;
+#   - each field of its kind as the deck would carry it (ase::meas_field_value:
+#     the stored value, else the kind's default).
+# So a key that holds its default, or holds nothing, makes the same row as no
+# key at all -- which is what the Measurements dialog turns one into when it
+# reads its form, and a template writes such keys. A key that is no field of
+# the row's kind reaches no deck and is not compared.
+proc ase::meas_row_canon {sim row} {
+  if {[catch {dict size $row}]} { return [list ? $row] }
+  set out {}
+  foreach k {name kind analysis id row on} {
+    lappend out $k [string trim [ase::state_get $row $k]]
+  }
+  lappend out enabled [ase::meas_enabled $row]
+  set kind [string trim [ase::state_get $row kind]]
+  foreach f [ase::meas_kind_fields $sim $kind] {
+    if {![dict exists $f name]} { continue }
+    set fn [dict get $f name]
+    lappend out f:$fn [ase::meas_field_value $sim $kind $row $fn]
+  }
+  return $out
+}
+
+# The words of a row that may name ANOTHER MEASUREMENT's result, lower case
+# (the simulator folds the names):
+#   - the row it is measured `on`;
+#   - `$&name` in any field: a result substituted into the line;
+#   - a word of an expression field (`expr`, `vecexpr`) that is not a
+#     function's name -- `180 + pmph` gives `pmph`.
+# A NODE is not a measurement: the argument of `v(...)`, `i(...)` and their
+# two- and three-letter forms (`vdb(out)`, `vp(out)`) and a device quantity
+# (`@m1[gm]`) are taken out first, so a measurement called `out` is not read
+# by every row that measures the node `out`. The caller keeps the words that
+# ARE measurement names.
+proc ase::meas_ref_words {sim row} {
+  set out {}
+  set on [string tolower [ase::meas_on $row]]
+  if {$on ne {}} { lappend out $on }
+  foreach f [ase::meas_kind_fields $sim [string trim [ase::state_get $row kind]]] {
+    if {![dict exists $f name]} { continue }
+    set v [ase::state_get $row [dict get $f name]]
+    foreach {- w} [regexp -all -inline {\$&([A-Za-z][A-Za-z0-9_]*)} $v] {
+      set w [string tolower $w]
+      if {$w ni $out} { lappend out $w }
+    }
+    if {![dict exists $f kind] || [dict get $f kind] ni {expr vecexpr}} { continue }
+    regsub -all {@[^\s\[\]]*\[[^\]]*\]} $v { } v
+    regsub -all -nocase {\m[vi][a-z]{0,2}\s*\([^()]*\)} $v { } v
+    foreach w [regexp -all -inline {[A-Za-z][A-Za-z0-9_]*(?![A-Za-z0-9_]|\s*\()} $v] {
+      set w [string tolower $w]
+      if {$w ni $out} { lappend out $w }
+    }
+  }
+  return $out
+}
+
+# The rows that make a plot and stand before `row` in `state`'s list on the
+# same analysis, switched on, as comparable values. A row that makes a plot is
+# fed by the ones before it -- a resampled record is what every transform after
+# it reads -- so its answer is theirs too.
+proc ase::meas_feed {sim state row} {
+  set out {}
+  set mine [list [string trim [ase::state_get $row analysis]] \
+                 [string trim [ase::state_get $row id]] [string trim [ase::state_get $row row]]]
+  foreach r [ase::meas_rows $state] {
+    if {$r eq $row} { break }
+    if {![ase::meas_enabled $r]} { continue }
+    if {[ase::meas_kind_form $sim [string trim [ase::state_get $r kind]]] ne {producer}} { continue }
+    if {[list [string trim [ase::state_get $r analysis]] [string trim [ase::state_get $r id]] \
+              [string trim [ase::state_get $r row]]] ne $mine} { continue }
+    lappend out [ase::meas_row_canon $sim $r]
+  }
+  return $out
+}
+
+# The analysis row a measurement reads in `state`, as a comparable value; {}
+# when the state holds one analysis of that type at most, because the row can
+# then read no other. A handle is a position among the rows of its type and a
+# type alone means the first one switched on, so with two rows of a type the
+# same measurement text can come to read another sweep.
+proc ase::meas_reads_analysis {sim state row} {
+  set b [ase::meas_binding $sim $state $row]
+  if {$b eq {}} { return {} }
+  lassign $b type idx
+  set n 0
+  set rows [ase::state_get $state analyses]
+  foreach a $rows { if {[ase::state_get $a type] eq $type} { incr n } }
+  if {$n < 2} { return {} }
+  set a [lindex $rows $idx]
+  set out {}
+  if {[catch {dict keys $a} keys]} { return [list ? $a] }
+  foreach k [lsort $keys] {
+    set v [string trim [dict get $a $k]]
+    if {$v ne {}} { lappend out $k $v }
+  }
+  return $out
+}
+
+# Does `row` reach the deck of `state`: switched on, and not refused?
+proc ase::meas_emits {sim state row} {
+  if {![ase::meas_enabled $row]} { return 0 }
+  return [expr {[lindex [ase::meas_verdict $sim $state $row] 0] in {ok caution}}]
+}
+
+# Did the run `runstate` describes measure `row` of `state` as it stands now?
+# The row reaches the deck now, and it STANDS AS IT STOOD in that run
+# (ase::meas_standing).
+proc ase::meas_was_run {sim state runstate row {memovar {}}} {
+  if {$memovar ne {}} { upvar 1 $memovar memo }
+  if {![info exists memo]} { set memo [dict create] }
+  if {![ase::meas_emits $sim $state $row]} { return 0 }
+  return [ase::meas_standing $sim $state $runstate $row memo]
+}
+
+# Does `row` of `state` stand as it stood in the run `runstate` describes?
+#   1. that run's list holds the same row (ase::meas_row_canon), and the row
+#      reached that run's deck exactly when it reaches the deck now;
+#   2. where either state holds two analyses of the row's type, the analysis
+#      the row reads is the same one in both (ase::meas_reads_analysis);
+#   3. a row that makes a plot stands behind the same plot-making rows in both
+#      (ase::meas_feed);
+#   4. every measurement the row is computed from (ase::meas_ref_words) stands
+#      as it stood, in turn. A measure over an edited measure is edited too;
+#      one over a measure that is gone, renamed or new has other inputs than it
+#      had; one over a measure that was switched off in the run and still is
+#      stands as it stood, and shows what that run said of it.
+# `memovar` names a dict the answers are kept in, by lower-case name, so a list
+# of rows that read each other is walked once. A row being asked about counts
+# as standing while its own inputs are asked, which ends two rows that read
+# each other.
+proc ase::meas_standing {sim state runstate row memovar} {
+  upvar 1 $memovar memo
+  set me [string tolower [ase::meas_name $row]]
+  if {[dict exists $memo $me]} { return [dict get $memo $me] }
+  dict set memo $me 1
+  set ok [ase::meas_standing_own $sim $state $runstate $row]
+  if {$ok} {
+    foreach n [ase::meas_ref_words $sim $row] {
+      if {$n eq $me} { continue }
+      set q {} ; set hasq 0
+      foreach r [ase::meas_rows $state] {
+        if {[string tolower [ase::meas_name $r]] eq $n} { set q $r ; set hasq 1 ; break }
+      }
+      set hasr 0
+      foreach r [ase::meas_rows $runstate] {
+        if {[string tolower [ase::meas_name $r]] eq $n} { set hasr 1 ; break }
+      }
+      if {!$hasq && !$hasr} { continue }
+      if {!$hasq || !$hasr || ![ase::meas_standing $sim $state $runstate $q memo]} {
+        set ok 0
+        break
+      }
+    }
+  }
+  dict set memo $me $ok
+  return $ok
+}
+
+# Points 1 to 3 of ase::meas_standing: the row itself, without what it reads.
+proc ase::meas_standing_own {sim state runstate row} {
+  set want [ase::meas_row_canon $sim $row]
+  set rr {}
+  set found 0
+  foreach r [ase::meas_rows $runstate] {
+    if {[ase::meas_row_canon $sim $r] ne $want} { continue }
+    set rr $r
+    set found 1
+    break
+  }
+  if {!$found} { return 0 }
+  set now [ase::meas_emits $sim $state $row]
+  if {$now != [ase::meas_emits $sim $runstate $rr]} { return 0 }
+  if {!$now} { return 1 }
+  if {[ase::meas_reads_analysis $sim $runstate $rr] ne [ase::meas_reads_analysis $sim $state $row]} {
+    return 0
+  }
+  if {[ase::meas_kind_form $sim [string trim [ase::state_get $row kind]]] eq {producer}
+      && [ase::meas_feed $sim $runstate $rr] ne [ase::meas_feed $sim $state $row]} {
+    return 0
+  }
+  return 1
+}
+
+# `{name verdict value why}` per row of `state`'s measurements, in order:
+# ase::meas_results' answer, with one verdict added. `notrun`: the row is
+# enabled and not refused, and the run `runstate` describes did not measure it
+# as it stands, so no number in the sidecar is this row's. With no snapshot
+# (`runstate` {}) nothing says what the run measured, and the answer is
+# ase::meas_results' own.
+proc ase::meas_shown {sim state {runstate {}} {text {}}} {
+  set res [ase::meas_results $sim $state $text]
+  if {$runstate eq {}} { return $res }
+  set out {}
+  set memo [dict create]
+  foreach r [ase::meas_rows $state] e $res {
+    if {[lindex $e 1] in {ok caution failed produced}
+        && ![ase::meas_was_run $sim $state $runstate $r memo]} {
+      lappend out [list [lindex $e 0] notrun {} {}]
+    } else {
+      lappend out $e
+    }
+  }
+  return $out
+}
+
+# The indices of the rows that answer with ONE NUMBER, in stored order: what a
+# value column can show. A row that makes a plot or a working vector
+# (ase::meas_kind_yields) is left out.
+proc ase::meas_number_rows {sim state} {
+  set out {}
+  set i -1
+  foreach r [ase::meas_rows $state] {
+    incr i
+    if {[ase::meas_kind_yields $sim [string trim [ase::state_get $r kind]]] eq {number}} {
+      lappend out $i
+    }
+  }
+  return $out
+}
+
+# The run-state snapshot in `state`'s run directory, as a state, or {} when
+# there is none to read.
+proc ase::runstate_read {state} {
+  set p {}
+  if {[catch {ase::runstate_path $state} p]} { return {} }
+  if {![file isfile $p]} { return {} }
+  set f {}
+  if {[catch {open $p r} f]} { return {} }
+  set txt {}
+  catch {set txt [read $f]}
+  catch {close $f}
+  if {[catch {dict size $txt} n] || $n == 0} { return {} }
+  return [dict merge [ase::state_default] $txt]
+}
+
 # Does any of these rows need the simulator's phase unit changed first?
 # THE ANSWER IS THE ADAPTER'S, and there is no fallback: whether `vp()` comes
 # back in radians is a fact about one simulator, and a core that guessed it
@@ -24068,6 +24316,22 @@ proc ase::run_failed {key} {
   return [dict create exit $ec log $lf]
 }
 
+# "The run in view was STOPPED by the user": 1 or 0 (issue 1768). The same mark
+# ase::run_failed reads to tell a stop from a failure -- the session's own for
+# the live run (in memory only), the saved meta's under a saved view. A stopped
+# run leaves the results of what had finished, so "the simulator did not say"
+# has another reason there than a condition that never occurred.
+proc ase::run_stopped {key} {
+  set sv {}
+  catch {set sv [ase::result_view $key]}
+  if {$sv ne {}} {
+    return [expr {[ase::state_get [ase::saved_meta $sv] stopped 0] eq {1} ? 1 : 0}]
+  }
+  set s 0
+  catch {set s [ase::session_getattr $key stopped 0]}
+  return [expr {$s eq {1} ? 1 : 0}]
+}
+
 # "Session `key`'s raw is OLDER than the deck it claims to describe" — issue 0838.
 #
 # A raw file DESCRIBES A DECK. It is usable as this session's results iff it is
@@ -25132,6 +25396,19 @@ proc ase::result_plotmap_state {key} {
   catch {set v [ase::result_view $key]}
   if {$v eq {}} { return [ase::session_state $key] }
   return [ase::saved_runstate_view $v]
+}
+
+# The state the result in view was RUN from (issue 1768), or {} when nothing
+# on disk says: the live run's snapshot beside its deck, or under a saved view
+# the saved `.runstate`, which answers {} when Save made it from the current
+# state (`state_source current`) because it then does not describe the run.
+proc ase::result_runstate {key} {
+  set v {}
+  catch {set v [ase::result_view $key]}
+  if {$v ne {}} { return [ase::saved_runstate_view $v] }
+  set st [ase::session_state $key]
+  if {$st eq {}} { return {} }
+  return [ase::runstate_read $st]
 }
 
 # --- Mixed-signal co-simulation (spec section E) -----------------------------

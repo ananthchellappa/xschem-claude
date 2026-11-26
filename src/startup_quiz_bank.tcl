@@ -992,6 +992,28 @@ startup_quiz::add calc-integ-between {
          && [lindex [calc::area_between {0 1 2 3} {0 2 2 0} 0.5 2.5] 1] == 3.5
          && [calc::meas_arity ymax] eq {1 to 3}}
 }
+startup_quiz::add ase-meas-in-measures {
+  type mc  kind howto  topic {Measurements}
+  q   {In ASE-L, a measurement set up in Outputs > Measurements is made by the simulator
+       during the run. Where do you read its value afterwards?}
+  a   {{In the Measures tab of the Outputs pane, where the By column names the simulator}
+       {Only in the simulation log}
+       {In the Saves tab of the Outputs pane}
+       {Nowhere, until it is typed again as a Calculator expression}}
+  ok  0
+  why {The Measures tab lists the simulator's measurements under the Outputs rows. Its By
+       column says who computes each row: the simulator for a measurement, the Calculator
+       for an Outputs row. A double click opens the row's own editor, and a measurement
+       changed after the run reads "not measured in this run" until the next run.}
+  proof {[P_proc ::ase::ui::meas_tab_rows] && [P_body ::ase::ui::populate {ase::ui::meas_tab_rows}]
+         && [P_body ::ase::ui::populate {ase::ui::measures_by}]
+         && [P_has src/ase_window.tcl {outs {name value by plot save saveopts}}]
+         && [ase::ui::lbl_out_by] eq {By} && [ase::ui::lbl_by_calc] eq {Calculator}
+         && [ase::ui::measures_by no/such/session m0] eq {ngspice}
+         && [P_body ::ase::ui::edit_measures_item {ase::ui::measurements_dialog}]
+         && [ase::ui::lbl_meas_notrun] eq {not measured in this run}
+         && [ase::meas_number_rows ngspice {measurements {{name a kind max} {name b kind fft}}}] eq {0}}
+}
 
 # ---------------------------------------------------------------- Operating point
 startup_quiz::add rdw {

@@ -5069,7 +5069,16 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   a look into every worktree: no checkout holds 1767. `~/private/xschem-private` wrote
   "1767 to 1769 stay left to that clone" when it took 1765 and 1766, and stood at 1773.
 
-**The next free number is 1768.**
+~~**The next free number is 1768.**~~
+- **1768**: the measurements of ASE-L's Outputs > Measurements, made by the simulator,
+  showed their values only in that dialog and in the run log; they are in the Measures tab
+  now, a `By` column says who computes each row, and both dialogs say which kind of
+  measure they make (the user's request of 2026-11-25). Added by the change that adds its
+  issue file. Minted 2026-11-25 after the two checks of CLAUDE.md and a look into every
+  worktree: no checkout holds 1768, and `~/private/xschem-private` leaves 1768 and 1769 to
+  this clone (its pointer stands at 1773).
+
+**The next free number is 1769.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

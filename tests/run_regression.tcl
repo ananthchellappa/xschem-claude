@@ -163,6 +163,7 @@ set hcases [list "hilight_hier_oracle" "hilight_hier_dump_replay" \
                  "headless/test_ase_outputs_eval" \
                  "headless/test_ase_optexport" \
                  "headless/test_ase_outputs_tabs" \
+                 "headless/test_ase_meas_in_measures_1768" \
                  "headless/test_ase_op_measures" \
                  "headless/test_ase_plot_outputs" \
                  "headless/test_wave_sigbrowser" \
@@ -1150,6 +1151,7 @@ set dcases [list "headless/test_op_annot" "headless/test_annot_show_menu" \
                  "headless/test_calc_quotes" \
                  "headless/test_calc_analysis_tokens" \
                  "headless/test_ase_outputs_tabs" \
+                 "headless/test_ase_meas_in_measures_1768" \
                  "headless/test_ase_interact" \
                  "headless/test_ase_plot_outputs" \
                  "headless/test_ase_persist" \
