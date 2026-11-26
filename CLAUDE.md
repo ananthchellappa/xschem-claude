@@ -531,6 +531,10 @@ never in `doc/claude/issues/`**: an `NNNN-*.md` there with no stamp reddens T1 (
 rot, identity holds (`src/op_annot.tcl` does this on purpose). A line number that cannot
 be avoided needs the commit it was measured at; re-grep before quoting it again.
 
+**Keep command output small**: send a long run's output to a file and print only bounded
+verdict lines (`/usr/bin/grep … | head`); `git diff --stat` before a diff; read a file by
+range, never `cat` it.
+
 **Issue numbers: `doc/claude/issues/NUMBERING.md` is authoritative about what a number
 MEANS, and blind to what is free.** Tracked per branch, its `next free number` line is
 a per-clone pointer, so two clones here have minted the same numbers for different
