@@ -5178,6 +5178,26 @@ static int xschem_cmds_g(Tcl_Interp *interp, int argc, const char *argv[], int *
             if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
             Tcl_SetResult(interp, xctx->graph_snap != 0 ? "1" : "0", TCL_STATIC);
           }
+          else if(!strcmp(argv[2], "graph_shade_color")) {
+            /* xschem get graph_shade_color <layer> <pct>: the colour a graph trace of layer
+             * <layer> is painted in when its colour token carries the shade <pct> (`<layer>+40`,
+             * `<layer>-35`; issue 1780), as #rrggbb. graph_shade() itself is asked and then
+             * turned off again, so this is what draw_graph() paints. For the suite. */
+            char s[32];
+            int l, pct;
+            if(!xctx) {Tcl_SetResult(interp, not_avail, TCL_STATIC); return TCL_ERROR;}
+            if(argc < 5 || (l = atoi(argv[3])) < 0 || l >= cadlayers) {
+              Tcl_SetResult(interp, "xschem get graph_shade_color: give a layer number and a percent",
+                TCL_STATIC);
+              return TCL_ERROR;
+            }
+            pct = atoi(argv[4]);
+            graph_shade(pct, l);
+            my_snprintf(s, S(s), "#%02x%02x%02x", xctx->xcolor_array[l].red >> 8,
+              xctx->xcolor_array[l].green >> 8, xctx->xcolor_array[l].blue >> 8);
+            graph_shade(0, -1);
+            Tcl_SetResult(interp, s, TCL_VOLATILE);
+          }
           else if(!strcmp(argv[2], "gridlayer")) { /* layer number for grid */
             Tcl_SetResult(interp, my_itoa(GRIDLAYER),TCL_VOLATILE);
           }

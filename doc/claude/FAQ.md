@@ -14,6 +14,64 @@ Newest entries on top.
 
 ---
 
+## Q112. I ran the bench again (or selected a saved result) and want to see the new waveforms beside the old ones. How?
+
+- **Asked:** 2026-11-26 (the user's request)
+- **Project state:** branch `ovl-latest` on `fluid-editing` at `40a61028e`, issue 1780
+  (`doc/claude/specs/waveform_viewer.md`, "Overlay Latest").
+
+**Press Alt-Shift-P in the Waveform Viewer** (File > Overlay Latest). Every waveform that
+shows an earlier result gets a second trace in its strip, showing the result ASE-L has in
+view, in a lighter shade of the same colour. The earlier trace stays.
+
+| you did | the viewer shows | then |
+|---|---|---|
+| ran again with Results > Auto Plot Outputs After Simulation **off** | the earlier run, untouched | Alt-Shift-P adds the new run beside it; Ctrl-R or `~` replaces |
+| ran again with it **on** (destination Replace) | ASE-L's outputs on the new run, the traces you plotted yourself still on the earlier one | Alt-Shift-P adds the new run beside those |
+| selected a saved result (Results > Select) | what it showed: **a select plots nothing** | Alt-Shift-P adds the saved result beside it; Ctrl-R or `~` replaces |
+
+- **Which trace is which.** The earlier one's legend name ends in the time its data was
+  written (`v(out)@14:02:11`; `@Nov25_14:02:11` for another day) or, for a result saved in
+  ASE-L, in the name it was saved under (`v(out)@golden`). The one on the result in view has
+  the plain name. The cursor read-out and the Delete dialog name them the same way.
+- **Again and again.** Each press after another run (or another select) adds one more
+  version of each waveform, in the next shade: 40 % towards white, 35 % towards black, 65 %
+  towards white, 60 % towards black, then the list starts again. `set wviewer_overlay_shades
+  {40 -35 65 -60}` in an rc file changes it. A waveform that already has a trace on the
+  result in view gets none, so going back and forth between two results adds nothing twice.
+- **The versions stay on their data.** A Direct Plot made after another run reads the new
+  result; the versions do not move to it. (A waveform with a single trace follows such a
+  load, as it always did.)
+- **Back to one trace of each:** Ctrl-R in the viewer, or `~` in ASE-L. The first trace
+  stays, in its own colour, on the result in view. `u` takes back the last press only.
+- **Nothing to overlay?** A small window says why and nothing changes: every waveform is on
+  the result already (when a finished run's plot is why, the window names the option:
+  Results > Auto Plot Outputs After Simulation), no waveform is plotted, or the result's
+  file holds none of the analysis the waveforms show. The window takes no grab; Ctrl-R and
+  Alt-Shift-P typed on it do what they do in the viewer, any other key closes it, and a
+  modifier alone does nothing.
+- **Another analysis.** The waveforms decide how the result is read: an AC plot beside a
+  session that plots its transient gets the AC analysis of the new run, from Alt-Shift-P
+  and from Ctrl-R alike. In a window that shows two analyses the one ASE-L has in view is
+  read and the waveforms of the other are left. When the result holds none of the analysis
+  shown (the analyses were changed before the run), the key says so and Ctrl-R replaces
+  the waveforms with the result, read as the analysis ASE-L names.
+- **A file typed into the viewer's Location bar** is loaded into every waveform, after a
+  select too.
+- **Only what is in the viewer gets a version.** An output ticked Plot in ASE-L that is not
+  in the viewer is not added; `~` plots those.
+- **What changed for Results > Select.** Until this issue a select redrew every waveform
+  from the selected result at once. It no longer does: the Outputs values, the title and
+  the annotation follow the selection as before, the waveforms wait for `~`, Ctrl-R or
+  Alt-Shift-P, and the dialog's status line says so and names the gestures that work: all
+  three for a saved result or the last run; Ctrl-R and Alt-Shift-P for a file picked by
+  path (`~` plots the session's own result); Ctrl-R alone when the selected analysis is
+  not the one the waveforms show.
+- **A saved state** holds one trace of each waveform; the earlier results live in memory
+  only.
+
+---
+
 ## Q111. I selected something (or a Find did) and cannot see it in a busy schematic. Can the rest be dimmed?
 
 - **Asked:** 2026-11-25 (the user's request)

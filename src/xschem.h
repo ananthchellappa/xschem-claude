@@ -3250,6 +3250,7 @@ extern void sel_dim_toggle(void);           /* flip the selection_dim setting */
 extern void sel_dim_peek(int on);           /* the peek button went down or came up */
 extern unsigned int sel_dim_pixel(unsigned int pix); /* a pixel as painted inside a dim draw */
 extern void sel_dim_rgb16(unsigned short *r, unsigned short *g, unsigned short *b);
+extern void graph_shade(int pct, int layer);
 extern void draw_selection_base(GC g);      /* draw()'s overlay paint: no overlay re-stamp */
 extern void sel_pend_add(double x1, double y1, double x2, double y2); /* damaged screen rect */
 extern void sel_pend_clear(void);

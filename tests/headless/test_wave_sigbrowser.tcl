@@ -1434,8 +1434,11 @@ set bt_accs [regexp -all {data-menu="[^"]+" data-accel="[^"]+"} $gsrc]
 # twin is the Options > Plot Mode entry.
 # ⚠ WIDENED IN PLACE again 2026-11-25 (issue 1766): 21/16 -> 22/17, for Ctrl-R
 # (Reload), a `bind WaveViewer` default whose menu twin is File > Reload.
-check {BT09 ...so the guide carries GH0's twenty-two keys and seventeen accelerators} \
-  [list $bt_seqs $bt_accs] [list 22 17]
+# ⚠ WIDENED IN PLACE again 2026-11-26 (issue 1780): 22/17 -> 23/18, for
+# Alt-Shift-P (Overlay Latest), a `bind WaveViewer` default whose menu twin is
+# File > Overlay Latest.
+check {BT09 ...so the guide carries GH0's twenty-three keys and eighteen accelerators} \
+  [list $bt_seqs $bt_accs] [list 23 18]
 set bt_i11 [wvproc_body $wsrc wviewer::install_default_binds]
 set bt_m11 [wvproc_body $wsrc wviewer::build_menubar]
 # count bind STATEMENTS only (test_wave_grid GH2's rule): each one sits under an

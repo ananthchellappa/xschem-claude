@@ -5089,7 +5089,25 @@ to a checkout this branch cannot see. Do not "reclaim" them.
   the number this clone's pointer now reads too: whichever clone mints next takes it after
   the two checks, and the other skips it.
 
-**The next free number is 1773.**
+~~**The next free number is 1773.**~~
+- **1773 is taken by `~/private/xschem-private`** (a refused new-window descend that leaves
+  an editable window; its worktree `.claude/worktrees/wf_0fa4dc95-efc-1`, branch
+  `dblfu12`, wrote the issue file and the entry on the morning of 2026-11-26). Both
+  pointers read 1773 that morning; this clone had begun work under the number an hour
+  earlier, had recorded nothing, and renumbered its work to 1780 before anything was
+  committed. Nothing in this clone is named 1773.
+- **1774 to 1779**: left to `~/private/xschem-private`. A session that mints there goes on
+  from 1774, and this clone cannot see a number it takes until it is committed, so the
+  numbers up to 1779 are left for it and this clone does not mint them.
+- **1780**: the Waveform Viewer could not draw a new result beside the one it shows. It can
+  now: Alt-Shift-P (File > Overlay Latest) gives every waveform that shows an earlier result
+  a second trace on the result in view, in a shade of its colour, and Results > Select in
+  ASE-L no longer plots by itself (the user's request and rulings of 2026-11-26). Added by
+  the change that adds its issue file. Minted 2026-11-26 after the two checks of CLAUDE.md
+  and a look into every worktree: no checkout holds an issue file or an entry for 1780, nor
+  for 1774 to 1779.
+
+**The next free number is 1781.**
 
 ⚠ **Read that pointer line with your eyes, not with the recipe's `grep -o '[0-9][0-9]*' | tail -n1`.**
 It used to carry a trailing clause naming the number just taken, and the recipe's `tail -n1` then

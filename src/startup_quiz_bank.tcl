@@ -1312,7 +1312,8 @@ startup_quiz::add ase-replace-keeps-hand-plots {
          && [P_body ::ase::ui::auto_plot {replace   { wviewer::owned_clear $key }}]
          && [P_body ::ase::ui::auto_plot {if {$dest eq {replace}} { wviewer::hold_manual $key $rf $sim_t $vcds }}]
          && [P_body ::ase::ui::auto_plot_idle {ase::ui::auto_plot $key run}]
-         && [P_body ::wviewer::held_cue {return "@[clock format $w -format %H:%M:%S]"}]}
+         && [P_body ::wviewer::held_cue {return "@[wviewer::when_text $w]"}]
+         && [P_body ::wviewer::when_text {return [clock format $w -format %H:%M:%S]}]}
 }
 startup_quiz::add ase-auto-plot-after-sim {
   type mc  kind howto  topic {Plots after a run}
@@ -1343,14 +1344,41 @@ startup_quiz::add wave-reload-ctrl-r {
        {Ctrl-Shift-R}}
   ok  0
   why {Ctrl-R is File > Reload: the result is read again and every trace shows it, the
-       ones a finished run left on an earlier run included. No trace is added or removed
-       and a zoom is kept. Ctrl-D clears the window, f fits it, and Ctrl-Shift-R does
-       nothing there.}
+       ones a finished run left on an earlier run included. No trace is added (the later
+       versions Alt-Shift-P drew go) and a zoom is kept. Ctrl-D clears the window, f fits
+       it, and Ctrl-Shift-R does nothing there.}
   proof {[P_has src/wave_viewer.tcl {bind WaveViewer <Control-Key-r> {wviewer::reload_at %W; break}}]
          && [P_proc ::wviewer::reload] && [P_proc ::ase::ui::reload_source]
          && [P_has src/wave_viewer.tcl {$mb.file add command -label {Reload} -accelerator Ctrl+R}]
          && [P_body ::wviewer::reload {set back [wviewer::hold_release $token]}]
          && [P_body ::ase::ui::reload_source {set rf [ase::last_rawfile $key]}]}
+}
+# Issue 1780: the result in view drawn BESIDE what the waveforms show. Asked
+# with the other plots-after-a-run questions because it is the answer to "I
+# ran again (or selected a saved result) and want to compare".
+startup_quiz::add wave-overlay-latest {
+  type mc  kind howto  topic {Plots after a run}
+  q   {You ran again with "Auto Plot Outputs After Simulation" off, or selected a saved
+       result in ASE-L, and the waveform viewer still shows the earlier waveforms.
+       Which key in the viewer draws the new result beside them?}
+  a   {{Alt-Shift-P}
+       {Ctrl-R}
+       {Ctrl-V}
+       {Alt-P}}
+  ok  0
+  why {Alt-Shift-P is File > Overlay Latest: each waveform that shows an earlier result
+       gets a second trace in its strip, in a lighter shade of its colour; the earlier
+       one stays, its legend name ending in the time of its run or the saved result's
+       name. Ctrl-R replaces instead, and goes back to one trace of each. Results >
+       Select in ASE-L plots nothing by itself.}
+  proof {[P_has src/wave_viewer.tcl {bind WaveViewer <Alt-Shift-Key-P> {wviewer::overlay_latest_at %W; break}}]
+         && [P_proc ::wviewer::overlay_latest] && [P_proc ::wviewer::ovl_versions]
+         && [P_has src/wave_viewer.tcl {$mb.file add command -label {Overlay Latest} -accelerator Alt+Shift+P}]
+         && [P_body ::wviewer::overlay_latest {wviewer::hold_manual $token $rf $type $vcds 1}]
+         && [P_body ::wviewer::ovl_versions {set new [dict replace [wviewer::held_plain_trace $tr] ovl $f ogen $ng]}]
+         && [P_body ::wviewer::hold_release {set tidied($token) [wviewer::unpin_and_tidy $token [list wviewer::held_plain]]}]
+         && [P_body ::ase::ui::rsel_commit {catch {set kn_ [wviewer::select_keep_post $key $keeppre]}}]
+         && [P_has src/wave_viewer.tcl "set_ne wviewer_overlay_shades {40 -35 65 -60}"]}
 }
 # The double-click grow is the Cadence profile's (`set cadence_compat 1` in its rc),
 # so this one is asked where the others above are.

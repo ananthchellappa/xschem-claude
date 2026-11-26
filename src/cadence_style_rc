@@ -614,6 +614,17 @@ bind .drw <Alt-Shift-Key-6>     {cadence::annot_tran;             break}
 # set wviewer_legend_textmag 1.63
 # set wviewer_legend_bold 0
 
+# Waveform-viewer OVERLAY. Alt-Shift-P in the viewer (File > Overlay Latest)
+# draws the result in view (the latest run, or the saved result selected in
+# ASE-L) beside what each waveform shows, in a shade of the same colour; press
+# it again after another run and each waveform gets one more. Ctrl-R goes back
+# to one version of each.
+#   wviewer_overlay_shades  the shade of the first later version, of the
+#                           second, and so on, as whole percents: above zero
+#                           towards white, below zero towards black. Past the
+#                           end of the list it starts again.
+# set wviewer_overlay_shades {40 -35 65 -60}
+
 # Waveform-viewer GRID density. The dashed grid inside each strip used to light
 # half its pixels (a 2-on/2-off dash); it now lights a quarter (1-on/3-off),
 # which makes the traces stand out without removing a single grid line or

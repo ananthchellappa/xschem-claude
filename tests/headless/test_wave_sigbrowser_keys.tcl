@@ -219,14 +219,16 @@ check {BK09 (FILE) the guide's §9.1 row carries all three renamed literals and
 # plot mode of the target subwindow) and its Options > Plot Mode twin.
 # ⚠ WIDENED IN PLACE again 2026-11-25 (issue 1766): 21/16 -> 22/17, for Ctrl-R
 # (Reload) and its File > Reload twin.
+# ⚠ WIDENED IN PLACE again 2026-11-26 (issue 1780): 22/17 -> 23/18, for
+# Alt-Shift-P (Overlay Latest) and its File > Overlay Latest twin.
 check {BK10 (FILE, LOCKSTEP — the local twin of BX13) the guide has
-       twenty-two data-seq rows and seventeen menu/accel pairs, and
+       twenty-three data-seq rows and eighteen menu/accel pairs, and
        test_wave_grid pins exactly those two numbers} \
   [list [regexp -all {data-seq="} $gsrc] \
         [regexp -all {data-menu="[^"]*" data-accel="[^"]*"} $gsrc] \
-        [regexp {\[llength \$gh_seqs\] 22} $gridsrc] \
-        [regexp {\[llength \$gh_menus\] 17} $gridsrc]] \
-  {22 17 1 1}
+        [regexp {\[llength \$gh_seqs\] 23} $gridsrc] \
+        [regexp {\[llength \$gh_menus\] 18} $gridsrc]] \
+  {23 18 1 1}
 
 # ============================================================================
 # BK20-BK31 — TWO-PANE item 17b, R10: "Show in Signal Browser" moves off the

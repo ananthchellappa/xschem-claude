@@ -1389,14 +1389,20 @@ currently plotted."*
   `<Control-Key-R>`, which is what Ctrl-Shift-R sends, is not bound.
 - **What is read** (`wviewer::reload_source`): the result the window's ASE-L session has in
   view (`ase::ui::reload_source`: `ase::last_rawfile`, the analysis the after-run plot
-  shows, the run's digital files). That is the latest run, or the saved result chosen with
+  shows, the run's digital files). Since issue 1780 the analysis is the row's that Results >
+  Select chose, while that is the session's selection; and otherwise, in a window whose
+  waveforms are all of another analysis than the one the session plots, their own
+  (`wviewer::shown_types`, as for the overlay): an AC plot beside a session that plots its
+  transient is reloaded as AC. That is the latest run, or the saved result chosen with
   Results > Select. A session that answers nothing (no results file) reads again the file
   the window attached last, else the file behind its current database.
 - **What happens** (`wviewer::reload`): the traces a finished run left on an earlier run
   are put back on the result (`wviewer::hold_release`, below), then the load a run and a
   Direct Plot use (`wviewer::attach_raw`), so the view is kept by the rules of "Keeping the
   view across a rebuild" and expression traces are evaluated again. No trace or strip is
-  added or removed, the target stays, and no undo point is taken.
+  added, the target stays, and no undo point is taken. The only traces that go are the
+  later versions an overlay added (issue 1780, "Overlay Latest" below): they would show
+  the same data as the first trace of their waveform.
 - **Not while the session's run is live** (`ase::ui::reload_busy`): `wviewer: a simulation
   of this session is running; reload when it has finished`, and nothing is read.
 - **A read that finds nothing** (no such analysis in the file, no data) leaves the viewer
@@ -1405,11 +1411,203 @@ currently plotted."*
   `wviewer::hold_settle` puts the pins back on the traces that were kept. The sentence
   says the file could not be reloaded; nothing is logged.
 - **What is said:** `wviewer: reloaded <file or saved name> (<analysis>)`, with the number
-  of traces that were on an earlier run; `wviewer: nothing to reload: no result file is
+  of traces that were on an earlier run and are still there, and the number of later
+  versions taken out; `wviewer: nothing to reload: no result file is
   attached to this window` when there is none. One log line for a read, `wviewer::reload
   <token>`.
 
 Rows: `tests/headless/test_wave_reload_1766.tcl`.
+
+## Overlay Latest: Alt-Shift-P, File > Overlay Latest (issue 1780, 2026-11-26)
+
+**Alt-Shift-P draws the result in view beside what each waveform shows.** The user: *"add
+support for Alt-Shift-P in Waveform Viewer which will plot the latest waveforms from
+currently loaded [result] ... in OVERLAY mode ... Overlay means that, in each strip, the
+new version of the waveform will be plotted in a slightly different color."* Asked what a
+second press after another run shows: every version. Asked which waveforms: the ones in the
+viewer. Rows named here are in `tests/headless/test_wave_overlay_latest_1780.tcl`.
+
+- **The key** is `<Alt-Shift-Key-P>` on the `WaveViewer` tag (`wviewer::install_default_binds`;
+  an rc that binds it first wins), with the menu twin File > Overlay Latest. The same chord
+  with Caps Lock on (`<Alt-Shift-Key-p>`) is bound while the key is the overlay's, so an rc
+  that gave the key another job does not find the chord on the overlay under Caps Lock.
+  Rows `OV1`, `OV3`; `GH2b` of `test_wave_grid`.
+- **What is overlaid** (`wviewer::reload_source`, Reload's own): the result the window's
+  ASE-L session has in view. That is the latest run, a saved result chosen with Results >
+  Select, or a file the dialog picked by path or from its loaded list
+  (`ase::ui::reload_source`, `ase::ui::rsel_noted`); a finished run puts the latest run in
+  view again. For a session that answers nothing, the file the window attached last.
+- **The analysis the waveforms show decides how that file is read**
+  (`wviewer::shown_types`). ASE-L names one analysis for its plots; a window whose
+  waveforms are ALL of another one (an AC plot beside a session that plots its transient)
+  is given the file read as their analysis. When the file holds none of it, a small window
+  says so and nothing changes. A window that shows two analyses is read once, as the
+  analysis ASE-L has in view, and the waveforms of the other one are left and counted.
+  Ctrl-R follows the same rule unless the dialog chose the row, and the plot button reads
+  a saved result or the last run as the row the dialog chose (`ase::ui::auto_plot`), so the
+  three agree. Where the file holds none of the analysis shown (the session's analyses
+  were changed and it ran again), Ctrl-R reads it as the analysis ASE-L names and
+  replaces the waveforms, as the small window says. Rows `OV12`, `OV20`, `OV27`, `OV29`.
+- **What happens** (`wviewer::overlay_latest`):
+  1. When the data in the viewer is not that result (`wviewer::shows_result`: another
+     file or analysis, or the file was written since it was read), every trace that has
+     data is kept on what it shows (`wviewer::hold_manual` with `every` 1: ASE-L's own
+     traces too) and the result is read (`wviewer::attach_raw`).
+  2. In every tab, each waveform that has NO version following the data in view gets one
+     (`wviewer::ovl_versions`): its latest version as it was before it was kept, appended
+     to its strip, in the same layer and a shade. A waveform one of whose versions follows
+     the data in view gets none, whichever version that is. A version kept on the very
+     data that is loaded again just loses its pin. That covers a finished run that plotted
+     nothing, a finished run whose plot left the traces made by hand on the earlier run,
+     and Results > Select, alike.
+  The versions added to the tab shown are one undo step; a press that changes only a tab
+  that is not shown takes none. Rows `OV2`, `OV4`, `OV6`, `OV8`, `OV10`, `OV14`, `OV18`,
+  `OV23`.
+- **The marks** on a trace: `ovl <id>` (the versions of one waveform in one strip share
+  it), `ogen <n>` (1 for the first later version; the first trace carries none), `shade`
+  (`+40`, `-35`). A trace without them is byte for byte what it was, and a window with no
+  mark takes none of the steps below. A pasted copy carries none. Rows `OP2`, `OP3`,
+  `OV21`.
+- **The shade.** `wviewer::graph_props` appends it to the trace's colour token (`4+40`).
+  `draw_graph()` reads the layer as before (`atoi` stops at the sign) and paints the
+  node's legend entry, curve and readout that far towards white (above zero) or black
+  (below zero): `graph_shade()` in `src/xinit.c` puts the shaded colour into the layer's
+  GCs and the two colour tables while the node is drawn. A colour with no room that way (a
+  white trace towards white) goes the other way, 20 less far. The shades of the first,
+  second, ... later version are `wviewer_overlay_shades` (default `40 -35 65 -60`; past
+  the end the list starts again). Rows `OP1`, `OV5`, `OV24`.
+- **The earlier versions say which data they show**: the legend cue of a kept trace
+  (`wviewer::held_cue`), which the cursor read-out and the Delete dialog carry too. A
+  result saved in ASE-L says its name (`@golden`); data of another day says the day too
+  (`@Nov25_14:02:11`, `wviewer::when_text`). The time is the kept database's own
+  (`wviewer::when_of`: the file state noted at its load), so a read that failed between
+  two presses does not turn it into `@earlier`, and a file loaded beside the result does
+  not get the result's time. Rows `OP5`, `OV23`.
+- **A version stays on its data.** A load made by a door that knows nothing of versions (a
+  Direct Plot after another run, a finished run under Append) keeps the versions that
+  follow the result on what they show before it reads (`wviewer::attach_raw`,
+  `wviewer::hold_manual` with `every` 2: the traces that carry `ovl`). The keep a finished
+  run under Replace makes for the traces plotted by hand covers the versions too, whoever
+  made them (`wviewer::pin_wanted`): Replace takes ASE-L's own traces out of the target
+  subwindow alone. A waveform with one version follows such a load as it always did. Rows
+  `OV22`, `OV28`.
+- **The zoom across a finished run under Replace** (issue 1733's ruling) holds for a row
+  that was kept, by its versions or by Results > Select: the row comes back as a trace
+  that names no database, and the view on screen and the stored views of its strip are
+  matched with ASE-L's kept traces named as before the pin (`wviewer::recs_owned_plain`,
+  in `ase::ui::auto_plot`). The strip counts as one whose traces changed: the axes that
+  were moved stay and the other is fitted to the new run. Rows `OP7`, `OV29`.
+- **The same data under another name.** A result saved in ASE-L is a copy of the run's
+  file, with its name, size and time. A trace kept on the run that was then saved shows
+  the saved result's data already, so it gets no version of it and its pin comes off when
+  that result is selected (`wviewer::same_place`). Rows `OV17`, `OV28`.
+- **Back to one version of each.** When every version of a waveform shows the same data
+  again, the later ones go and the earliest stays (`wviewer::ovl_tidy`); a trace that is
+  then the only version of its waveform in its strip is an ordinary trace again, in its
+  layer's own colour and with no mark (`wviewer::ovl_unmark`), whether it was the first
+  trace or a later version left alone by a delete or a move. That happens after Ctrl-R
+  and ASE-L's plot button (`wviewer::hold_release`), after a finished run of another
+  analysis took the pins off (`wviewer::hold_manual`), in what a state file holds
+  (`wviewer::saved_graphs`), and in a model that comes back out of the undo history after
+  its kept data is gone (`wviewer::state_apply`). The strips are folded into the model
+  before a trace goes and rebuilt at once after (`wviewer::unpin_and_tidy`), so the bold
+  trace, the selection and the trace highlights follow their traces. Rows `OP4`, `OV7`,
+  `OV9`, `OV14`, `OV16`, `OV21`.
+- **Nothing to overlay** opens a small window that says why (`wviewer::notice`) and
+  nothing is logged. It is not modal and asks for no focus; where the window manager
+  hands it the keyboard, Ctrl-R and Alt-Shift-P typed on it close it and do in the viewer
+  what they do there, any other key closes it (Tab too), and a modifier or a lock key
+  alone does nothing (`wviewer::key_is_modifier`: Shift, Control, Alt, Meta, Super,
+  Hyper, AltGr and its kin, the group keys). The sentence goes to the CIW too. Rows
+  `OV25`, `OV29`, `OP7`.
+  - Every waveform already shows the result: "the latest result" for a run, "the result
+    in view" for a result chosen in the dialog. It names the option, ASE-L's Results >
+    Auto Plot Outputs After Simulation, only when a finished run's plot is why the
+    waveforms are on the latest result (`wviewer::data_from`: the plot button, Ctrl-R, the
+    key, a Direct Plot, a Plot Difference, a select and the Location bar each say that
+    they loaded) and the option is still ticked. Rows `OV3`, `OV8`, `OV11`, `OV18`,
+    `OV25`, `OV28`.
+  - No waveform is plotted. Row `OV12`.
+  - The file holds none of the analysis the waveforms show. Row `OV12`.
+  - Every waveform that would take a version is of a net the result lacks, or is kept on
+    another analysis. When the result was read for it the press is logged: the viewer's
+    data changed. Row `OV23`.
+- **Not while the session's run is live**, and a read that finds nothing leaves the viewer
+  as it was, on Reload's terms. Row `OV12`.
+- **What is said:** `wviewer: overlaid <file or saved name> (<analysis>): <n> traces added
+  beside the earlier versions. Ctrl-R goes back to one version of each.` One log line,
+  `wviewer::overlay_latest <token>`.
+
+**Which file state a database holds.** `wviewer::stamp_note` records `{mtime size}` of the
+file per loaded database at every door that reads a file into the viewer
+(`wviewer::attach_raw`, `wviewer::restore`, the Location bar and Results > Select when
+they read, `wviewer::display_raw` when the engine read), and the note moves with a
+database that is given a kept name. It is what tells "the viewer shows this result" from
+"the file was written again", and what a kept trace's legend time is read from. A
+database with no note (one the engine loaded by another door) counts as not known, and
+the key then reads the result again. Rows `OV15`, `OV17`, `OV23`.
+
+**Results > Select plots nothing** (`ase::ui::rsel_commit`; the user, 2026-11-26:
+*"Selecting a simulation result using Results > Select should NOT automatically plot
+waveforms ... she must also press plot button to have new results plotted"*). The dialog
+selects in the viewer's context, where the engine then has another database current, and
+until this issue every trace that names no database drew from it at once. Now:
+
+- `wviewer::select_keep_pre` reads what the traces draw from before the select, and
+  `wviewer::select_keep_post` pins every trace that named no database to it afterwards
+  (the database that was current is given a kept name; a select unloads nothing): ASE-L's
+  own traces, and a trace with nothing to show there, which stays empty. The strips are
+  rebuilt as they show. Rows `OV10`, `OV25`.
+- A trace kept on the very data just selected again shows the result in view: its pin
+  comes off, and a kept copy no trace names any more is unloaded unless a model in the undo
+  history is pinned to it (`wviewer::held_same_release`, `wviewer::held_sweep`,
+  `wviewer::undo_names`), so `u` finds the data its model names. A load does drop such a
+  copy (Ctrl-R, once no trace names it), so a file state that is kept again gets the kept
+  name it had when that name is not loaded any more (`wviewer::held_name_new`, by the
+  file state noted at its load): the model `u` brings back then finds its data under the
+  name it knows. Row `OV29`. The Signal Browser
+  reads its databases again after the keep. The dialog's Loaded list has no row for a kept
+  copy. Rows `OV11`, `OV18`, `OV26`.
+- The dialog remembers the file and the analysis of the row it selected
+  (`ase::ui::rsel_note`), and the viewer's Ctrl-R and Alt-Shift-P read that: a file picked
+  by path, which the session's own view does not follow, and a saved result of another
+  analysis than the session plots now. A finished run forgets it
+  (`ase::result_view_reset`). Rows `OV19`, `OV20`.
+- When a waveform is left that does not show the selected result
+  (`wviewer::behind_count`), the dialog's status and the CIW say that the waveforms
+  stayed and name the gestures that reach the result (`ase::ui::rsel_kept_how`): the plot
+  button, Ctrl-R and Alt-Shift-P for a saved result or the last run of the analysis the
+  session plots; Ctrl-R and Alt-Shift-P for a file picked by path (the plot button plots
+  the session's own result); Ctrl-R alone when the selected analysis is not the one the
+  waveforms show. Rows `OV10`, `OV18`, `OV19`, `OV20`.
+- The viewer's own Location bar loads the file typed there into the plots, as it always
+  did: the pins a select (or a finished run) made come off first (`wviewer::rawbar_load`),
+  and go back on when the engine refuses the file. Row `OV26`.
+
+**Known, and left.**
+- **A waveform with one version follows a load made by another door.** With Auto Plot
+  off, a Direct Plot made after a run reads the new result, and the waveforms that have
+  no version move to it, as before this issue; the versions stay. Whether a Direct Plot
+  should leave every waveform where it is, as a select now does, is the user's to rule.
+- **After a select, a finished run under Append, New SubWin or New Win** adds its rows
+  from the new run and leaves the waveforms the select kept on the data they show, until
+  `~`, Ctrl-R or Alt-Shift-P.
+- A database the engine loaded by a door that takes no note (the schematic's Waves menu
+  in a viewer context) is read again by the key even when it is the result, and the
+  versions then show the same data twice.
+- Two results written within one second with the same size are one file state
+  (`wviewer::attach_stamp`'s own limit).
+- A tab that is not shown and loses its later versions (Ctrl-R) loses its trace
+  highlights.
+- `u` takes back the versions of the tab shown; the versions the same press added to
+  another tab stay until Ctrl-R (the undo history is kept per tab).
+- A viewer with no data loaded at all has nothing to keep its traces on, so a select
+  made then draws them.
+- No row drives a rainbow graph, a digital database or a visual that is not TrueColor
+  through the shade; the review ran all three by hand. Nor does a row reach a marker on a
+  version that goes, the small window without Tk, the arm of `wviewer::select_keep_post`
+  for a database that is already a kept one, or the two returns of
+  `wviewer::overlay_latest` for a refused context switch.
 
 ## An earlier run, kept for the traces plotted by hand (issue 1765, 2026-11-25)
 
@@ -1440,7 +1638,9 @@ Replace has to leave what the user plotted by hand on the run it was plotted fro
 
 A kept trace's legend name ends in `@HH:MM:SS`, the time its data was written
 (`wviewer::held_cue`, on the rect only); where a database is named it reads `<file> of
-<HH:MM:SS>` (`wviewer::db_label`). The time is the result file's own at the load that
+<HH:MM:SS>` (`wviewer::db_label`). Since issue 1780 data of another day says the day too
+(`@Nov25_14:02:11`), a result saved in ASE-L says its name (`@golden`), and the time is
+the kept database's own (`wviewer::when_of`). The time is the result file's own at the load that
 read it (`wviewer::attach_raw`, `wviewer::restore`); for data loaded by hand the window
 does not know it and says `@earlier` / `<file>, earlier run`. `wviewer::hold_release`
 takes the pins off (`~` in ASE-L, Reload here) and drops the window's record of its last

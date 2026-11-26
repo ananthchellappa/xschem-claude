@@ -1605,6 +1605,99 @@ unsigned int sel_dim_pixel(unsigned int pix)
                         (pix & ~(visual->red_mask | visual->green_mask | visual->blue_mask)));
 }
 
+/* A graph trace's SHADE (draw_graph(): a colour token `<layer>+<pct>` or `<layer>-<pct>`; issue
+ * 1780). pct > 0 moves the colour that far towards white, pct < 0 towards black, and the layer GCs
+ * and the two colour tables hold the result until graph_shade(0, ...) puts the layer's own colour
+ * back. `layer` is the one layer to shade; -1 shades every layer a trace can be drawn in (4 and
+ * up: a rainbow graph walks through them). The colour moved is the one the layer holds NOW, so
+ * inside a dim draw the shade is a shade of the dim colour. One shade is in at a time: a second
+ * call takes the first one out before it puts its own in. A colour with no room towards the end
+ * asked for goes towards the other one (below). */
+void graph_shade(int pct, int layer)
+{
+  static int on = 0, first = 0, last = -1;
+  static unsigned int save_index[256];
+  static XColor save_xcolor[256];
+  int i;
+  unsigned int t, p;
+  if(!xctx) return;
+  if(on) {
+    for(i = first; i <= last; ++i) {
+      xctx->color_index[i] = save_index[i];
+      xctx->xcolor_array[i] = save_xcolor[i];
+      if(has_x) {
+        XSetForeground(display, xctx->gc[i], xctx->color_index[i]);
+        XSetForeground(display, xctx->gcstipple[i], xctx->color_index[i]);
+      }
+    }
+    on = 0;
+  }
+  if(pct == 0) return;
+  if(pct > 95) pct = 95;
+  if(pct < -95) pct = -95;
+  t = pct > 0 ? 255u : 0u;
+  p = (unsigned int)(pct > 0 ? pct : -pct);
+  if(layer >= 0) { first = last = layer; }
+  else { first = 4; last = cadlayers - 1; }
+  if(first < 0) first = 0;
+  if(last > 255) last = 255;
+  if(last >= cadlayers) last = cadlayers - 1;
+  if(first > last) return;
+  for(i = first; i <= last; ++i) {
+    save_index[i] = xctx->color_index[i];
+    save_xcolor[i] = xctx->xcolor_array[i];
+  }
+  for(i = first; i <= last; ++i) {
+    unsigned int r, g, b, pix, r0, g0, b0, d;
+    r0 = save_xcolor[i].red >> 8; g0 = save_xcolor[i].green >> 8; b0 = save_xcolor[i].blue >> 8;
+    r = sel_dim_mix(r0, t, (int)p);
+    g = sel_dim_mix(g0, t, (int)p);
+    b = sel_dim_mix(b0, t, (int)p);
+    /* NO ROOM THAT WAY: a white trace cannot go towards white, and its later version came out
+     * in the trace's own colour. When the shade moves the colour by less than a sixteenth of the
+     * way across, it is taken towards the other end instead: 20 less far for a shade that was
+     * towards white (10 at least), 20 further for one that was towards black (95 at most). The
+     * two amounts differ so that the shades of the default list (40 -35 65 -60) stay four
+     * colours at either end: on white 20 35 45 60 towards black, on black 40 55 65 80 towards
+     * white. With one rule for both ends a black trace's first and fourth later versions were
+     * one grey. */
+    d = (r > r0 ? r - r0 : r0 - r) + (g > g0 ? g - g0 : g0 - g) + (b > b0 ? b - b0 : b0 - b);
+    if(d < 48u) {
+      unsigned int t2 = t ? 0u : 255u;
+      unsigned int p2 = t ? (p > 30u ? p - 20u : 10u) : (p < 75u ? p + 20u : 95u);
+      r = sel_dim_mix(r0, t2, (int)p2);
+      g = sel_dim_mix(g0, t2, (int)p2);
+      b = sel_dim_mix(b0, t2, (int)p2);
+    }
+    pix = save_index[i];
+    if(has_x) {
+      if(visual && visual->class == TrueColor) {
+        pix = (unsigned int)(sel_dim_unchan(r, visual->red_mask) | sel_dim_unchan(g, visual->green_mask) |
+                             sel_dim_unchan(b, visual->blue_mask) |
+                             (pix & ~(visual->red_mask | visual->green_mask | visual->blue_mask)));
+      } else {
+        /* find_best_color() uses xcolor_array[] as scratch when the colormap is full */
+        XColor keep[256];
+        char s[16];
+        memcpy(keep, xctx->xcolor_array, sizeof(keep));
+        my_snprintf(s, S(s), "#%02x%02x%02x", r, g, b);
+        pix = find_best_color(s);
+        memcpy(xctx->xcolor_array, keep, sizeof(keep));
+      }
+    }
+    xctx->color_index[i] = pix;
+    xctx->xcolor_array[i].pixel = pix;
+    xctx->xcolor_array[i].red = (unsigned short)(r * 257u);
+    xctx->xcolor_array[i].green = (unsigned short)(g * 257u);
+    xctx->xcolor_array[i].blue = (unsigned short)(b * 257u);
+    if(has_x) {
+      XSetForeground(display, xctx->gc[i], pix);
+      XSetForeground(display, xctx->gcstipple[i], pix);
+    }
+  }
+  on = 1;
+}
+
 /* Repaint this context when the frame in its window is not the one wanted now: dim and nothing
  * is selected any more, plain and something is, or dim for another selection or by another
  * percent than the ones it was painted with. Called when an xschem

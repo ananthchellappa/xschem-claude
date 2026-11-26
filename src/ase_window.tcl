@@ -6673,6 +6673,9 @@ proc ase::ui::dp_finish {key queue {qcolors {}}} {
   set attached 0
   if {$rf ne {}} {
     if {[wviewer::attach_raw $key $rf $sim_t [ase::last_vcdfiles $key]]} { set attached 1 }
+    # issue 1780: who put the data there (the viewer's small window names the
+    # Auto Plot option only when a finished run's plot did)
+    catch {wviewer::data_from_read $key hand}
   } else {
     catch {::ase::echo "ase: no simulation results yet — run first (queued\
  traces are recorded and resolve after the run)"}
@@ -7043,12 +7046,14 @@ proc ase::ui::pd_finish {key an first second} {
     return 0
   }
   set vcds [ase::last_vcdfiles $key]
-  if {![ase::ui::pd_shown $key $rf $an $vcds] && ![wviewer::attach_raw $key $rf $an $vcds]} {
+  set pd_shown_ [ase::ui::pd_shown $key $rf $an $vcds]
+  if {!$pd_shown_ && ![wviewer::attach_raw $key $rf $an $vcds]} {
     catch {::ase::echo "$h — $what not plotted: the waveform viewer could not be switched to\
  the results in $rf, as happens while a run or another command is in progress; when it has\
  finished, press the key and click the two nets again" error}
     return 0
   }
+  if {!$pd_shown_} { catch {wviewer::data_from_read $key hand} }   ;# issue 1780, as for a Direct Plot
   set r [calc::ix_route [ase::diff_text $an $first $second]]
   if {[dict get $r mode] eq {refuse}} {
     catch {::ase::echo "$h — $what not plotted: [dict get $r msg]" error}
@@ -7756,6 +7761,11 @@ proc ase::ui::rsel_rows {key} {
   foreach row $rows {
     set p [ase::state_get $row path]
     set t [ase::state_get $row type]
+    # issue 1780: an earlier result the viewer keeps under a name of its own
+    # (wviewer::held_parse) is no result to select: its row named no file, and
+    # selecting it said "No such result file '...@held1'". Since a select keeps
+    # the plots, every select with plots made one.
+    if {![catch {wviewer::held_parse $p} hp_] && $hp_ ne {}} { continue }
     lappend loaded [dict create kind loaded idx [ase::state_get $row idx] \
                       path $p type [ase::ui::rsel_type_norm $t] \
                       cur [ase::state_get $row cur 0] \
@@ -8107,12 +8117,15 @@ proc ase::ui::rsel_status {key msg} {
 #      `wviewer::rawbar_load`'s ARM 3 (:8640) and its reasoning, verbatim in
 #      shape;
 #   3. the borrow (R407a) -- a refused ticket is reported as refused;
-#   4. `capture_live_view_state` before the door, issue 0194's rule: a
-#      selection replaces the DATA, not the plot, so the regenerate below owes
-#      the fold and skip_ranges is what re-autozooms the incoming raw;
+#   4. `capture_live_view_state` before the door, issue 0194's rule: the
+#      regenerate below owes the fold. Since issue 1780 a selection replaces
+#      neither the plot NOR the data the plot shows: what the traces draw from
+#      is read here (`wviewer::select_keep_pre`) and they are pinned to it
+#      after the door (`wviewer::select_keep_post`);
 #   5. THE DOOR (R303) -- `results::select`, with the type R407c ruled and
 #      `host ase` (R802: ASE-L's channel is `ase::echo`);
-#   6. the regenerate, INSIDE the loan (R407f below);
+#   6. the regenerate, INSIDE the loan (R407f below), carrying every strip as
+#      it shows (`wviewer::live_axes`): nothing was plotted;
 #   7. the sentence -- the door's own `msg`, in this dialog's Status region as
 #      well as on the session channel, and a refill so the marks move.
 #
@@ -8198,16 +8211,53 @@ proc ase::ui::rsel_commit {key} {
   dict unset opts rawfile
   dict set opts host ase
   set haswin [expr {[wviewer::window_for $key] ne {}}]
+  # ISSUE 1780: SELECTING A RESULT PLOTS NOTHING. The user, 2026-11-26:
+  # "Selecting a simulation result using Results > Select should NOT
+  # automatically plot waveforms ... If user selects a saved result, she must
+  # also press plot button to have new results plotted." The door makes another
+  # database current in the viewer's context, and every trace that names none
+  # would draw from it, as it did until this issue. So what the traces draw
+  # from is read before the door (wviewer::select_keep_pre) and, when the door
+  # has moved the data in view, they are pinned to what they showed
+  # (wviewer::select_keep_post). `~` here, or Ctrl-R in the viewer, brings them
+  # to the result; Alt-Shift-P in the viewer draws the result beside them.
+  set keeppre {}
   if {$haswin} {
     dict set opts token $key
     catch {wviewer::capture_live_view_state $key}
+    catch {set keeppre [wviewer::select_keep_pre $key]}
   }
   if {[catch {results::select $path $type $opts} res]} { set res {} }
   set how [ase::state_get $res how refused]
   # issue 1733 (R4): a result loaded by hand, so the next attach_raw of this
   # viewer reads its data as new data
   if {$how ne {refused}} { catch {wviewer::attach_forget $key} }
-  if {$how ne {refused} && $haswin} { catch {wviewer::regenerate $key} }
+  # what the dialog chose, for the viewer's Ctrl-R and Alt-Shift-P
+  # (ase::ui::reload_source): the file and the analysis of the row
+  if {$how ne {refused}} { catch {ase::ui::rsel_note $key $abs [ase::state_get $res type] $ckind} }
+  set behind 0
+  set kepthow all
+  if {$how ne {refused} && $haswin} {
+    set kn_ 0
+    set rn_ 0
+    catch {set kn_ [wviewer::select_keep_post $key $keeppre]}
+    catch {wviewer::select_note $key $abs $how}
+    catch {wviewer::data_from $key select}
+    # ...and a trace kept on the very data just selected again shows the
+    # result in view: its pin comes off
+    catch {set rn_ [wviewer::held_same_release $key]}
+    # the door refreshed the Signal Browser before the two steps above gave a
+    # database another name or unloaded one: its list of databases is read
+    # again, or a signal picked under one header was plotted from another
+    if {$kn_ || $rn_} { catch {wviewer::browser_refresh $key 1} }
+    # how many waveforms do not show the selected result, and which of the
+    # three gestures would bring it to them (ase::ui::rsel_kept_how)
+    catch {set behind [wviewer::behind_count $key]}
+    catch {set kepthow [ase::ui::rsel_kept_how $key $ckind [ase::state_get $res type] [wviewer::shown_types $key]]}
+    # the strips as they show: the pins changed which data a trace names and
+    # nothing a strip draws
+    catch {wviewer::regenerate $key [wviewer::live_axes $key]}
+  }
   ase::ui::rsel_release $key $b
   set msg [ase::state_get $res msg]
   if {$msg eq {}} {
@@ -8225,6 +8275,12 @@ proc ase::ui::rsel_commit {key} {
     set now {}
     catch {set now [ase::result_view $key]}
     if {$now ne $was} { catch {ase::ui::result_view_changed $key} }
+  }
+  # issue 1780: the waveforms did not move, and the sentence says how to move
+  # them, here and in the CIW
+  if {$behind > 0} {
+    catch {::ase::echo [ase::ui::lbl_rsel_plots_kept $kepthow]}
+    append msg " " [ase::ui::lbl_rsel_plots_kept $kepthow]
   }
   ase::ui::rsel_status $key $msg
   # R406: the dialog STAYS OPEN and refreshes -- the current-slot mark has
@@ -15972,6 +16028,78 @@ proc ase::ui::results_menu_labels {} {
 }
 # issue 1765: ADE-L's own words for the option
 proc ase::ui::lbl_plot_after_sim_menu {} { return {Auto Plot Outputs After Simulation} }
+# issue 1780: what Results > Select says when the viewer's waveforms stay on
+# what they showed
+# `how` says which gestures bring the selected result to the waveforms
+# (ase::ui::rsel_kept_how): every sentence names only what works.
+proc ase::ui::lbl_rsel_plots_kept {{how all}} {
+  set head "The Waveform Viewer still shows the waveforms it showed"
+  switch -exact -- $how {
+    keys   { return "$head. Ctrl-R in the viewer brings them to this result; Alt-Shift-P in the viewer draws this result beside them." }
+    reload { return "$head, which are of another analysis. Ctrl-R in the viewer brings them to this result." }
+  }
+  return "$head. The plot button (~) here, or Ctrl-R in the viewer, brings them to this result; Alt-Shift-P in the viewer draws this result beside them."
+}
+
+# WHICH GESTURES BRING A RESULT THE DIALOG SELECTED TO THE WAVEFORMS (issue
+# 1780, found by the review: the one sentence there was promised the plot
+# button for a file picked by path, which the plot button never reads, and an
+# overlay for a result of another analysis than the waveforms').
+#   all     a saved result or the last run, of the analysis the session plots:
+#           the plot button, Ctrl-R, Alt-Shift-P.
+#   keys    a file picked by path or from the loaded list, or a result of
+#           another analysis than the session plots: the plot button plots the
+#           session's own result, so Ctrl-R and Alt-Shift-P only.
+#   reload  the selected analysis is not the one the waveforms show (`shown`,
+#           wviewer::shown_types): an overlay would put seconds beside hertz,
+#           so Ctrl-R only.
+proc ase::ui::rsel_kept_how {key kind type shown} {
+  if {$type ne {} && [llength $shown] && [lsearch -exact $shown $type] < 0} { return reload }
+  set st [ase::session_state $key]
+  if {$kind in {saved lastrun} && ($type eq {} || $type eq [ase::plot_sim_type $st])} { return all }
+  return keys
+}
+
+# WHAT THE DIALOG CHOSE LAST, per session: the file, the analysis of the row
+# and the row's kind. The session's own record of its selection is a path
+# (ase::result_sel_note) and its view follows a saved result or the last run
+# only (ase::result_view), so a file picked by path, and the analysis of any
+# row, were known to nobody once the dialog's select stopped plotting. The
+# viewer's Ctrl-R and Alt-Shift-P read it through ase::ui::reload_source.
+namespace eval ase::ui {
+  variable rselnote
+  if {![info exists rselnote]} { set rselnote [dict create] }
+}
+proc ase::ui::rsel_note {key path type kind} {
+  variable rselnote
+  if {[catch {file normalize $path} p]} { set p $path }
+  dict set rselnote $key [dict create path $p type $type kind $kind]
+  return 1
+}
+proc ase::ui::rsel_forget {key} {
+  variable rselnote
+  catch {dict unset rselnote $key}
+  return 1
+}
+# -> {path type kind} while that is still what the session has selected (the
+# record ase::result_sel_get answers: the path, or nothing for the last run),
+# else {}. A finished run and a state that is loaded forget it
+# (ase::result_view_reset, ase::result_sel_forget).
+proc ase::ui::rsel_noted {key} {
+  variable rselnote
+  if {![dict exists $rselnote $key]} { return {} }
+  set n [dict get $rselnote $key]
+  lassign [ase::result_sel_get $key] has sel
+  if {!$has} { return {} }
+  set p [dict get $n path]
+  if {[dict get $n kind] eq {lastrun}} {
+    if {$sel ne {}} { return {} }
+  } elseif {$sel ne $p} {
+    return {}
+  }
+  if {![file isfile $p]} { return {} }
+  return [list $p [dict get $n type] [dict get $n kind]]
+}
 proc ase::ui::lbl_rsave_title {} { return {Save Results} }
 proc ase::ui::lbl_rdel_title {} { return {Delete Results} }
 proc ase::ui::lbl_rsave_badname {} { return "Name: 1 to 64 characters, no / or \\." }
@@ -18277,16 +18405,41 @@ proc ase::ui::reload_busy {key} {
 # WHAT THE VIEWER'S RELOAD READS FOR THIS SESSION (issue 1766,
 # wviewer::reload_source): `{rawfile sim_type vcdfiles}` of the result in view
 # -- the latest run, or the saved result chosen with Results > Select
-# (ase::last_rawfile follows it) -- or {} when the session has none, shows an
-# operating point only, or is unknown. The analysis is the one the after-run
-# plot shows (ase::plot_sim_type).
+# (ase::last_rawfile follows it), or since issue 1780 a file the dialog picked
+# by path -- or {} when the session has none, shows an operating point only, or
+# is unknown. The analysis is the one the after-run plot shows
+# (ase::plot_sim_type), or the selected row's own.
 proc ase::ui::reload_source {key} {
   if {[catch {ase::session_exists $key} ok] || !$ok} { return {} }
   set sim_t [ase::plot_sim_type [ase::session_state $key]]
-  if {$sim_t in {op {}}} { return {} }
   set rf [ase::last_rawfile $key]
+  set vcds [ase::last_vcdfiles $key]
+  # issue 1780: what Results > Select chose last, while it is still the
+  # session's selection (ase::ui::rsel_noted). A file picked by path or from
+  # the loaded list is not a result the session's view follows, and it is what
+  # the user selected: it is read. And the analysis is the selected row's: a
+  # saved transient under a session that now plots its AC analysis is read as
+  # the transient it holds.
+  lassign [ase::ui::rsel_noted $key] np nt nk
+  if {$np ne {}} {
+    if {$nk ni {saved lastrun} || $rf eq {}} {
+      set rf $np
+      set vcds {}
+    }
+    if {$nt ni {{} op <NULL>}} { set sim_t $nt }
+  }
+  if {$sim_t in {op {}}} { return {} }
   if {$rf eq {}} { return {} }
-  return [list $rf $sim_t [ase::last_vcdfiles $key]]
+  return [list $rf $sim_t $vcds]
+}
+
+# IS THE ANALYSIS ase::ui::reload_source ANSWERS THE ROW'S THAT RESULTS > SELECT
+# CHOSE? 1 or 0. The viewer's Ctrl-R reads such an analysis as it is; any other
+# it holds against the analysis the waveforms show (wviewer::reload).
+proc ase::ui::reload_noted {key} {
+  if {[catch {ase::session_exists $key} ok] || !$ok} { return 0 }
+  lassign [ase::ui::rsel_noted $key] np nt nk
+  return [expr {$np ne {} && $nt ni {{} op <NULL>}}]
 }
 
 # THE ROWS THE VIEWER IS ASKED TO DRAW (ase_l.md R-OUT12).  Every row with
@@ -18430,6 +18583,17 @@ proc ase::ui::auto_plot {key {why user}} {
   set sim_t [ase::plot_sim_type $st]
   set dest [ase::plot_dest_of $st]
   set run [expr {$why eq {run}}]
+  # issue 1780: THE PLOT BUTTON READS WHAT RESULTS > SELECT CHOSE AS THE ROW'S
+  # OWN ANALYSIS. The user: "If user selects a saved result, she must also
+  # press plot button to have new results plotted." A saved transient under a
+  # session that plots its AC analysis now was read "as ac", found nothing,
+  # and the row was drawn from whatever the dialog had left current (the
+  # second review). The row the dialog noted says the analysis, as it does for
+  # the viewer's Ctrl-R (ase::ui::reload_source); a finished run forgets it.
+  if {!$run} {
+    lassign [ase::ui::rsel_noted $key] np_ nt_ nk_
+    if {$np_ ne {} && $nk_ in {saved lastrun} && $nt_ ni {{} op <NULL>}} { set sim_t $nt_ }
+  }
   # R208c/R208d: a row qualified for an analysis the viewer does not show is
   # refused with a sentence (plot_row_refusal), never drawn from the shown one.
   # Before the viewer opens, so the sentence is said even where it cannot; a
@@ -18469,6 +18633,7 @@ proc ase::ui::auto_plot {key {why user}} {
     if {!$run && $sim_t ni {op {}} && [ase::last_rawfile $key] ne {}} {
       wviewer::hold_release $key
       wviewer::attach_raw $key [ase::last_rawfile $key] $sim_t [ase::last_vcdfiles $key]
+      catch {wviewer::data_from_read $key user}
       # a load that read nothing: the kept traces stay on the run they show
       wviewer::hold_settle $key
     }
@@ -18506,7 +18671,15 @@ proc ase::ui::auto_plot {key {why user}} {
     wviewer::hold_release $key
   }
   set had {}
-  if {$dest eq {replace}} { set had [wviewer::sw_stored $key] }
+  if {$dest eq {replace}} {
+    set had [wviewer::sw_stored $key]
+    # issue 1780: ASE-L's own traces that are kept (the versions of a row, a
+    # row kept by Results > Select) are about to come back as traces that name
+    # no database; the stored view of their strip is theirs all the same
+    if {[dict exists $had strips]} {
+      dict set had strips [wviewer::recs_owned_plain [dict get $had strips]]
+    }
+  }
   # issue 1734: THE LOAD BELOW IS QUIET, AND LEAVES OUT WHAT REPLACE IS
   # ABOUT TO TAKE OUT. A load makes the viewer's expression traces again and says
   # so when one cannot be evaluated ("is empty ... draws again when ..."). Said
@@ -18530,6 +18703,9 @@ proc ase::ui::auto_plot {key {why user}} {
   # spec E3: the run's digital VCDs ride along with the analog raw, so a
   # mixed-signal session's Signal Browser sees every DB the run produced.
   wviewer::attach_raw $key $rf $sim_t $vcds $leave 1
+  # issue 1780: who put the data there, for the viewer's small window: it names
+  # the Auto Plot option only when a finished run's plot is why
+  catch {wviewer::data_from_read $key [expr {$run ? {run} : {user}}]}
   # issue 1765: a load that read nothing leaves the viewer's data as it was,
   # so what was done to the traces plotted by hand just above is taken back
   # (the names of the kept data, the pins): wviewer::hold_settle
@@ -18553,6 +18729,8 @@ proc ase::ui::auto_plot {key {why user}} {
     set vsw [wviewer::sw_range [dict get [wviewer::layout_for $key] graphs] \
                [wviewer::target_index $key]]
   }
+  # issue 1780: and so is the view on screen (wviewer::recs_owned_plain)
+  if {$dest eq {replace}} { set view [wviewer::recs_owned_plain $view {*}$vsw] }
   # R-OUT15: the destination's window half. A viewer this press opened is one
   # empty tab, which IS a new window and a new subwindow already.
   switch -exact -- $dest {

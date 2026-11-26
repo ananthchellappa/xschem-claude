@@ -1313,8 +1313,26 @@ and `leave_ctx` still puts everything back. It runs **after** the door returns,
 so nothing redraws while the current-database pointer is moving (L7), and it is
 `catch`ed because a dialog may not throw (R801). `capture_live_view_state` runs
 **before** the door, issue 0194's rule: a selection replaces the DATA, not the
-plot, so the regenerate owes the fold. Pinned SEL410 — moving the regenerate
+plot, so the regenerate owes the fold. (Since issue 1780 the dialog's select
+replaces neither: R407h below. The fold and the order stand.) Pinned SEL410 — moving the regenerate
 outside the bracket reds it.
+
+**R407h — the dialog's select plots nothing (issue 1780, 2026-11-26).** The user:
+*"Selecting a simulation result using Results > Select should NOT automatically plot
+waveforms."* Until then the door's move of the current database was the plot: every
+trace that names no database drew from the selected result at the regenerate above. Now
+`wviewer::select_keep_pre` reads, before the door, which database is current, and
+`wviewer::select_keep_post`, after it and still inside the loan, gives that database a
+kept name and pins every trace that named none to it. The regenerate then carries every
+strip as it shows (`wviewer::live_axes`). The dialog notes the file and the analysis of
+the row (`ase::ui::rsel_note`), which is what the viewer's Ctrl-R and Alt-Shift-P read
+until the next run; `~` in ASE-L plots the session's result in view. The status names
+the gestures that reach the selected result (`ase::ui::rsel_kept_how`), and says nothing
+of it when every waveform shows that result already.
+The viewer's own Location bar (`wviewer::rawbar_load`) loads the file typed into the
+viewer into its plots as before: the pins this dialog made come off there first. Rows OV10 and OV11 of
+`tests/headless/test_wave_overlay_latest_1780.tcl`; the full account is in
+waveform_viewer.md, "Overlay Latest".
 
 **R407g — a candidate that is not a file is refused by the dialog, ahead of the
 door.** `results::resolve` would answer `invalid` and hand back the **derived**

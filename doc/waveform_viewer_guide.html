@@ -564,10 +564,32 @@ back.</td>
 the latest run, or the saved result selected in ASE-L (Results &gt; Select). A
 trace that a finished run left on an earlier run
 (<a href="#browser-menu">&sect;11.3</a>) shows the result again. No trace is
-added or removed, and a zoom is kept. While the simulation is running it reads
+added, and a zoom is kept; the later traces <kbd>Alt-Shift-P</kbd> drew go, so
+each waveform is one trace again. While the simulation is running it reads
 nothing and says so.</td>
 <td class="where">whole window</td>
 <td><span class="menu">File &gt; Reload</span></td></tr>
+<tr data-seq="Alt-Shift-Key-P" data-menu="Overlay Latest" data-accel="Alt+Shift+P">
+<td><kbd>Alt-Shift-P</kbd></td>
+<td>Overlay Latest — draw the result in view <b>beside</b> what each waveform
+shows, where <kbd>Ctrl-R</kbd> replaces it. Every waveform that shows an earlier
+result (after a run that plotted nothing, after a run whose plot left your own
+traces on the earlier run, after Results &gt; Select in ASE-L) gets a second
+trace in its strip, in a lighter shade of the same colour; the earlier trace
+stays, and its legend name says which data it shows
+(<code>v(out)@14:02:11</code>, or <code>v(out)@golden</code> for a saved
+result). Press it again after another run and each waveform gets one more, in
+the next shade; a waveform that already has a trace on the result gets none.
+<kbd>u</kbd> takes the last press back in the tab you are on;
+<kbd>Ctrl-R</kbd>, or <kbd>~</kbd> in ASE-L, goes back to one trace of each.
+When every waveform is on the result already, a small window says so and
+nothing changes. In a window whose waveforms are all of another analysis than
+ASE-L plots (an AC plot beside a transient session) the result's file is read
+as their analysis, by this key and by <kbd>Ctrl-R</kbd>; a window that shows
+two analyses is read as the one ASE-L has in view, and the waveforms of the
+other are left.</td>
+<td class="where">whole window</td>
+<td><span class="menu">File &gt; Overlay Latest</span></td></tr>
 <tr data-seq="Control-Key-c" data-menu="Copy Traces" data-accel="Ctrl+C">
 <td><kbd>Ctrl-C</kbd></td>
 <td>Copy the selected traces to the viewer clipboard, remembering which strip
@@ -1125,6 +1147,12 @@ one CIW warning.</td></tr>
 <tr><td><code>wviewer_legend_bold</code></td><td><code>0</code></td>
 <td>0 = bold marks the <i>selected</i> trace only. 1 = every legend entry is
 bold, and the selected one is then bold italic.</td></tr>
+<tr><td><code>wviewer_overlay_shades</code></td><td><code>40 -35 65 -60</code></td>
+<td>The shades of the later versions <kbd>Alt-Shift-P</kbd> adds to a waveform:
+the first later version takes the first number, the next the second, and past
+the end the list starts again. A number is a whole percent, above zero towards
+white, below zero towards black (95 at most either way). Anything that is not
+such a list reads as the default.</td></tr>
 <tr><td><code>wviewer_drag_shrink</code></td><td><code>0.7</code></td>
 <td>How much a trace shrinks while it is being dragged to another strip. 1.0
 turns the effect off without disabling the drag; anything outside (0,&nbsp;1]
@@ -1379,10 +1407,22 @@ plotted from, and their legend names end in that run's time
 (<code>v(out)@14:02:11</code>); <kbd>~</kbd> brings every trace to the result,
 and so does <kbd>Ctrl-R</kbd> in this window. Pick <b>Append</b> to add to what
 ASE-L plotted before; under <b>Append</b>, <b>New SubWin</b> and <b>New Win</b>
-a finished run moves every trace to the new run. Whether a finished run plots
+a finished run moves every trace to the new run, except the ones that are
+kept on earlier data (after Results &gt; Select) and every trace of a waveform
+that <kbd>Alt-Shift-P</kbd> gave a second trace to: those stay until
+<kbd>~</kbd> or <kbd>Ctrl-R</kbd>. Whether a finished run plots
 at all is ASE-L's <b>Results &gt; Auto Plot Outputs After Simulation</b> (on
 unless you turn it off; <code>set ase_plot_after_sim 0</code> in an rc file
-starts every new session with it off).
+starts every new session with it off). With it off the window keeps showing the
+earlier run until you ask: <kbd>~</kbd> or <kbd>Ctrl-R</kbd> replace it with the
+new one, and <kbd>Alt-Shift-P</kbd> here draws the new one <b>beside</b> it, each
+waveform a second time in a lighter shade (<a href="#reference">&sect;9.1</a>).
+<b>Selecting a result in ASE-L (Results &gt; Select) plots nothing</b> either: the
+waveforms stay on the data they show, their legend names say which, and the same
+three keys bring the selected result in (for a file picked by path in that
+dialog, <kbd>Ctrl-R</kbd> and <kbd>Alt-Shift-P</kbd>: <kbd>~</kbd> plots the
+session's own result). That is how a saved result is compared with the latest
+run: select it, then <kbd>Alt-Shift-P</kbd>.
 <b>Direct Plot</b> (<kbd>Ctrl-4</kbd> on the schematic) and <b>Plot
 Difference</b> (<kbd>Alt-Shift-D</kbd> on the schematic) do not use this
 drop-down: their signals are always added to the target subwindow. To start every

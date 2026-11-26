@@ -10568,6 +10568,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
 {
   int dimmed, own;
   int wc = 4, wave_color = 4;
+  int wshade = 0;
   char *node = NULL, *color = NULL, *sweep = NULL;
   int sweep_idx = 0;
   const char *sweep_name = NULL; /* last non-empty `sweep=` token, carried forward BY NAME */
@@ -10758,6 +10759,20 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
       if(ctok && ctok[0]) wc = atoi(ctok);
       if(wc < 0) wc = 4;
       if(wc >= cadlayers) wc = cadlayers - 1;
+      /* A colour token may carry a shade after its layer: `4+40` is layer 4 moved 40 percent of
+       * the way to white, `4-35` 35 percent of the way to black (issue 1780: a later version of a
+       * waveform, drawn beside the earlier one in the viewer). atoi() above stops at the sign, so
+       * the layer is read as before and a token with no sign has no shade. While this node is
+       * drawn (its legend entry, its curve, its readout) the layer is painted in that shade;
+       * graph_shade(0, ...) at the bottom of the loop puts the layer's own colour back. */
+      wshade = 0;
+      if(ctok && ctok[0]) {
+        const char *sp = ctok;
+        while(*sp == ' ') ++sp;
+        while(isdigit((unsigned char)*sp)) ++sp;
+        if((*sp == '+' || *sp == '-') && isdigit((unsigned char)sp[1])) wshade = atoi(sp);
+      }
+      if(wshade) graph_shade(wshade, gr->rainbow ? -1 : wc);
       /* ⚠ THE SWEEP COLUMN IS RE-RESOLVED BY NAME ON EVERY ENTRY (batch F item 2,
        * issue 0305). This is the reference walker and it always resolved the
        * column AFTER its per-node switch -- but only for entries carrying their
@@ -10964,6 +10979,7 @@ void draw_graph(int i, int flags, Graph_ctx *gr, void *ct)
         my_free(_ALLOC_ID_, &point);
         if(idx_arr) my_free(_ALLOC_ID_, &idx_arr);
       } /* if( expression || (idx = get_raw_index(bus_msb ? bus_msb : express, NULL)) != -1 ) */
+      if(wshade) graph_shade(0, -1);
       ++wcnt;
       if(bus_msb) my_free(_ALLOC_ID_, &bus_msb);
       if(sch_waves_loaded()!= -1 && save_npoints != -1) { /* restore multiple OP points from artificial dc sweep */

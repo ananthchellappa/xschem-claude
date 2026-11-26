@@ -1290,14 +1290,19 @@ group RK19 {
                   return [wviewer::db_label [dict get $tr rawfile] tran]
               }} $key]] \
         {1 {tbrk19_ase.raw of 01:02:03 (tran)}}
-    ## data the window loaded by hand carries no time the window knows
+    ## data of which the window knows nothing carries no time. Since issue 1780
+    ## every door that reads a file into the viewer notes the file's state (the
+    ## Location bar and Results > Select too), and a kept trace's time is read
+    ## from that note; a database the engine loaded by a door that takes none
+    ## has neither a note nor a time, which is what is made here.
     pcall ase::ui::plot_outputs $key
     pcall wviewer::attach_forget $key
+    catch {unset ::wviewer::dbstamps($key)}
     rk_tran $::rk_raw 10e-9 3.0
     file mtime $::rk_raw [expr {$t0 + 7200}]
     pcall ase::ui::auto_plot_idle $key
     update
-    check "RK19 when the window does not know when its data was written (a load made by hand), the legend says `@earlier` and the label `earlier run`, never a time" \
+    check "RK19 when the window does not know when its data was written (a database loaded by a door that notes nothing), the legend says `@earlier` and the label `earlier run`, never a time" \
         [list [pcall wviewer::held_traces $key] [regexp {v\(b\)@earlier;} [rk_node $key [rk_gi $key v(b)]]] \
               [pcall apply {{key} {
                   set tr [lindex [wviewer::dget [lindex [rk_gs $key] [rk_gi $key v(b)]] traces {}] 0]

@@ -278,12 +278,19 @@ proc wvproc_body {src name} {
 # ⚠ `hold_settle` ADDED WITH THE SAME ISSUE: after a load that read nothing it
 # puts back what was done to the traces plotted by hand before the load (their
 # pins, the names of the kept data) and rebuilds once, carrying every strip.
+# ⚠ `overlay_latest` ADDED WITH ISSUE 1780 (2026-11-26): Alt-Shift-P appends a
+# later version to the strips whose waveforms show earlier data and carries
+# every strip forward, so gx_must.
+# ⚠ `unpin_and_tidy` ADDED WITH THE SAME ISSUE (hold_release's and
+# hold_manual's step): when it takes the later versions of a waveform out it
+# rebuilds at once, so that the strips and the model number the traces alike
+# before the load that follows folds the strips again.
 set gx_must {configure_apply display_raw attach_raw add_trace add_graph
              plot_signals grid_apply sharedx_toggle apply_range wheel_zoom
              pan_x axes_ok set_axis_scale
              select_tab new_tab close_tab paste_traces paste_payload
              rawbar_load new_subwin close_subwin clear_subwin set_text_size
-             sw_stored_settle owned_clear hold_settle}
+             sw_stored_settle owned_clear hold_settle overlay_latest unpin_and_tidy}
 set gx_pre  {move_strip move_trace move_traces move_trace_to_new_strip
              split_strip delete_empty_strips delete_items}
 set gx_exempt {restore state_apply clear_all}
@@ -1399,7 +1406,11 @@ set gzr_borrow {wviewer::signal_list_all wviewer::trace_cursor_value wviewer::ra
                 wviewer::raw_prev_idx graph_fill_listbox
                 ase::cosim_db_inventory ase::optexport_datasets
                 calc::wave_dest calc::wave_dest_drop calc::wave_dest_restore
-                calc::aq_run calc::aq_restore calc::et_run}
+                calc::aq_run calc::aq_restore calc::et_run
+                wviewer::held_sweep}
+# (wviewer::held_sweep, issue 1780: it unloads the kept copies of earlier
+# results that no trace names any more and puts the current database back when
+# the unload moved it)
 # may leave another database current in a viewer (attach_is_same's `cur` leg
 # sees it), or act on a schematic window's context, not a viewer's
 set gzr_cur {ase::saved_registry_drop op_annot::db_attach op_annot::db_detach
@@ -1710,9 +1721,9 @@ foreach {gh_all gh_m gh_a} \
 }
 # a guide whose attributes were stripped by an edit would make every loop below
 # vacuously green — assert the extraction FOUND something first
-check "GH0 the guide's §9.1 carries the twenty-two documented viewer keys" \
-  [llength $gh_seqs] 22
-check "GH0 ...and seventeen documented menu accelerators" [llength $gh_menus] 17
+check "GH0 the guide's §9.1 carries the twenty-three documented viewer keys" \
+  [llength $gh_seqs] 23
+check "GH0 ...and eighteen documented menu accelerators" [llength $gh_menus] 18
 
 set gh_idb [wvproc_body $wsrc wviewer::install_default_binds]
 check_true "GH1 install_default_binds was found in the source" [expr {$gh_idb ne {}}]
@@ -1727,6 +1738,22 @@ foreach gh_line [split $gh_idb "\n"] {
   if {[regexp {^\s*bind WaveViewer <} $gh_line]} { incr gh_nb }
 }
 check "GH2 every shipped WaveViewer default has a guide row" $gh_nb [llength $gh_seqs]
+# GH2b (issue 1780, found by its review). GH2 counts the statements spelled
+# `bind WaveViewer <`, so a default bound through a variable is not seen by it.
+# There are two such places and they are named here, so that a third does not
+# arrive unseen: the editor's dimming toggle with its Caps Lock forms (issue
+# 1769: the editor's key, which the viewer hands on and the editor's own pages
+# document), and the Caps Lock form of Alt-Shift-P, a key that has its row.
+set gh_var {}
+foreach gh_line [split $gh_idb "\n"] {
+  if {[regexp {^\s*bind WaveViewer \$(\w+)} $gh_line -> gh_v]} { lappend gh_var $gh_v }
+}
+check "GH2b the defaults bound through a variable are the two named: the editor's dimming toggle, and the Caps Lock form of a key that has its guide row" \
+  [list $gh_var \
+        [regexp {foreach wv_seq \{<Control-Alt-Shift-Key-D> <Control-Alt-Lock-Key-D> <Control-Alt-Lock-Key-d>\}} $gh_idb] \
+        [regexp {set wv_ovl <Alt-Shift-Key-p>} $gh_idb] \
+        [expr {{Alt-Shift-Key-P} in $gh_seqs}]] \
+  {{wv_ovl wv_seq} 1 1 1}
 
 # the menu twins: label + accelerator, spelled exactly as the guide claims. The
 # source writes the label braced or bare depending on whether it has a space, so

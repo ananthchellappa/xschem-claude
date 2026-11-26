@@ -295,9 +295,11 @@ group RL1 {
     check "RL1 Ctrl-Shift-R is not bound there" [bind WaveViewer <Control-Key-R>] {}
     set m [wviewer::window_for $key].wvmenubar.file
     set at [pcall $m index Reload]
-    check "RL1 File > Reload is in the menu, shows Ctrl+R, and stands above the separator before Copy Traces" \
-        [list [pcall $m entrycget Reload -accelerator] [pcall $m type [expr {$at + 1}]] \
-              [pcall $m entrycget [expr {$at + 2}] -label]] {Ctrl+R separator {Copy Traces}}
+    ## (issue 1780 put Overlay Latest between Reload and the separator)
+    check "RL1 File > Reload is in the menu, shows Ctrl+R, and stands with Overlay Latest above the separator before Copy Traces" \
+        [list [pcall $m entrycget Reload -accelerator] [pcall $m entrycget [expr {$at + 1}] -label] \
+              [pcall $m type [expr {$at + 2}]] [pcall $m entrycget [expr {$at + 3}] -label]] \
+        {Ctrl+R {Overlay Latest} separator {Copy Traces}}
 }
 
 group RL2 {

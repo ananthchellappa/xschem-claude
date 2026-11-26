@@ -1175,13 +1175,21 @@ proc readout {x} {
     }
     return $out
 }
+# A name on the bar without the cue of a trace kept on an earlier run. Since
+# issue 1780 the bar names such a trace as its legend does (`v(b)-v(a)@01:02:03`),
+# so that the versions of a waveform are told apart there too; the rows here
+# ask for a trace by its label, and rd_cue for the cue itself.
+proc rd_plain {name} {
+    regsub {@(([A-Z][a-z][a-z][0-9][0-9]_)?[0-9][0-9]:[0-9][0-9]:[0-9][0-9]|earlier)$} $name {} name
+    return $name
+}
 # what the bar reads under `label` at each of `times` (the first entry of that
 # label; MISSING where the bar has none)
 proc rd_at {label times} {
     set out {}
     foreach x $times {
         set v MISSING
-        foreach p [readout $x] { if {[lindex $p 0] eq $label} { set v [lindex $p 1] ; break } }
+        foreach p [readout $x] { if {[rd_plain [lindex $p 0]] eq $label} { set v [lindex $p 1] ; break } }
         lappend out $v
     }
     return $out
@@ -1189,7 +1197,13 @@ proc rd_at {label times} {
 # every value the bar reads under `label` at time `x`
 proc rd_all {label x} {
     set out {}
-    foreach p [readout $x] { if {[lindex $p 0] eq $label} { lappend out [lindex $p 1] } }
+    foreach p [readout $x] { if {[rd_plain [lindex $p 0]] eq $label} { lappend out [lindex $p 1] } }
+    return $out
+}
+# the names on the bar at time `x` that carry a kept trace's cue, cue and all
+proc rd_cue {x} {
+    set out {}
+    foreach p [readout $x] { if {[rd_plain [lindex $p 0]] ne [lindex $p 0]} { lappend out [lindex $p 0] } }
     return $out
 }
 # the three times the bar is read at: two sample times of the results file and
@@ -2889,6 +2903,10 @@ group GG {
         [list [gg_labels] [expr {[apart $w1 $w2] > 0.05}] [near [rd_at {v(b)-v(a)} $::RT] $w1 2e-3] \
               [near [rd_at NEG $::RT] [at_rt [gg_neg $::T2(e)]] 2e-3] [gg_lost] [pcall wviewer::held_traces $::key]] \
         {{NEG v(b)-v(a)} 1 ok ok {} 1}
+    ## issue 1780: the bar names the kept difference as its legend does
+    set gg_cue [rd_cue 1e-9]
+    check "GG18 ...and the bar names the kept difference with the time of the run it shows, as its legend does; the row's trace, which shows the result, has the plain name" \
+        [list [llength $gg_cue] [regexp {^v\(b\)-v\(a\)@} [lindex $gg_cue 0]]] {1 1}
     set ::notices {}
     gz_tilde
     check "GG19 the ~ button then brings the difference to the result: the bar reads the second run's b minus a under its label, no trace is kept on the earlier run, and nothing is said" \

@@ -25314,6 +25314,8 @@ proc ase::result_sel_note {key path} {
 proc ase::result_sel_forget {key} {
   variable resultsel
   if {[dict exists $resultsel $key]} { dict unset resultsel $key }
+  # issue 1780: and what the dialog chose (the file and the analysis of its row)
+  if {[info commands ::ase::ui::rsel_forget] ne {}} { catch {ase::ui::rsel_forget $key} }
   return 1
 }
 
@@ -25382,6 +25384,9 @@ proc ase::result_view_reset {key {force 0}} {
   set was {}
   catch {set was [ase::result_view $key]}
   ase::result_sel_note $key {}
+  # issue 1780: the live run is in view again, read as the analysis the session
+  # plots: what the dialog chose before is over
+  if {[info commands ::ase::ui::rsel_forget] ne {}} { catch {ase::ui::rsel_forget $key} }
   if {($was ne {} || $force) && [info commands ::ase::ui::result_view_changed] ne {}} {
     catch {ase::ui::result_view_changed $key}
   }

@@ -241,6 +241,48 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   catches a painter that left something stale; it cannot catch a rule the redraw itself
   breaks. Sample a pixel against a colour the suite computes itself as well (rows `F3`,
   `U1` to `U3` of `test_selection_dim_1769`: the dim colour is the suite's own arithmetic).
+- **"Is this colour on the screen" is answered yes by an antialiased letter.** The edge of
+  a legend letter blends the layer's colour with the background, and a few such pixels
+  land exactly on "the layer's colour, 35 percent towards black". Rows `OV6` and `OV7` of
+  `test_wave_overlay_latest_1780` asked whether a shade was gone from the canvas and were
+  red with the feature right. A curve is thousands of pixels and an edge is a handful, so
+  ask for a count (`ov_has`), not for presence. A shade towards white on a dark background
+  cannot be made by an edge; that half of the row never lied.
+- **A fixture that writes the model where the product writes the strip tests nothing of
+  the fold.** The bold trace is written into the strip's rect by a click and reaches the
+  model only when something folds the strips. Row `OV16` first set `hilight_wave` in the
+  model and rebuilt: the row was green with the fold taken out (break `t45`). Set it where
+  a click sets it (`xschem setprop -fast rect 2 <i> hilight_wave <n>`), and say in a
+  fixture row that the model does not hold it yet.
+- **A row about "this door notes what it read" needs a window that has read nothing.**
+  Row `OV15` restored a state into a window that had loaded the same file a moment
+  earlier; the note that load left answered for the restore, and the row was green with
+  the restore's own note taken out (break `t66`). Use a fresh session.
+- **Two paths to one outcome: a row reaches one of them.** "Ctrl-R takes the later
+  versions out" has a path for a window that keeps a trace on earlier data and one for a
+  window that keeps none. Every row of `test_wave_overlay_latest_1780` went down the
+  first, and the second could be deleted with the suite green (break `n5`). When a proc
+  branches on a count, write one row per side of the branch (row `OV16`, second half).
+- **A helper that looks a thing up by its exact label answers MISSING when the label
+  gains a suffix.** `rd_at` of `test_ase_plot_difference_1727` found a read-out entry by
+  its name; when a kept trace's name gained its time (`v(b)-v(a)@01:02:03`) two rows went
+  red on a value that was right. A helper that searches by name should say which part of
+  the name it matches (`rd_plain`), and a row should assert the new part once (`GG18`).
+
+- **A break that turns no row red does not prove the code dead; it proves no row reaches
+  it.** Break `m2` of issue 1780 (a file state kept again gets its old kept name) turned
+  nothing red, the code was reasoned to be unreachable and taken out, and an hour later a
+  check on a longer path (a reload between two selects, then `u`) found the defect it had
+  repaired. Before removing code on a loose break, find the caller that could reach it and
+  write that scenario; "the sweep spares those copies" was true of one door and not of the
+  load that drops them.
+
+- **A repair can mask an older break: run the whole break table again after it, not only
+  the new breaks.** Ctrl-R got a second read "as the analysis ASE-L names" when the first
+  finds nothing (issue 1780). The row that used to catch break `m6` (Ctrl-R ignores the
+  row the dialog chose) used a file that holds one analysis, so the new second read gave
+  the unbroken answer and the row stayed green. It needed a file that holds both (row
+  `OV27`).
 
 ## 2. Text scans, names and Tcl parse traps
 
@@ -303,6 +345,18 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   arguments, and the proof is simply false: the suite says "its proof holds" failed and
   nothing about a wrong argument count (a quiz proof, 2026-11-24). Wrap between the `&&`
   terms, never inside `[...]`.
+
+- **`expr` hands a signed number back without its sign.** `[expr {$v > 0 ? "+$v" : "$v"}]`
+  answers `40` for 40: the string `+40` looks like a number, and `expr` returns the number.
+  A token whose sign is part of its grammar (`4+40` on a graph's colour list) is built
+  outside `expr`: `if {$v > 0} { return "+$v" }` (issue 1780, caught by row `OP1`).
+
+- **A new parameter with the name of a local of the proc is overwritten by it, silently.**
+  `wviewer::hold_manual` has a local `all` (every strip of the window). A new last
+  argument `all` was accepted, defaulted, and then replaced by the strip list on the
+  proc's fourth line; the first test of it said `expected boolean value but got "{traces
+  ..."` from a background error, far from the cause. Before adding a parameter, search the
+  body for `set <name>` and `foreach <name>` (issue 1780: the argument is `every`).
 
 ## 3. Tk and event traps
 
@@ -467,6 +521,18 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   put `selection_dim` right (true to 1) left the menu's check entry showing the old word:
   Tk's own trace of the variable keeps the tick and did not run for the nested write. Do
   the write when the event loop is idle (`selection_dim_written`, row `M4`).
+- **Whether a new toplevel gets the keyboard is the window manager's choice.** A small
+  window that calls no `focus` still has the keyboard under openbox the moment it maps. A
+  row "the window does not take the keyboard" is a row about the window manager and was
+  red on a correct product. Test what the product owns: a key typed on that window does
+  the right thing (rows `OV25` of `test_wave_overlay_latest_1780`).
+
+- **`event generate <Key-NAME>` for a keysym the display's keymap does not hold sends a
+  key with the keysym `??`**, not the one asked for. On the hidden display `Mode_switch`,
+  `Multi_key`, `Hyper_L` and `Scroll_Lock` have no keycode, so a row that "typed" them
+  tested an unnamed key. Read `%K` back, or type only keysyms the keymap has (`Super_L`,
+  `ISO_Level3_Shift`), and test the rest through the pure helper (issue 1780, rows `OP7`
+  and `OV29`).
 
 ## 4. `xschem` command and data traps
 
@@ -591,7 +657,27 @@ it stops being true. Where it differs from `CLAUDE.md`, `CLAUDE.md` wins.
   (`wviewer::hold_release`), and read the Y window the strip SHOWS, not only a fit made by
   the row (RK13: `rk_y` beside `rk_yfit`).
 
+- **A fold of the viewer's strips made AFTER a model edit that renumbers traces writes the
+  old numbers back.** `wviewer::capture_live_view_state` copies the bold trace and the
+  selection from the rects into the model. `wviewer::hold_release` took a later version
+  of a waveform out of the model (which renumbers the traces after it) and the load that
+  follows folded the strips, still numbered the old way, over the result: the bold mark
+  ended one trace off. Fold first, edit, and rebuild before anything folds again (issue
+  1780, row `OV16`; `wviewer::delete_items` has always done it in that order).
+
+- **Unloading a database by name can leave another one current.** `xschem raw clear <name>
+  <type>` of a database that is not the current one moved the engine's current database
+  (break `n13`: after it the viewer's plain traces drew from another file). Read the
+  current database first and switch back to it (`wviewer::held_sweep`, row `OV18`).
+
 ## 5. Registration, gates and flakes
+
+- **An issue number can be taken between the mint check and the commit.** The checks of
+  CLAUDE.md said 1773 was free at 09:15; a worktree of another clone took it at 10:07,
+  while this clone was still building under it and had recorded nothing. A reviewer found
+  it by running the worktree glob again. Run the three checks again right before the
+  commit, and when another session is minting in the same hours, leave it a block and
+  take a number beyond it (issue 1780, `NUMBERING.md`).
 
 - **Derive a registration's trailer delta before the gate; never predict it from the
   registration shape.** Lift `summarize_all` and every proc it needs out of

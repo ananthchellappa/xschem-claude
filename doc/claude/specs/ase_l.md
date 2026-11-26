@@ -1225,14 +1225,30 @@ They should not influence the input to the simulator."* ADE-L is the floor
     written), while ASE-L's rows are drawn from the new run; **`~`** brings every trace to
     the result in view (`wviewer::hold_release`), under every destination, and so does the
     viewer's Reload (Ctrl-R, issue 1766). Under Append, New SubWin and New Win a finished run
-    moves every trace to the new run, as before. Nothing is kept across a run of another
+    moves every trace to the new run, as before, except a trace that is kept on earlier
+    data already (by an earlier Replace or by Results > Select) and every version of a
+    waveform that the viewer's Overlay Latest gave a second trace to (issue 1780): those
+    stay until `~` or Ctrl-R. Nothing is kept across a run of another
     analysis than the viewer shows, for a trace with nothing to show on the earlier run, or
     when the new file cannot be read (waveform_viewer.md, "An earlier run, kept for the
     traces plotted by hand").
     **Whether a finished run plots at all** is Results > Auto Plot Outputs After Simulation
     (`ase::ui::set_plot_after_sim`): the state key `plot_after_sim`, written only when it is
     not the default; the default is the rc variable `ase_plot_after_sim`, yes when unset. Off,
-    a finished run changes nothing in the viewer.
+    a finished run changes nothing in the viewer; the viewer's Overlay Latest (Alt-Shift-P,
+    issue 1780) then draws the new run beside what each waveform shows, and `~` or Ctrl-R
+    replaces.
+    **Results > Select plots nothing** (issue 1780; the user, 2026-11-26: *"Selecting should
+    not plot. If user selects a saved result, she must also press plot button to have new
+    results plotted"*). The Outputs, the title, the status and the schematic's annotation
+    follow the result in view as before; the viewer's waveforms stay on the data they show,
+    their legend names say which, and `~`, Ctrl-R or Alt-Shift-P brings the selected result
+    in. The dialog's status names the gestures that reach it: all three for a saved result
+    or the last run, Ctrl-R and Alt-Shift-P for a file picked by path (`~` plots the
+    session's own result), Ctrl-R alone when the selected analysis is not the one the
+    waveforms show (`ase::ui::rsel_commit`, `ase::ui::rsel_kept_how`; waveform_viewer.md,
+    "Overlay Latest"). `~` reads a saved result or the last run as the analysis of the row
+    the dialog chose (`ase::ui::auto_plot`), which a finished run forgets.
     Then, as before, R-OUT14's auto strips. A window the viewer's own zoom, View > Fit or a marker stored
     on a strip goes back to the rows that strip held, by traces (`wviewer::sw_stored`,
     `wviewer::sw_stored_give`; issue 1736): in multi-plot each row finds its own strip's
